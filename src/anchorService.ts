@@ -1,10 +1,22 @@
 import { readFile } from "node:fs/promises";
 
 import { buildContextRoot } from "./contextRoot.js";
+import {
+  buildLoadContextAnchor,
+  decodeLoadContextCursor,
+  encodeLoadContextCursor,
+  jsonByteLength,
+  LOAD_CONTEXT_DEFAULT_EXCERPT_CHARS,
+  LOAD_CONTEXT_DEFAULT_LIMIT,
+  LOAD_CONTEXT_DEFAULT_MAX_BYTES,
+  shrinkLoadContextAnchorToFit,
+  toNextCursorPayload,
+} from "./loadContext.js";
 import type { AnchorRepository } from "./git/repo.js";
 import { countCompletedRows, parseAnchor } from "./storage/markdown.js";
 import type { AnchorCategory } from "./taxonomy.js";
 import type {
+  AnchorContentMode,
   AnchorMeta,
   AnchorRead,
   AnchorVersion,
@@ -12,6 +24,10 @@ import type {
   ContextRootFormat,
   ContextRootResult,
   ConflictStatus,
+  LoadContextAnchor,
+  LoadContextInput,
+  LoadContextResult,
+  LoadContextSelectionReason,
   SearchHit,
   ValidationViolation,
   WriteAnchorResult,
@@ -124,6 +140,124 @@ export class AnchorService {
     return buildContextRoot(anchors, { format: input.format });
   }
 
+  /**
+   * One-call discovery + multi-anchor read: same index metadata as `contextRoot`, plus anchor bodies
+   * (full, excerpt, or none) with byte/limit caps and cursor continuation.
+   */
+  async loadContext(input: LoadContextInput = {}): Promise<LoadContextResult> {
+    const decoded = input.cursor ? decodeLoadContextCursor(input.cursor) : undefined;
+
+    const limit = Math.min(500, Math.max(1, decoded?.limit ?? input.limit ?? LOAD_CONTEXT_DEFAULT_LIMIT));
+    const maxBytes = Math.max(1024, decoded?.maxBytes ?? input.maxBytes ?? LOAD_CONTEXT_DEFAULT_MAX_BYTES);
+    const includeContent: AnchorContentMode = decoded?.includeContent ?? input.includeContent ?? "excerpt";
+    const excerptChars = Math.max(100, decoded?.excerptChars ?? input.excerptChars ?? LOAD_CONTEXT_DEFAULT_EXCERPT_CHARS);
+    const format = decoded?.format ?? input.format ?? "both";
+
+    const filter = {
+      project: decoded?.filter.project ?? input.project,
+      category: decoded?.filter.category ?? input.category,
+      tag: decoded?.filter.tag ?? input.tag,
+      runtime: decoded?.filter.runtime ?? input.runtime,
+      includeArchive: decoded?.filter.includeArchive ?? input.includeArchive ?? false,
+    };
+
+    const offset = decoded?.offset ?? 0;
+
+    let selectionReason: LoadContextSelectionReason;
+    let orderedNames: string[];
+
+    if (decoded) {
+      selectionReason = decoded.selectionReason;
+      if (selectionReason === "explicit_names") {
+        orderedNames = decoded.explicitNames ?? [];
+      } else {
+        const metas = await this.repo.listAnchors(filter);
+        const ordered = buildContextRoot(metas, { format: "json" });
+        orderedNames = ordered.entries.map((entry) => entry.name);
+      }
+    } else if (input.names && input.names.length > 0) {
+      selectionReason = "explicit_names";
+      orderedNames = dedupePreserveOrder(input.names.map((name) => this.repo.resolveAnchor(name).name));
+    } else {
+      selectionReason = "filter";
+      const metas = await this.repo.listAnchors(filter);
+      const ordered = buildContextRoot(metas, { format: "json" });
+      orderedNames = ordered.entries.map((entry) => entry.name);
+    }
+
+    const totalMatching = orderedNames.length;
+
+    let entriesMetas: AnchorMeta[];
+    if (selectionReason === "explicit_names") {
+      const all = await this.repo.listAnchors({});
+      const byName = new Map(all.map((meta) => [meta.name, meta]));
+      entriesMetas = orderedNames.map((name) => byName.get(name)).filter((meta): meta is AnchorMeta => Boolean(meta));
+    } else {
+      entriesMetas = await this.repo.listAnchors(filter);
+    }
+
+    const root = buildContextRoot(entriesMetas, { format });
+
+    const anchors: LoadContextAnchor[] = [];
+    let index = offset;
+    let stoppedForBytes = false;
+
+    while (index < orderedNames.length) {
+      if (anchors.length >= limit) {
+        break;
+      }
+
+      const read = await this.readAnchor(orderedNames[index]);
+      let row = buildLoadContextAnchor(read, includeContent, excerptChars);
+      const trial = [...anchors, row];
+      const bytes = jsonByteLength(trial);
+
+      if (bytes > maxBytes && anchors.length > 0) {
+        stoppedForBytes = true;
+        break;
+      }
+
+      if (bytes > maxBytes && anchors.length === 0) {
+        row = shrinkLoadContextAnchorToFit(read, includeContent, excerptChars, maxBytes);
+      }
+
+      anchors.push(row);
+      index += 1;
+    }
+
+    const returnedCount = anchors.length;
+    const nextOffset = offset + returnedCount;
+    const truncated = nextOffset < totalMatching || stoppedForBytes;
+
+    const nextCursor = truncated
+      ? encodeLoadContextCursor(
+          toNextCursorPayload({
+            selectionReason,
+            filter,
+            explicitNames: selectionReason === "explicit_names" ? orderedNames : undefined,
+            offset: nextOffset,
+            limit,
+            maxBytes,
+            includeContent,
+            excerptChars,
+            format,
+          }),
+        )
+      : undefined;
+
+    return {
+      generatedAt: root.generatedAt,
+      entries: root.entries,
+      markdown: root.markdown,
+      anchors,
+      truncated,
+      nextCursor,
+      selectionReason,
+      totalMatching,
+      returnedCount,
+    };
+  }
+
   async writeContextRoot(input: {
     project?: string;
     category?: AnchorCategory;
@@ -199,4 +333,18 @@ function lastValidatedChanged(oldContent: string, newContent: string): boolean {
 
 function dateKey(value: unknown): unknown {
   return value instanceof Date ? value.toISOString().slice(0, 10) : value;
+}
+
+function dedupePreserveOrder(names: string[]): string[] {
+  const seen = new Set<string>();
+  const result: string[] = [];
+
+  for (const name of names) {
+    if (!seen.has(name)) {
+      seen.add(name);
+      result.push(name);
+    }
+  }
+
+  return result;
 }

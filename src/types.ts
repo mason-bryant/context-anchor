@@ -87,6 +87,60 @@ export type ContextRootResult = {
   markdown?: string;
 };
 
+/** How much anchor body to include in `loadContext` results. */
+export type AnchorContentMode = "full" | "excerpt" | "none";
+
+/** Input for the combined discovery + multi-anchor read tool (`loadContext`). */
+export type LoadContextInput = {
+  project?: string;
+  category?: AnchorCategory;
+  tag?: string;
+  runtime?: string;
+  includeArchive?: boolean;
+  /** When set, load these anchors in order instead of all anchors matching the filter. */
+  names?: string[];
+  limit?: number;
+  maxBytes?: number;
+  includeContent?: AnchorContentMode;
+  /** Max characters per anchor body when `includeContent` is `excerpt`. */
+  excerptChars?: number;
+  /** Continuation token from a previous `loadContext` response. */
+  cursor?: string;
+  /** Same as `contextRoot`: include markdown snapshot in the result. */
+  format?: ContextRootFormat;
+};
+
+export type LoadContextSelectionReason = "explicit_names" | "filter";
+
+/** One anchor row returned by `loadContext`. */
+export type LoadContextAnchor = {
+  name: string;
+  path: string;
+  title?: string;
+  summary: string;
+  read_this_if: string[];
+  version?: string;
+  /** Present when `includeContent` is `full`. */
+  content?: string;
+  /** Present when `includeContent` is `excerpt`. */
+  excerpt?: string;
+  frontmatter?: AnchorFrontmatter;
+};
+
+export type LoadContextResult = {
+  generatedAt: string;
+  entries: ContextRootEntry[];
+  markdown?: string;
+  anchors: LoadContextAnchor[];
+  truncated: boolean;
+  nextCursor?: string;
+  selectionReason: LoadContextSelectionReason;
+  /** Total anchors matching this query (before pagination). */
+  totalMatching: number;
+  /** How many anchors were returned in `anchors` this page. */
+  returnedCount: number;
+};
+
 export type ServerConfig = {
   repoPath: string;
   anchorRoot: string;

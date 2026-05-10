@@ -5,7 +5,7 @@
 ## What Is Implemented
 
 - Phase 0 storage support: point the server at a private git repo, or run `scripts/anchor-context-sync.sh` for basic add/commit/pull/push sync without MCP.
-- Phase 1 read-only MCP tools: `listAnchors`, `readAnchor`, `readAnchorBatch`, `searchAnchors`, and `listVersions`.
+- Phase 1 read-only MCP tools: `listAnchors`, `readAnchor`, `readAnchorBatch`, `loadContext`, `searchAnchors`, and `listVersions`.
 - Phase 2 write tools and validators: `writeAnchor`, `diffAnchor`, `revertAnchor`, `compactionReport`, `contextRoot`, `writeContextRoot`, and `conflictStatus`.
 - Phase 3 transport support: stdio for local tools and Streamable HTTP/SSE for remote or containerized agents.
 
@@ -98,6 +98,17 @@ Then add to your Cursor MCP settings (`~/.cursor/mcp.json`):
     }
   }
 }
+```
+
+### Cursor rule snippet (session start)
+
+Add a short rule under `.cursor/rules/` (or your global Cursor rules) so agents call anchors **before** other tools, even if MCP `instructions` are buried in context:
+
+```md
+- Before any non-trivial tool use (read/search/edit/shell), call anchor-mcp `loadContext` first.
+- If you only need the index, `contextRoot` is enough; otherwise prefer `loadContext` with `includeContent: "excerpt"` (default behavior).
+- If the response is too large or `truncated` is true: pass `nextCursor`, or lower `limit` / `maxBytes`, or set `includeContent` to `excerpt` or `none`.
+- Never locate anchors by filesystem search; use MCP tools only.
 ```
 
 ### Authentication (optional)
@@ -228,6 +239,33 @@ Archive entries are excluded unless `includeArchive: true` or `category: "archiv
   "format": "both"
 }
 ```
+
+## Load context (one call)
+
+`loadContext` combines **discovery** (same `entries` as `contextRoot`, plus optional `markdown`) with **multiple anchor bodies** in a single tool call. Defaults: `limit` 12, `maxBytes` 250000, `includeContent` `excerpt`, `excerptChars` 1200.
+
+Filter the index and load matching anchors:
+
+```json
+{
+  "project": "demo",
+  "category": "projects",
+  "includeArchive": false,
+  "includeContent": "excerpt",
+  "format": "both"
+}
+```
+
+Load explicit paths (order preserved):
+
+```json
+{
+  "names": ["agent-rules/codex.md", "projects/demo/demo.md"],
+  "includeContent": "full"
+}
+```
+
+When `truncated` is true, call again with `nextCursor` from the previous response (same filters or explicit names are encoded in the cursor). If the payload is still too large for your client, reduce `limit` or `maxBytes`, or set `includeContent` to `excerpt` or `none`.
 
 ## Git Sync
 

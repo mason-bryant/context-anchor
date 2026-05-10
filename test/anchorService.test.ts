@@ -267,6 +267,90 @@ None.
     expect(generated).toContain("Do not edit manually");
     expect(generated).toContain("[Demo Anchor](projects/demo/demo.md)");
   });
+
+  it("loadContext returns entries plus excerpt anchors in one call", async () => {
+    await service.writeAnchor({
+      name: "agent-rules/codex",
+      content: sharedAnchorContent({ title: "Codex Rules", summary: "Rules for Codex agents." }),
+      message: "test: add rules",
+    });
+    await service.writeAnchor({
+      name: "projects/demo/demo",
+      content: projectAnchorContent(),
+      message: "test: add project",
+    });
+
+    const loaded = await service.loadContext({
+      project: "demo",
+      format: "json",
+    });
+
+    expect(loaded.selectionReason).toBe("filter");
+    expect(loaded.entries).toHaveLength(1);
+    expect(loaded.entries[0]?.name).toBe("projects/demo/demo.md");
+    expect(loaded.totalMatching).toBe(1);
+    expect(loaded.returnedCount).toBe(1);
+    expect(loaded.truncated).toBe(false);
+    expect(loaded.anchors).toHaveLength(1);
+    expect(loaded.anchors[0]?.excerpt).toBeDefined();
+    expect(loaded.anchors[0]?.content).toBeUndefined();
+  });
+
+  it("loadContext paginates with limit and nextCursor", async () => {
+    await service.writeAnchor({
+      name: "agent-rules/codex",
+      content: sharedAnchorContent({ title: "Codex Rules", summary: "Rules for Codex agents." }),
+      message: "test: add rules",
+    });
+    await service.writeAnchor({
+      name: "projects/demo/demo",
+      content: projectAnchorContent(),
+      message: "test: add project",
+    });
+    await service.writeAnchor({
+      name: "shared/common",
+      content: sharedAnchorContent({ title: "Common Context", summary: "Shared context for all agents." }),
+      message: "test: add shared",
+    });
+
+    const first = await service.loadContext({ limit: 1, format: "json" });
+    expect(first.returnedCount).toBe(1);
+    expect(first.totalMatching).toBe(3);
+    expect(first.truncated).toBe(true);
+    expect(first.nextCursor).toBeDefined();
+
+    const second = await service.loadContext({ cursor: first.nextCursor });
+    expect(second.returnedCount).toBe(1);
+    expect(second.truncated).toBe(true);
+
+    const third = await service.loadContext({ cursor: second.nextCursor });
+    expect(third.returnedCount).toBe(1);
+    expect(third.truncated).toBe(false);
+    expect(third.nextCursor).toBeUndefined();
+  });
+
+  it("loadContext explicit names supports includeContent none", async () => {
+    await service.writeAnchor({
+      name: "shared/common",
+      content: sharedAnchorContent({ title: "Common Context", summary: "Shared context for all agents." }),
+      message: "test: add shared",
+    });
+    await service.writeAnchor({
+      name: "projects/demo/demo",
+      content: projectAnchorContent(),
+      message: "test: add project",
+    });
+
+    const loaded = await service.loadContext({
+      names: ["shared/common", "projects/demo/demo"],
+      includeContent: "none",
+      format: "json",
+    });
+
+    expect(loaded.selectionReason).toBe("explicit_names");
+    expect(loaded.anchors).toHaveLength(2);
+    expect(loaded.anchors.every((anchor) => anchor.content === undefined && anchor.excerpt === undefined)).toBe(true);
+  });
 });
 
 function projectAnchorContent(

@@ -93,4 +93,18 @@ Use the same values as the Claude stdio example above.
 
 ---
 
-Before your first non-trivial tool call (read/search/edit/shell), call `contextRoot`, scan the index, and then load matching anchors with `readAnchor` or `readAnchorBatch`.
+## Session start: load anchors first
+
+Before your first non-trivial tool call (read/search/edit/shell), call **`loadContext`** so discovery (`entries` / optional `markdown`) and multiple anchor bodies arrive in **one** MCP request. If you only need the index, call **`contextRoot`** instead.
+
+If `truncated` is true or the response is too large: pass **`nextCursor`** from the prior response, or lower **`limit`** / **`maxBytes`**, or set **`includeContent`** to `excerpt` or `none`.
+
+### Cursor rule snippet (recommended)
+
+Put this in `.cursor/rules/` (or global Cursor rules) so it survives buried MCP `instructions`:
+
+```md
+- Before any non-trivial tool use, call anchor-mcp `loadContext` first (or `contextRoot` if only the index is needed).
+- If overloaded or `truncated`: use `nextCursor`, or reduce `limit` / `maxBytes`, or set `includeContent` to `excerpt` or `none`.
+- Do not locate anchors via filesystem search; use MCP tools only.
+```

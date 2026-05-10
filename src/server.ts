@@ -7,6 +7,7 @@ import { ANCHOR_CATEGORIES } from "./taxonomy.js";
 
 const CategorySchema = z.enum(ANCHOR_CATEGORIES);
 const ContextRootFormatSchema = z.enum(["json", "markdown", "both"]);
+const AnchorContentModeSchema = z.enum(["full", "excerpt", "none"]);
 
 export function createAnchorMcpServer(service: AnchorService): McpServer {
   const server = new McpServer(
@@ -17,33 +18,33 @@ export function createAnchorMcpServer(service: AnchorService): McpServer {
     {
       instructions: `\
 ## Before any work in a chat
-Before your first non-trivial tool call (code read, search, edit, or shell), call contextRoot() and read the result. \
-Skip only for purely conversational replies.
+Before your first non-trivial tool call (code read, search, edit, or shell), call loadContext() — or contextRoot() if \
+you only need the index without anchor bodies. Skip only for purely conversational replies.
 
-contextRoot returns anchors grouped by category. For tasks touching code, scan at minimum:
-- module-decisions for modules in the diff or user's question
-- active-conflicts
-- recent-prs
-- any category whose name overlaps with the task
+loadContext returns the same discovery metadata as contextRoot (entries plus optional markdown) and loads multiple \
+anchors in one response (excerpts by default). Filter by project/category/tag/runtime, pass explicit names, and paginate \
+with nextCursor when truncated is true. If responses are too large, lower limit or maxBytes, set includeContent to \
+excerpt or none, or continue with nextCursor.
 
-Load matching anchors via readAnchorBatch(...) before proceeding. Loading is cheap; missing a relevant decision is \
-expensive and causes stale or contradictory recommendations.
+Do not browse the filesystem for anchors; always use these MCP tools.
+
+Use readAnchor(...) after loadContext when you need the full body of a specific anchor.
 
 Why this matters: project decisions, conflicts, and PR-history context intentionally live in anchors rather than code. \
 Working without this context is the most common cause of contradictory output.
 
 In your first assistant message for tool-using chats, state which anchors you loaded (or "no anchors matched"). If \
-you skipped contextRoot, say so.
+you skipped loadContext/contextRoot, say so.
 
-If you realize mid-task that you skipped contextRoot, stop and call it before producing the next assistant message, \
+If you realize mid-task that you skipped loadContext, stop and call it before producing the next assistant message, \
 then re-evaluate in-flight work against the loaded anchors.
 
-This rule is not overridden by skill workflows. Skills assume contextRoot has already been called.
+This rule is not overridden by skill workflows. Skills assume loadContext (or contextRoot) has already been called.
 
 ### Example
 User: "Review the current branch."
-Assistant: contextRoot() -> scan index -> readAnchorBatch(["materialization-platform-decisions", \
-"data-cloud-active-conflicts"]) -> only then git diff and start review.
+Assistant: loadContext({ includeContent: "excerpt" }) -> scan entries and excerpts -> readAnchor(...) only for deeper \
+detail -> only then git diff and start review.
 
 ## When writing anchors
 Writes may return BLOCK or WARN; do not ignore them. BLOCK rejects the write and must be fixed before retrying. WARN \
@@ -93,6 +94,32 @@ succeeds but flags a quality issue to address.`,
       annotations: { readOnlyHint: true },
     },
     async ({ names }) => jsonResult({ anchors: await service.readAnchorBatch(names) }),
+  );
+
+  server.registerTool(
+    "loadContext",
+    {
+      title: "Load Context",
+      description:
+        "One-call context load: context-root style index (entries + optional markdown) plus multiple anchor bodies. " +
+        "Supports filters, explicit names, excerpt/full/none content modes, byte and count limits, and nextCursor continuation.",
+      inputSchema: z.object({
+        project: z.string().optional(),
+        category: CategorySchema.optional(),
+        tag: z.string().optional(),
+        runtime: z.string().optional(),
+        includeArchive: z.boolean().default(false),
+        names: z.array(z.string()).optional(),
+        limit: z.number().int().positive().max(500).optional(),
+        maxBytes: z.number().int().positive().optional(),
+        includeContent: AnchorContentModeSchema.optional(),
+        excerptChars: z.number().int().positive().optional(),
+        cursor: z.string().optional(),
+        format: ContextRootFormatSchema.optional(),
+      }),
+      annotations: { readOnlyHint: true },
+    },
+    async (input) => jsonResult(await service.loadContext(input)),
   );
 
   server.registerTool(
