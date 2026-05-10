@@ -1,12 +1,18 @@
+import type { AnchorCategory } from "./taxonomy.js";
+
 export type AnchorFrontmatter = Record<string, unknown>;
 
 export type AnchorMeta = {
   name: string;
   path: string;
+  category: AnchorCategory;
   title?: string;
   project?: unknown;
+  projectSlug?: string;
   type?: unknown;
   tags?: unknown;
+  summary: string;
+  read_this_if: string[];
   last_validated?: unknown;
   version?: string;
   updatedAt?: string;
@@ -59,6 +65,28 @@ export type CompactionReport = {
   suggestedMoves: string[];
 };
 
+export type ContextRootFormat = "json" | "markdown" | "both";
+
+export type ContextRootEntry = {
+  name: string;
+  path: string;
+  category: AnchorCategory;
+  title?: string;
+  projectSlug?: string;
+  summary: string;
+  read_this_if: string[];
+  type?: unknown;
+  tags?: unknown;
+  project?: unknown;
+  last_validated?: unknown;
+};
+
+export type ContextRootResult = {
+  generatedAt: string;
+  entries: ContextRootEntry[];
+  markdown?: string;
+};
+
 export type ServerConfig = {
   repoPath: string;
   anchorRoot: string;
@@ -67,4 +95,3 @@ export type ServerConfig = {
   syncIntervalMs: number;
   migrationWarnOnly: boolean;
 };
-

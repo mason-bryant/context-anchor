@@ -6,7 +6,7 @@
 
 - Phase 0 storage support: point the server at a private git repo, or run `scripts/anchor-context-sync.sh` for basic add/commit/pull/push sync without MCP.
 - Phase 1 read-only MCP tools: `listAnchors`, `readAnchor`, `readAnchorBatch`, `searchAnchors`, and `listVersions`.
-- Phase 2 write tools and validators: `writeAnchor`, `diffAnchor`, `revertAnchor`, `compactionReport`, and `conflictStatus`.
+- Phase 2 write tools and validators: `writeAnchor`, `diffAnchor`, `revertAnchor`, `compactionReport`, `contextRoot`, `writeContextRoot`, and `conflictStatus`.
 - Phase 3 transport support: stdio for local tools and Streamable HTTP/SSE for remote or containerized agents.
 
 ## Install
@@ -34,9 +34,21 @@ By default, `--repo` points at the root of the anchor markdown tree:
 
 ```txt
 ~/agent-context/
-  project-a.md
-  context-engineering/
-    lifecycle.md
+  CONTEXT-ROOT.md        # generated, do not edit manually
+  projects/
+    demo/
+      current.md
+  agent-rules/
+    codex.md
+  invariants/
+    auth.md
+  conflicts/
+    token-model.md
+  shared/
+    glossary.md
+  archive/
+    2026/
+      retired.md
 ```
 
 If the private repo contains the full `.agents/context` tree under a subdirectory, pass `--anchor-root`:
@@ -109,7 +121,10 @@ x-anchor-mcp-token: secret
 
 Blocks:
 
-- required front matter: `project`, `type`, `tags`, `last_validated: YYYY-MM-DD`
+- unknown top-level directories and root-level markdown anchors
+- direct writes to generated `CONTEXT-ROOT.md`
+- required front matter: `type`, `tags`, `summary`, `read_this_if`, `last_validated: YYYY-MM-DD`
+- `projects/<project-slug>/<anchor>.md` anchors require `project` front matter containing `<project-slug>`
 - required sections: `## Current State`, `## Decisions`, `## Constraints`, `## PRs`
 - PR link text format: `PR <title> - #<number>`
 - `last_validated` must change when Current State, Decisions, or Constraints change
@@ -124,6 +139,71 @@ Warnings:
 
 During migration, run with `--migration-warn-only` to downgrade schema and shape blocks into warnings while existing anchors are cleaned up.
 
+Example anchor:
+
+```md
+---
+project:
+  - demo
+type: design
+tags:
+  - context
+summary: "Current operating context for the demo project."
+read_this_if:
+  - "You are modifying demo project behavior."
+  - "You need current decisions and constraints for demo work."
+last_validated: 2026-05-10
+---
+
+# Demo Project
+
+## Current State
+
+- The demo project uses git-backed context anchors.
+
+## Decisions
+
+- Keep generated root content derived from front matter.
+
+## Constraints
+
+- Do not edit generated CONTEXT-ROOT.md manually.
+
+## PRs
+
+- [PR Add dynamic root - #123](https://github.com/example/repo/pull/123)
+```
+
+## Dynamic Context Root
+
+`contextRoot` builds a live root index from anchor metadata. It groups anchors in this order:
+
+```txt
+agent-rules
+projects
+invariants
+conflicts
+shared
+archive
+```
+
+Archive entries are excluded unless `includeArchive: true` or `category: "archive"` is passed.
+
+`writeContextRoot` writes and commits a generated `CONTEXT-ROOT.md` at the anchor root. The generated file is excluded from `listAnchors`, validation, and future context-root entries.
+
+`contextRoot` accepts:
+
+```json
+{
+  "project": "demo",
+  "category": "projects",
+  "tag": "context",
+  "runtime": "codex",
+  "includeArchive": false,
+  "format": "both"
+}
+```
+
 ## Git Sync
 
 Successful writes commit with structured metadata and then attempt `git push` unless `--no-push-on-write` is set. A background sync loop runs `git pull --rebase` every 45 seconds unless `--no-auto-sync` is set. Real conflicts are not auto-resolved; call `conflictStatus` to surface them to the agent.
@@ -133,4 +213,3 @@ For Phase 0 without MCP:
 ```sh
 scripts/anchor-context-sync.sh ~/agent-context 45
 ```
-

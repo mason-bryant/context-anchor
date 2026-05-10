@@ -5,6 +5,7 @@ import { simpleGit, type SimpleGit } from "simple-git";
 
 import { AnchorParseCache } from "../storage/cache.js";
 import { parseAnchor } from "../storage/markdown.js";
+import { classifyAnchorPath, CONTEXT_ROOT_FILE, type AnchorCategory } from "../taxonomy.js";
 import type {
   AnchorMeta,
   AnchorRead,
@@ -83,6 +84,9 @@ export class AnchorRepository {
     project?: string;
     tag?: string;
     since?: string;
+    category?: AnchorCategory;
+    includeArchive?: boolean;
+    runtime?: string;
   }): Promise<AnchorMeta[]> {
     const files = await this.listMarkdownFiles(this.anchorRootPath);
     const metas: AnchorMeta[] = [];
@@ -92,14 +96,31 @@ export class AnchorRepository {
       const parsed = await this.cache.parse(absolutePath, content);
       const stats = await stat(absolutePath);
       const anchorRelativePath = toPosix(path.relative(this.anchorRootPath, absolutePath));
+      const classification = classifyAnchorPath(anchorRelativePath);
+      if (classification.kind !== "anchor") {
+        continue;
+      }
+
+      if (classification.category === "archive" && !filter?.includeArchive && filter?.category !== "archive") {
+        continue;
+      }
+
+      if (filter?.category && classification.category !== filter.category) {
+        continue;
+      }
+
       const repoRelativePath = toPosix(path.relative(this.repoPath, absolutePath));
       const meta: AnchorMeta = {
         name: anchorRelativePath,
         path: repoRelativePath,
+        category: classification.category,
         title: parsed.title,
         project: parsed.frontmatter.project,
+        projectSlug: classification.projectSlug,
         type: parsed.frontmatter.type,
         tags: parsed.frontmatter.tags,
+        summary: stringValue(parsed.frontmatter.summary),
+        read_this_if: stringArrayValue(parsed.frontmatter.read_this_if),
         last_validated: parsed.frontmatter.last_validated,
         updatedAt: stats.mtime.toISOString(),
       };
@@ -109,6 +130,10 @@ export class AnchorRepository {
       }
 
       if (filter?.tag && !frontmatterValueIncludes(meta.tags, filter.tag)) {
+        continue;
+      }
+
+      if (filter?.runtime && !runtimeMatches(parsed.frontmatter, filter.runtime)) {
         continue;
       }
 
@@ -206,6 +231,44 @@ export class AnchorRepository {
       await this.git.raw(args);
 
       if (input.push) {
+        await this.push().catch(() => undefined);
+      }
+
+      return this.currentVersion();
+    });
+  }
+
+  async commitGeneratedContextRoot(content: string, push?: boolean): Promise<string | undefined> {
+    return this.lock.runExclusive(async () => {
+      const absolutePath = path.resolve(this.anchorRootPath, CONTEXT_ROOT_FILE);
+      assertInside(this.anchorRootPath, absolutePath);
+
+      const tmpPath = `${absolutePath}.${process.pid}.${Date.now()}.tmp`;
+      await writeFile(tmpPath, content, "utf8");
+      await rename(tmpPath, absolutePath);
+      this.cache.invalidate(absolutePath);
+
+      const repoRelativePath = toPosix(path.relative(this.repoPath, absolutePath));
+      await this.git.add(repoRelativePath);
+
+      const status = await this.git.status();
+      if (!status.files.some((file) => file.path === repoRelativePath)) {
+        return this.currentVersion().catch(() => undefined);
+      }
+
+      await this.git.raw([
+        "-c",
+        "user.name=anchor-mcp",
+        "-c",
+        "user.email=anchor-mcp@local",
+        "commit",
+        "-m",
+        "anchor-mcp: generate CONTEXT-ROOT.md",
+        "-m",
+        "Generated from anchor front matter.",
+      ]);
+
+      if (push) {
         await this.push().catch(() => undefined);
       }
 
@@ -320,4 +383,21 @@ function frontmatterValueIncludes(value: unknown, needle: string): boolean {
   }
 
   return String(value ?? "") === needle;
+}
+
+function stringValue(value: unknown): string {
+  return typeof value === "string" ? value : "";
+}
+
+function stringArrayValue(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
+}
+
+function runtimeMatches(frontmatter: Record<string, unknown>, runtime: string): boolean {
+  return (
+    frontmatterValueIncludes(frontmatter.runtime, runtime) ||
+    frontmatterValueIncludes(frontmatter.runtimes, runtime) ||
+    frontmatterValueIncludes(frontmatter.applies_to, runtime) ||
+    frontmatterValueIncludes(frontmatter.tags, runtime)
+  );
 }

@@ -2,6 +2,7 @@ import type { ValidationViolation } from "../types.js";
 import { validateAgentsSibling } from "./agentsSibling.js";
 import { validateApprovalGate } from "./approval.js";
 import { validateCompactionThresholds } from "./compactionThresholds.js";
+import { validateDirectoryTaxonomy } from "./directoryTaxonomy.js";
 import { validateFrontMatter } from "./frontMatter.js";
 import { validateLastValidatedBump } from "./lastValidatedBump.js";
 import { validateNonDestructive } from "./nonDestructive.js";
@@ -23,7 +24,11 @@ const VALIDATORS: Validator[] = [
 ];
 
 export async function runValidators(context: ValidationContext): Promise<ValidationViolation[]> {
-  const results = await Promise.all(VALIDATORS.map((validator) => validator(context)));
-  return results.flat();
-}
+  const taxonomyResults = await validateDirectoryTaxonomy(context);
+  if (taxonomyResults.some((result) => result.code === "generated_file_reserved")) {
+    return taxonomyResults;
+  }
 
+  const results = await Promise.all(VALIDATORS.map((validator) => validator(context)));
+  return [...taxonomyResults, ...results.flat()];
+}

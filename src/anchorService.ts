@@ -1,12 +1,16 @@
 import { readFile } from "node:fs/promises";
 
+import { buildContextRoot } from "./contextRoot.js";
 import type { AnchorRepository } from "./git/repo.js";
 import { countCompletedRows, parseAnchor } from "./storage/markdown.js";
+import type { AnchorCategory } from "./taxonomy.js";
 import type {
   AnchorMeta,
   AnchorRead,
   AnchorVersion,
   CompactionReport,
+  ContextRootFormat,
+  ContextRootResult,
   ConflictStatus,
   SearchHit,
   ValidationViolation,
@@ -23,7 +27,14 @@ export class AnchorService {
     },
   ) {}
 
-  listAnchors(filter?: { project?: string; tag?: string; since?: string }): Promise<AnchorMeta[]> {
+  listAnchors(filter?: {
+    project?: string;
+    tag?: string;
+    since?: string;
+    category?: AnchorCategory;
+    includeArchive?: boolean;
+    runtime?: string;
+  }): Promise<AnchorMeta[]> {
     return this.repo.listAnchors(filter);
   }
 
@@ -92,6 +103,43 @@ export class AnchorService {
   async revertAnchor(name: string, toVersion: string, message?: string): Promise<{ newVersion?: string }> {
     const newVersion = await this.repo.revertAnchor(name, toVersion, message, this.options.pushOnWrite);
     return { newVersion };
+  }
+
+  async contextRoot(input: {
+    project?: string;
+    category?: AnchorCategory;
+    tag?: string;
+    runtime?: string;
+    includeArchive?: boolean;
+    format?: ContextRootFormat;
+  } = {}): Promise<ContextRootResult> {
+    const anchors = await this.repo.listAnchors({
+      project: input.project,
+      category: input.category,
+      tag: input.tag,
+      runtime: input.runtime,
+      includeArchive: input.includeArchive,
+    });
+
+    return buildContextRoot(anchors, { format: input.format });
+  }
+
+  async writeContextRoot(input: {
+    project?: string;
+    category?: AnchorCategory;
+    tag?: string;
+    runtime?: string;
+    includeArchive?: boolean;
+  } = {}): Promise<{ version?: string; generatedAt: string; path: string }> {
+    const root = await this.contextRoot({ ...input, format: "markdown" });
+    const markdown = root.markdown ?? "";
+    const version = await this.repo.commitGeneratedContextRoot(markdown, this.options.pushOnWrite);
+
+    return {
+      version,
+      generatedAt: root.generatedAt,
+      path: "CONTEXT-ROOT.md",
+    };
   }
 
   conflictStatus(): Promise<ConflictStatus> {

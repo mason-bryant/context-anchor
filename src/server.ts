@@ -3,6 +3,10 @@ import { McpServer } from "@modelcontextprotocol/server";
 import * as z from "zod/v4";
 
 import type { AnchorService } from "./anchorService.js";
+import { ANCHOR_CATEGORIES } from "./taxonomy.js";
+
+const CategorySchema = z.enum(ANCHOR_CATEGORIES);
+const ContextRootFormatSchema = z.enum(["json", "markdown", "both"]);
 
 export function createAnchorMcpServer(service: AnchorService): McpServer {
   const server = new McpServer(
@@ -25,6 +29,8 @@ export function createAnchorMcpServer(service: AnchorService): McpServer {
         project: z.string().optional(),
         tag: z.string().optional(),
         since: z.string().optional(),
+        category: CategorySchema.optional(),
+        includeArchive: z.boolean().default(false),
       }),
       annotations: { readOnlyHint: true },
     },
@@ -151,6 +157,41 @@ export function createAnchorMcpServer(service: AnchorService): McpServer {
   );
 
   server.registerTool(
+    "contextRoot",
+    {
+      title: "Context Root",
+      description: "Build a dynamic context root from anchor front matter.",
+      inputSchema: z.object({
+        project: z.string().optional(),
+        category: CategorySchema.optional(),
+        tag: z.string().optional(),
+        runtime: z.string().optional(),
+        includeArchive: z.boolean().default(false),
+        format: ContextRootFormatSchema.default("both"),
+      }),
+      annotations: { readOnlyHint: true },
+    },
+    async (input) => jsonResult(await service.contextRoot(input)),
+  );
+
+  server.registerTool(
+    "writeContextRoot",
+    {
+      title: "Write Context Root",
+      description: "Generate and commit CONTEXT-ROOT.md from anchor front matter.",
+      inputSchema: z.object({
+        project: z.string().optional(),
+        category: CategorySchema.optional(),
+        tag: z.string().optional(),
+        runtime: z.string().optional(),
+        includeArchive: z.boolean().default(false),
+      }),
+      annotations: { destructiveHint: false, idempotentHint: false },
+    },
+    async (input) => jsonResult(await service.writeContextRoot(input)),
+  );
+
+  server.registerTool(
     "conflictStatus",
     {
       title: "Conflict Status",
@@ -175,4 +216,3 @@ function jsonResult(value: unknown, isError = false): CallToolResult {
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
-

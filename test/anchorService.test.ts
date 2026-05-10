@@ -25,31 +25,33 @@ afterEach(async () => {
 describe("AnchorService", () => {
   it("writes a valid anchor as a git commit", async () => {
     const result = await service.writeAnchor({
-      name: "project/demo",
-      content: anchorContent(),
+      name: "projects/demo/demo",
+      content: projectAnchorContent(),
       message: "test: add demo anchor",
     });
 
     expect(result.version).toMatch(/[a-f0-9]{40}/);
     expect(result.warnings).toEqual([]);
 
-    const read = await service.readAnchor("project/demo");
+    const read = await service.readAnchor("projects/demo/demo");
     expect(read.frontmatter.project).toEqual(["demo"]);
+    expect(read.frontmatter.summary).toBe("Demo anchor summary.");
     expect(read.content).toContain("## Current State");
 
-    const versions = await service.listVersions("project/demo");
+    const versions = await service.listVersions("projects/demo/demo");
     expect(versions).toHaveLength(1);
     expect(versions[0]?.message).toBe("test: add demo anchor");
   });
 
   it("blocks anchors missing required sections", async () => {
     const result = await service.writeAnchor({
-      name: "bad",
+      name: "shared/bad",
       content: `---
-project:
-  - demo
 type: design
 tags: []
+summary: "Bad anchor summary."
+read_this_if:
+  - "You are checking section validation."
 last_validated: 2026-05-10
 ---
 
@@ -67,16 +69,82 @@ last_validated: 2026-05-10
     );
   });
 
+  it("blocks anchors outside the enforced taxonomy", async () => {
+    const result = await service.writeAnchor({
+      name: "demo",
+      content: sharedAnchorContent(),
+      message: "test: invalid path",
+    });
+
+    expect(result.version).toBeUndefined();
+    expect(result.warnings.map((warning) => warning.code)).toContain("directory_taxonomy");
+  });
+
+  it("blocks missing summary and read_this_if front matter", async () => {
+    const result = await service.writeAnchor({
+      name: "shared/missing-metadata",
+      content: `---
+type: design
+tags: []
+last_validated: 2026-05-10
+---
+
+# Missing Metadata
+
+## Current State
+
+- Exists.
+
+## Decisions
+
+- Keep it.
+
+## Constraints
+
+- Preserve shape.
+
+## PRs
+
+- [PR Add metadata checks - #123](https://github.com/example/repo/pull/123)
+`,
+    });
+
+    expect(result.version).toBeUndefined();
+    expect(result.warnings.map((warning) => warning.code)).toContain("front_matter_schema");
+  });
+
+  it("blocks project anchors whose front matter does not include the project slug", async () => {
+    const result = await service.writeAnchor({
+      name: "projects/demo/wrong-project",
+      content: projectAnchorContent({ project: "other" }),
+      message: "test: mismatched project slug",
+    });
+
+    expect(result.version).toBeUndefined();
+    expect(result.warnings.map((warning) => warning.code)).toContain("project_slug_mismatch");
+  });
+
+  it("blocks direct writes to generated CONTEXT-ROOT.md", async () => {
+    const result = await service.writeAnchor({
+      name: "CONTEXT-ROOT",
+      content: "# Manual Root\n",
+      message: "test: write generated root",
+    });
+
+    expect(result.version).toBeUndefined();
+    expect(result.warnings.map((warning) => warning.code)).toEqual(["generated_file_reserved"]);
+  });
+
   it("requires last_validated to change when substantive sections change", async () => {
     await service.writeAnchor({
-      name: "demo",
-      content: anchorContent(),
+      name: "projects/demo/demo",
+      content: projectAnchorContent(),
       message: "test: add demo anchor",
     });
 
     const result = await service.writeAnchor({
-      name: "demo",
-      content: anchorContent({ currentState: "- Updated but same validation date." }),
+      name: "projects/demo/demo",
+      content: projectAnchorContent({ currentState: "- Updated but same validation date." }),
       message: "test: update current state",
     });
 
@@ -86,14 +154,14 @@ last_validated: 2026-05-10
 
   it("requires explicit approval for decisions changes", async () => {
     await service.writeAnchor({
-      name: "demo",
-      content: anchorContent(),
+      name: "projects/demo/demo",
+      content: projectAnchorContent(),
       message: "test: add demo anchor",
     });
 
     const blocked = await service.writeAnchor({
-      name: "demo",
-      content: anchorContent({
+      name: "projects/demo/demo",
+      content: projectAnchorContent({
         lastValidated: "2026-05-11",
         decisions: "- New decision.",
       }),
@@ -104,8 +172,8 @@ last_validated: 2026-05-10
     expect(blocked.version).toBeUndefined();
 
     const approved = await service.writeAnchor({
-      name: "demo",
-      content: anchorContent({
+      name: "projects/demo/demo",
+      content: projectAnchorContent({
         lastValidated: "2026-05-11",
         decisions: "- New decision.",
       }),
@@ -115,22 +183,74 @@ last_validated: 2026-05-10
 
     expect(approved.version).toMatch(/[a-f0-9]{40}/);
   });
+
+  it("builds a grouped dynamic context root and excludes archive by default", async () => {
+    await service.writeAnchor({
+      name: "agent-rules/codex",
+      content: sharedAnchorContent({ title: "Codex Rules", summary: "Rules for Codex agents." }),
+      message: "test: add rules",
+    });
+    await service.writeAnchor({
+      name: "projects/demo/demo",
+      content: projectAnchorContent(),
+      message: "test: add project",
+    });
+    await service.writeAnchor({
+      name: "shared/common",
+      content: sharedAnchorContent({ title: "Common Context", summary: "Shared context for all agents." }),
+      message: "test: add shared",
+    });
+    await service.writeAnchor({
+      name: "archive/retired",
+      content: sharedAnchorContent({ title: "Retired Context", summary: "Old context kept for history." }),
+      message: "test: add archive",
+    });
+
+    const root = await service.contextRoot({ format: "markdown" });
+    expect(root.entries.map((entry) => entry.category)).toEqual(["agent-rules", "projects", "shared"]);
+    expect(root.markdown).toContain("Generated by anchor-mcp");
+    expect(root.markdown).toContain("## Agent Rules");
+    expect(root.markdown).toContain("## Projects");
+    expect(root.markdown).not.toContain("## Archive");
+
+    const archived = await service.contextRoot({ includeArchive: true });
+    expect(archived.entries.map((entry) => entry.category)).toContain("archive");
+  });
+
+  it("writes generated CONTEXT-ROOT.md as a commit", async () => {
+    await service.writeAnchor({
+      name: "projects/demo/demo",
+      content: projectAnchorContent(),
+      message: "test: add project",
+    });
+
+    const result = await service.writeContextRoot();
+    expect(result.version).toMatch(/[a-f0-9]{40}/);
+
+    const generated = await repo.readRaw("CONTEXT-ROOT");
+    expect(generated).toContain("Do not edit manually");
+    expect(generated).toContain("[Demo Anchor](projects/demo/demo.md)");
+  });
 });
 
-function anchorContent(
+function projectAnchorContent(
   overrides: {
     currentState?: string;
     decisions?: string;
     constraints?: string;
     lastValidated?: string;
+    project?: string;
   } = {},
 ): string {
   return `---
 project:
-  - demo
+  - ${overrides.project ?? "demo"}
 type: design
 tags:
   - context
+summary: "Demo anchor summary."
+read_this_if:
+  - "You are working on the demo project."
 last_validated: ${overrides.lastValidated ?? "2026-05-10"}
 ---
 
@@ -154,3 +274,41 @@ ${overrides.constraints ?? "- Preserve existing claims."}
 `;
 }
 
+function sharedAnchorContent(
+  overrides: {
+    title?: string;
+    summary?: string;
+    currentState?: string;
+    decisions?: string;
+    constraints?: string;
+  } = {},
+): string {
+  return `---
+type: design
+tags:
+  - context
+summary: "${overrides.summary ?? "Shared anchor summary."}"
+read_this_if:
+  - "You need shared context."
+last_validated: 2026-05-10
+---
+
+# ${overrides.title ?? "Shared Anchor"}
+
+## Current State
+
+${overrides.currentState ?? "- The shared anchor exists."}
+
+## Decisions
+
+${overrides.decisions ?? "- Keep shared context compact."}
+
+## Constraints
+
+${overrides.constraints ?? "- Preserve existing claims."}
+
+## PRs
+
+- [PR Add shared anchor - #124](https://github.com/example/repo/pull/124)
+`;
+}
