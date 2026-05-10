@@ -16,17 +16,38 @@ export function createAnchorMcpServer(service: AnchorService): McpServer {
     },
     {
       instructions: `\
-At the start of every session, call contextRoot (no arguments) and read the result before doing any other work. \
-It returns a structured index of all available context anchors grouped by category, with summaries and "read_this_if" \
-loading instructions for each. Use the index to decide which anchors are relevant to the current task, then load them \
-with readAnchor or readAnchorBatch before proceeding.
+## Before any work in a chat
+Before your first non-trivial tool call (code read, search, edit, or shell), call contextRoot() and read the result. \
+Skip only for purely conversational replies.
 
-After reading the context root, treat the "read_this_if" fields on each anchor as loading conditions: if the current \
-task matches any condition for an anchor, load that anchor before responding or making changes.
+contextRoot returns anchors grouped by category. For tasks touching code, scan at minimum:
+- module-decisions for modules in the diff or user's question
+- active-conflicts
+- recent-prs
+- any category whose name overlaps with the task
 
-When writing anchors, writes may return BLOCK or WARN validation results; do not ignore them. BLOCK means the write \
-was rejected and must be fixed before retrying. WARN means the write succeeded but the anchor has a quality issue \
-that should be addressed.`,
+Load matching anchors via readAnchorBatch(...) before proceeding. Loading is cheap; missing a relevant decision is \
+expensive and causes stale or contradictory recommendations.
+
+Why this matters: project decisions, conflicts, and PR-history context intentionally live in anchors rather than code. \
+Working without this context is the most common cause of contradictory output.
+
+In your first assistant message for tool-using chats, state which anchors you loaded (or "no anchors matched"). If \
+you skipped contextRoot, say so.
+
+If you realize mid-task that you skipped contextRoot, stop and call it before producing the next assistant message, \
+then re-evaluate in-flight work against the loaded anchors.
+
+This rule is not overridden by skill workflows. Skills assume contextRoot has already been called.
+
+### Example
+User: "Review the current branch."
+Assistant: contextRoot() -> scan index -> readAnchorBatch(["materialization-platform-decisions", \
+"data-cloud-active-conflicts"]) -> only then git diff and start review.
+
+## When writing anchors
+Writes may return BLOCK or WARN; do not ignore them. BLOCK rejects the write and must be fixed before retrying. WARN \
+succeeds but flags a quality issue to address.`,
     },
   );
 

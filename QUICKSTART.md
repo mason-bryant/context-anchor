@@ -93,4 +93,4 @@ Use the same values as the Claude stdio example above.
 
 ---
 
-After connecting, run `contextRoot` first in your client, then load relevant anchors with `readAnchor` or `readAnchorBatch`.
+Before your first non-trivial tool call (read/search/edit/shell), call `contextRoot`, scan the index, and then load matching anchors with `readAnchor` or `readAnchorBatch`.
