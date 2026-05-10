@@ -1,0 +1,42 @@
+{
+  "name": "@mason/anchor-mcp",
+  "version": "0.1.0",
+  "description": "Git-backed MCP server for context anchors with write-time discipline enforcement.",
+  "type": "module",
+  "bin": {
+    "anchor-mcp": "./dist/bin/anchor-mcp.js"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "dev:stdio": "tsx src/bin/anchor-mcp.ts --repo ./fixtures/demo-context",
+    "dev:http": "tsx src/bin/anchor-mcp.ts --repo ./fixtures/demo-context --transport http --port 3333"
+  },
+  "engines": {
+    "node": ">=20.10"
+  },
+  "dependencies": {
+    "@cfworker/json-schema": "^4.1.1",
+    "@modelcontextprotocol/express": "2.0.0-alpha.2",
+    "@modelcontextprotocol/node": "2.0.0-alpha.2",
+    "@modelcontextprotocol/server": "2.0.0-alpha.2",
+    "cors": "^2.8.5",
+    "express": "^5.1.0",
+    "gray-matter": "^4.0.3",
+    "simple-git": "^3.28.0",
+    "zod": "^4.1.12"
+  },
+  "devDependencies": {
+    "@types/cors": "^2.8.19",
+    "@types/express": "^5.0.3",
+    "@types/node": "^24.9.1",
+    "tsx": "^4.20.6",
+    "typescript": "^5.9.3",
+    "vitest": "^3.2.4"
+  }
+}
