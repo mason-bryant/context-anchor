@@ -15,7 +15,8 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
     "dev:stdio": "tsx src/bin/anchor-mcp.ts --repo ./fixtures/demo-context",
-    "dev:http": "tsx src/bin/anchor-mcp.ts --repo ./fixtures/demo-context --transport http --port 3333"
+    "dev:http": "tsx src/bin/anchor-mcp.ts --repo ./fixtures/demo-context --transport http --port 3333",
+    "dev:http:watch": "tsx watch src/bin/anchor-mcp.ts --repo ./fixtures/demo-context --transport http --port 3333"
   },
   "engines": {
     "node": ">=20.10"

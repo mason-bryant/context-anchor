@@ -15,8 +15,18 @@ export function createAnchorMcpServer(service: AnchorService): McpServer {
       version: "0.1.0",
     },
     {
-      instructions:
-        "Use anchor-mcp to read and update git-backed context anchors. Writes may return BLOCK or WARN validation results; do not ignore them.",
+      instructions: `\
+At the start of every session, call contextRoot (no arguments) and read the result before doing any other work. \
+It returns a structured index of all available context anchors grouped by category, with summaries and "read_this_if" \
+loading instructions for each. Use the index to decide which anchors are relevant to the current task, then load them \
+with readAnchor or readAnchorBatch before proceeding.
+
+After reading the context root, treat the "read_this_if" fields on each anchor as loading conditions: if the current \
+task matches any condition for an anchor, load that anchor before responding or making changes.
+
+When writing anchors, writes may return BLOCK or WARN validation results; do not ignore them. BLOCK means the write \
+was rejected and must be fixed before retrying. WARN means the write succeeded but the anchor has a quality issue \
+that should be addressed.`,
     },
   );
 

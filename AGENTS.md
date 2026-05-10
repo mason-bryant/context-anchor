@@ -1,310 +1,137 @@
-# Agent Migration Rules — anchor-mcp Compatibility
+# anchor-mcp Migration Guide
 
-This file describes the specific changes required to make every file in this repo
-valid under the [anchor-mcp](https://github.com/mbryant/context-conductor) MCP server.
-Work through issues 1–4 in order; do not skip ahead.
+Use this file to convert an existing collection of context-anchor markdown documents
+into the format expected by anchor-mcp. Work through each section in order.
 
 ---
 
-## Issue 1 — Directory Taxonomy Migration
+## Step 1 — Initialise the Git Repository
 
-The MCP server only recognises six top-level categories. Every file outside them is
-invisible to reads and blocked on writes.
+anchor-mcp requires a git repository. Every write is committed; background sync uses
+`git pull --rebase`. Without git, all writes fail.
+
+```bash
+cd <your-anchor-repo>
+git init
+git add .
+git commit -m "initial: import existing context documents"
+```
+
+---
+
+## Step 2 — Fix Directory Taxonomy
+
+anchor-mcp only recognises six top-level categories. Files outside these directories
+are invisible to reads and blocked on writes.
 
 **Valid top-level directories:**
 
 | Directory | Purpose |
 |---|---|
-| `agent-rules/` | Agent behaviour and coding rules |
+| `agent-rules/` | Agent behaviour rules, coding standards, role instructions |
 | `projects/` | Per-project context anchors and roadmaps |
 | `invariants/` | Hard architectural invariants |
 | `conflicts/` | Conflict-resolution records |
-| `shared/` | General shared knowledge (tools, workflows, guides) |
-| `archive/` | Archived anchors |
+| `shared/` | General shared knowledge — tools, workflows, how-to guides |
+| `archive/` | Anchors no longer actively maintained |
 
 **Depth rules:**
 
-- Non-`projects` anchors must live at exactly `<category>/<file>.md` — one level deep, no subdirectories.
-- Project anchors must live at `projects/<project-slug>/<file>.md` — exactly three path parts.
-- `CONTEXT-ROOT.md` at the root is the only allowed root-level file (generated, do not edit manually).
+- Non-`projects` anchors: exactly one level deep — `<category>/<file>.md`. No subdirectories.
+- Project anchors: exactly three parts — `projects/<project-slug>/<file>.md`.
+- `CONTEXT-ROOT.md` at the repo root is reserved and generated automatically. Do not move it.
 
-**Required file moves — perform as `git mv` to preserve history:**
+**How to find invalid paths:**
 
-| Current path | New path | Notes |
-|---|---|---|
-| `coding/common-coding-rules.md` | `agent-rules/common-coding-rules.md` | |
-| `coding/feature-flags.md` | `agent-rules/feature-flags.md` | |
-| `coding/no-private-path-leakage.md` | `agent-rules/no-private-path-leakage.md` | |
-| `context-engineering/context-anchor-rules.md` | `agent-rules/context-anchor-rules.md` | |
-| `context-engineering/conflicts-and-invariants-rules.md` | `agent-rules/conflicts-and-invariants-rules.md` | |
-| `context-engineering/markdown-rules.md` | `agent-rules/markdown-rules.md` | |
-| `context-engineering/project-docs-lifecycle.md` | `agent-rules/project-docs-lifecycle.md` | |
-| `context-engineering/roadmap-rules.md` | `agent-rules/roadmap-rules.md` | |
-| `context-engineering/runbook-rules.md` | `agent-rules/runbook-rules.md` | |
-| `git-workflows/stacked-branches.md` | `shared/stacked-branches.md` | |
-| `tests/authoring-rql-tests.md` | `shared/authoring-rql-tests.md` | |
-| `tests/running-tests.md` | `shared/running-tests.md` | |
-| `datadog/datadog-dashboard-authoring.md` | `shared/datadog-dashboard-authoring.md` | |
-| `rql-audits/adding-an-rql-audit.md` | `shared/adding-an-rql-audit.md` | |
-| `cbp/cbp-native-model-guide.md` | *(delete)* | Exact duplicate of `projects/cbp/cbp-native-model-guide.md` |
+List every `.md` file whose top-level directory is not in the valid set:
 
-After moving, remove the now-empty source directories.
+```bash
+find . -name "*.md" ! -path "./.git/*" | awk -F/ '{print $2}' | sort -u
+```
+
+Any name in the output that is not one of the six valid categories (and not `CONTEXT-ROOT.md`)
+needs to be moved. For each such directory, decide the right target:
+
+- Agent behaviour / coding rules / role documents → `agent-rules/`
+- General references, workflows, how-to guides → `shared/`
+- Hard system constraints → `invariants/`
+- Conflict-resolution notes → `conflicts/`
+- Inactive / superseded → `archive/`
+
+Also check for files nested more than one level deep inside a non-`projects` category
+(two or more `/` after the category name). Flatten them to `<category>/<file>.md`.
+
+Move files with `git mv` to preserve history:
+
+```bash
+git mv <old-path> <new-path>
+```
+
+Remove any empty directories left behind. Commit when all files are in valid locations.
 
 ---
 
-## Issue 2 — Missing Required Front Matter Fields
+## Step 3 — Fix Front Matter
 
-Every anchor (except `CONTEXT-ROOT.md`) must contain these two fields or the MCP
-server will block writes and omit the file from context-root generation:
+Every anchor (except `CONTEXT-ROOT.md`) must pass this schema on write. Validate
+each file and add or correct any failing fields.
+
+### Required fields
 
 ```yaml
-summary: "<One sentence, max 240 characters, describing what this anchor is about.>"
-read_this_if:
-  - "<Condition under which an agent should load this anchor, max 160 chars.>"
-  - "<Add 1–5 total items.>"
+type: "<non-empty string>"          # e.g. context-anchor, agent-roles, project-roadmap
+tags:                               # array; may be empty but must be present
+  - "<tag>"
+summary: "<one sentence, max 240 characters>"
+read_this_if:                       # 1–5 items, each max 160 characters
+  - "<condition under which an agent should load this file>"
+last_validated: "<YYYY-MM-DD>"      # strict ISO date, no trailing characters
 ```
 
-Add `summary` and `read_this_if` immediately after the existing front matter fields
-(before the closing `---`). Prescribed values for each file follow.
+`project` is optional globally but **required** for files under `projects/`:
 
-### agent-rules/ (formerly coding/)
-
-**`agent-rules/common-coding-rules.md`**
-```yaml
-summary: "Coding standards covering planning, debugging, file/function size, type annotations, and test requirements."
-read_this_if:
-  - "You are writing, reviewing, or refactoring any code in this repo."
-  - "You need to decide how to plan or debug a non-trivial change."
-```
-
-**`agent-rules/feature-flags.md`**
-```yaml
-summary: "Rules for gating, naming, and cleaning up feature flags in Rippling code."
-read_this_if:
-  - "You are adding, using, or removing a feature flag."
-```
-
-**`agent-rules/no-private-path-leakage.md`**
-```yaml
-summary: "Rule preventing machine-specific or private filesystem paths from appearing in committed code or agent context."
-read_this_if:
-  - "You are about to reference a local file path in a response, comment, or committed file."
-```
-
-### agent-rules/ (formerly context-engineering/)
-
-**`agent-rules/context-anchor-rules.md`**
-```yaml
-summary: "Rules for creating and maintaining context anchor documents: placement, front matter, required sections, and lifecycle."
-read_this_if:
-  - "You are creating or updating a context anchor file."
-  - "You need to know the required format or section structure for an anchor."
-```
-
-**`agent-rules/conflicts-and-invariants-rules.md`**
-```yaml
-summary: "Rules for documenting architectural invariants and conflict-resolution entries in anchor files."
-read_this_if:
-  - "You are documenting a hard architectural constraint or a known conflict between two rules."
-```
-
-**`agent-rules/markdown-rules.md`**
-```yaml
-summary: "Markdown authoring standards for all files in this context repo, including front matter conventions and section ordering."
-read_this_if:
-  - "You are writing or editing any markdown file in this repo."
-```
-
-**`agent-rules/project-docs-lifecycle.md`**
-```yaml
-summary: "Lifecycle rules for project documentation: when to create anchors, when to promote to tracked files, and when to archive."
-read_this_if:
-  - "You are deciding whether to create, update, promote, or archive a project document."
-```
-
-**`agent-rules/roadmap-rules.md`**
-```yaml
-summary: "Rules for writing and maintaining project roadmap files, including structure, content boundaries, and update cadence."
-read_this_if:
-  - "You are creating or updating a project roadmap file."
-```
-
-**`agent-rules/runbook-rules.md`**
-```yaml
-summary: "Rules for writing runbook documents: when to create them, required structure, and how to link them to context anchors."
-read_this_if:
-  - "You are creating or updating a runbook."
-```
-
-### shared/ (formerly git-workflows/)
-
-**`shared/stacked-branches.md`**
-```yaml
-summary: "Workflow and commands for creating, rebasing, and managing stacked git branches in this repo."
-read_this_if:
-  - "You are creating or managing a stack of dependent PRs."
-  - "You need to rebase or update a branch in a PR stack."
-```
-
-### shared/ (formerly tests/)
-
-**`shared/authoring-rql-tests.md`**
-```yaml
-summary: "Guide for writing RQL test cases: test structure, fixtures, assertion patterns, and common pitfalls."
-read_this_if:
-  - "You are writing or modifying RQL test cases."
-```
-
-**`shared/running-tests.md`**
-```yaml
-summary: "How to run tests in this repo, including the mandatory hot test daemon MCP and what to avoid."
-read_this_if:
-  - "You need to run tests."
-  - "You are about to use cde local test or a shell command to execute tests."
-```
-
-### shared/ (formerly datadog/)
-
-**`shared/datadog-dashboard-authoring.md`**
-```yaml
-summary: "Rules and patterns for authoring Datadog dashboards: widget types, query format, naming conventions, and review checklist."
-read_this_if:
-  - "You are creating or editing a Datadog dashboard or monitor."
-```
-
-### shared/ (formerly rql-audits/)
-
-**`shared/adding-an-rql-audit.md`**
-```yaml
-summary: "Step-by-step guide for adding a new RQL audit: required components, registration, and validation."
-read_this_if:
-  - "You are adding a new RQL audit."
-  - "You need to understand how existing RQL audits are structured."
-```
-
-### projects/cbp/
-
-**`projects/cbp/cbp-native-model-guide.md`**
-```yaml
-summary: "Architecture reference for Criteria-Based Permissions (CBP) on native RQL models: how preprocessing, enrollment, and enforcement work."
-read_this_if:
-  - "You are working on CBP enforcement, native model onboarding, or row-level security for RQL queries."
-  - "You need to understand how the native_cbp_model_registry or CBP preprocessor works."
-```
-
-**`projects/cbp/cbp-roadmap.md`**
-```yaml
-summary: "Roadmap for deferred CBP enforcement work, including AST-checked constraint improvements and outstanding cleanup tasks."
-read_this_if:
-  - "You are planning or picking up CBP enforcement work."
-  - "You need to know what CBP work is planned but not yet shipped."
-```
-
-### projects/custom-field-perf/
-
-**`projects/custom-field-perf/custom-field-perf-project-context.md`**
-```yaml
-summary: "Context anchor for the custom-field query performance project: consolidation, blending, Iceberg sourcing, and experiment results."
-read_this_if:
-  - "You are working on custom field query performance, the consolidation CTE, or the Iceberg blending approach."
-```
-
-### projects/object-graph/
-
-**`projects/object-graph/object-graph-project-context.md`**
-```yaml
-summary: "Context anchor for the object-graph project: current architecture, decisions, and constraints."
-read_this_if:
-  - "You are working on the object graph, graph traversal, or any feature that depends on object relationships."
-```
-
-### projects/trino-config-refactor/
-
-**`projects/trino-config-refactor/trino-config-refactor-project-context.md`**
-```yaml
-summary: "Context anchor for the TrinoQueryConfig refactor: motivation, current state of the refactor, and key decisions."
-read_this_if:
-  - "You are working on TrinoQueryConfig, Trino query construction, or anything that touches query config assembly."
-```
-
-**`projects/trino-config-refactor/trino-config-refactor-roadmap.md`**
-```yaml
-summary: "Roadmap for the TrinoQueryConfig refactor: remaining work, sequencing, and open questions."
-read_this_if:
-  - "You are planning or picking up the next phase of the Trino config refactor."
-```
-
-### projects/typed-vtables/
-
-**`projects/typed-vtables/typed-vtables-project-context.md`**
-```yaml
-summary: "Context anchor for the typed-vtables project: goals, current typing approach, and constraints."
-read_this_if:
-  - "You are working on typed vtables or adding type annotations to vtable definitions."
-```
-
-### projects/vtable-framework/
-
-**`projects/vtable-framework/vtable-framework-project-context.md`**
-```yaml
-summary: "Context anchor for the vtable framework: architecture, base classes, registration, and key invariants."
-read_this_if:
-  - "You are working on the vtable framework itself or building a new vtable that uses the framework."
-```
-
-**`projects/vtable-framework/vtable-framework-roadmap.md`**
-```yaml
-summary: "Roadmap for vtable framework improvements: planned work, open design questions, and sequencing."
-read_this_if:
-  - "You are planning or picking up vtable framework improvements."
-```
-
-### projects/zviews-framework/
-
-**`projects/zviews-framework/zviews-project-context.md`**
-```yaml
-summary: "Context anchor for the zviews framework: architecture, rendering pipeline, and current state."
-read_this_if:
-  - "You are working on the zviews framework or a view that uses it."
-```
-
-**`projects/zviews-framework/zviews-roadmap.md`**
-```yaml
-summary: "Roadmap for the zviews framework: planned features, open questions, and sequencing."
-read_this_if:
-  - "You are planning or picking up zviews framework work."
-```
-
----
-
-## Issue 3 — Project Slug Mismatch
-
-Files under `projects/<slug>/` must have a `project` front matter value that exactly
-matches `<slug>` (the directory name). The following file has a mismatch:
-
-| File | Current `project` value | Correct value |
-|---|---|---|
-| `projects/custom-field-perf/custom-field-perf-project-context.md` | `custom-field-perf-2025` | `custom-field-perf` |
-
-Change the `project` field in that file from:
 ```yaml
 project:
-  - custom-field-perf-2025
-```
-to:
-```yaml
-project:
-  - custom-field-perf
+  - "<project-slug>"               # must exactly match the directory name
 ```
 
-Verify the other project files while editing — each file at `projects/<slug>/…` must
-have `project: <slug>` or `project:\n  - <slug>`.
+### How to find front-matter violations
+
+**Missing `summary` or `read_this_if`:**
+```bash
+grep -rL "^summary:" --include="*.md" . | grep -v CONTEXT-ROOT
+grep -rL "^read_this_if:" --include="*.md" . | grep -v CONTEXT-ROOT
+```
+
+**Malformed `last_validated` (catches trailing characters, wrong format):**
+```bash
+grep -rn "^last_validated:" --include="*.md" . \
+  | grep -Ev "last_validated: [0-9]{4}-[0-9]{2}-[0-9]{2}$"
+```
+
+**Project slug mismatch under `projects/`:**
+For each file at `projects/<slug>/…`, confirm its `project` front-matter value equals
+`<slug>`. Extract and compare:
+```bash
+for f in projects/*/**.md; do
+  slug=$(echo "$f" | cut -d/ -f2)
+  grep "project:" "$f" | grep -qv "$slug" && echo "MISMATCH: $f (expected slug: $slug)"
+done
+```
+
+### Writing good `summary` and `read_this_if` values
+
+- `summary`: describe what the document **is**, not what it instructs. One sentence.
+  Treat it as the answer to "what is this anchor about?"
+- `read_this_if`: describe the **agent situation** that makes this file relevant.
+  Each item should complete the sentence "Load this anchor if you are…" or "Load this
+  anchor when you need to…". Be concrete — vague items waste context budget.
 
 ---
 
-## Issue 4 — Missing Required H2 Sections
+## Step 4 — Fix Required Document Sections
 
-Every anchor must contain these four H2 headings in order:
+Every anchor body must contain these four H2 headings:
 
 ```markdown
 ## Current State
@@ -313,40 +140,72 @@ Every anchor must contain these four H2 headings in order:
 ## PRs
 ```
 
-Files that are missing sections need them added. Use the following content guidelines:
-
-- **`## Current State`** — What exists today. For rule/guide files, describe what the rule
-  applies to and what the current approach is. Do not include plans or intentions.
-- **`## Decisions`** — Decisions that have already been made and are reflected in the
-  content of this file. For rule files, list choices made about how the rule works.
-- **`## Constraints`** — Hard limits or requirements that shape what is possible.
-  For rule files, list the constraints that motivated the rule.
-- **`## PRs`** — Links to PRs related to this anchor. Use format
-  `[PR <title> - #<number>](<url>)`. If there are no PRs, write `None.`
-
-Files that clearly have no relevant PRs (e.g., pure rule documents) should include:
-
-```markdown
-## PRs
-
-None.
+**How to find files missing a section:**
+```bash
+for section in "Current State" "Decisions" "Constraints" "PRs"; do
+  echo "=== Missing '## $section' ==="
+  grep -rL "^## $section" --include="*.md" . | grep -v CONTEXT-ROOT
+done
 ```
 
-> **Tip:** When running the MCP server during migration, start with `--migration-warn-only`
-> to demote missing-section violations from BLOCK to WARN. This allows incremental
+**What belongs in each section:**
+
+- **`## Current State`** — What exists today. Facts only; no plans or intentions.
+  For rule/guide files, describe what the rule applies to and the current approach.
+- **`## Decisions`** — Choices already made and reflected in this file. Each entry
+  should state what was decided and why (if known).
+- **`## Constraints`** — Hard limits that shape what is possible. Technical,
+  organizational, or product constraints. Do not infer unless clearly implied.
+- **`## PRs`** — Related pull requests. Format: `[PR <title> - #<number>](<url>)`.
+  Group by status (Merged / Open / Closed). If none exist, write `None.`
+
+> **Tip:** Start the server with `--migration-warn-only` while adding sections.
+> This demotes missing-section violations from BLOCK to WARN, allowing incremental
 > migration without blocking all writes.
 
 ---
 
-## Verification Checklist
+## Step 5 — Verification
 
-After completing all changes, confirm:
+Run through this checklist before connecting the repo to anchor-mcp.
 
-- [ ] All source directories (`coding/`, `context-engineering/`, `git-workflows/`,
-      `tests/`, `datadog/`, `rql-audits/`, `cbp/`) have been removed
-- [ ] All files now live under a valid top-level category directory
-- [ ] Every `.md` file (except `CONTEXT-ROOT.md`) has `summary` and `read_this_if` in its front matter
-- [ ] `projects/custom-field-perf/custom-field-perf-project-context.md` has `project: custom-field-perf`
-- [ ] Every file has all four required H2 sections: `Current State`, `Decisions`, `Constraints`, `PRs`
-- [ ] `shared/running-tests.md` has `last_validated: 2026-05-01` (typo `2026-05-01c` fixed)
-- [ ] The repo has been committed to git (`git init && git add . && git commit -m "initial"`)
+**Taxonomy**
+- [ ] `find . -name "*.md" ! -path "./.git/*" | awk -F/ '{print $2}' | sort -u`
+      returns only valid category names (plus blank for root-level `CONTEXT-ROOT.md`)
+- [ ] No `.md` files are nested more than one level inside a non-`projects` category
+- [ ] No empty directories remain
+
+**Front matter**
+- [ ] `grep -rL "^summary:" --include="*.md" . | grep -v CONTEXT-ROOT` is empty
+- [ ] `grep -rL "^read_this_if:" --include="*.md" . | grep -v CONTEXT-ROOT` is empty
+- [ ] `grep -rn "^last_validated:" --include="*.md" . | grep -Ev "last_validated: [0-9]{4}-[0-9]{2}-[0-9]{2}$"` is empty
+- [ ] All `projects/<slug>/` files have `project: <slug>` in their front matter
+
+**Sections**
+- [ ] All four required H2 sections present in every anchor (or `--migration-warn-only`
+      is set while you complete them incrementally)
+
+**Git**
+- [ ] `git status` is clean (all changes committed)
+- [ ] `git log --oneline -1` shows at least one commit
+
+---
+
+## Reference — anchor-mcp Configuration (stdio)
+
+```json
+{
+  "mcpServers": {
+    "anchor-mcp": {
+      "command": "node",
+      "args": [
+        "/path/to/context-conductor/dist/bin/anchor-mcp.js",
+        "--repo", "/path/to/your-anchor-repo",
+        "--migration-warn-only"
+      ]
+    }
+  }
+}
+```
+
+Remove `--migration-warn-only` once all files pass validation cleanly.

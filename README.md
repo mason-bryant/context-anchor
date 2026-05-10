@@ -64,46 +64,53 @@ mkdir -p ~/agent-context
 ln -sfn ~/agent-context /path/to/rippling-main/.agents/context
 ```
 
-## Local Agent Stdio
+## Connecting to Cursor (HTTP)
 
-```json
-{
-  "mcpServers": {
-    "anchor-mcp": {
-      "command": "node",
-      "args": [
-        "/Users/mbryant/github/context-conductor/dist/bin/anchor-mcp.js",
-        "--repo",
-        "/Users/mbryant/agent-context"
-      ]
-    }
-  }
-}
-```
-
-## HTTP/SSE Transport
+Start the server (no build step required):
 
 ```sh
-node dist/bin/anchor-mcp.js \
+npx tsx src/bin/anchor-mcp.ts \
   --repo ~/agent-context \
   --transport http \
   --host 127.0.0.1 \
   --port 3333
 ```
 
-The MCP endpoint is:
-
-```txt
-http://127.0.0.1:3333/mcp
-```
-
-For a shared-secret deployment:
+To auto-restart when source files change, add the `watch` flag:
 
 ```sh
-ANCHOR_MCP_AUTH_TOKEN=secret node dist/bin/anchor-mcp.js --repo ~/agent-context --transport http
+npx tsx watch src/bin/anchor-mcp.ts \
+  --repo ~/agent-context \
+  --transport http \
+  --host 127.0.0.1 \
+  --port 3333
 ```
 
-Clients can send either:
+> **Note:** The `node dist/bin/anchor-mcp.js` form requires `npm run build` first and is intended for production deployments. Use `tsx` for local development.
+
+Then add to your Cursor MCP settings (`~/.cursor/mcp.json`):
+
+```json
+{
+  "mcpServers": {
+    "anchor-mcp": {
+      "url": "http://127.0.0.1:3333/mcp"
+    }
+  }
+}
+```
+
+### Authentication (optional)
+
+Set a shared secret to restrict access:
+
+```sh
+ANCHOR_MCP_AUTH_TOKEN=secret node dist/bin/anchor-mcp.js \
+  --repo ~/agent-context \
+  --transport http
+```
+
+Clients send either:
 
 ```txt
 Authorization: Bearer secret
@@ -113,6 +120,24 @@ or:
 
 ```txt
 x-anchor-mcp-token: secret
+```
+
+### Stdio (debugging only)
+
+stdio transport is available for local debugging but is not recommended for general use.
+
+```json
+{
+  "mcpServers": {
+    "anchor-mcp": {
+      "command": "node",
+      "args": [
+        "/path/to/context-conductor/dist/bin/anchor-mcp.js",
+        "--repo", "~/agent-context"
+      ]
+    }
+  }
+}
 ```
 
 ## Write Validation
