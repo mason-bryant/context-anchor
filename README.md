@@ -61,7 +61,7 @@ For a checkout that should keep `.agents/context` in this private repo, symlink 
 
 ```sh
 mkdir -p ~/agent-context
-ln -sfn ~/agent-context /path/to/rippling-main/.agents/context
+ln -sfn ~/agent-context /path/to/your-project/.agents/context
 ```
 
 ## Connecting to Cursor (HTTP)
