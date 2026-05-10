@@ -1,5 +1,4 @@
 import type { ValidationViolation } from "../types.js";
-import { validateAgentsSibling } from "./agentsSibling.js";
 import { validateApprovalGate } from "./approval.js";
 import { validateCompactionThresholds } from "./compactionThresholds.js";
 import { validateDirectoryTaxonomy } from "./directoryTaxonomy.js";
@@ -17,7 +16,6 @@ const VALIDATORS: Validator[] = [
   validatePrFormat,
   validateTrackedLinkLeak,
   validateLastValidatedBump,
-  validateAgentsSibling,
   validateApprovalGate,
   validateNonDestructive,
   validateCompactionThresholds,

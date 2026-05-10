@@ -113,6 +113,42 @@ last_validated: 2026-05-10
     expect(result.warnings.map((warning) => warning.code)).toContain("front_matter_schema");
   });
 
+  it("blocks local/private path leakage in anchor content", async () => {
+    const result = await service.writeAnchor({
+      name: "shared/path-leak",
+      content: `---
+type: design
+tags: []
+summary: "Path leak example."
+read_this_if:
+  - "You are validating path hygiene."
+last_validated: 2026-05-10
+---
+
+# Path Leak
+
+## Current State
+
+- See [Draft](cursor-output/markdowns/context-conductor/draft.md) for details.
+
+## Decisions
+
+- Keep private references out of shared anchors.
+
+## Constraints
+
+- Local-only files should not appear in persisted anchors.
+
+## PRs
+
+None.
+`,
+    });
+
+    expect(result.version).toBeUndefined();
+    expect(result.warnings.map((warning) => warning.code)).toContain("tracked_link_leak");
+  });
+
   it("blocks project anchors whose front matter does not include the project slug", async () => {
     const result = await service.writeAnchor({
       name: "projects/demo/wrong-project",
