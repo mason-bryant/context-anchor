@@ -13,15 +13,22 @@ import type { ServerConfig } from "../types.js";
 export type HttpServerOptions = {
   host: string;
   port: number;
+  allowedHosts?: string[];
   authToken?: string;
   stateless: boolean;
 };
+
+const LOCALHOST_ALLOWED_HOSTS = ["localhost", "127.0.0.1", "[::1]"];
 
 export async function startHttpServer(config: ServerConfig, options: HttpServerOptions): Promise<Server> {
   const runtime = await createAnchorRuntime(config);
   runtime.startAutoSync();
 
-  const app = createMcpExpressApp({ host: options.host, jsonLimit: "10mb" });
+  const app = createMcpExpressApp({
+    host: options.host,
+    allowedHosts: buildAllowedHosts(options.allowedHosts),
+    jsonLimit: "10mb",
+  });
   app.use(
     cors({
       origin: true,
@@ -75,6 +82,14 @@ export async function startHttpServer(config: ServerConfig, options: HttpServerO
 
   server.once("close", () => runtime.stopAutoSync());
   return server;
+}
+
+export function buildAllowedHosts(configuredHosts: string[] | undefined): string[] | undefined {
+  if (!configuredHosts?.length) {
+    return undefined;
+  }
+
+  return [...new Set([...LOCALHOST_ALLOWED_HOSTS, ...configuredHosts])];
 }
 
 function bearerAuth(expectedToken: string) {

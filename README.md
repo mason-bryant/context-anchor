@@ -100,6 +100,33 @@ Then add to your Cursor MCP settings (`~/.cursor/mcp.json`):
 }
 ```
 
+### Accessing HTTP through ngrok
+
+Keep the server bound to localhost, and allow only the tunnel hostname through
+MCP Express Host header validation:
+
+```json
+{
+  "allowedHosts": [
+    "your-tunnel.ngrok-free.dev"
+  ]
+}
+```
+
+Save that as `anchor-mcp.config.json`, then start the server with:
+
+```sh
+npx tsx src/bin/anchor-mcp.ts \
+  --repo ~/agent-context \
+  --transport http \
+  --host 127.0.0.1 \
+  --port 3333 \
+  --config ./anchor-mcp.config.json
+```
+
+`allowedHosts` accepts hostnames or full URLs. The same setting is available for
+one-off runs as `--allowed-hosts` or `ANCHOR_MCP_ALLOWED_HOSTS`.
+
 ### Cursor rule snippet (session start)
 
 Add a short rule under `.cursor/rules/` (or your global Cursor rules) so agents call anchors **before** other tools, even if MCP `instructions` are buried in context:

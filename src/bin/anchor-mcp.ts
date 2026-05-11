@@ -12,6 +12,7 @@ async function main(): Promise<void> {
     const server = await startHttpServer(options.config, {
       host: options.host,
       port: options.port,
+      allowedHosts: options.allowedHosts,
       authToken: options.authToken,
       stateless: options.stateless,
     });
@@ -38,4 +39,3 @@ main().catch((error: unknown) => {
   console.error(error instanceof Error ? error.stack ?? error.message : String(error));
   process.exitCode = 1;
 });
-

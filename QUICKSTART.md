@@ -38,6 +38,28 @@ Optional (local dev with auto-reload):
 npx tsx watch src/bin/anchor-mcp.ts --repo /path/to/your-context-repo --transport http --host 127.0.0.1 --port 3333
 ```
 
+If you expose the local HTTP server through ngrok, keep `--host 127.0.0.1` and
+put the tunnel hostname in `anchor-mcp.config.json`:
+
+```json
+{
+  "allowedHosts": [
+    "your-tunnel.ngrok-free.dev"
+  ]
+}
+```
+
+Then start with:
+
+```bash
+npx tsx watch src/bin/anchor-mcp.ts \
+  --repo /path/to/your-context-repo \
+  --transport http \
+  --host 127.0.0.1 \
+  --port 3333 \
+  --config ./anchor-mcp.config.json
+```
+
 If your anchors are under a subdirectory (for example `.agents/context`), include:
 
 ```bash
