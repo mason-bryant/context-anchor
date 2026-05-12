@@ -1,0 +1,48 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          registry-url: https://registry.npmjs.org
+
+      - name: Verify tag matches package.json version
+        run: |
+          TAG_VER="${GITHUB_REF_NAME#v}"
+          PKG_VER="$(jq -r .version package.json)"
+          if [ "$TAG_VER" != "$PKG_VER" ]; then
+            echo "Tag version ($GITHUB_REF_NAME -> $TAG_VER) does not match package.json version ($PKG_VER)"
+            exit 1
+          fi
+
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run test
+      - run: npm run build
+
+      - run: npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" --generate-notes

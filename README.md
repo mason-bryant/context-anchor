@@ -11,18 +11,32 @@
 
 ## Install
 
+From the registry (pin a version for reproducible installs; `@latest` follows the newest publish):
+
+```sh
+npx -y @mason/anchor-mcp@0.1.0 --repo ~/agent-context
+```
+
+```sh
+npx -y @mason/anchor-mcp@latest --repo ~/agent-context
+```
+
+Release notes and assets: [GitHub Releases](https://github.com/mason-bryant/context-conductor/releases).
+
+### Releases (maintainers)
+
+1. Bump `version` in `package.json` and commit (for example `npm version patch` updates the lockfile too).
+2. Push to `main`, then tag and push: `git tag vX.Y.Z && git push origin vX.Y.Z` (the tag must match `package.json`, including the leading `v`).
+3. The **Release** workflow publishes to npm and creates a GitHub Release. Configure a repository Actions secret `NPM_TOKEN` with an npm automation token that can publish `@mason/anchor-mcp`.
+
+### Local development (this repo)
+
 ```sh
 npm install
 npm run build
 ```
 
-The package exposes:
-
-```sh
-npx -y @mason/anchor-mcp --repo ~/agent-context
-```
-
-In this local checkout, use:
+In this checkout, run the built binary:
 
 ```sh
 node dist/bin/anchor-mcp.js --repo ~/agent-context
@@ -137,6 +151,14 @@ Add a short rule under `.cursor/rules/` (or your global Cursor rules) so agents 
 - If the response is too large or `truncated` is true: pass `nextCursor`, or lower `limit` / `maxBytes`, or set `includeContent` to `excerpt` or `none`.
 - Never locate anchors by filesystem search; use MCP tools only.
 ```
+
+### Updating anchors when facts change
+
+The MCP server also ships session instructions (`src/server.ts`) telling agents to **write back** durable discoveries, not only answer in-thread:
+
+- **Facts** → map to `## Current State`, `## Decisions`, or `## Constraints`, bump `last_validated` when those sections change materially, and add PR rows under `## PRs` with link text `PR <title> - #<number>`.
+- **Approval** → changes to Decisions/Constraints (or removing bullets) require `writeAnchor` with `approved: true` after explicit user confirmation.
+- **Roadmaps** → keep forward-looking specs and completed history in the project’s roadmap anchor when you use that pattern; heed `writeAnchor` warnings for oversized roadmaps or `## Completed` tables and use `compactionReport` to plan cleanup.
 
 ### Authentication (optional)
 

@@ -48,7 +48,28 @@ detail -> only then git diff and start review.
 
 ## When writing anchors
 Writes may return BLOCK or WARN; do not ignore them. BLOCK rejects the write and must be fixed before retrying. WARN \
-succeeds but flags a quality issue to address.`,
+succeeds but flags a quality issue to address.
+
+## When you discover new facts
+If work reveals durable truth (what shipped, decisions, limits), persist it with writeAnchor on the relevant anchor — not \
+only in chat. Section mapping: observable reality → ## Current State; settled choices → ## Decisions; hard limits → \
+## Constraints; pull requests → ## PRs (use the enforced PR link text shape).
+
+Bump last_validated (YYYY-MM-DD) whenever you materially edit Current State, Decisions, or Constraints; the server blocks \
+same-day substantive edits if the date is unchanged.
+
+Edits to Decisions or Constraints, or deleting existing bullets, need explicit human approval: retry writeAnchor with \
+approved: true after the user confirms.
+
+## Roadmaps and maintenance
+Forward-looking work usually belongs in a companion roadmap anchor (same project slug) if your tree uses one: goals, \
+requirements, acceptance criteria, and completed history — not a duplicate of Current State.
+
+If writeAnchor warns about roadmap length or ## Completed table size, plan compaction (compactionReport helps review \
+structure) rather than letting token-heavy roadmaps grow unbounded.
+
+After large front-matter or taxonomy sweeps, writeContextRoot() keeps an on-disk CONTEXT-ROOT.md snapshot aligned with \
+the index when your workflow checks in that file.`,
     },
   );
 

@@ -4,6 +4,17 @@
   "description": "Git-backed MCP server for context anchors with write-time discipline enforcement.",
   "license": "MIT",
   "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mason-bryant/context-conductor.git"
+  },
+  "bugs": {
+    "url": "https://github.com/mason-bryant/context-conductor/issues"
+  },
+  "homepage": "https://github.com/mason-bryant/context-conductor#readme",
+  "publishConfig": {
+    "access": "public"
+  },
   "bin": {
     "anchor-mcp": "./dist/bin/anchor-mcp.js"
   },
