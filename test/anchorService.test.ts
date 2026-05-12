@@ -352,6 +352,64 @@ None.
     expect(loaded.anchors.every((anchor) => anchor.content === undefined && anchor.excerpt === undefined)).toBe(true);
   });
 
+  it("planContextBundle ranks anchors by task and project", async () => {
+    await service.writeAnchor({
+      name: "projects/demo/demo",
+      content: projectAnchorContent({ summary: "Demo storage decisions and constraints." }),
+      message: "test: add demo project",
+    });
+    await service.writeAnchor({
+      name: "projects/other/other",
+      content: projectAnchorContent({ project: "other", summary: "Other billing context." }),
+      message: "test: add other project",
+    });
+    await service.writeAnchor({
+      name: "shared/storage",
+      content: sharedAnchorContent({ title: "Storage Workflow", summary: "Shared storage workflow for anchor planning." }),
+      message: "test: add storage guide",
+    });
+
+    const planned = await service.planContextBundle({
+      task: "Update demo storage decisions",
+      project: "demo",
+      budgetTokens: 1200,
+    });
+
+    expect(planned.included[0]?.name).toBe("projects/demo/demo.md");
+    expect(planned.included.map((anchor) => anchor.name)).toContain("shared/storage.md");
+    expect(planned.excluded.map((anchor) => anchor.name)).toContain("projects/other/other.md");
+    expect(planned.loadContext).toEqual({
+      names: planned.included.map((anchor) => anchor.name),
+      includeContent: "excerpt",
+      maxBytes: 4800,
+    });
+    expect(planned.estimatedTokens).toBeLessThanOrEqual(planned.budgetTokens);
+  });
+
+  it("planContextBundle explains relevant anchors left out by limits", async () => {
+    await service.writeAnchor({
+      name: "projects/demo/demo",
+      content: projectAnchorContent({ summary: "Demo storage decisions and constraints." }),
+      message: "test: add demo project",
+    });
+    await service.writeAnchor({
+      name: "shared/storage",
+      content: sharedAnchorContent({ title: "Storage Workflow", summary: "Shared storage workflow for demo decisions." }),
+      message: "test: add storage guide",
+    });
+
+    const planned = await service.planContextBundle({
+      task: "Update demo storage decisions",
+      project: "demo",
+      budgetTokens: 1200,
+      maxAnchors: 1,
+    });
+
+    expect(planned.included).toHaveLength(1);
+    expect(planned.excluded.some((anchor) => anchor.reason.includes("max anchor count reached"))).toBe(true);
+    expect(planned.missingContext).toEqual([]);
+  });
+
   it("readAnchor returns fileCommit for latest reads", async () => {
     await service.writeAnchor({
       name: "shared/commit-meta",
@@ -462,6 +520,7 @@ function projectAnchorContent(
     constraints?: string;
     lastValidated?: string;
     project?: string;
+    summary?: string;
   } = {},
 ): string {
   return `---
@@ -470,7 +529,7 @@ project:
 type: design
 tags:
   - context
-summary: "Demo anchor summary."
+summary: "${overrides.summary ?? "Demo anchor summary."}"
 read_this_if:
   - "You are working on the demo project."
 last_validated: ${overrides.lastValidated ?? "2026-05-10"}
