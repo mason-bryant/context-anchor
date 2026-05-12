@@ -25,9 +25,15 @@ Release notes and assets: [GitHub Releases](https://github.com/mason-bryant/cont
 
 ### Releases (maintainers)
 
-1. Bump `version` in `package.json` and commit (for example `npm version patch` updates the lockfile too).
-2. Push to `main`, then tag and push: `git tag vX.Y.Z && git push origin vX.Y.Z` (the tag must match `package.json`, including the leading `v`).
-3. The **Release** workflow publishes to npm and creates a GitHub Release. Configure a repository Actions secret `NPM_TOKEN` with an npm automation token that can publish `@mason/anchor-mcp`.
+From the repo root, on a **clean** `main` checkout:
+
+```sh
+./scripts/release.sh tag              # tag vX.Y.Z from package.json version and push (default)
+./scripts/release.sh patch            # or: minor | major — bump, commit, tag via npm, push branch + tag
+./scripts/release.sh --dry-run tag    # print steps only
+```
+
+The **Release** workflow (on tag `v*.*.*`) publishes to npm and creates a GitHub Release. Configure a repository Actions secret **`NPM_TOKEN`** with an npm automation token that can publish `@mason/anchor-mcp`. The tag must match `package.json` (including the leading `v`).
 
 ### Local development (this repo)
 
