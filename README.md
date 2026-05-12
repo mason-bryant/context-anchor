@@ -5,7 +5,7 @@
 ## What Is Implemented
 
 - Phase 0 storage support: point the server at a private git repo, or run `scripts/anchor-context-sync.sh` for basic add/commit/pull/push sync without MCP.
-- Phase 1 read-only MCP tools: `listAnchors`, `readAnchor`, `readAnchorBatch`, `loadContext`, `searchAnchors`, and `listVersions`.
+- Phase 1 read-only MCP tools: `listAnchors`, `readAnchor`, `readAnchorBatch`, `loadContext`, `planContextBundle`, `searchAnchors`, and `listVersions`.
 - Phase 2 write tools and validators: `writeAnchor`, `updateAnchorFrontmatter`, `updateAnchorSection`, `appendToAnchorSection`, `deleteAnchorSection`, `diffAnchor`, `revertAnchor`, `compactionReport`, `contextRoot`, `writeContextRoot`, and `conflictStatus`.
 - Phase 3 transport support: stdio for local tools and Streamable HTTP/SSE for remote or containerized agents.
 
@@ -321,6 +321,25 @@ Load explicit paths (order preserved):
 ```
 
 When `truncated` is true, call again with `nextCursor` from the previous response (same filters or explicit names are encoded in the cursor). If the payload is still too large for your client, reduce `limit` or `maxBytes`, or set `includeContent` to `excerpt` or `none`.
+
+## Plan context bundle
+
+`planContextBundle` is a read-only planning step for task-aware context assembly. It accepts a natural-language `task`, optional filters, and an approximate `budgetTokens`, then returns:
+
+- `included`: anchors selected for the task, with scores, reasons, matched terms, and estimated token costs
+- `excluded`: relevant or nearby anchors left out, with explanations such as low relevance, budget pressure, or max-anchor limits
+- `missingContext`: signals that the selected bundle may be incomplete
+- `loadContext`: a suggested follow-up call using the selected anchor names
+
+Example:
+
+```json
+{
+  "task": "Update demo storage decisions",
+  "project": "demo",
+  "budgetTokens": 4000
+}
+```
 
 ## Git Sync
 

@@ -154,6 +154,51 @@ export type LoadContextResult = {
   returnedCount: number;
 };
 
+/** Input for a task-aware context bundle planning tool. */
+export type PlanContextBundleInput = {
+  task: string;
+  project?: string;
+  category?: AnchorCategory;
+  tag?: string;
+  runtime?: string;
+  includeArchive?: boolean;
+  /** Approximate context budget in tokens. */
+  budgetTokens?: number;
+  /** Maximum anchors to include even when budget remains. */
+  maxAnchors?: number;
+  /** Maximum excluded anchors to explain in the response. */
+  maxExcluded?: number;
+};
+
+export type PlanContextBundleItem = {
+  name: string;
+  path: string;
+  category: AnchorCategory;
+  title?: string;
+  projectSlug?: string;
+  summary: string;
+  score: number;
+  estimatedTokens: number;
+  matchedTerms: string[];
+  reason: string;
+};
+
+export type PlanContextBundleResult = {
+  generatedAt: string;
+  task: string;
+  budgetTokens: number;
+  estimatedTokens: number;
+  totalCandidates: number;
+  included: PlanContextBundleItem[];
+  excluded: PlanContextBundleItem[];
+  missingContext: string[];
+  loadContext: {
+    names: string[];
+    includeContent: "excerpt";
+    maxBytes: number;
+  };
+};
+
 export type ServerConfig = {
   repoPath: string;
   anchorRoot: string;

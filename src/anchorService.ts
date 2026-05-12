@@ -18,6 +18,7 @@ import {
   shrinkLoadContextAnchorToFit,
   toNextCursorPayload,
 } from "./loadContext.js";
+import { buildContextBundlePlan } from "./contextPlanner.js";
 import type { AnchorRepository } from "./git/repo.js";
 import { countCompletedRows, parseAnchor } from "./storage/markdown.js";
 import type { AnchorCategory } from "./taxonomy.js";
@@ -34,6 +35,8 @@ import type {
   LoadContextInput,
   LoadContextResult,
   LoadContextSelectionReason,
+  PlanContextBundleInput,
+  PlanContextBundleResult,
   SearchHit,
   ValidationViolation,
   WriteAnchorInput,
@@ -405,6 +408,17 @@ export class AnchorService {
       totalMatching,
       returnedCount,
     };
+  }
+
+  async planContextBundle(input: PlanContextBundleInput): Promise<PlanContextBundleResult> {
+    const anchors = await this.repo.listAnchors({
+      category: input.category,
+      tag: input.tag,
+      runtime: input.runtime,
+      includeArchive: input.includeArchive,
+    });
+
+    return buildContextBundlePlan(anchors, input);
   }
 
   async writeContextRoot(input: {

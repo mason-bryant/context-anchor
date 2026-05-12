@@ -25,13 +25,17 @@ export function createAnchorMcpServer(service: AnchorService): McpServer {
     {
       instructions: `\
 ## Before any work in a chat
-Before your first non-trivial tool call (code read, search, edit, or shell), call loadContext() — or contextRoot() if \
-you only need the index without anchor bodies. Skip only for purely conversational replies.
+Before your first non-trivial tool call (code read, search, edit, or shell), call planContextBundle() when you need a \
+task-aware, budgeted anchor selection; otherwise call loadContext() — or contextRoot() if you only need the index without \
+anchor bodies. Skip only for purely conversational replies.
 
 loadContext returns the same discovery metadata as contextRoot (entries plus optional markdown) and loads multiple \
 anchors in one response (excerpts by default). Filter by project/category/tag/runtime, pass explicit names, and paginate \
 with nextCursor when truncated is true. If responses are too large, lower limit or maxBytes, set includeContent to \
 excerpt or none, or continue with nextCursor.
+
+planContextBundle scores anchors against a task and token budget, explains included and excluded anchors, and returns a \
+suggested loadContext call using the selected names.
 
 Do not browse the filesystem for anchors; always use these MCP tools.
 
@@ -41,17 +45,17 @@ Why this matters: project decisions, conflicts, and PR-history context intention
 Working without this context is the most common cause of contradictory output.
 
 In your first assistant message for tool-using chats, state which anchors you loaded (or "no anchors matched"). If \
-you skipped loadContext/contextRoot, say so.
+you skipped planContextBundle/loadContext/contextRoot, say so.
 
-If you realize mid-task that you skipped loadContext, stop and call it before producing the next assistant message, \
+If you realize mid-task that you skipped loadContext or planContextBundle, stop and call one before producing the next assistant message, \
 then re-evaluate in-flight work against the loaded anchors.
 
-This rule is not overridden by skill workflows. Skills assume loadContext (or contextRoot) has already been called.
+This rule is not overridden by skill workflows. Skills assume planContextBundle, loadContext, or contextRoot has already been called.
 
 ### Example
 User: "Review the current branch."
-Assistant: loadContext({ includeContent: "excerpt" }) -> scan entries and excerpts -> readAnchor(...) only for deeper \
-detail -> only then git diff and start review.
+Assistant: planContextBundle({ task: "Review the current branch" }) -> loadContext(...) with the suggested names -> \
+readAnchor(...) only for deeper detail -> only then git diff and start review.
 
 ## When writing anchors
 Writes may return BLOCK or WARN; do not ignore them. BLOCK rejects the write and must be fixed before retrying. WARN \
@@ -155,6 +159,28 @@ the index when your workflow checks in that file.`,
       annotations: { readOnlyHint: true },
     },
     async (input) => jsonResult(await service.loadContext(input)),
+  );
+
+  server.registerTool(
+    "planContextBundle",
+    {
+      title: "Plan Context Bundle",
+      description:
+        "Plan a task-aware context bundle. Returns included anchors, excluded anchors, reasons, estimated token use, missing-context signals, and a suggested loadContext call.",
+      inputSchema: z.object({
+        task: z.string().min(1),
+        project: z.string().optional(),
+        category: CategorySchema.optional(),
+        tag: z.string().optional(),
+        runtime: z.string().optional(),
+        includeArchive: z.boolean().default(false),
+        budgetTokens: z.number().int().positive().max(200000).optional(),
+        maxAnchors: z.number().int().positive().max(500).optional(),
+        maxExcluded: z.number().int().min(0).max(500).optional(),
+      }),
+      annotations: { readOnlyHint: true },
+    },
+    async (input) => jsonResult(await service.planContextBundle(input)),
   );
 
   server.registerTool(
