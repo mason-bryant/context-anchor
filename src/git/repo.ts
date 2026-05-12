@@ -157,13 +157,26 @@ export class AnchorRepository {
       ? await this.cache.parse(resolved.absolutePath, content)
       : parseAnchor(content);
 
+    const fileCommit = isLatest ? await this.lastCommitForFile(resolved.repoRelativePath) : undefined;
+
     return {
       name: resolved.name,
       path: resolved.repoRelativePath,
       content,
       frontmatter: parsed.frontmatter,
       version: isLatest ? await this.currentVersion().catch(() => undefined) : version,
+      fileCommit,
     };
+  }
+
+  /** Latest commit hash that touched this repo-relative path (undefined if no commits yet). */
+  async lastCommitForFile(repoRelativePath: string): Promise<string | undefined> {
+    try {
+      const log = await this.git.log({ file: repoRelativePath, maxCount: 1 });
+      return log.latest?.hash;
+    } catch {
+      return undefined;
+    }
   }
 
   async readAnchorBatch(names: string[]): Promise<AnchorRead[]> {

@@ -6,7 +6,7 @@
 
 - Phase 0 storage support: point the server at a private git repo, or run `scripts/anchor-context-sync.sh` for basic add/commit/pull/push sync without MCP.
 - Phase 1 read-only MCP tools: `listAnchors`, `readAnchor`, `readAnchorBatch`, `loadContext`, `searchAnchors`, and `listVersions`.
-- Phase 2 write tools and validators: `writeAnchor`, `diffAnchor`, `revertAnchor`, `compactionReport`, `contextRoot`, `writeContextRoot`, and `conflictStatus`.
+- Phase 2 write tools and validators: `writeAnchor`, `updateAnchorFrontmatter`, `updateAnchorSection`, `appendToAnchorSection`, `deleteAnchorSection`, `diffAnchor`, `revertAnchor`, `compactionReport`, `contextRoot`, `writeContextRoot`, and `conflictStatus`.
 - Phase 3 transport support: stdio for local tools and Streamable HTTP/SSE for remote or containerized agents.
 
 ## Install
@@ -163,8 +163,8 @@ Add a short rule under `.cursor/rules/` (or your global Cursor rules) so agents 
 The MCP server also ships session instructions (`src/server.ts`) telling agents to **write back** durable discoveries, not only answer in-thread:
 
 - **Facts** → map to `## Current State`, `## Decisions`, or `## Constraints`, bump `last_validated` when those sections change materially, and add PR rows under `## PRs` with link text `PR <title> - #<number>`.
-- **Approval** → changes to Decisions/Constraints (or removing bullets) require `writeAnchor` with `approved: true` after explicit user confirmation.
-- **Roadmaps** → keep forward-looking specs and completed history in the project’s roadmap anchor when you use that pattern; heed `writeAnchor` warnings for oversized roadmaps or `## Completed` tables and use `compactionReport` to plan cleanup.
+- **Approval** → changes to Decisions/Constraints (or removing bullets) require the same write tool (`writeAnchor` or a chunked write) with `approved: true` after explicit user confirmation.
+- **Roadmaps** → keep forward-looking specs and completed history in the project’s roadmap anchor when you use that pattern; heed write warnings for oversized roadmaps or `## Completed` tables and use `compactionReport` to plan cleanup.
 
 ### Authentication (optional)
 
@@ -208,7 +208,7 @@ stdio transport is available for local debugging but is not recommended for gene
 
 ## Write Validation
 
-`writeAnchor` validates before writing and committing.
+`writeAnchor` and the chunked write tools (`updateAnchorFrontmatter`, `updateAnchorSection`, `appendToAnchorSection`, `deleteAnchorSection`) all synthesize full markdown and run the same validator pipeline before committing. Prefer chunked tools when you only need a front-matter tweak or a single-section edit so the model does not resend large bodies. Optional `expectedFileCommit` (from `readAnchor(...).fileCommit` on latest reads) rejects stale concurrent updates with `stale_base`.
 
 Blocks:
 

@@ -23,7 +23,10 @@ export type AnchorRead = {
   path: string;
   content: string;
   frontmatter: AnchorFrontmatter;
+  /** Repository HEAD when reading latest (unchanged). */
   version?: string;
+  /** Latest commit that touched this anchor path (for optimistic concurrency). */
+  fileCommit?: string;
 };
 
 export type SearchHit = {
@@ -58,6 +61,16 @@ export type WriteAnchorResult = {
   version?: string;
   warnings: ValidationViolation[];
   requiresApproval?: boolean;
+};
+
+export type WriteAnchorInput = {
+  name: string;
+  content: string;
+  message?: string;
+  approved?: boolean;
+  coAuthor?: string;
+  /** When set, must match `readAnchor(...).fileCommit` or the write is rejected with `stale_base`. */
+  expectedFileCommit?: string;
 };
 
 export type CompactionReport = {

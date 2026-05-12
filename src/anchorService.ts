@@ -1,5 +1,11 @@
 import { readFile } from "node:fs/promises";
 
+import {
+  appendToAnchorSection,
+  deleteAnchorSection,
+  mergeAnchorFrontmatter,
+  replaceAnchorSection,
+} from "./anchorPatch.js";
 import { buildContextRoot } from "./contextRoot.js";
 import {
   buildLoadContextAnchor,
@@ -30,6 +36,7 @@ import type {
   LoadContextSelectionReason,
   SearchHit,
   ValidationViolation,
+  WriteAnchorInput,
   WriteAnchorResult,
 } from "./types.js";
 import { runValidators } from "./validators/pipeline.js";
@@ -74,14 +81,23 @@ export class AnchorService {
     return this.repo.diffAnchor(name, fromVersion, toVersion);
   }
 
-  async writeAnchor(input: {
-    name: string;
-    content: string;
-    message?: string;
-    approved?: boolean;
-    coAuthor?: string;
-  }): Promise<WriteAnchorResult> {
+  async writeAnchor(input: WriteAnchorInput): Promise<WriteAnchorResult> {
     const resolved = this.repo.resolveAnchor(input.name);
+    if (input.expectedFileCommit) {
+      const current = await this.repo.lastCommitForFile(resolved.repoRelativePath);
+      if (current !== input.expectedFileCommit) {
+        return {
+          warnings: [
+            {
+              severity: "BLOCK",
+              code: "stale_base",
+              message: `Anchor file commit mismatch: expected ${input.expectedFileCommit}, found ${current ?? "none"}. Re-read the anchor and retry.`,
+            },
+          ],
+          requiresApproval: false,
+        };
+      }
+    }
     const oldContent = await this.repo.readRaw(input.name);
     const violations = await runValidators({
       name: resolved.name,
@@ -114,6 +130,139 @@ export class AnchorService {
     });
 
     return { version, warnings };
+  }
+
+  async updateAnchorFrontmatter(input: {
+    name: string;
+    updates: Record<string, unknown>;
+    message?: string;
+    approved?: boolean;
+    coAuthor?: string;
+    expectedFileCommit?: string;
+  }): Promise<WriteAnchorResult> {
+    const oldContent = await this.repo.readRaw(input.name);
+    if (oldContent === undefined) {
+      return {
+        warnings: [
+          {
+            severity: "BLOCK",
+            code: "missing_anchor",
+            message: `Anchor not found: ${input.name}`,
+          },
+        ],
+      };
+    }
+    const newContent = mergeAnchorFrontmatter(oldContent, input.updates);
+    return this.writeAnchor({
+      name: input.name,
+      content: newContent,
+      message: input.message,
+      approved: input.approved,
+      coAuthor: input.coAuthor,
+      expectedFileCommit: input.expectedFileCommit,
+    });
+  }
+
+  async updateAnchorSection(input: {
+    name: string;
+    heading: string;
+    content: string;
+    message?: string;
+    approved?: boolean;
+    coAuthor?: string;
+    expectedFileCommit?: string;
+  }): Promise<WriteAnchorResult> {
+    return this.applyAnchorContentPatch({
+      name: input.name,
+      message: input.message,
+      approved: input.approved,
+      coAuthor: input.coAuthor,
+      expectedFileCommit: input.expectedFileCommit,
+      mutate: (old) => replaceAnchorSection(old, input.heading, input.content),
+    });
+  }
+
+  async appendToAnchorSection(input: {
+    name: string;
+    heading: string;
+    content: string;
+    message?: string;
+    approved?: boolean;
+    coAuthor?: string;
+    expectedFileCommit?: string;
+  }): Promise<WriteAnchorResult> {
+    return this.applyAnchorContentPatch({
+      name: input.name,
+      message: input.message,
+      approved: input.approved,
+      coAuthor: input.coAuthor,
+      expectedFileCommit: input.expectedFileCommit,
+      mutate: (old) => appendToAnchorSection(old, input.heading, input.content),
+    });
+  }
+
+  async deleteAnchorSection(input: {
+    name: string;
+    heading: string;
+    message?: string;
+    approved?: boolean;
+    coAuthor?: string;
+    expectedFileCommit?: string;
+  }): Promise<WriteAnchorResult> {
+    return this.applyAnchorContentPatch({
+      name: input.name,
+      message: input.message,
+      approved: input.approved,
+      coAuthor: input.coAuthor,
+      expectedFileCommit: input.expectedFileCommit,
+      mutate: (old) => deleteAnchorSection(old, input.heading),
+    });
+  }
+
+  private async applyAnchorContentPatch(input: {
+    name: string;
+    message?: string;
+    approved?: boolean;
+    coAuthor?: string;
+    expectedFileCommit?: string;
+    mutate: (oldContent: string) => string;
+  }): Promise<WriteAnchorResult> {
+    const oldContent = await this.repo.readRaw(input.name);
+    if (oldContent === undefined) {
+      return {
+        warnings: [
+          {
+            severity: "BLOCK",
+            code: "missing_anchor",
+            message: `Anchor not found: ${input.name}`,
+          },
+        ],
+      };
+    }
+    let newContent: string;
+    try {
+      newContent = input.mutate(oldContent);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return {
+        warnings: [
+          {
+            severity: "BLOCK",
+            code: "section_not_found",
+            message,
+          },
+        ],
+      };
+    }
+
+    return this.writeAnchor({
+      name: input.name,
+      content: newContent,
+      message: input.message,
+      approved: input.approved,
+      coAuthor: input.coAuthor,
+      expectedFileCommit: input.expectedFileCommit,
+    });
   }
 
   async revertAnchor(name: string, toVersion: string, message?: string): Promise<{ newVersion?: string }> {

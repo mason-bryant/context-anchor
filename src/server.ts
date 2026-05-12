@@ -9,6 +9,13 @@ const CategorySchema = z.enum(ANCHOR_CATEGORIES);
 const ContextRootFormatSchema = z.enum(["json", "markdown", "both"]);
 const AnchorContentModeSchema = z.enum(["full", "excerpt", "none"]);
 
+const SharedWriteOptsSchema = z.object({
+  message: z.string().optional(),
+  approved: z.boolean().default(false),
+  coAuthor: z.string().optional(),
+  expectedFileCommit: z.string().optional(),
+});
+
 export function createAnchorMcpServer(service: AnchorService): McpServer {
   const server = new McpServer(
     {
@@ -50,16 +57,23 @@ detail -> only then git diff and start review.
 Writes may return BLOCK or WARN; do not ignore them. BLOCK rejects the write and must be fixed before retrying. WARN \
 succeeds but flags a quality issue to address.
 
+For small edits (one front-matter field, append a PR line, replace one section body), prefer updateAnchorFrontmatter, \
+updateAnchorSection, appendToAnchorSection, or deleteAnchorSection so you do not round-trip entire large anchor bodies. \
+They run the same validators and commits as writeAnchor. Pass expectedFileCommit from readAnchor.fileCommit when you need \
+optimistic concurrency across sessions.
+
+Use full writeAnchor when restructuring an entire anchor or when bulk-replacing the file is simpler.
+
 ## When you discover new facts
-If work reveals durable truth (what shipped, decisions, limits), persist it with writeAnchor on the relevant anchor — not \
-only in chat. Section mapping: observable reality → ## Current State; settled choices → ## Decisions; hard limits → \
-## Constraints; pull requests → ## PRs (use the enforced PR link text shape).
+If work reveals durable truth (what shipped, decisions, limits), persist it with writeAnchor or the chunked write tools \
+on the relevant anchor — not only in chat. Section mapping: observable reality → ## Current State; settled choices → \
+## Decisions; hard limits → ## Constraints; pull requests → ## PRs (use the enforced PR link text shape).
 
 Bump last_validated (YYYY-MM-DD) whenever you materially edit Current State, Decisions, or Constraints; the server blocks \
 same-day substantive edits if the date is unchanged.
 
-Edits to Decisions or Constraints, or deleting existing bullets, need explicit human approval: retry writeAnchor with \
-approved: true after the user confirms.
+Edits to Decisions or Constraints, or deleting existing bullets, need explicit human approval: retry the same write tool \
+with approved: true after the user confirms.
 
 ## Roadmaps and maintenance
 Forward-looking work usually belongs in a companion roadmap anchor (same project slug) if your tree uses one: goals, \
@@ -94,7 +108,7 @@ the index when your workflow checks in that file.`,
     "readAnchor",
     {
       title: "Read Anchor",
-      description: "Read one context anchor, optionally at a git version.",
+      description: "Read one context anchor, optionally at a git version. Latest reads include `fileCommit` (last git commit touching the file) for optional `expectedFileCommit` on writes.",
       inputSchema: z.object({
         name: z.string(),
         version: z.string().optional(),
@@ -168,11 +182,122 @@ the index when your workflow checks in that file.`,
         message: z.string().optional(),
         approved: z.boolean().default(false),
         coAuthor: z.string().optional(),
+        expectedFileCommit: z.string().optional(),
       }),
       annotations: { destructiveHint: false, idempotentHint: false },
     },
-    async ({ name, content, message, approved, coAuthor }) => {
-      const result = await service.writeAnchor({ name, content, message, approved, coAuthor });
+    async ({ name, content, message, approved, coAuthor, expectedFileCommit }) => {
+      const result = await service.writeAnchor({ name, content, message, approved, coAuthor, expectedFileCommit });
+      return jsonResult(result, result.version ? false : true);
+    },
+  );
+
+  server.registerTool(
+    "updateAnchorFrontmatter",
+    {
+      title: "Update Anchor Front Matter",
+      description:
+        "Merge keys into YAML front matter without resending the anchor body. Use null in updates to remove a key. Same validation and commit rules as writeAnchor.",
+      inputSchema: z
+        .object({
+          name: z.string(),
+          updates: z.record(z.string(), z.unknown()),
+        })
+        .extend(SharedWriteOptsSchema.shape),
+      annotations: { destructiveHint: false, idempotentHint: false },
+    },
+    async ({ name, updates, message, approved, coAuthor, expectedFileCommit }) => {
+      const result = await service.updateAnchorFrontmatter({
+        name,
+        updates,
+        message,
+        approved,
+        coAuthor,
+        expectedFileCommit,
+      });
+      return jsonResult(result, result.version ? false : true);
+    },
+  );
+
+  server.registerTool(
+    "updateAnchorSection",
+    {
+      title: "Update Anchor Section",
+      description:
+        "Replace the body of one ## H2 section (heading may be passed as \"## PRs\" or \"PRs\"). Content must not include the heading line.",
+      inputSchema: z
+        .object({
+          name: z.string(),
+          heading: z.string(),
+          content: z.string(),
+        })
+        .extend(SharedWriteOptsSchema.shape),
+      annotations: { destructiveHint: false, idempotentHint: false },
+    },
+    async ({ name, heading, content, message, approved, coAuthor, expectedFileCommit }) => {
+      const result = await service.updateAnchorSection({
+        name,
+        heading,
+        content,
+        message,
+        approved,
+        coAuthor,
+        expectedFileCommit,
+      });
+      return jsonResult(result, result.version ? false : true);
+    },
+  );
+
+  server.registerTool(
+    "appendToAnchorSection",
+    {
+      title: "Append To Anchor Section",
+      description: "Append markdown to the end of one ## H2 section body.",
+      inputSchema: z
+        .object({
+          name: z.string(),
+          heading: z.string(),
+          content: z.string(),
+        })
+        .extend(SharedWriteOptsSchema.shape),
+      annotations: { destructiveHint: false, idempotentHint: false },
+    },
+    async ({ name, heading, content, message, approved, coAuthor, expectedFileCommit }) => {
+      const result = await service.appendToAnchorSection({
+        name,
+        heading,
+        content,
+        message,
+        approved,
+        coAuthor,
+        expectedFileCommit,
+      });
+      return jsonResult(result, result.version ? false : true);
+    },
+  );
+
+  server.registerTool(
+    "deleteAnchorSection",
+    {
+      title: "Delete Anchor Section",
+      description: "Remove an entire ## H2 section including its heading. Deleting required sections will fail validation.",
+      inputSchema: z
+        .object({
+          name: z.string(),
+          heading: z.string(),
+        })
+        .extend(SharedWriteOptsSchema.shape),
+      annotations: { destructiveHint: false, idempotentHint: false },
+    },
+    async ({ name, heading, message, approved, coAuthor, expectedFileCommit }) => {
+      const result = await service.deleteAnchorSection({
+        name,
+        heading,
+        message,
+        approved,
+        coAuthor,
+        expectedFileCommit,
+      });
       return jsonResult(result, result.version ? false : true);
     },
   );

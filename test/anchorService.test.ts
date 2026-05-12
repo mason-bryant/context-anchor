@@ -351,6 +351,108 @@ None.
     expect(loaded.anchors).toHaveLength(2);
     expect(loaded.anchors.every((anchor) => anchor.content === undefined && anchor.excerpt === undefined)).toBe(true);
   });
+
+  it("readAnchor returns fileCommit for latest reads", async () => {
+    await service.writeAnchor({
+      name: "shared/commit-meta",
+      content: sharedAnchorContent({ title: "Commit meta", summary: "For fileCommit field." }),
+      message: "test: add anchor for fileCommit",
+    });
+    const read = await service.readAnchor("shared/commit-meta");
+    expect(read.fileCommit).toMatch(/^[a-f0-9]{40}$/);
+    expect(read.version).toMatch(/^[a-f0-9]{40}$/);
+  });
+
+  it("rejects writeAnchor when expectedFileCommit does not match", async () => {
+    await service.writeAnchor({
+      name: "shared/stale",
+      content: sharedAnchorContent({ title: "Stale", summary: "Stale base test." }),
+      message: "test: add stale anchor",
+    });
+    const result = await service.writeAnchor({
+      name: "shared/stale",
+      content: sharedAnchorContent({ title: "Stale", summary: "Updated summary only." }),
+      message: "test: stale write",
+      expectedFileCommit: "0".repeat(40),
+    });
+    expect(result.version).toBeUndefined();
+    expect(result.warnings.some((w) => w.code === "stale_base")).toBe(true);
+  });
+
+  it("updateAnchorFrontmatter merges YAML without changing body sections", async () => {
+    await service.writeAnchor({
+      name: "projects/demo/demo",
+      content: projectAnchorContent(),
+      message: "test: add demo anchor",
+    });
+    const result = await service.updateAnchorFrontmatter({
+      name: "projects/demo/demo",
+      updates: { summary: "Updated demo summary via front matter tool." },
+      message: "test: fm merge",
+    });
+    expect(result.version).toMatch(/[a-f0-9]{40}/);
+    const read = await service.readAnchor("projects/demo/demo");
+    expect(read.frontmatter.summary).toBe("Updated demo summary via front matter tool.");
+    expect(read.content).toContain("## Current State");
+    expect(read.content).toContain("- The demo anchor exists.");
+  });
+
+  it("appendToAnchorSection appends a valid PR line", async () => {
+    await service.writeAnchor({
+      name: "projects/demo/demo",
+      content: projectAnchorContent(),
+      message: "test: add demo anchor",
+    });
+    const result = await service.appendToAnchorSection({
+      name: "projects/demo/demo",
+      heading: "## PRs",
+      content: "\n- [PR Chunked append - #999](https://github.com/example/repo/pull/999)",
+      message: "test: append pr",
+    });
+    expect(result.version).toMatch(/[a-f0-9]{40}/);
+    const read = await service.readAnchor("projects/demo/demo");
+    expect(read.content).toContain("pull/999");
+  });
+
+  it("deleteAnchorSection returns section_not_found for unknown heading", async () => {
+    await service.writeAnchor({
+      name: "shared/del-sec",
+      content: sharedAnchorContent({ title: "Del", summary: "Section delete test." }),
+      message: "test: add del-sec",
+    });
+    const result = await service.deleteAnchorSection({
+      name: "shared/del-sec",
+      heading: "## Missing Section",
+      message: "test: bad delete",
+    });
+    expect(result.version).toBeUndefined();
+    expect(result.warnings.some((w) => w.code === "section_not_found")).toBe(true);
+  });
+
+  it("updateAnchorFrontmatter returns missing_anchor when file does not exist", async () => {
+    const result = await service.updateAnchorFrontmatter({
+      name: "shared/no-such-anchor",
+      updates: { summary: "x" },
+      message: "test: missing",
+    });
+    expect(result.version).toBeUndefined();
+    expect(result.warnings.some((w) => w.code === "missing_anchor")).toBe(true);
+  });
+
+  it("deleteAnchorSection on a required section is blocked by validators", async () => {
+    await service.writeAnchor({
+      name: "shared/del-req",
+      content: sharedAnchorContent({ title: "Del req", summary: "Required section delete." }),
+      message: "test: add del-req",
+    });
+    const result = await service.deleteAnchorSection({
+      name: "shared/del-req",
+      heading: "PRs",
+      message: "test: delete PRs",
+    });
+    expect(result.version).toBeUndefined();
+    expect(result.warnings.map((w) => w.code)).toContain("required_section");
+  });
 });
 
 function projectAnchorContent(
