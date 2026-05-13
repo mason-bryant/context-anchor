@@ -1,4 +1,4 @@
-import { mkdir, readFile, readdir, rename, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, rename, stat, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import { simpleGit, type SimpleGit } from "simple-git";
@@ -379,6 +379,128 @@ export class AnchorRepository {
     return { state: "clean" };
   }
 
+  /**
+   * Remove an anchor file from the working tree and record a git commit.
+   * The path must already exist on disk.
+   */
+  async deleteAnchorFile(input: {
+    name: string;
+    message?: string;
+    coAuthor?: string;
+    push?: boolean;
+  }): Promise<string | undefined> {
+    return this.lock.runExclusive(async () => {
+      const resolved = this.resolveAnchor(input.name);
+      try {
+        await stat(resolved.absolutePath);
+      } catch (error) {
+        if (isNodeFsErrorCode(error, "ENOENT")) {
+          throw new Error(`Anchor file not found: ${resolved.name}`);
+        }
+        throw error;
+      }
+
+      await unlink(resolved.absolutePath);
+      this.cache.invalidate(resolved.absolutePath);
+
+      await this.git.add(resolved.repoRelativePath);
+
+      const status = await this.git.status();
+      if (!status.files.some((file) => file.path === resolved.repoRelativePath)) {
+        return this.currentVersion().catch(() => undefined);
+      }
+
+      const args = [
+        "-c",
+        "user.name=anchor-mcp",
+        "-c",
+        "user.email=anchor-mcp@local",
+        "commit",
+        ...buildAnchorCommitMessage({
+          action: "delete",
+          name: resolved.name,
+          message: input.message,
+          coAuthor: input.coAuthor,
+        }),
+      ];
+      await this.git.raw(args);
+
+      if (input.push) {
+        await this.push().catch(() => undefined);
+      }
+
+      return this.currentVersion();
+    });
+  }
+
+  /**
+   * Move an anchor file within the repo (`git mv`). Destination parent directories are created as needed.
+   */
+  async renameAnchorFile(input: {
+    from: string;
+    to: string;
+    message?: string;
+    coAuthor?: string;
+    push?: boolean;
+  }): Promise<string | undefined> {
+    return this.lock.runExclusive(async () => {
+      const fromResolved = this.resolveAnchor(input.from);
+      const toResolved = this.resolveAnchor(input.to);
+
+      try {
+        await stat(fromResolved.absolutePath);
+      } catch (error) {
+        if (isNodeFsErrorCode(error, "ENOENT")) {
+          throw new Error(`Anchor file not found: ${fromResolved.name}`);
+        }
+        throw error;
+      }
+
+      let destinationExists = true;
+      try {
+        await stat(toResolved.absolutePath);
+      } catch (error) {
+        if (isNodeFsErrorCode(error, "ENOENT")) {
+          destinationExists = false;
+        } else {
+          throw error;
+        }
+      }
+      if (destinationExists) {
+        throw new Error(`Destination already exists: ${toResolved.name}`);
+      }
+
+      await mkdir(path.dirname(toResolved.absolutePath), { recursive: true });
+
+      await this.git.raw(["mv", "--", fromResolved.repoRelativePath, toResolved.repoRelativePath]);
+
+      this.cache.invalidate(fromResolved.absolutePath);
+      this.cache.invalidate(toResolved.absolutePath);
+
+      const args = [
+        "-c",
+        "user.name=anchor-mcp",
+        "-c",
+        "user.email=anchor-mcp@local",
+        "commit",
+        ...buildAnchorCommitMessage({
+          action: "rename",
+          name: fromResolved.name,
+          renameTo: toResolved.name,
+          message: input.message,
+          coAuthor: input.coAuthor,
+        }),
+      ];
+      await this.git.raw(args);
+
+      if (input.push) {
+        await this.push().catch(() => undefined);
+      }
+
+      return this.currentVersion();
+    });
+  }
+
   async pullRebase(): Promise<void> {
     await this.git.pull(["--rebase"]);
     this.cache.invalidate();
@@ -437,6 +559,15 @@ export class AnchorRepository {
 
     return files;
   }
+}
+
+function isNodeFsErrorCode(error: unknown, code: string): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    (error as { code?: unknown }).code === code
+  );
 }
 
 function isProjectRoadmapType(type: unknown): boolean {

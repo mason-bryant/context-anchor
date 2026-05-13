@@ -34,7 +34,12 @@ import { listRoadmapGoalDetails } from "./roadmap/analyzeRoadmap.js";
 import { getRelatedAnchors } from "./relations/index.js";
 import { isProjectMilestoneType } from "./schema/milestoneTypes.js";
 import { countCompletedRows, parseAnchor } from "./storage/markdown.js";
-import { SERVER_RULES_DISCOVERY_CATEGORY, classifyAnchorPath, type AnchorCategory, type DiscoveryCategory } from "./taxonomy.js";
+import {
+  SERVER_RULES_DISCOVERY_CATEGORY,
+  classifyAnchorPath,
+  type AnchorCategory,
+  type DiscoveryCategory,
+} from "./taxonomy.js";
 import type {
   AnchorContentMode,
   AnchorMeta,
@@ -71,6 +76,29 @@ export class AnchorService {
       return canonicalBuiltInAnchorName(name);
     }
     return this.repo.resolveAnchor(name).name;
+  }
+
+  /** Ensures `name` resolves to a normal taxonomy anchor (not CONTEXT-ROOT.md, not an invalid path). */
+  private validateTaxonomyAnchorPath(name: string, label: string): ValidationViolation | null {
+    const resolved = this.repo.resolveAnchor(name);
+    const classification = classifyAnchorPath(resolved.name);
+    if (classification.kind === "generated") {
+      return {
+        severity: "BLOCK",
+        code: "generated_file_reserved",
+        message: `${label}: CONTEXT-ROOT.md is generated; use writeContextRoot instead of structural anchor tools.`,
+        path: resolved.name,
+      };
+    }
+    if (classification.kind === "invalid") {
+      return {
+        severity: "BLOCK",
+        code: "directory_taxonomy",
+        message: `${label}: ${classification.reason}`,
+        path: resolved.name,
+      };
+    }
+    return null;
   }
 
   private async mergeDiscoveryAnchors(filter: {
@@ -206,6 +234,212 @@ export class AnchorService {
     return { version, warnings };
   }
 
+  async deleteAnchor(input: {
+    name: string;
+    approved?: boolean;
+    message?: string;
+    coAuthor?: string;
+    expectedFileCommit?: string;
+  }): Promise<WriteAnchorResult> {
+    if (!input.approved) {
+      return {
+        warnings: [
+          {
+            severity: "BLOCK",
+            code: "requires_approval",
+            message:
+              "deleteAnchor removes an anchor from the working tree as a git commit; retry with approved: true after explicit user confirmation.",
+          },
+        ],
+        requiresApproval: true,
+      };
+    }
+
+    if (isBuiltInAnchorName(input.name)) {
+      return {
+        warnings: [
+          {
+            severity: "BLOCK",
+            code: "reserved_builtin",
+            message: "Built-in server policy anchors cannot be deleted.",
+          },
+        ],
+        requiresApproval: false,
+      };
+    }
+
+    const pathViolation = this.validateTaxonomyAnchorPath(input.name, "deleteAnchor");
+    if (pathViolation) {
+      return { warnings: [pathViolation], requiresApproval: false };
+    }
+
+    const resolved = this.repo.resolveAnchor(input.name);
+    if (input.expectedFileCommit) {
+      const current = await this.repo.lastCommitForFile(resolved.repoRelativePath);
+      if (current !== input.expectedFileCommit) {
+        return {
+          warnings: [
+            {
+              severity: "BLOCK",
+              code: "stale_base",
+              message: `Anchor file commit mismatch: expected ${input.expectedFileCommit}, found ${current ?? "none"}. Re-read the anchor and retry.`,
+            },
+          ],
+          requiresApproval: false,
+        };
+      }
+    }
+
+    const oldContent = await this.repo.readRaw(input.name);
+    if (oldContent === undefined) {
+      return {
+        warnings: [
+          {
+            severity: "BLOCK",
+            code: "missing_anchor",
+            message: `Anchor not found: ${input.name}`,
+          },
+        ],
+        requiresApproval: false,
+      };
+    }
+
+    try {
+      const version = await this.repo.deleteAnchorFile({
+        name: input.name,
+        message: input.message,
+        coAuthor: input.coAuthor,
+        push: this.options.pushOnWrite,
+      });
+      return { version, warnings: [] };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return {
+        warnings: [
+          {
+            severity: "BLOCK",
+            code: "delete_anchor_failed",
+            message,
+          },
+        ],
+        requiresApproval: false,
+      };
+    }
+  }
+
+  async renameAnchor(input: {
+    from: string;
+    to: string;
+    approved?: boolean;
+    message?: string;
+    coAuthor?: string;
+    expectedFileCommit?: string;
+  }): Promise<WriteAnchorResult> {
+    if (!input.approved) {
+      return {
+        warnings: [
+          {
+            severity: "BLOCK",
+            code: "requires_approval",
+            message:
+              "renameAnchor moves an anchor path with git mv; retry with approved: true after explicit user confirmation.",
+          },
+        ],
+        requiresApproval: true,
+      };
+    }
+
+    if (isBuiltInAnchorName(input.from) || isBuiltInAnchorName(input.to)) {
+      return {
+        warnings: [
+          {
+            severity: "BLOCK",
+            code: "reserved_builtin",
+            message: "Built-in server policy anchors cannot be renamed or used as rename targets.",
+          },
+        ],
+        requiresApproval: false,
+      };
+    }
+
+    const fromViolation = this.validateTaxonomyAnchorPath(input.from, "renameAnchor (from)");
+    if (fromViolation) {
+      return { warnings: [fromViolation], requiresApproval: false };
+    }
+    const toViolation = this.validateTaxonomyAnchorPath(input.to, "renameAnchor (to)");
+    if (toViolation) {
+      return { warnings: [toViolation], requiresApproval: false };
+    }
+
+    const fromResolved = this.repo.resolveAnchor(input.from);
+    const toResolved = this.repo.resolveAnchor(input.to);
+    if (fromResolved.name === toResolved.name) {
+      return {
+        warnings: [
+          {
+            severity: "BLOCK",
+            code: "rename_noop",
+            message: "renameAnchor requires different source and destination paths.",
+          },
+        ],
+        requiresApproval: false,
+      };
+    }
+
+    if (input.expectedFileCommit) {
+      const current = await this.repo.lastCommitForFile(fromResolved.repoRelativePath);
+      if (current !== input.expectedFileCommit) {
+        return {
+          warnings: [
+            {
+              severity: "BLOCK",
+              code: "stale_base",
+              message: `Anchor file commit mismatch: expected ${input.expectedFileCommit}, found ${current ?? "none"}. Re-read the anchor and retry.`,
+            },
+          ],
+          requiresApproval: false,
+        };
+      }
+    }
+
+    const oldContent = await this.repo.readRaw(input.from);
+    if (oldContent === undefined) {
+      return {
+        warnings: [
+          {
+            severity: "BLOCK",
+            code: "missing_anchor",
+            message: `Anchor not found: ${input.from}`,
+          },
+        ],
+        requiresApproval: false,
+      };
+    }
+
+    try {
+      const version = await this.repo.renameAnchorFile({
+        from: input.from,
+        to: input.to,
+        message: input.message,
+        coAuthor: input.coAuthor,
+        push: this.options.pushOnWrite,
+      });
+      return { version, warnings: [] };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return {
+        warnings: [
+          {
+            severity: "BLOCK",
+            code: "rename_anchor_failed",
+            message,
+          },
+        ],
+        requiresApproval: false,
+      };
+    }
+  }
+
   async updateAnchorFrontmatter(input: {
     name: string;
     updates: Record<string, unknown>;
@@ -252,6 +486,7 @@ export class AnchorService {
     name: string;
     heading: string;
     content: string;
+    lastValidated?: string;
     message?: string;
     approved?: boolean;
     coAuthor?: string;
@@ -259,6 +494,7 @@ export class AnchorService {
   }): Promise<WriteAnchorResult> {
     return this.applyAnchorContentPatch({
       name: input.name,
+      lastValidated: input.lastValidated,
       message: input.message,
       approved: input.approved,
       coAuthor: input.coAuthor,
@@ -271,6 +507,7 @@ export class AnchorService {
     name: string;
     heading: string;
     content: string;
+    lastValidated?: string;
     message?: string;
     approved?: boolean;
     coAuthor?: string;
@@ -278,6 +515,7 @@ export class AnchorService {
   }): Promise<WriteAnchorResult> {
     return this.applyAnchorContentPatch({
       name: input.name,
+      lastValidated: input.lastValidated,
       message: input.message,
       approved: input.approved,
       coAuthor: input.coAuthor,
@@ -289,6 +527,7 @@ export class AnchorService {
   async deleteAnchorSection(input: {
     name: string;
     heading: string;
+    lastValidated?: string;
     message?: string;
     approved?: boolean;
     coAuthor?: string;
@@ -296,6 +535,7 @@ export class AnchorService {
   }): Promise<WriteAnchorResult> {
     return this.applyAnchorContentPatch({
       name: input.name,
+      lastValidated: input.lastValidated,
       message: input.message,
       approved: input.approved,
       coAuthor: input.coAuthor,
@@ -306,6 +546,7 @@ export class AnchorService {
 
   private async applyAnchorContentPatch(input: {
     name: string;
+    lastValidated?: string;
     message?: string;
     approved?: boolean;
     coAuthor?: string;
@@ -349,6 +590,10 @@ export class AnchorService {
           },
         ],
       };
+    }
+
+    if (input.lastValidated) {
+      newContent = mergeAnchorFrontmatter(newContent, { last_validated: input.lastValidated });
     }
 
     return this.writeAnchor({

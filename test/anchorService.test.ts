@@ -220,6 +220,84 @@ None.
     expect(approved.version).toMatch(/[a-f0-9]{40}/);
   });
 
+  it("section tools with lastValidated bump the date atomically in the same commit", async () => {
+    await service.writeAnchor({
+      name: "projects/demo/demo",
+      content: projectAnchorContent(),
+      message: "test: add demo anchor",
+    });
+
+    // Without lastValidated: appending to a substantive section blocks on last_validated_bump.
+    const withoutBump = await service.appendToAnchorSection({
+      name: "projects/demo/demo",
+      heading: "Current State",
+      content: "- Extra observation.",
+    });
+    expect(withoutBump.version).toBeUndefined();
+    expect(withoutBump.warnings.map((w) => w.code)).toContain("last_validated_bump");
+
+    // With lastValidated: section append + date bump succeed in one call.
+    const withBump = await service.appendToAnchorSection({
+      name: "projects/demo/demo",
+      heading: "Current State",
+      content: "- Extra observation.",
+      lastValidated: "2026-05-14",
+    });
+    expect(withBump.version).toMatch(/[a-f0-9]{40}/);
+    expect(withBump.warnings).toEqual([]);
+
+    const read = await service.readAnchor("projects/demo/demo");
+    expect(read.frontmatter.last_validated).toBe("2026-05-14");
+    expect(read.content).toContain("- Extra observation.");
+  });
+
+  it("deleteAnchor requires approval before removing a file", async () => {
+    await service.writeAnchor({
+      name: "shared/to-delete",
+      content: sharedAnchorContent({ title: "Delete Me", summary: "Will be removed." }),
+      message: "test: add deletable anchor",
+    });
+
+    const blocked = await service.deleteAnchor({ name: "shared/to-delete" });
+    expect(blocked.requiresApproval).toBe(true);
+    expect(blocked.version).toBeUndefined();
+
+    const done = await service.deleteAnchor({ name: "shared/to-delete", approved: true });
+    expect(done.version).toMatch(/[a-f0-9]{40}/);
+    expect(await repo.readRaw("shared/to-delete")).toBeUndefined();
+  });
+
+  it("renameAnchor requires approval before moving a file", async () => {
+    await service.writeAnchor({
+      name: "shared/old-name",
+      content: sharedAnchorContent({ title: "Renamed", summary: "Moves path." }),
+      message: "test: add rename source",
+    });
+
+    const blocked = await service.renameAnchor({ from: "shared/old-name", to: "shared/new-name" });
+    expect(blocked.requiresApproval).toBe(true);
+    expect(blocked.version).toBeUndefined();
+
+    const done = await service.renameAnchor({ from: "shared/old-name", to: "shared/new-name", approved: true });
+    expect(done.version).toMatch(/[a-f0-9]{40}/);
+    expect(await repo.readRaw("shared/old-name")).toBeUndefined();
+    const moved = await repo.readRaw("shared/new-name");
+    expect(moved).toContain("Renamed");
+  });
+
+  it("blocks deleteAnchor on CONTEXT-ROOT.md", async () => {
+    await service.writeAnchor({
+      name: "projects/demo/demo",
+      content: projectAnchorContent(),
+      message: "test: add project",
+    });
+    await service.writeContextRoot();
+
+    const result = await service.deleteAnchor({ name: "CONTEXT-ROOT", approved: true });
+    expect(result.version).toBeUndefined();
+    expect(result.warnings.map((w) => w.code)).toContain("generated_file_reserved");
+  });
+
   it("builds a grouped dynamic context root and excludes archive by default", async () => {
     await service.writeAnchor({
       name: "agent-rules/codex",
