@@ -11,6 +11,25 @@ export const ANCHOR_CATEGORIES = [
 
 export type AnchorCategory = (typeof ANCHOR_CATEGORIES)[number];
 
+/** Synthetic discovery-only category for built-in MCP policy (not a repo directory). */
+export const SERVER_RULES_DISCOVERY_CATEGORY = "server-rules" as const;
+
+export type DiscoveryCategory = AnchorCategory | typeof SERVER_RULES_DISCOVERY_CATEGORY;
+
+/** Order for context root / discovery: built-ins first, then repo taxonomy. */
+export const DISCOVERY_CATEGORY_ORDER: readonly DiscoveryCategory[] = [
+  SERVER_RULES_DISCOVERY_CATEGORY,
+  ...ANCHOR_CATEGORIES,
+];
+
+export function isDiscoveryCategory(input: unknown): input is DiscoveryCategory {
+  return isAnchorCategory(input) || input === SERVER_RULES_DISCOVERY_CATEGORY;
+}
+
+export function discoveryCategoryIndex(category: DiscoveryCategory): number {
+  return DISCOVERY_CATEGORY_ORDER.indexOf(category);
+}
+
 export const CONTEXT_ROOT_FILE = "CONTEXT-ROOT.md";
 
 export type AnchorClassification =
@@ -92,5 +111,12 @@ export function categoryTitle(category: AnchorCategory): string {
     case "archive":
       return "Archive";
   }
+}
+
+export function discoveryCategoryTitle(category: DiscoveryCategory): string {
+  if (category === SERVER_RULES_DISCOVERY_CATEGORY) {
+    return "Built-in server policy";
+  }
+  return categoryTitle(category);
 }
 

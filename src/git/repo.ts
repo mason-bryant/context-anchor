@@ -4,6 +4,7 @@ import path from "node:path";
 import { simpleGit, type SimpleGit } from "simple-git";
 
 import { AnchorParseCache } from "../storage/cache.js";
+import { analyzeRoadmapFromContent } from "../roadmap/analyzeRoadmap.js";
 import { parseAnchor } from "../storage/markdown.js";
 import { classifyAnchorPath, CONTEXT_ROOT_FILE, type AnchorCategory } from "../taxonomy.js";
 import type {
@@ -123,7 +124,20 @@ export class AnchorRepository {
         read_this_if: stringArrayValue(parsed.frontmatter.read_this_if),
         last_validated: parsed.frontmatter.last_validated,
         updatedAt: stats.mtime.toISOString(),
+        origin: "repo",
       };
+
+      if (isProjectRoadmapType(parsed.frontmatter.type)) {
+        const analysis = analyzeRoadmapFromContent(content, { isProjectRoadmap: true });
+        meta.acceptanceCriteria = {
+          activeGoals: analysis.activeGoals,
+          goalsWithCriteria: analysis.goalsWithCriteria,
+          goalsMissingCriteria: analysis.goalsMissingCriteria,
+          hasProposedCriteria: analysis.hasProposedCriteria,
+          criteriaViolations:
+            analysis.criteriaViolations.length > 0 ? analysis.criteriaViolations : undefined,
+        };
+      }
 
       if (filter?.project && !frontmatterValueIncludes(meta.project, filter.project)) {
         continue;
@@ -388,6 +402,16 @@ export class AnchorRepository {
 
     return files;
   }
+}
+
+function isProjectRoadmapType(type: unknown): boolean {
+  if (type === "project-roadmap") {
+    return true;
+  }
+  if (Array.isArray(type)) {
+    return type.some((item) => item === "project-roadmap");
+  }
+  return false;
 }
 
 function frontmatterValueIncludes(value: unknown, needle: string): boolean {

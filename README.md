@@ -14,7 +14,7 @@
 From the registry (pin a version for reproducible installs; `@latest` follows the newest publish):
 
 ```sh
-npx -y @mason/anchor-mcp@0.1.0 --repo ~/agent-context
+npx -y @mason/anchor-mcp@0.2.0 --repo ~/agent-context
 ```
 
 ```sh
@@ -221,12 +221,16 @@ Blocks:
 - `last_validated` must change when Current State, Decisions, or Constraints change
 - `CLAUDE.md` requires sibling `AGENTS.md` containing `@CLAUDE.md`
 - edits changing Decisions/Constraints or removing bullets require `approved: true`
+- built-in `server-rules/*` policy anchors cannot be edited via write tools
+- any change to `###` / `#### Acceptance Criteria` subtrees (including `#### Proposed`) requires `approved: true`
+- `type: project-roadmap` anchors with a `## Goals` section must give each `###` goal a `#### Acceptance Criteria` block; checklist lines under `#### Approved` / `#### Proposed` must include stable ids (`AC-###` / `AC-P###`) and an `Evidence:` hint unless `anchor_mcp_policy.weaken` includes `require_evidence` (weakening requires `approved: true` when first introduced)
 
 Warnings:
 
 - removed bullets should be moved to `## History` or marked superseded
 - roadmaps over 400 lines should be compacted
 - `## Completed` tables over 10 rows should be compacted
+- when `anchor_mcp_policy.weaken` is active on a roadmap, the server emits a reminder that default enforcement is relaxed
 
 During migration, run with `--migration-warn-only` to downgrade schema and shape blocks into warnings while existing anchors are cleaned up.
 
@@ -267,9 +271,10 @@ last_validated: 2026-05-10
 
 ## Dynamic Context Root
 
-`contextRoot` builds a live root index from anchor metadata. It groups anchors in this order:
+`contextRoot` builds a live root index from anchor metadata. It prepends **built-in server policy** rows (`category: "server-rules"`, `origin: "built-in"`) that are not files in your repo, then groups repo anchors in this order:
 
 ```txt
+server-rules (built-in policy — not in git)
 agent-rules
 projects
 invariants
@@ -278,9 +283,9 @@ shared
 archive
 ```
 
-Archive entries are excluded unless `includeArchive: true` or `category: "archive"` is passed.
+Archive entries are excluded unless `includeArchive: true` or `category: "archive"` is passed. Use `category: "server-rules"` to list only built-in policy entries.
 
-`writeContextRoot` writes and commits a generated `CONTEXT-ROOT.md` at the anchor root. The generated file is excluded from `listAnchors`, validation, and future context-root entries.
+`writeContextRoot` writes and commits a generated `CONTEXT-ROOT.md` at the anchor root. The generated file is excluded from `listAnchors`, validation, and future context-root entries. The markdown snapshot includes a **Built-in server policy — not in git** section when applicable.
 
 `contextRoot` accepts:
 

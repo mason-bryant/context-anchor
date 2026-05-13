@@ -1,11 +1,21 @@
-import type { AnchorCategory } from "./taxonomy.js";
+import type { DiscoveryCategory } from "./taxonomy.js";
 
 export type AnchorFrontmatter = Record<string, unknown>;
+
+/** Derived roadmap signals for `type: project-roadmap` (discovery metadata). */
+export type RoadmapAcceptanceCriteriaSummary = {
+  activeGoals: number;
+  goalsWithCriteria: number;
+  goalsMissingCriteria: string[];
+  hasProposedCriteria: boolean;
+  criteriaViolations?: string[];
+};
 
 export type AnchorMeta = {
   name: string;
   path: string;
-  category: AnchorCategory;
+  /** Repo anchors use taxonomy dirs; built-in policy rows use `server-rules`. */
+  category: DiscoveryCategory;
   title?: string;
   project?: unknown;
   projectSlug?: string;
@@ -16,6 +26,10 @@ export type AnchorMeta = {
   last_validated?: unknown;
   version?: string;
   updatedAt?: string;
+  origin?: "repo" | "built-in";
+  /** Package version when this built-in policy row was materialized. */
+  policyVersion?: string;
+  acceptanceCriteria?: RoadmapAcceptanceCriteriaSummary;
 };
 
 export type AnchorRead = {
@@ -83,7 +97,7 @@ export type ContextRootFormat = "json" | "markdown" | "both";
 export type ContextRootEntry = {
   name: string;
   path: string;
-  category: AnchorCategory;
+  category: DiscoveryCategory;
   title?: string;
   projectSlug?: string;
   summary: string;
@@ -92,6 +106,9 @@ export type ContextRootEntry = {
   tags?: unknown;
   project?: unknown;
   last_validated?: unknown;
+  origin?: "repo" | "built-in";
+  policyVersion?: string;
+  acceptanceCriteria?: RoadmapAcceptanceCriteriaSummary;
 };
 
 export type ContextRootResult = {
@@ -106,7 +123,7 @@ export type AnchorContentMode = "full" | "excerpt" | "none";
 /** Input for the combined discovery + multi-anchor read tool (`loadContext`). */
 export type LoadContextInput = {
   project?: string;
-  category?: AnchorCategory;
+  category?: DiscoveryCategory;
   tag?: string;
   runtime?: string;
   includeArchive?: boolean;
@@ -158,7 +175,7 @@ export type LoadContextResult = {
 export type PlanContextBundleInput = {
   task: string;
   project?: string;
-  category?: AnchorCategory;
+  category?: DiscoveryCategory;
   tag?: string;
   runtime?: string;
   includeArchive?: boolean;
@@ -173,7 +190,7 @@ export type PlanContextBundleInput = {
 export type PlanContextBundleItem = {
   name: string;
   path: string;
-  category: AnchorCategory;
+  category: DiscoveryCategory;
   title?: string;
   projectSlug?: string;
   summary: string;

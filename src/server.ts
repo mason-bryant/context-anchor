@@ -3,9 +3,11 @@ import { McpServer } from "@modelcontextprotocol/server";
 import * as z from "zod/v4";
 
 import type { AnchorService } from "./anchorService.js";
-import { ANCHOR_CATEGORIES } from "./taxonomy.js";
+import { isDiscoveryCategory, type DiscoveryCategory } from "./taxonomy.js";
 
-const CategorySchema = z.enum(ANCHOR_CATEGORIES);
+const CategorySchema = z
+  .string()
+  .refine((value): value is DiscoveryCategory => isDiscoveryCategory(value), { message: "Invalid anchor category" });
 const ContextRootFormatSchema = z.enum(["json", "markdown", "both"]);
 const AnchorContentModeSchema = z.enum(["full", "excerpt", "none"]);
 
@@ -20,7 +22,7 @@ export function createAnchorMcpServer(service: AnchorService): McpServer {
   const server = new McpServer(
     {
       name: "anchor-mcp",
-      version: "0.1.0",
+      version: "0.2.0",
     },
     {
       instructions: `\

@@ -1,4 +1,5 @@
-import type { AnchorCategory } from "./taxonomy.js";
+import { isDiscoveryCategory } from "./taxonomy.js";
+import type { DiscoveryCategory } from "./taxonomy.js";
 import type { AnchorContentMode, AnchorRead, ContextRootFormat, LoadContextAnchor, LoadContextSelectionReason } from "./types.js";
 
 /** Defaults aligned with the orchestration tool contract. */
@@ -11,7 +12,7 @@ export type LoadContextCursorV1 = {
   selectionReason: LoadContextSelectionReason;
   filter: {
     project?: string;
-    category?: AnchorCategory;
+    category?: DiscoveryCategory;
     tag?: string;
     runtime?: string;
     includeArchive?: boolean;
@@ -72,7 +73,7 @@ export function decodeLoadContextCursor(cursor: string): LoadContextCursorV1 {
     selectionReason,
     filter: {
       project: typeof filter.project === "string" ? filter.project : undefined,
-      category: typeof filter.category === "string" ? (filter.category as AnchorCategory) : undefined,
+      category: typeof filter.category === "string" && isDiscoveryCategory(filter.category) ? filter.category : undefined,
       tag: typeof filter.tag === "string" ? filter.tag : undefined,
       runtime: typeof filter.runtime === "string" ? filter.runtime : undefined,
       includeArchive: typeof filter.includeArchive === "boolean" ? filter.includeArchive : undefined,

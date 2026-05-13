@@ -1,5 +1,5 @@
 import type { AnchorMeta, ContextRootEntry, ContextRootFormat, ContextRootResult } from "./types.js";
-import { ANCHOR_CATEGORIES, categoryTitle } from "./taxonomy.js";
+import { ANCHOR_CATEGORIES, discoveryCategoryIndex, discoveryCategoryTitle } from "./taxonomy.js";
 
 export function buildContextRoot(
   anchors: AnchorMeta[],
@@ -29,30 +29,59 @@ export function renderContextRootMarkdown(entries: ContextRootEntry[], generated
     "",
   ];
 
+  const builtIn = entries.filter((entry) => entry.origin === "built-in");
+  const repoEntries = entries.filter((entry) => entry.origin !== "built-in");
+
+  if (builtIn.length > 0) {
+    lines.push("## Built-in server policy — not in git", "");
+    for (const entry of builtIn) {
+      lines.push(...renderContextRootEntryBlock(entry));
+    }
+  }
+
   for (const category of ANCHOR_CATEGORIES) {
-    const group = entries.filter((entry) => entry.category === category);
+    const group = repoEntries.filter((entry) => entry.category === category);
     if (group.length === 0) {
       continue;
     }
 
-    lines.push(`## ${categoryTitle(category)}`, "");
+    lines.push(`## ${discoveryCategoryTitle(category)}`, "");
     for (const entry of group) {
-      const label = entry.title || entry.name;
-      lines.push(`### [${escapeMarkdown(label)}](${entry.path})`);
-      lines.push("");
-      lines.push(entry.summary);
-      lines.push("");
-      lines.push("Read this if:");
-      for (const instruction of entry.read_this_if) {
-        lines.push(`- ${instruction}`);
-      }
-      lines.push("");
-      lines.push(`Metadata: \`${entry.type}\`${entry.projectSlug ? `, project \`${entry.projectSlug}\`` : ""}`);
-      lines.push("");
+      lines.push(...renderContextRootEntryBlock(entry));
     }
   }
 
   return `${lines.join("\n").trimEnd()}\n`;
+}
+
+function renderContextRootEntryBlock(entry: ContextRootEntry): string[] {
+  const out: string[] = [];
+  const label = entry.title || entry.name;
+  out.push(`### [${escapeMarkdown(label)}](${entry.path})`, "");
+  out.push(entry.summary);
+  out.push("");
+  out.push("Read this if:");
+  for (const instruction of entry.read_this_if) {
+    out.push(`- ${instruction}`);
+  }
+  out.push("");
+  const metaBits = [`\`${entry.type}\``];
+  if (entry.projectSlug) {
+    metaBits.push(`project \`${entry.projectSlug}\``);
+  }
+  if (entry.policyVersion) {
+    metaBits.push(`policy \`${entry.policyVersion}\``);
+  }
+  out.push(`Metadata: ${metaBits.join(", ")}`);
+  if (entry.acceptanceCriteria) {
+    const ac = entry.acceptanceCriteria;
+    out.push("");
+    out.push(
+      `Acceptance criteria: ${ac.goalsWithCriteria}/${ac.activeGoals} goals with criteria; missing: ${ac.goalsMissingCriteria.length ? ac.goalsMissingCriteria.join("; ") : "none"}; proposed: ${ac.hasProposedCriteria ? "yes" : "no"}.`,
+    );
+  }
+  out.push("");
+  return out;
 }
 
 function toContextRootEntry(anchor: AnchorMeta): ContextRootEntry {
@@ -68,11 +97,14 @@ function toContextRootEntry(anchor: AnchorMeta): ContextRootEntry {
     tags: anchor.tags,
     project: anchor.project,
     last_validated: anchor.last_validated,
+    origin: anchor.origin,
+    policyVersion: anchor.policyVersion,
+    acceptanceCriteria: anchor.acceptanceCriteria,
   };
 }
 
 function compareContextEntries(left: ContextRootEntry, right: ContextRootEntry): number {
-  const categoryDelta = ANCHOR_CATEGORIES.indexOf(left.category) - ANCHOR_CATEGORIES.indexOf(right.category);
+  const categoryDelta = discoveryCategoryIndex(left.category) - discoveryCategoryIndex(right.category);
   if (categoryDelta !== 0) {
     return categoryDelta;
   }

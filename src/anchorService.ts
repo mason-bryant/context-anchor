@@ -8,6 +8,12 @@ import {
 } from "./anchorPatch.js";
 import { buildContextRoot } from "./contextRoot.js";
 import {
+  ACCEPTANCE_CRITERIA_NAME,
+  isBuiltInAnchorName,
+  listBuiltInAnchorMetas,
+  readBuiltInAnchor,
+} from "./builtin/serverPolicy.js";
+import {
   buildLoadContextAnchor,
   decodeLoadContextCursor,
   encodeLoadContextCursor,
@@ -18,10 +24,10 @@ import {
   shrinkLoadContextAnchorToFit,
   toNextCursorPayload,
 } from "./loadContext.js";
-import { buildContextBundlePlan } from "./contextPlanner.js";
+import { buildContextBundlePlan, collectRoadmapAcceptanceMissingSignals } from "./contextPlanner.js";
 import type { AnchorRepository } from "./git/repo.js";
 import { countCompletedRows, parseAnchor } from "./storage/markdown.js";
-import type { AnchorCategory } from "./taxonomy.js";
+import { SERVER_RULES_DISCOVERY_CATEGORY, type AnchorCategory, type DiscoveryCategory } from "./taxonomy.js";
 import type {
   AnchorContentMode,
   AnchorMeta,
@@ -53,23 +59,63 @@ export class AnchorService {
     },
   ) {}
 
+  private resolveDiscoveryAnchorName(name: string): string {
+    if (isBuiltInAnchorName(name)) {
+      return ACCEPTANCE_CRITERIA_NAME;
+    }
+    return this.repo.resolveAnchor(name).name;
+  }
+
+  private async mergeDiscoveryAnchors(filter: {
+    project?: string;
+    category?: DiscoveryCategory;
+    tag?: string;
+    since?: string;
+    includeArchive?: boolean;
+    runtime?: string;
+  } = {}): Promise<AnchorMeta[]> {
+    const built = listBuiltInAnchorMetas();
+    if (filter.category === SERVER_RULES_DISCOVERY_CATEGORY) {
+      return built;
+    }
+
+    const { category, ...rest } = filter;
+    const repoMetas = await this.repo.listAnchors({
+      ...rest,
+      category: category as AnchorCategory | undefined,
+    });
+
+    if (category) {
+      return repoMetas;
+    }
+
+    return [...built, ...repoMetas];
+  }
+
   listAnchors(filter?: {
     project?: string;
     tag?: string;
     since?: string;
-    category?: AnchorCategory;
+    category?: DiscoveryCategory;
     includeArchive?: boolean;
     runtime?: string;
   }): Promise<AnchorMeta[]> {
-    return this.repo.listAnchors(filter);
+    return this.mergeDiscoveryAnchors(filter);
   }
 
-  readAnchor(name: string, version?: string): Promise<AnchorRead> {
+  async readAnchor(name: string, version?: string): Promise<AnchorRead> {
+    const built = readBuiltInAnchor(name);
+    if (built) {
+      if (version && version !== "latest") {
+        throw new Error("Built-in policy anchors only support the latest revision.");
+      }
+      return built;
+    }
     return this.repo.readAnchor(name, version);
   }
 
   readAnchorBatch(names: string[]): Promise<AnchorRead[]> {
-    return this.repo.readAnchorBatch(names);
+    return Promise.all(names.map((name) => this.readAnchor(name)));
   }
 
   searchAnchors(query: string, scope?: string): Promise<SearchHit[]> {
@@ -77,14 +123,32 @@ export class AnchorService {
   }
 
   listVersions(name: string, limit?: number): Promise<AnchorVersion[]> {
+    if (isBuiltInAnchorName(name)) {
+      return Promise.resolve([]);
+    }
     return this.repo.listVersions(name, limit);
   }
 
   diffAnchor(name: string, fromVersion: string, toVersion: string): Promise<string> {
+    if (isBuiltInAnchorName(name)) {
+      return Promise.resolve("");
+    }
     return this.repo.diffAnchor(name, fromVersion, toVersion);
   }
 
   async writeAnchor(input: WriteAnchorInput): Promise<WriteAnchorResult> {
+    if (isBuiltInAnchorName(input.name)) {
+      return {
+        warnings: [
+          {
+            severity: "BLOCK",
+            code: "reserved_builtin",
+            message: "Built-in server policy anchors cannot be edited through writeAnchor.",
+          },
+        ],
+        requiresApproval: false,
+      };
+    }
     const resolved = this.repo.resolveAnchor(input.name);
     if (input.expectedFileCommit) {
       const current = await this.repo.lastCommitForFile(resolved.repoRelativePath);
@@ -143,6 +207,17 @@ export class AnchorService {
     coAuthor?: string;
     expectedFileCommit?: string;
   }): Promise<WriteAnchorResult> {
+    if (isBuiltInAnchorName(input.name)) {
+      return {
+        warnings: [
+          {
+            severity: "BLOCK",
+            code: "reserved_builtin",
+            message: "Built-in server policy anchors cannot be edited.",
+          },
+        ],
+      };
+    }
     const oldContent = await this.repo.readRaw(input.name);
     if (oldContent === undefined) {
       return {
@@ -230,6 +305,17 @@ export class AnchorService {
     expectedFileCommit?: string;
     mutate: (oldContent: string) => string;
   }): Promise<WriteAnchorResult> {
+    if (isBuiltInAnchorName(input.name)) {
+      return {
+        warnings: [
+          {
+            severity: "BLOCK",
+            code: "reserved_builtin",
+            message: "Built-in server policy anchors cannot be edited.",
+          },
+        ],
+      };
+    }
     const oldContent = await this.repo.readRaw(input.name);
     if (oldContent === undefined) {
       return {
@@ -269,19 +355,22 @@ export class AnchorService {
   }
 
   async revertAnchor(name: string, toVersion: string, message?: string): Promise<{ newVersion?: string }> {
+    if (isBuiltInAnchorName(name)) {
+      return { newVersion: undefined };
+    }
     const newVersion = await this.repo.revertAnchor(name, toVersion, message, this.options.pushOnWrite);
     return { newVersion };
   }
 
   async contextRoot(input: {
     project?: string;
-    category?: AnchorCategory;
+    category?: DiscoveryCategory;
     tag?: string;
     runtime?: string;
     includeArchive?: boolean;
     format?: ContextRootFormat;
   } = {}): Promise<ContextRootResult> {
-    const anchors = await this.repo.listAnchors({
+    const anchors = await this.mergeDiscoveryAnchors({
       project: input.project,
       category: input.category,
       tag: input.tag,
@@ -323,16 +412,16 @@ export class AnchorService {
       if (selectionReason === "explicit_names") {
         orderedNames = decoded.explicitNames ?? [];
       } else {
-        const metas = await this.repo.listAnchors(filter);
+        const metas = await this.mergeDiscoveryAnchors(filter);
         const ordered = buildContextRoot(metas, { format: "json" });
         orderedNames = ordered.entries.map((entry) => entry.name);
       }
     } else if (input.names && input.names.length > 0) {
       selectionReason = "explicit_names";
-      orderedNames = dedupePreserveOrder(input.names.map((name) => this.repo.resolveAnchor(name).name));
+      orderedNames = dedupePreserveOrder(input.names.map((name) => this.resolveDiscoveryAnchorName(name)));
     } else {
       selectionReason = "filter";
-      const metas = await this.repo.listAnchors(filter);
+      const metas = await this.mergeDiscoveryAnchors(filter);
       const ordered = buildContextRoot(metas, { format: "json" });
       orderedNames = ordered.entries.map((entry) => entry.name);
     }
@@ -341,11 +430,11 @@ export class AnchorService {
 
     let entriesMetas: AnchorMeta[];
     if (selectionReason === "explicit_names") {
-      const all = await this.repo.listAnchors({});
+      const all = await this.mergeDiscoveryAnchors({});
       const byName = new Map(all.map((meta) => [meta.name, meta]));
       entriesMetas = orderedNames.map((name) => byName.get(name)).filter((meta): meta is AnchorMeta => Boolean(meta));
     } else {
-      entriesMetas = await this.repo.listAnchors(filter);
+      entriesMetas = await this.mergeDiscoveryAnchors(filter);
     }
 
     const root = buildContextRoot(entriesMetas, { format });
@@ -412,18 +501,30 @@ export class AnchorService {
 
   async planContextBundle(input: PlanContextBundleInput): Promise<PlanContextBundleResult> {
     const anchors = await this.repo.listAnchors({
-      category: input.category,
+      category:
+        input.category && input.category !== SERVER_RULES_DISCOVERY_CATEGORY
+          ? (input.category as AnchorCategory)
+          : undefined,
       tag: input.tag,
       runtime: input.runtime,
       includeArchive: input.includeArchive,
     });
 
-    return buildContextBundlePlan(anchors, input);
+    const plan = buildContextBundlePlan(anchors, input);
+    const builtNames = listBuiltInAnchorMetas().map((meta) => meta.name);
+    const names = [...builtNames.filter((name) => !plan.loadContext.names.includes(name)), ...plan.loadContext.names];
+    const roadmapSignals = collectRoadmapAcceptanceMissingSignals(anchors);
+
+    return {
+      ...plan,
+      missingContext: [...plan.missingContext, ...roadmapSignals],
+      loadContext: { ...plan.loadContext, names },
+    };
   }
 
   async writeContextRoot(input: {
     project?: string;
-    category?: AnchorCategory;
+    category?: DiscoveryCategory;
     tag?: string;
     runtime?: string;
     includeArchive?: boolean;

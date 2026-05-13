@@ -4,7 +4,7 @@ import type {
   PlanContextBundleItem,
   PlanContextBundleResult,
 } from "./types.js";
-import { ANCHOR_CATEGORIES } from "./taxonomy.js";
+import { discoveryCategoryIndex } from "./taxonomy.js";
 
 const DEFAULT_BUDGET_TOKENS = 4000;
 const DEFAULT_MAX_ANCHORS = 12;
@@ -226,6 +226,21 @@ function buildMissingContextSignals(params: {
   return signals;
 }
 
+/** Extra missing-context lines when project roadmaps lack per-goal acceptance criteria. */
+export function collectRoadmapAcceptanceMissingSignals(anchors: AnchorMeta[]): string[] {
+  const out: string[] = [];
+  for (const anchor of anchors) {
+    const ac = anchor.acceptanceCriteria;
+    if (!ac || ac.goalsMissingCriteria.length === 0) {
+      continue;
+    }
+    out.push(
+      `Roadmap "${anchor.name}" has goal(s) without #### Acceptance Criteria under ## Goals: ${ac.goalsMissingCriteria.join("; ")}.`,
+    );
+  }
+  return out;
+}
+
 function estimateAnchorTokens(anchor: AnchorMeta): number {
   const metadataText = [
     anchor.name,
@@ -249,7 +264,7 @@ function compareScoredAnchors(left: ScoredAnchor, right: ScoredAnchor): number {
     return left.projectMatches ? -1 : 1;
   }
 
-  const categoryDelta = ANCHOR_CATEGORIES.indexOf(left.category) - ANCHOR_CATEGORIES.indexOf(right.category);
+  const categoryDelta = discoveryCategoryIndex(left.category) - discoveryCategoryIndex(right.category);
   if (categoryDelta !== 0) {
     return categoryDelta;
   }
