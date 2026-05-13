@@ -6,7 +6,7 @@
 
 - Phase 0 storage support: point the server at a private git repo, or run `scripts/anchor-context-sync.sh` for basic add/commit/pull/push sync without MCP.
 - Phase 1 read-only MCP tools: `listAnchors`, `readAnchor`, `readAnchorBatch`, `loadContext`, `planContextBundle`, `listMilestones`, `readMilestone`, `getRelated`, `searchAnchors`, and `listVersions`.
-- Phase 2 write tools and validators: `writeAnchor`, `updateAnchorFrontmatter`, `updateAnchorSection`, `appendToAnchorSection`, `deleteAnchorSection`, `migrateRoadmapGoalIds`, `diffAnchor`, `revertAnchor`, `compactionReport`, `contextRoot`, `writeContextRoot`, and `conflictStatus`.
+- Phase 2 write tools and validators: `writeAnchor`, `deleteAnchor`, `renameAnchor`, `updateAnchorFrontmatter`, `updateAnchorSection`, `appendToAnchorSection`, `deleteAnchorSection`, `migrateRoadmapGoalIds`, `diffAnchor`, `revertAnchor`, `compactionReport`, `contextRoot`, `writeContextRoot`, and `conflictStatus`.
 - Phase 3 transport support: stdio for local tools and Streamable HTTP/SSE for remote or containerized agents.
 
 ## Install
@@ -51,6 +51,8 @@ node dist/bin/anchor-mcp.js --repo ~/agent-context
 ```
 
 ## Storage Layout
+
+> **Important:** Create the anchor context repository in a **separate git repository** from the one where you do your everyday work. Agents often get confused when the same anchors are reachable both as normal workspace files and through this MCP server, which can lead to duplicated or conflicting edits across the two paths.
 
 By default, `--repo` points at the root of the anchor markdown tree:
 
@@ -162,10 +164,10 @@ Add a short rule under `.cursor/rules/` (or your global Cursor rules) so agents 
 
 ### Updating anchors when facts change
 
-The MCP server also ships session instructions (`src/server.ts`) telling agents to **write back** durable discoveries, not only answer in-thread:
+The MCP server also ships session instructions (`src/server.ts`) telling agents to **write back** durable discoveries, not only answer in-thread, and to **avoid editing anchor files under `--repo` directly on disk** (use MCP write tools so validation and server-side commits stay aligned):
 
 - **Facts** → map to `## Current State`, `## Decisions`, or `## Constraints`, bump `last_validated` when those sections change materially, and add PR rows under `## PRs` with link text `PR <title> - #<number>`.
-- **Approval** → changes to Decisions/Constraints (or removing bullets) require the same write tool (`writeAnchor` or a chunked write) with `approved: true` after explicit user confirmation.
+- **Approval** → changes to Decisions/Constraints (or removing bullets) require the same write tool (`writeAnchor` or a chunked write) with `approved: true` after explicit user confirmation. **`deleteAnchor` and `renameAnchor` always require `approved: true`** before the server will remove or move an anchor file.
 - **Roadmaps** → keep forward-looking specs and completed history in the project’s roadmap anchor when you use that pattern; heed write warnings for oversized roadmaps or `## Completed` tables and use `compactionReport` to plan cleanup.
 
 ### Authentication (optional)

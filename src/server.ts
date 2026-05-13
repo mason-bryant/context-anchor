@@ -60,6 +60,10 @@ Assistant: planContextBundle({ task: "Review the current branch" }) -> loadConte
 readAnchor(...) only for deeper detail -> only then git diff and start review.
 
 ## When writing anchors
+Do not edit anchor markdown in the server's \`--repo\` tree directly on disk (editor, patch tools, or shell). That \
+bypasses validators and the server's git commits, so MCP reads and the working tree can disagree. Use writeAnchor and \
+the partial-write tools for every anchor change.
+
 Writes may return BLOCK or WARN; do not ignore them. BLOCK rejects the write and must be fixed before retrying. WARN \
 succeeds but flags a quality issue to address.
 
@@ -69,6 +73,9 @@ They run the same validators and commits as writeAnchor. Pass expectedFileCommit
 optimistic concurrency across sessions.
 
 Use full writeAnchor when restructuring an entire anchor or when bulk-replacing the file is simpler.
+
+\`deleteAnchor\` and \`renameAnchor\` remove or move entire anchor files as git commits; they always require \
+\`approved: true\` after explicit user confirmation, independent of validator-driven approval on ordinary writes.
 
 ## When you discover new facts
 If work reveals durable truth (what shipped, decisions, limits), persist it with writeAnchor or the chunked write tools \
@@ -80,6 +87,16 @@ same-day substantive edits if the date is unchanged.
 
 Edits to Decisions or Constraints, or deleting existing bullets, need explicit human approval: retry the same write tool \
 with approved: true after the user confirms.
+
+## Before wrap-up (ask the human)
+When work looks ready to commit, merge, ship, or otherwise complete, use judgment and **prompt the user** whether to \
+update context anchors, milestones, roadmaps, or related docs with lessons from the session. Do not assume they noticed \
+every durable insight that belongs in persisted context.
+
+**Especially** offer that prompt when the chat produced lessons that could change future behavior, constraints, or \
+decisions, or when the user gave **non-trivial redirection** (scope changes, reversals, new requirements, or \
+corrections that would matter to the next person or agent). Skip the nudge for purely trivial or mechanical work unless \
+they explicitly asked for context hygiene.
 
 ## Roadmaps and maintenance
 Forward-looking work usually belongs in a companion roadmap anchor (same project slug) if your tree uses one: goals, \
@@ -289,6 +306,41 @@ the index when your workflow checks in that file.`,
     },
     async ({ name, content, message, approved, coAuthor, expectedFileCommit }) => {
       const result = await service.writeAnchor({ name, content, message, approved, coAuthor, expectedFileCommit });
+      return jsonResult(result, result.version ? false : true);
+    },
+  );
+
+  server.registerTool(
+    "deleteAnchor",
+    {
+      title: "Delete Anchor",
+      description:
+        "Remove an anchor markdown file from the working tree and record a git commit. Always requires approved: true after explicit user confirmation. Supports expectedFileCommit like writeAnchor.",
+      inputSchema: z.object({ name: z.string() }).extend(SharedWriteOptsSchema.shape),
+      annotations: { destructiveHint: true, idempotentHint: false },
+    },
+    async ({ name, message, approved, coAuthor, expectedFileCommit }) => {
+      const result = await service.deleteAnchor({ name, message, approved, coAuthor, expectedFileCommit });
+      return jsonResult(result, result.version ? false : true);
+    },
+  );
+
+  server.registerTool(
+    "renameAnchor",
+    {
+      title: "Rename Anchor",
+      description:
+        "Move an anchor to a new taxonomy-valid path using git mv. Always requires approved: true after explicit user confirmation. expectedFileCommit applies to the source anchor.",
+      inputSchema: z
+        .object({
+          from: z.string(),
+          to: z.string(),
+        })
+        .extend(SharedWriteOptsSchema.shape),
+      annotations: { destructiveHint: true, idempotentHint: false },
+    },
+    async ({ from, to, message, approved, coAuthor, expectedFileCommit }) => {
+      const result = await service.renameAnchor({ from, to, message, approved, coAuthor, expectedFileCommit });
       return jsonResult(result, result.version ? false : true);
     },
   );
