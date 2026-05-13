@@ -7,8 +7,19 @@ export type RoadmapAcceptanceCriteriaSummary = {
   activeGoals: number;
   goalsWithCriteria: number;
   goalsMissingCriteria: string[];
+  /** Goal ids (`G-###`) that are missing `#### Acceptance Criteria` (when headings use stable ids). */
+  goalsMissingCriteriaIds?: string[];
+  /** Goal titles whose `###` heading lacks `Goal G-### --` stable id form. */
+  goalsWithoutStableIds?: string[];
   hasProposedCriteria: boolean;
   criteriaViolations?: string[];
+};
+
+export type MilestonePlannerMeta = {
+  status: "proposed" | "active" | "shipped" | "cancelled";
+  theme: string;
+  steelThread?: string;
+  goalIds: string[];
 };
 
 export type AnchorMeta = {
@@ -30,6 +41,8 @@ export type AnchorMeta = {
   /** Package version when this built-in policy row was materialized. */
   policyVersion?: string;
   acceptanceCriteria?: RoadmapAcceptanceCriteriaSummary;
+  /** Present for `type: project-milestone` anchors when front matter is parseable. */
+  milestone?: MilestonePlannerMeta;
 };
 
 export type AnchorRead = {
@@ -109,6 +122,7 @@ export type ContextRootEntry = {
   origin?: "repo" | "built-in";
   policyVersion?: string;
   acceptanceCriteria?: RoadmapAcceptanceCriteriaSummary;
+  milestoneStatus?: string;
 };
 
 export type ContextRootResult = {

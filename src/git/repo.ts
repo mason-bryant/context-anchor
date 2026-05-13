@@ -7,11 +7,13 @@ import { AnchorParseCache } from "../storage/cache.js";
 import { analyzeRoadmapFromContent } from "../roadmap/analyzeRoadmap.js";
 import { parseAnchor } from "../storage/markdown.js";
 import { classifyAnchorPath, CONTEXT_ROOT_FILE, type AnchorCategory } from "../taxonomy.js";
+import { isProjectMilestoneType } from "../schema/milestoneTypes.js";
 import type {
   AnchorMeta,
   AnchorRead,
   AnchorVersion,
   ConflictStatus,
+  MilestonePlannerMeta,
   SearchHit,
 } from "../types.js";
 import { assertInside, normalizeRelative, toPosix } from "../utils/path.js";
@@ -133,10 +135,36 @@ export class AnchorRepository {
           activeGoals: analysis.activeGoals,
           goalsWithCriteria: analysis.goalsWithCriteria,
           goalsMissingCriteria: analysis.goalsMissingCriteria,
+          goalsMissingCriteriaIds:
+            (analysis.goalsMissingCriteriaIds?.length ?? 0) > 0 ? analysis.goalsMissingCriteriaIds : undefined,
+          goalsWithoutStableIds:
+            (analysis.goalsWithoutStableIds?.length ?? 0) > 0 ? analysis.goalsWithoutStableIds : undefined,
           hasProposedCriteria: analysis.hasProposedCriteria,
           criteriaViolations:
             analysis.criteriaViolations.length > 0 ? analysis.criteriaViolations : undefined,
         };
+      }
+
+      if (isProjectMilestoneType(parsed.frontmatter.type)) {
+        const status = parsed.frontmatter.status;
+        const theme = stringValue(parsed.frontmatter.theme);
+        const steelThread = parsed.frontmatter.steel_thread;
+        const rel = parsed.frontmatter.relations as { goal_ids?: unknown } | undefined;
+        const goalIds = Array.isArray(rel?.goal_ids)
+          ? rel!.goal_ids.filter((item): item is string => typeof item === "string")
+          : [];
+        if (
+          typeof status === "string" &&
+          ["proposed", "active", "shipped", "cancelled"].includes(status) &&
+          theme.length > 0
+        ) {
+          meta.milestone = {
+            status: status as MilestonePlannerMeta["status"],
+            theme,
+            steelThread: typeof steelThread === "string" && steelThread.length > 0 ? steelThread : undefined,
+            goalIds,
+          };
+        }
       }
 
       if (filter?.project && !frontmatterValueIncludes(meta.project, filter.project)) {

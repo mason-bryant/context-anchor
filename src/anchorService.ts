@@ -24,10 +24,16 @@ import {
   shrinkLoadContextAnchorToFit,
   toNextCursorPayload,
 } from "./loadContext.js";
-import { buildContextBundlePlan, collectRoadmapAcceptanceMissingSignals } from "./contextPlanner.js";
+import {
+  buildContextBundlePlan,
+  collectMilestoneAcceptanceMissingSignals,
+  collectRoadmapAcceptanceMissingSignals,
+} from "./contextPlanner.js";
 import type { AnchorRepository } from "./git/repo.js";
+import { listRoadmapGoalDetails } from "./roadmap/analyzeRoadmap.js";
+import { getRelatedAnchors } from "./relations/index.js";
 import { countCompletedRows, parseAnchor } from "./storage/markdown.js";
-import { SERVER_RULES_DISCOVERY_CATEGORY, type AnchorCategory, type DiscoveryCategory } from "./taxonomy.js";
+import { SERVER_RULES_DISCOVERY_CATEGORY, classifyAnchorPath, type AnchorCategory, type DiscoveryCategory } from "./taxonomy.js";
 import type {
   AnchorContentMode,
   AnchorMeta,
@@ -514,12 +520,73 @@ export class AnchorService {
     const builtNames = listBuiltInAnchorMetas().map((meta) => meta.name);
     const names = [...builtNames.filter((name) => !plan.loadContext.names.includes(name)), ...plan.loadContext.names];
     const roadmapSignals = collectRoadmapAcceptanceMissingSignals(anchors);
+    const milestoneSignals = collectMilestoneAcceptanceMissingSignals(anchors);
 
     return {
       ...plan,
-      missingContext: [...plan.missingContext, ...roadmapSignals],
+      missingContext: [...plan.missingContext, ...roadmapSignals, ...milestoneSignals],
       loadContext: { ...plan.loadContext, names },
     };
+  }
+
+  async listMilestones(project?: string): Promise<
+    Array<{ name: string; path: string; status: string; theme: string; goalIds: string[] }>
+  > {
+    const anchors = await this.repo.listAnchors({ project });
+    return anchors
+      .filter((anchor) => anchor.name.includes("/milestones/") && anchor.milestone)
+      .map((anchor) => ({
+        name: anchor.name,
+        path: anchor.path,
+        status: anchor.milestone!.status,
+        theme: anchor.milestone!.theme,
+        goalIds: anchor.milestone!.goalIds,
+      }));
+  }
+
+  async readMilestone(name: string): Promise<{
+    milestone: AnchorRead;
+    roadmap: AnchorRead | null;
+    goals: Array<{ id: string; title: string; hasAcceptanceCriteria: boolean }>;
+  }> {
+    const milestone = await this.readAnchor(name);
+    const classification = classifyAnchorPath(milestone.name);
+    const slug = classification.kind === "anchor" ? classification.projectSlug : undefined;
+    let roadmap: AnchorRead | null = null;
+    const goalMap = new Map<string, { title: string; hasAcceptanceCriteria: boolean }>();
+    if (slug) {
+      const roadmapName = `projects/${slug}/${slug}-roadmap.md`;
+      try {
+        roadmap = await this.readAnchor(roadmapName);
+        for (const row of listRoadmapGoalDetails(roadmap.content)) {
+          if (row.id) {
+            goalMap.set(row.id, { title: row.title, hasAcceptanceCriteria: row.hasAcceptanceCriteria });
+          }
+        }
+      } catch {
+        roadmap = null;
+      }
+    }
+
+    const rel = milestone.frontmatter.relations as { goal_ids?: unknown } | undefined;
+    const goalIds = Array.isArray(rel?.goal_ids)
+      ? rel.goal_ids.filter((item): item is string => typeof item === "string")
+      : [];
+
+    const goals = goalIds.map((id) => {
+      const row = goalMap.get(id);
+      return {
+        id,
+        title: row?.title ?? "(unknown)",
+        hasAcceptanceCriteria: row?.hasAcceptanceCriteria ?? false,
+      };
+    });
+
+    return { milestone, roadmap, goals };
+  }
+
+  getRelated(name: string, kind?: string): Promise<AnchorRead[]> {
+    return getRelatedAnchors(this.repo, name, kind);
   }
 
   async writeContextRoot(input: {

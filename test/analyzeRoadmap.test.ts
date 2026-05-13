@@ -51,7 +51,7 @@ c
     const r = analyzeRoadmapFromContent(md, { isProjectRoadmap: true });
     expect(r.activeGoals).toBe(2);
     expect(r.goalsMissingCriteria).toEqual(["Goal B"]);
-    expect(r.goalsWithCriteria).toBe(1);
+    expect(r.goalsWithoutStableIds).toEqual(["Goal A", "Goal B"]);
   });
 
   it("flags proposed checklist lines missing AC-P id", () => {

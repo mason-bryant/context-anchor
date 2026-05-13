@@ -1,5 +1,6 @@
 import * as z from "zod/v4";
 
+import { validateTypedFrontmatterOverlay } from "../schema/registry.js";
 import { parseAnchor } from "../storage/markdown.js";
 import { classifyAnchorPath } from "../taxonomy.js";
 import type { Validator } from "./types.js";
@@ -11,7 +12,7 @@ const LoadingInstruction = z.string().min(1).max(160);
 
 const AnchorFrontmatterSchema = z
   .object({
-    type: z.string().min(1),
+    type: z.union([z.string().min(1), z.array(z.string().min(1)).min(1)]),
     tags: z.array(z.string()),
     summary: z.string().min(1).max(240),
     read_this_if: z.array(LoadingInstruction).min(1).max(5),
@@ -50,6 +51,12 @@ export const validateFrontMatter: Validator = (context) => {
         );
       }
     }
+
+    violations.push(
+      ...validateTypedFrontmatterOverlay(parsed.frontmatter as Record<string, unknown>).map((issue) =>
+        maybeMigrationBlock(context, issue.code, issue.message),
+      ),
+    );
 
     return violations;
   }

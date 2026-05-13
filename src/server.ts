@@ -186,6 +186,49 @@ the index when your workflow checks in that file.`,
   );
 
   server.registerTool(
+    "listMilestones",
+    {
+      title: "List Milestones",
+      description:
+        "List `type: project-milestone` anchors under `projects/<slug>/milestones/` with status, theme, and referenced goal ids.",
+      inputSchema: z.object({
+        project: z.string().optional(),
+      }),
+      annotations: { readOnlyHint: true },
+    },
+    async (input) => jsonResult({ milestones: await service.listMilestones(input.project) }),
+  );
+
+  server.registerTool(
+    "readMilestone",
+    {
+      title: "Read Milestone",
+      description:
+        "Read one milestone anchor plus resolved roadmap goals referenced by `relations.goal_ids` (from the sibling `<slug>-roadmap.md`).",
+      inputSchema: z.object({
+        name: z.string(),
+      }),
+      annotations: { readOnlyHint: true },
+    },
+    async ({ name }) => jsonResult(await service.readMilestone(name)),
+  );
+
+  server.registerTool(
+    "getRelated",
+    {
+      title: "Get Related Anchors",
+      description:
+        "Follow `relations` front matter on an anchor. For `project-milestone` anchors, `goal_ids` resolves to the sibling project roadmap anchor.",
+      inputSchema: z.object({
+        name: z.string(),
+        kind: z.string().optional(),
+      }),
+      annotations: { readOnlyHint: true },
+    },
+    async ({ name, kind }) => jsonResult({ anchors: await service.getRelated(name, kind) }),
+  );
+
+  server.registerTool(
     "searchAnchors",
     {
       title: "Search Anchors",

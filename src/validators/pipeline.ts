@@ -12,6 +12,9 @@ import {
   validatePolicyWeakeningActiveWarn,
   validateRoadmapAcceptanceShape,
 } from "./roadmapAcceptanceShape.js";
+import { validateMilestoneGoalRefs } from "./milestoneGoalRefs.js";
+import { validateRelationsShape } from "./relations.js";
+import { validateRoadmapGoalIdsForMilestones } from "./roadmapGoalIdsForMilestones.js";
 import { validateSectionShape } from "./sectionShape.js";
 import { validateTrackedLinkLeak } from "./trackedLinkLeak.js";
 import type { ValidationContext, Validator } from "./types.js";
@@ -26,6 +29,9 @@ const VALIDATORS: Validator[] = [
   validateApprovalGate,
   validateAcceptanceCriteriaWriteGate,
   validateRoadmapAcceptanceShape,
+  validateRelationsShape,
+  validateRoadmapGoalIdsForMilestones,
+  validateMilestoneGoalRefs,
   validateNonDestructive,
   validateCompactionThresholds,
   validatePolicyWeakeningActiveWarn,

@@ -38,7 +38,7 @@ are invisible to reads and blocked on writes.
 **Depth rules:**
 
 - Non-`projects` anchors: exactly one level deep — `<category>/<file>.md`. No subdirectories.
-- Project anchors: exactly three parts — `projects/<project-slug>/<file>.md`.
+- Project anchors: either `projects/<project-slug>/<file>.md` **or** `projects/<project-slug>/milestones/<file>.md` for milestone anchors (`type: project-milestone`). No other nested directories under `projects/<slug>/` are allowed.
 - `CONTEXT-ROOT.md` at the repo root is reserved and generated automatically. Do not move it.
 
 **How to find invalid paths:**

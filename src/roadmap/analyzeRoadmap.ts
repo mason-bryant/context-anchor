@@ -130,6 +130,8 @@ export function analyzeRoadmapFromContent(markdown: string, options: { isProject
       activeGoals: 0,
       goalsWithCriteria: 0,
       goalsMissingCriteria: [],
+      goalsMissingCriteriaIds: [],
+      goalsWithoutStableIds: [],
       hasProposedCriteria: false,
       criteriaViolations: violations,
     };
@@ -137,15 +139,24 @@ export function analyzeRoadmapFromContent(markdown: string, options: { isProject
 
   const goals = extractGoalsUnderRegion(goalsRegion);
   const goalsMissingCriteria: string[] = [];
+  const goalsMissingCriteriaIds: string[] = [];
+  const goalsWithoutStableIds: string[] = [];
   let goalsWithCriteria = 0;
   let hasProposedCriteria = false;
 
   for (const goal of goals) {
+    if (!goal.id) {
+      goalsWithoutStableIds.push(goal.title);
+    }
+
     const acBlock = findChildHeadingBlock(goal.bodyLines, 4, "Acceptance Criteria", {
       stopAtSameLevelSibling: false,
     });
     if (!acBlock) {
       goalsMissingCriteria.push(goal.title);
+      if (goal.id) {
+        goalsMissingCriteriaIds.push(goal.id);
+      }
       continue;
     }
     goalsWithCriteria += 1;
@@ -189,6 +200,8 @@ export function analyzeRoadmapFromContent(markdown: string, options: { isProject
     activeGoals: goals.length,
     goalsWithCriteria,
     goalsMissingCriteria,
+    goalsMissingCriteriaIds,
+    goalsWithoutStableIds,
     hasProposedCriteria,
     criteriaViolations: violations,
   };
@@ -249,7 +262,35 @@ function extractGoalsRegion(body: string): string | undefined {
   return undefined;
 }
 
-type GoalBlock = { title: string; bodyLines: string[] };
+export function listRoadmapGoalDetails(markdown: string): Array<{
+  id?: string;
+  title: string;
+  hasAcceptanceCriteria: boolean;
+}> {
+  const body = parseAnchor(markdown).body;
+  const goalsRegion = extractGoalsRegion(body);
+  if (!goalsRegion) {
+    return [];
+  }
+
+  const goals = extractGoalsUnderRegion(goalsRegion);
+  return goals.map((goal) => ({
+    id: goal.id,
+    title: goal.title,
+    hasAcceptanceCriteria: Boolean(
+      findChildHeadingBlock(goal.bodyLines, 4, "Acceptance Criteria", {
+        stopAtSameLevelSibling: false,
+      }),
+    ),
+  }));
+}
+
+type GoalBlock = { title: string; id?: string; bodyLines: string[] };
+
+export function parseStableGoalIdFromHeading(title: string): string | undefined {
+  const m = title.match(/^Goal\s+(G-\d+)\s+--\s+/i);
+  return m?.[1];
+}
 
 function extractGoalsUnderRegion(regionBody: string): GoalBlock[] {
   const lines = regionBody.split(/\r?\n/);
@@ -301,7 +342,8 @@ function extractGoalsUnderRegion(regionBody: string): GoalBlock[] {
         bodyLines.push(inner);
         i += 1;
       }
-      goals.push({ title, bodyLines });
+      const id = parseStableGoalIdFromHeading(title);
+      goals.push({ title, id, bodyLines });
       continue;
     }
     i += 1;
