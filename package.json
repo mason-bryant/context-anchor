@@ -25,6 +25,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
+    "install-git-hooks": "git config core.hooksPath githooks",
     "test": "vitest run",
     "dev:stdio": "tsx src/bin/anchor-mcp.ts --repo ./fixtures/demo-context",
     "dev:http": "tsx src/bin/anchor-mcp.ts --repo ./fixtures/demo-context --transport http --port 3333",

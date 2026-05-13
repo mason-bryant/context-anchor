@@ -1,7 +1,6 @@
 import { isBuiltInAnchorName } from "../builtin/serverPolicy.js";
 import type { AnchorRepository } from "../git/repo.js";
 import { normalizedMilestoneId, normalizedSequenceFromFm } from "../milestoneFrontmatter.js";
-import { normalizedMilestoneId, normalizedSequenceFromFm } from "../milestoneFrontmatter.js";
 import { isProjectMilestoneType } from "../schema/milestoneTypes.js";
 import { parseAnchor } from "../storage/markdown.js";
 import { classifyAnchorPath } from "../taxonomy.js";
