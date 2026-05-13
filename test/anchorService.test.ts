@@ -537,6 +537,17 @@ None.
     expect(result.warnings.map((w) => w.code)).toContain("required_section");
   });
 
+  it("readAnchor returns parsed YAML front matter for built-in policy anchors", async () => {
+    const read = await service.readAnchor("server-rules/milestone-usage");
+    expect(read.frontmatter.type).toBe("agent-roles");
+    expect(typeof read.frontmatter.summary).toBe("string");
+    expect((read.frontmatter.summary as string).length).toBeGreaterThan(0);
+    expect(Array.isArray(read.frontmatter.read_this_if)).toBe(true);
+    expect((read.frontmatter.read_this_if as string[]).length).toBeGreaterThan(0);
+    const last = read.frontmatter.last_validated;
+    expect(last === "2026-05-13" || (last instanceof Date && last.toISOString().startsWith("2026-05-13"))).toBe(true);
+  });
+
   it("blocks writes to built-in policy anchors", async () => {
     const read = await service.readAnchor("server-rules/acceptance-criteria");
     const res = await service.writeAnchor({ name: read.name, content: read.content });

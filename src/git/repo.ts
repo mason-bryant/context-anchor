@@ -7,6 +7,7 @@ import { AnchorParseCache } from "../storage/cache.js";
 import { analyzeRoadmapFromContent } from "../roadmap/analyzeRoadmap.js";
 import { parseAnchor } from "../storage/markdown.js";
 import { classifyAnchorPath, CONTEXT_ROOT_FILE, type AnchorCategory } from "../taxonomy.js";
+import { normalizedMilestoneId, normalizedSequenceFromFm } from "../milestoneFrontmatter.js";
 import { isProjectMilestoneType } from "../schema/milestoneTypes.js";
 import type {
   AnchorMeta,
@@ -155,19 +156,8 @@ export class AnchorRepository {
         const goalIds = Array.isArray(rel?.goal_ids)
           ? rel!.goal_ids.filter((item): item is string => typeof item === "string")
           : [];
-        const milestoneIdRaw = parsed.frontmatter.milestone_id;
-        const milestoneId =
-          typeof milestoneIdRaw === "string" && milestoneIdRaw.length > 0 ? milestoneIdRaw : undefined;
-        const seqRaw = parsed.frontmatter.sequence;
-        let sequence: number | undefined;
-        if (typeof seqRaw === "number" && Number.isInteger(seqRaw) && seqRaw > 0) {
-          sequence = seqRaw;
-        } else if (typeof seqRaw === "string" && /^\d+$/.test(seqRaw)) {
-          const n = parseInt(seqRaw, 10);
-          if (Number.isInteger(n) && n > 0) {
-            sequence = n;
-          }
-        }
+        const milestoneId = normalizedMilestoneId(parsed.frontmatter.milestone_id);
+        const sequence = normalizedSequenceFromFm(parsed.frontmatter);
         if (
           typeof status === "string" &&
           ["proposed", "active", "shipped", "cancelled"].includes(status) &&

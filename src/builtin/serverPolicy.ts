@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { parseAnchor } from "../storage/markdown.js";
 import type { AnchorMeta, AnchorRead } from "../types.js";
 import { SERVER_RULES_DISCOVERY_CATEGORY } from "../taxonomy.js";
 
@@ -181,11 +182,12 @@ export function readBuiltInAnchor(name: string): AnchorRead | undefined {
   }
   const canonical = canonicalBuiltInAnchorName(name);
   const content = canonical === MILESTONE_USAGE_NAME ? MILESTONE_USAGE_BODY : ACCEPTANCE_CRITERIA_BODY;
+  const { frontmatter } = parseAnchor(content);
   return {
     name: canonical,
     path: canonical,
     content,
-    frontmatter: {},
+    frontmatter,
     version: `builtin@${POLICY_VERSION}`,
   };
 }

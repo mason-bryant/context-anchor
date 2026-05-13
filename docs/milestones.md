@@ -46,10 +46,12 @@ CallMcpTool(
   toolName="writeAnchor",
   arguments={
     "name": "projects/your-slug/milestones/your-milestone.md",
-    "content": "---\nproject:\n  - your-slug\ntype: project-milestone\ntags:\n  - milestone\nsummary: \"One sentence describing what this milestone delivers.\"\nread_this_if:\n  - \"You are planning work in <theme area>.\"\nlast_validated: 2026-05-12\nschema_version: 1\nmilestone_id: M1\nsequence: 1\ntheme: \"Short theme label\"\nsteel_thread: \"One sentence: the single outcome that makes this milestone coherent.\"\nstatus: proposed\nrelations:\n  goal_ids:\n    - G-001\n    - G-004\n---\n\n# Milestone -- <Name>\n\n## Current State\n\n- Not yet started.\n\n## Decisions\n\n- (Scope and sequencing decisions go here.)\n\n## Constraints\n\n- (Hard limits that shape this milestone.)\n\n## PRs\n\nNone.\n"
+    "content": "---\nproject:\n  - your-slug\ntype: project-milestone\ntags:\n  - milestone\nsummary: \"One sentence describing what this milestone delivers.\"\nread_this_if:\n  - \"You are planning work in <theme area>.\"\nlast_validated: 2026-05-12\nschema_version: 1\ntheme: \"Short theme label\"\nsteel_thread: \"One sentence: the single outcome that makes this milestone coherent.\"\nstatus: proposed\nrelations:\n  goal_ids:\n    - G-001\n    - G-004\n---\n\n# Milestone -- <Name>\n\n## Current State\n\n- Not yet started.\n\n## Decisions\n\n- (Scope and sequencing decisions go here.)\n\n## Constraints\n\n- (Hard limits that shape this milestone.)\n\n## PRs\n\nNone.\n"
   }
 )
 ```
+
+For your **first** milestone in a project, omit `milestone_id` and `sequence` so the template does not collide with a second milestone. When you add ordering or another milestone, set `milestone_id` (for example `M1`, `M2`, or `backlog`) and `sequence` via `updateAnchorFrontmatter` or a follow-up `writeAnchor`, as described under **Milestone ordering and backlog**.
 
 ### Required front-matter fields
 
