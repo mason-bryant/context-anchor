@@ -9,6 +9,14 @@ export const ANCHOR_CATEGORIES = [
   "archive",
 ] as const;
 
+/** Allowed subdirectories under `projects/<slug>/` (four path segments total). */
+export const PROJECT_RESERVED_SUBDIRS = ["milestones"] as const;
+export type ProjectReservedSubdir = (typeof PROJECT_RESERVED_SUBDIRS)[number];
+
+export function isProjectReservedSubdir(name: string): name is ProjectReservedSubdir {
+  return (PROJECT_RESERVED_SUBDIRS as readonly string[]).includes(name);
+}
+
 export type AnchorCategory = (typeof ANCHOR_CATEGORIES)[number];
 
 /** Synthetic discovery-only category for built-in MCP policy (not a repo directory). */
@@ -78,11 +86,26 @@ export function classifyAnchorPath(input: string): AnchorClassification {
       return { kind: "invalid", reason: "Project anchors must live under projects/<project-slug>/." };
     }
 
-    if (parts.length !== 3) {
-      return { kind: "invalid", reason: "Project anchors must use projects/<project-slug>/<anchor>.md." };
+    if (parts.length === 3) {
+      return { kind: "anchor", category: topLevel, projectSlug };
     }
 
-    return { kind: "anchor", category: topLevel, projectSlug };
+    if (parts.length === 4) {
+      const subdir = parts[2];
+      const file = parts[3];
+      if (!subdir || !file) {
+        return { kind: "invalid", reason: "Project anchors must use projects/<project-slug>/<anchor>.md." };
+      }
+      if (!isProjectReservedSubdir(subdir)) {
+        return {
+          kind: "invalid",
+          reason: `Unknown projects subdirectory "${subdir}". Allowed: ${PROJECT_RESERVED_SUBDIRS.join(", ")}.`,
+        };
+      }
+      return { kind: "anchor", category: topLevel, projectSlug };
+    }
+
+    return { kind: "invalid", reason: "Project anchors must use projects/<project-slug>/<anchor>.md or projects/<project-slug>/<subdir>/<anchor>.md for allowed subdirs." };
   }
 
   if (parts.length !== 2) {

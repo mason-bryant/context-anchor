@@ -21,6 +21,11 @@ describe("taxonomy", () => {
   it("rejects root-level and unknown-directory anchors", () => {
     expect(classifyAnchorPath("demo.md")).toMatchObject({ kind: "invalid" });
     expect(classifyAnchorPath("unknown/demo.md")).toMatchObject({ kind: "invalid" });
+    expect(classifyAnchorPath("projects/demo/milestones/m1.md")).toEqual({
+      kind: "anchor",
+      category: "projects",
+      projectSlug: "demo",
+    });
     expect(classifyAnchorPath("projects/demo/nested/extra.md")).toMatchObject({ kind: "invalid" });
     expect(classifyAnchorPath("CONTEXT-ROOT.md")).toEqual({ kind: "generated" });
   });
