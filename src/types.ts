@@ -22,6 +22,10 @@ export type MilestonePlannerMeta = {
   theme: string;
   steelThread?: string;
   goalIds: string[];
+  /** Stable milestone slug: `M` + digits, or `backlog`. */
+  milestoneId?: string;
+  /** Ordering within a project; display label is `M${sequence}` when set. */
+  sequence?: number;
 };
 
 export type AnchorMeta = {

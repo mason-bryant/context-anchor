@@ -46,7 +46,7 @@ CallMcpTool(
   toolName="writeAnchor",
   arguments={
     "name": "projects/your-slug/milestones/your-milestone.md",
-    "content": "---\nproject:\n  - your-slug\ntype: project-milestone\ntags:\n  - milestone\nsummary: \"One sentence describing what this milestone delivers.\"\nread_this_if:\n  - \"You are planning work in <theme area>.\"\nlast_validated: 2026-05-12\nschema_version: 1\ntheme: \"Short theme label\"\nsteel_thread: \"One sentence: the single outcome that makes this milestone coherent.\"\nstatus: proposed\nrelations:\n  goal_ids:\n    - G-001\n    - G-004\n---\n\n# Milestone -- <Name>\n\n## Current State\n\n- Not yet started.\n\n## Decisions\n\n- (Scope and sequencing decisions go here.)\n\n## Constraints\n\n- (Hard limits that shape this milestone.)\n\n## PRs\n\nNone.\n"
+    "content": "---\nproject:\n  - your-slug\ntype: project-milestone\ntags:\n  - milestone\nsummary: \"One sentence describing what this milestone delivers.\"\nread_this_if:\n  - \"You are planning work in <theme area>.\"\nlast_validated: 2026-05-12\nschema_version: 1\nmilestone_id: M1\nsequence: 1\ntheme: \"Short theme label\"\nsteel_thread: \"One sentence: the single outcome that makes this milestone coherent.\"\nstatus: proposed\nrelations:\n  goal_ids:\n    - G-001\n    - G-004\n---\n\n# Milestone -- <Name>\n\n## Current State\n\n- Not yet started.\n\n## Decisions\n\n- (Scope and sequencing decisions go here.)\n\n## Constraints\n\n- (Hard limits that shape this milestone.)\n\n## PRs\n\nNone.\n"
   }
 )
 ```
@@ -56,6 +56,8 @@ CallMcpTool(
 | Field | Type | Description |
 |---|---|---|
 | `schema_version` | `1` | Must be exactly `1` |
+| `milestone_id` | `M` + digits (e.g. `M1`, `M2`) or `backlog` | Optional. Stable slug per milestone; `backlog` is the holding bucket for goals not yet scheduled (at most one per project when using ids). |
+| `sequence` | positive integer | Optional. Required when `milestone_id` is set and not `backlog`. Must be unique per project among milestones that set `milestone_id`. Drives sort order in `listMilestones`; display label is `M<sequence>`. |
 | `theme` | string (1–480 chars) | Short label; matched against task terms by the planner |
 | `steel_thread` | string (1–480 chars) | Optional. The unifying outcome for this milestone |
 | `status` | `proposed` \| `active` \| `shipped` \| `cancelled` | `active` gets the strongest planner boost |
@@ -87,6 +89,24 @@ proposed → active → shipped
 When a milestone ships, set `status: shipped` and record the date in `## Current State`
 using `updateAnchorSection`. Then move the corresponding goal entries in the roadmap's
 `## Completed` table using `updateAnchorSection` on the roadmap anchor.
+
+## Milestone ordering and backlog
+
+- **`milestone_id` + `sequence`:** Use a stable `milestone_id` such as `M1`, `M2`, and a
+  matching `sequence` (`1`, `2`, …) so reordering work does not require renaming files.
+  `listMilestones` returns a derived **`displayId`**: `M<sequence>` for sequenced milestones,
+  or `backlog` when `milestone_id: backlog`.
+- **Backlog:** One anchor with `milestone_id: backlog` (no `sequence`) holds goals that
+  are not yet placed in a sequenced milestone. The server blocks a second backlog in the
+  same project.
+- **Reordering:** Call `updateAnchorFrontmatter` on the affected milestone anchors to
+  change `sequence` (and `milestone_id` if you rename slugs). Duplicate `sequence` or
+  `milestone_id` values in the same project are rejected at write time.
+- **Agent guidance:** Built-in `server-rules/milestone-usage.md` (surfaced with other
+  `server-rules/*` policy in `contextRoot` / `loadContext`) describes how to assign goals
+  to milestones, preserve ordering sense, and avoid putting goals in an early milestone
+  when they implicitly depend on work you only placed in a later one. There is no
+  encoded goal-to-goal dependency graph; infer dependencies from roadmap prose and ACs.
 
 ## MCP tools
 
@@ -121,8 +141,9 @@ CallMcpTool(
 
 ### `listMilestones`
 
-Lists all milestone anchors for a project, with `status`, `theme`, and `goalIds` for
-each:
+Lists milestone anchors for a project, including optional `milestoneId`, `sequence`, and
+derived `displayId`, sorted by `sequence` ascending with backlog and unsequenced milestones
+last:
 
 ```json
 CallMcpTool(
@@ -187,7 +208,9 @@ term"` when the boost fires.
 
 | Code | Trigger | Severity |
 |---|---|---|
-| `front_matter_typed_schema` | `schema_version`, `theme`, `status`, or `relations.goal_ids` fail the milestone Zod schema | BLOCK |
+| `milestone_duplicate_id` | The same `milestone_id` (including `backlog`) is already used by another milestone in the project | BLOCK |
+| `milestone_duplicate_sequence` | The same `sequence` is already used by another milestone in the project (when `milestone_id` is set on the write) | BLOCK |
+| `front_matter_typed_schema` | Typed overlay fails (e.g. `sequence` missing when `milestone_id` is not `backlog`, or `sequence` present for `backlog`) | BLOCK |
 | `milestone_goal_unknown` | A `goal_ids` entry has no matching `### Goal G-<digits>` heading in the sibling roadmap | BLOCK |
 | `milestone_goal_missing_ac` | A referenced goal exists but has no `#### Acceptance Criteria` section | WARN |
 | `milestone_roadmap_missing` | No roadmap file found under `projects/<slug>/` | BLOCK |
@@ -207,7 +230,8 @@ The `context-conductor` project itself uses this pattern. After upgrading:
   `G-003` with acceptance criteria
 - `projects/context-conductor/milestones/steel-thread-v1.md` — groups `G-003`
   (milestones typed schemas and anchor relations) under the theme
-  `"Milestones typed schemas relations planner CONTEXT-ROOT"`, status `active`
+  `"Milestones typed schemas relations planner CONTEXT-ROOT"`, status `active`,
+  with `milestone_id: M1` and `sequence: 1`
 
 Call `readMilestone` to see a fully-resolved response with both goals confirmed:
 

@@ -6,6 +6,7 @@ import type { AnchorMeta, AnchorRead } from "../types.js";
 import { SERVER_RULES_DISCOVERY_CATEGORY } from "../taxonomy.js";
 
 export const ACCEPTANCE_CRITERIA_NAME = "server-rules/acceptance-criteria.md";
+export const MILESTONE_USAGE_NAME = "server-rules/milestone-usage.md";
 
 function readPackageVersion(): string {
   try {
@@ -78,13 +79,59 @@ Acceptance criteria:
 \`\`\`
 `;
 
+const MILESTONE_USAGE_BODY = `---
+type: agent-roles
+tags:
+  - anchor-mcp
+  - milestones
+  - server-policy
+summary: Built-in guidance for project milestones, ordering, backlog placement, and avoiding inconsistent goal sequencing.
+read_this_if:
+  - Creating, updating, listing, or reading project milestones.
+  - Assigning roadmap goals to milestones or reordering planned delivery.
+  - Planning or implementing work when the project uses type project-milestone anchors.
+last_validated: 2026-05-13
+---
+
+# Milestone usage (built-in policy)
+
+## Current State
+
+This file is **server-owned policy** materialized by anchor-mcp. Milestones live under \`projects/<slug>/milestones/\` as \`type: project-milestone\` anchors. Ordering is expressed with \`milestone_id\` (stable slug: \`M1\`, \`M2\`, … or the reserved \`backlog\`) and \`sequence\` (positive integer; required when \`milestone_id\` is not \`backlog\`). The display label for a sequenced milestone is \`M<sequence>\` (e.g. sequence \`1\` → \`M1\`). Reordering is done by updating \`sequence\` (and \`milestone_id\` if you use \`M<n>\` slugs) via MCP writes — the server blocks duplicate \`milestone_id\` or \`sequence\` within a project.
+
+## Decisions
+
+- Every roadmap goal that is in scope for milestone planning should appear in exactly one milestone’s \`relations.goal_ids\`, or in the **backlog** milestone (\`milestone_id: backlog\`, no \`sequence\`) until it is scheduled.
+- Treat milestones as **ordered**: lower \`sequence\` is earlier planned delivery. When moving goals between milestones, preserve a coherent order (do not leave high-dependency work only in later milestones while claiming earlier milestones are independently shippable unless that is intentional).
+- There is **no machine-encoded goal-to-goal dependency graph** in v1. Infer dependencies from goal titles, acceptance criteria, and roadmap prose. Before assigning a goal to an earlier milestone (\`M1\`, lower \`sequence\`), sanity-check that it does not implicitly require completion of a goal you placed only in a **later** milestone.
+- Use \`listMilestones\` to see \`sequence\`, \`milestoneId\`, and \`displayId\`; use \`readMilestone\` to confirm \`goal_ids\` resolve to roadmap headings.
+
+## Constraints
+
+- Do not invent \`G-*\` goal ids in milestone \`goal_ids\`; they must match headings in the sibling \`<slug>-roadmap.md\` (use \`migrateRoadmapGoalIds\` when needed).
+- Only one \`milestone_id: backlog\` anchor per project is allowed once you adopt \`milestone_id\` on milestones (enforced by duplicate-id validation).
+
+## PRs
+
+None.
+`;
+
 export function getServerPolicyVersion(): string {
   return POLICY_VERSION;
 }
 
+/** Canonical \`.md\` path for a built-in anchor name (with or without extension). */
+export function canonicalBuiltInAnchorName(name: string): string {
+  const withMd = name.endsWith(".md") ? name : `${name}.md`;
+  if (withMd === MILESTONE_USAGE_NAME) {
+    return MILESTONE_USAGE_NAME;
+  }
+  return ACCEPTANCE_CRITERIA_NAME;
+}
+
 export function isBuiltInAnchorName(name: string): boolean {
   const normalized = name.endsWith(".md") ? name : `${name}.md`;
-  return normalized === ACCEPTANCE_CRITERIA_NAME;
+  return normalized === ACCEPTANCE_CRITERIA_NAME || normalized === MILESTONE_USAGE_NAME;
 }
 
 export function listBuiltInAnchorMetas(): AnchorMeta[] {
@@ -107,6 +154,24 @@ export function listBuiltInAnchorMetas(): AnchorMeta[] {
       origin: "built-in",
       policyVersion: POLICY_VERSION,
     },
+    {
+      name: MILESTONE_USAGE_NAME,
+      path: MILESTONE_USAGE_NAME,
+      category: SERVER_RULES_DISCOVERY_CATEGORY,
+      title: "Milestone usage policy",
+      summary:
+        "Guidance for milestone ordering, backlog milestones, assigning goals to milestones, and avoiding inconsistent sequencing.",
+      read_this_if: [
+        "Creating, updating, listing, or reading project milestones.",
+        "Assigning roadmap goals to milestones or reordering planned delivery.",
+        "Planning work when the project uses type project-milestone anchors.",
+      ],
+      type: "agent-roles",
+      tags: ["anchor-mcp", "server-policy", "milestones"],
+      last_validated: "2026-05-13",
+      origin: "built-in",
+      policyVersion: POLICY_VERSION,
+    },
   ];
 }
 
@@ -114,10 +179,11 @@ export function readBuiltInAnchor(name: string): AnchorRead | undefined {
   if (!isBuiltInAnchorName(name)) {
     return undefined;
   }
-  const content = ACCEPTANCE_CRITERIA_BODY;
+  const canonical = canonicalBuiltInAnchorName(name);
+  const content = canonical === MILESTONE_USAGE_NAME ? MILESTONE_USAGE_BODY : ACCEPTANCE_CRITERIA_BODY;
   return {
-    name: ACCEPTANCE_CRITERIA_NAME,
-    path: ACCEPTANCE_CRITERIA_NAME,
+    name: canonical,
+    path: canonical,
     content,
     frontmatter: {},
     version: `builtin@${POLICY_VERSION}`,

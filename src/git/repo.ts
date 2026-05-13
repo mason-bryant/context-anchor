@@ -155,6 +155,19 @@ export class AnchorRepository {
         const goalIds = Array.isArray(rel?.goal_ids)
           ? rel!.goal_ids.filter((item): item is string => typeof item === "string")
           : [];
+        const milestoneIdRaw = parsed.frontmatter.milestone_id;
+        const milestoneId =
+          typeof milestoneIdRaw === "string" && milestoneIdRaw.length > 0 ? milestoneIdRaw : undefined;
+        const seqRaw = parsed.frontmatter.sequence;
+        let sequence: number | undefined;
+        if (typeof seqRaw === "number" && Number.isInteger(seqRaw) && seqRaw > 0) {
+          sequence = seqRaw;
+        } else if (typeof seqRaw === "string" && /^\d+$/.test(seqRaw)) {
+          const n = parseInt(seqRaw, 10);
+          if (Number.isInteger(n) && n > 0) {
+            sequence = n;
+          }
+        }
         if (
           typeof status === "string" &&
           ["proposed", "active", "shipped", "cancelled"].includes(status) &&
@@ -165,6 +178,8 @@ export class AnchorRepository {
             theme,
             steelThread: typeof steelThread === "string" && steelThread.length > 0 ? steelThread : undefined,
             goalIds,
+            ...(milestoneId !== undefined ? { milestoneId } : {}),
+            ...(sequence !== undefined ? { sequence } : {}),
           };
         }
       }

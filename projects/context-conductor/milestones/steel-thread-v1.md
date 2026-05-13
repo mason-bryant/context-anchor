@@ -11,6 +11,8 @@ read_this_if:
   - "You are implementing the steel-thread milestone for anchor-mcp."
   - "You need which roadmap goal bundles taxonomy, validators, tools, and CONTEXT-ROOT."
 last_validated: 2026-05-12
+milestone_id: M1
+sequence: 1
 theme: "Milestones typed schemas relations planner CONTEXT-ROOT"
 steel_thread: "Ship taxonomy depth, typed overlay, relations validation, MCP tools, planner boosts, and root rendering as one slice."
 status: active
