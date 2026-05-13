@@ -52,7 +52,7 @@ last_validated: 2026-05-12
 
 - [ ] AC-005: `classifyAnchorPath` accepts `projects/<slug>/milestones/<file>.md` and rejects unknown nested project directories. Evidence: `test/taxonomy.test.ts`.
 
-- [ ] AC-006: `project-milestone` writes validate typed overlay (`schema_version`, `theme`, `status`, `relations.goal_ids`) and `goal_ids` resolve to `### Goal G-### --` headings in the sibling roadmap. Evidence: `npm test` milestone integration coverage.
+- [ ] AC-006: `project-milestone` writes validate typed overlay (`schema_version`, `theme`, `status`, `relations.goal_ids`) and `goal_ids` resolve to `### Goal G-<digits> --` headings in the sibling roadmap. Evidence: `npm test` milestone integration coverage.
 
 - [ ] AC-007: `planContextBundle` boosts canonical roadmaps and milestone anchors when the task matches active milestone goal ids or milestone theme tokens; emits milestone missing-AC signals. Evidence: `test/milestoneSteelThread.test.ts` or equivalent.
 

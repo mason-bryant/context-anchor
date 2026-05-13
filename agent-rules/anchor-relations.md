@@ -15,7 +15,7 @@ last_validated: 2026-05-12
 ## Current State
 
 - Any anchor may declare optional YAML `relations: { <kind>: [<string>, ...] }` where each value is an array of strings.
-- For `type: project-milestone`, `relations.goal_ids` lists roadmap goal ids (`G-###`) resolved against `projects/<slug>/<slug>-roadmap.md`.
+- For `type: project-milestone`, `relations.goal_ids` lists roadmap goal ids (`G-<digits>`, conventionally `G-###`) resolved against `projects/<slug>/<slug>-roadmap.md`.
 - Other relation kinds are reserved for future graph features; values should be anchor names (with or without `.md` suffix) when pointing at files.
 
 ## Decisions

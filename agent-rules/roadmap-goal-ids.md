@@ -14,7 +14,7 @@ last_validated: 2026-05-12
 
 ## Current State
 
-- Under `## Goals`, each goal heading should use `### Goal G-### -- <short name>` so milestones can reference `G-###` in `relations.goal_ids`.
+- Under `## Goals`, each goal heading should use `### Goal G-<digits> -- <short name>` so milestones can reference `G-<digits>` in `relations.goal_ids`; prefer three-digit padding such as `G-001`.
 - When any milestone for the project has a non-empty `goal_ids` list, the server requires every goal in the roadmap to use that heading form.
 
 ## Decisions

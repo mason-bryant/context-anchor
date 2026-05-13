@@ -132,6 +132,7 @@ export function analyzeRoadmapFromContent(markdown: string, options: { isProject
       goalsMissingCriteria: [],
       goalsMissingCriteriaIds: [],
       goalsWithoutStableIds: [],
+      goalsDuplicateStableIds: [],
       hasProposedCriteria: false,
       criteriaViolations: violations,
     };
@@ -141,12 +142,18 @@ export function analyzeRoadmapFromContent(markdown: string, options: { isProject
   const goalsMissingCriteria: string[] = [];
   const goalsMissingCriteriaIds: string[] = [];
   const goalsWithoutStableIds: string[] = [];
+  const seenGoalIds = new Set<string>();
+  const duplicateGoalIds = new Set<string>();
   let goalsWithCriteria = 0;
   let hasProposedCriteria = false;
 
   for (const goal of goals) {
     if (!goal.id) {
       goalsWithoutStableIds.push(goal.title);
+    } else if (seenGoalIds.has(goal.id)) {
+      duplicateGoalIds.add(goal.id);
+    } else {
+      seenGoalIds.add(goal.id);
     }
 
     const acBlock = findChildHeadingBlock(goal.bodyLines, 4, "Acceptance Criteria", {
@@ -202,6 +209,7 @@ export function analyzeRoadmapFromContent(markdown: string, options: { isProject
     goalsMissingCriteria,
     goalsMissingCriteriaIds,
     goalsWithoutStableIds,
+    goalsDuplicateStableIds: [...duplicateGoalIds].sort(),
     hasProposedCriteria,
     criteriaViolations: violations,
   };
@@ -288,7 +296,8 @@ export function listRoadmapGoalDetails(markdown: string): Array<{
 type GoalBlock = { title: string; id?: string; bodyLines: string[] };
 
 export function parseStableGoalIdFromHeading(title: string): string | undefined {
-  const m = title.match(/^Goal\s+(G-\d+)\s+--\s+/i);
+  // Matches "Goal G-001 -- Title" or bare "Goal G-001" (no description)
+  const m = title.match(/^Goal\s+(G-\d{1,6})(?:\s+--\s+|\s*$)/);
   return m?.[1];
 }
 

@@ -7,10 +7,12 @@ export type RoadmapAcceptanceCriteriaSummary = {
   activeGoals: number;
   goalsWithCriteria: number;
   goalsMissingCriteria: string[];
-  /** Goal ids (`G-###`) that are missing `#### Acceptance Criteria` (when headings use stable ids). */
+  /** Goal ids (`G-<digits>`) that are missing `#### Acceptance Criteria` (when headings use stable ids). */
   goalsMissingCriteriaIds?: string[];
-  /** Goal titles whose `###` heading lacks `Goal G-### --` stable id form. */
+  /** Goal titles whose `###` heading lacks `Goal G-<digits> --` stable id form. */
   goalsWithoutStableIds?: string[];
+  /** Duplicate stable goal ids found in roadmap headings. */
+  goalsDuplicateStableIds?: string[];
   hasProposedCriteria: boolean;
   criteriaViolations?: string[];
 };

@@ -6,7 +6,7 @@
 
 - Phase 0 storage support: point the server at a private git repo, or run `scripts/anchor-context-sync.sh` for basic add/commit/pull/push sync without MCP.
 - Phase 1 read-only MCP tools: `listAnchors`, `readAnchor`, `readAnchorBatch`, `loadContext`, `planContextBundle`, `listMilestones`, `readMilestone`, `getRelated`, `searchAnchors`, and `listVersions`.
-- Phase 2 write tools and validators: `writeAnchor`, `updateAnchorFrontmatter`, `updateAnchorSection`, `appendToAnchorSection`, `deleteAnchorSection`, `diffAnchor`, `revertAnchor`, `compactionReport`, `contextRoot`, `writeContextRoot`, and `conflictStatus`.
+- Phase 2 write tools and validators: `writeAnchor`, `updateAnchorFrontmatter`, `updateAnchorSection`, `appendToAnchorSection`, `deleteAnchorSection`, `migrateRoadmapGoalIds`, `diffAnchor`, `revertAnchor`, `compactionReport`, `contextRoot`, `writeContextRoot`, and `conflictStatus`.
 - Phase 3 transport support: stdio for local tools and Streamable HTTP/SSE for remote or containerized agents.
 
 ## Install
@@ -329,7 +329,7 @@ When `truncated` is true, call again with `nextCursor` from the previous respons
 
 ## Milestones
 
-Milestones group roadmap goals under a theme and integrate with `planContextBundle` for task-aware context boosts. See **[docs/milestones.md](docs/milestones.md)** for the full guide, including how to upgrade existing roadmaps to stable `G-###` goal IDs.
+Milestones group roadmap goals under a theme and integrate with `planContextBundle` for task-aware context boosts. See **[docs/milestones.md](docs/milestones.md)** for the full guide, including how to upgrade existing roadmaps to stable `G-<digits>` goal IDs.
 
 ## Plan context bundle
 

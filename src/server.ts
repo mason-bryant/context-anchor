@@ -229,6 +229,36 @@ the index when your workflow checks in that file.`,
   );
 
   server.registerTool(
+    "migrateRoadmapGoalIds",
+    {
+      title: "Migrate Roadmap Goal IDs",
+      description:
+        "Assign stable, conventionally three-digit `G-###` ids to any roadmap goal headings that are still in bare `### Goal N -- Title` form. " +
+        "Required before writing a milestone that references those goals by id. " +
+        "Reads `projects/<project>/<project>-roadmap.md`, renames bare headings in document order, and commits the result. " +
+        "Returns the list of renamed headings and a `noChangesNeeded` flag when all goals already have stable ids.",
+      inputSchema: z.object({
+        project: z.string().min(1),
+        startFrom: z
+          .number()
+          .int()
+          .positive()
+          .optional()
+          .describe(
+            "Override the starting number for newly assigned ids. Defaults to max existing G-<digits> + 1 (or 1 if none exist).",
+          ),
+        message: z.string().optional(),
+        approved: z
+          .boolean()
+          .optional()
+          .describe("Pass true if the write triggers an approval gate (rare for heading-only changes)."),
+      }),
+      annotations: { destructiveHint: false, idempotentHint: true },
+    },
+    async (input) => jsonResult(await service.migrateRoadmapGoalIds(input)),
+  );
+
+  server.registerTool(
     "searchAnchors",
     {
       title: "Search Anchors",

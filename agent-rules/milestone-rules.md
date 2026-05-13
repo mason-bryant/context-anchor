@@ -15,8 +15,8 @@ last_validated: 2026-05-12
 ## Current State
 
 - Milestones live at `projects/<project-slug>/milestones/<file>.md` with `type: project-milestone` and `schema_version: 1`.
-- Each milestone declares `theme`, optional `steel_thread`, `status`, and `relations.goal_ids` listing stable roadmap goal ids (`G-###`).
-- The sibling roadmap is always `projects/<slug>/<slug>-roadmap.md`; goal headings must use `### Goal G-### -- Title`.
+- Each milestone declares `theme`, optional `steel_thread`, `status`, and `relations.goal_ids` listing stable roadmap goal ids (`G-<digits>`, conventionally `G-###`).
+- The sibling roadmap is always `projects/<slug>/<slug>-roadmap.md`; goal headings must use `### Goal G-<digits> -- Title`.
 
 ## Decisions
 

@@ -299,15 +299,20 @@ export function collectRoadmapAcceptanceMissingSignals(anchors: AnchorMeta[]): s
 /** Missing-context lines when milestones reference roadmap goals without acceptance criteria. */
 export function collectMilestoneAcceptanceMissingSignals(anchors: AnchorMeta[]): string[] {
   const out: string[] = [];
+  const missingGoalIdsByRoadmapName = new Map<string, Set<string>>();
+  for (const anchor of anchors) {
+    if (!anchor.acceptanceCriteria?.goalsMissingCriteriaIds?.length) {
+      continue;
+    }
+    missingGoalIdsByRoadmapName.set(anchor.name, new Set(anchor.acceptanceCriteria.goalsMissingCriteriaIds));
+  }
+
   for (const anchor of anchors) {
     if (!anchor.milestone?.goalIds.length || !anchor.projectSlug) {
       continue;
     }
-    const roadmap = anchors.find(
-      (a) => a.name === `projects/${anchor.projectSlug}/${anchor.projectSlug}-roadmap.md`,
-    );
-    const missingIds = roadmap?.acceptanceCriteria?.goalsMissingCriteriaIds ?? [];
-    const hit = anchor.milestone.goalIds.filter((gid) => missingIds.includes(gid));
+    const missingIds = missingGoalIdsByRoadmapName.get(`projects/${anchor.projectSlug}/${anchor.projectSlug}-roadmap.md`);
+    const hit = missingIds ? anchor.milestone.goalIds.filter((gid) => missingIds.has(gid)) : [];
     if (hit.length > 0) {
       out.push(`Milestone "${anchor.name}" has goal(s) without acceptance criteria: ${hit.join(", ")}.`);
     }
@@ -415,13 +420,17 @@ function containsTerm(text: string, term: string): boolean {
 }
 
 function tokenize(text: string): string[] {
+  const goalIds = text.match(/\bG-\d{1,6}\b/gi)?.map((id) => id.toLowerCase()) ?? [];
   return dedupe(
-    text
-      .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
-      .toLowerCase()
-      .split(/[^a-z0-9]+/)
-      .filter((term) => term.length > 1)
-      .filter((term) => !STOPWORDS.has(term)),
+    [
+      ...goalIds,
+      ...text
+        .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+        .toLowerCase()
+        .split(/[^a-z0-9]+/)
+        .filter((term) => term.length > 1)
+        .filter((term) => !STOPWORDS.has(term)),
+    ],
   );
 }
 

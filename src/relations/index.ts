@@ -1,6 +1,5 @@
 import type { AnchorRepository } from "../git/repo.js";
 import { isProjectMilestoneType } from "../schema/milestoneTypes.js";
-import { parseAnchor } from "../storage/markdown.js";
 import { classifyAnchorPath } from "../taxonomy.js";
 import type { AnchorMeta, AnchorRead } from "../types.js";
 

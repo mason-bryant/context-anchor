@@ -22,7 +22,7 @@ function expectedRoadmapName(projectSlug: string): string {
 }
 
 async function projectHasMilestoneWithGoalIds(repo: AnchorRepository, slug: string): Promise<boolean> {
-  const metas = await repo.listAnchors({ project: slug });
+  const metas = await repo.listAnchors();
   for (const meta of metas) {
     if (!meta.name.startsWith(`projects/${slug}/milestones/`)) {
       continue;
@@ -75,7 +75,18 @@ export const validateRoadmapGoalIdsForMilestones: Validator = async (context) =>
   }
 
   const analysis = analyzeRoadmapFromContent(context.newContent, { isProjectRoadmap: true });
+  const duplicateIds = analysis.goalsDuplicateStableIds ?? [];
   const missing = analysis.goalsWithoutStableIds ?? [];
+  if (duplicateIds.length > 0) {
+    return duplicateIds.map((id) =>
+      maybeMigrationBlock(
+        context,
+        "roadmap_goal_duplicate_id",
+        `Roadmap goal id "${id}" is used by more than one heading.`,
+      ),
+    );
+  }
+
   if (missing.length === 0) {
     return [];
   }
@@ -84,7 +95,7 @@ export const validateRoadmapGoalIdsForMilestones: Validator = async (context) =>
     maybeMigrationBlock(
       context,
       "roadmap_goal_stable_id_required",
-      `Roadmap goal "${title}" must use heading form "### Goal G-### -- Name" because a project milestone lists goal_ids.`,
+      `Roadmap goal "${title}" must use heading form "### Goal G-<digits> -- Name" because a project milestone lists goal_ids.`,
     ),
   );
 };

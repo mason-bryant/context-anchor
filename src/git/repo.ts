@@ -139,6 +139,8 @@ export class AnchorRepository {
             (analysis.goalsMissingCriteriaIds?.length ?? 0) > 0 ? analysis.goalsMissingCriteriaIds : undefined,
           goalsWithoutStableIds:
             (analysis.goalsWithoutStableIds?.length ?? 0) > 0 ? analysis.goalsWithoutStableIds : undefined,
+          goalsDuplicateStableIds:
+            (analysis.goalsDuplicateStableIds?.length ?? 0) > 0 ? analysis.goalsDuplicateStableIds : undefined,
           hasProposedCriteria: analysis.hasProposedCriteria,
           criteriaViolations:
             analysis.criteriaViolations.length > 0 ? analysis.criteriaViolations : undefined,

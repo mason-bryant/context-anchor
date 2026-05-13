@@ -32,6 +32,7 @@ import {
 import type { AnchorRepository } from "./git/repo.js";
 import { listRoadmapGoalDetails } from "./roadmap/analyzeRoadmap.js";
 import { getRelatedAnchors } from "./relations/index.js";
+import { isProjectMilestoneType } from "./schema/milestoneTypes.js";
 import { countCompletedRows, parseAnchor } from "./storage/markdown.js";
 import { SERVER_RULES_DISCOVERY_CATEGORY, classifyAnchorPath, type AnchorCategory, type DiscoveryCategory } from "./taxonomy.js";
 import type {
@@ -551,6 +552,13 @@ export class AnchorService {
   }> {
     const milestone = await this.readAnchor(name);
     const classification = classifyAnchorPath(milestone.name);
+    if (classification.kind !== "anchor" || classification.category !== "projects" || !milestone.name.includes("/milestones/")) {
+      throw new Error(`readMilestone requires a project milestone anchor under projects/<slug>/milestones/: ${milestone.name}`);
+    }
+    if (!isProjectMilestoneType(milestone.frontmatter.type)) {
+      throw new Error(`readMilestone requires type: project-milestone: ${milestone.name}`);
+    }
+
     const slug = classification.kind === "anchor" ? classification.projectSlug : undefined;
     let roadmap: AnchorRead | null = null;
     const goalMap = new Map<string, { title: string; hasAcceptanceCriteria: boolean }>();
@@ -587,6 +595,91 @@ export class AnchorService {
 
   getRelated(name: string, kind?: string): Promise<AnchorRead[]> {
     return getRelatedAnchors(this.repo, name, kind);
+  }
+
+  async migrateRoadmapGoalIds(input: {
+    project: string;
+    startFrom?: number;
+    message?: string;
+    approved?: boolean;
+  }): Promise<{
+    roadmap: string;
+    assigned: Array<{ from: string; to: string }>;
+    version?: string;
+    warnings: ValidationViolation[];
+    noChangesNeeded: boolean;
+  }> {
+    const slug = input.project;
+    const roadmapName = `projects/${slug}/${slug}-roadmap.md`;
+
+    const roadmapContent = await this.repo.readRaw(roadmapName);
+    if (!roadmapContent) {
+      return {
+        roadmap: roadmapName,
+        assigned: [],
+        warnings: [
+          {
+            severity: "BLOCK",
+            code: "missing_anchor",
+            message: `Roadmap not found: ${roadmapName}`,
+            path: roadmapName,
+          },
+        ],
+        noChangesNeeded: false,
+      };
+    }
+
+    const details = listRoadmapGoalDetails(roadmapContent);
+    const bareGoals = details.filter((g) => !g.id);
+
+    if (bareGoals.length === 0) {
+      return { roadmap: roadmapName, assigned: [], warnings: [], noChangesNeeded: true };
+    }
+
+    const maxExisting = details
+      .filter((g) => g.id)
+      .map((g) => parseInt((g.id as string).replace(/^G-0*/, ""), 10))
+      .filter((n) => !isNaN(n))
+      .reduce((max, n) => Math.max(max, n), 0);
+
+    let nextNum = input.startFrom ?? maxExisting + 1;
+
+    const assigned: Array<{ from: string; to: string }> = [];
+    const replacements = new Map<string, string>();
+
+    for (const goal of bareGoals) {
+      const id = `G-${String(nextNum).padStart(3, "0")}`;
+      nextNum += 1;
+      const oldHeading = `### ${goal.title}`;
+      const newHeading = `### ${rewriteGoalTitle(goal.title, id)}`;
+      replacements.set(oldHeading, newHeading);
+      assigned.push({ from: oldHeading, to: newHeading });
+    }
+
+    const newContent = roadmapContent
+      .split(/\r?\n/)
+      .map((line) => {
+        const replacement = replacements.get(line.trimEnd());
+        return replacement !== undefined ? replacement : line;
+      })
+      .join("\n");
+
+    const result = await this.writeAnchor({
+      name: roadmapName,
+      content: newContent,
+      message:
+        input.message ??
+        `anchor: assign stable G-### ids to ${bareGoals.length} goal(s) in ${slug} roadmap`,
+      approved: input.approved ?? false,
+    });
+
+    return {
+      roadmap: roadmapName,
+      assigned,
+      version: result.version,
+      warnings: result.warnings ?? [],
+      noChangesNeeded: false,
+    };
   }
 
   async writeContextRoot(input: {
@@ -664,6 +757,30 @@ function lastValidatedChanged(oldContent: string, newContent: string): boolean {
 
 function dateKey(value: unknown): unknown {
   return value instanceof Date ? value.toISOString().slice(0, 10) : value;
+}
+
+/**
+ * Given a bare goal heading title (the text after `### `) and an assigned stable id,
+ * returns the rewritten title in canonical `Goal G-### -- Description` form.
+ *
+ * Handles three input shapes:
+ *   "Goal N -- Description"  → "Goal G-00N -- Description"
+ *   "Goal N"                 → "Goal G-00N"
+ *   "Goal Description"       → "Goal G-00N -- Description"
+ */
+function rewriteGoalTitle(title: string, id: string): string {
+  const withNumAndDesc = title.match(/^Goal\s+\d+\s+--\s+(.+)$/i);
+  if (withNumAndDesc) {
+    return `Goal ${id} -- ${withNumAndDesc[1]}`;
+  }
+  if (/^Goal\s+\d+$/i.test(title)) {
+    return `Goal ${id}`;
+  }
+  const withDesc = title.match(/^Goal\s+(.+)$/i);
+  if (withDesc) {
+    return `Goal ${id} -- ${withDesc[1]}`;
+  }
+  return `Goal ${id} -- ${title}`;
 }
 
 function dedupePreserveOrder(names: string[]): string[] {

@@ -6,7 +6,15 @@ Milestones integrate with `planContextBundle`: an `active` milestone's theme and
 
 ## Upgrading a roadmap to use stable goal IDs
 
-Milestone anchors reference goals by a stable `G-###` ID embedded in each goal's `###` heading. Before writing your first milestone, rename your roadmap's goal headings:
+Milestone anchors reference goals by a stable `G-<digits>` ID embedded in each goal's `###` heading. Before writing your first milestone, run `migrateRoadmapGoalIds` to assign them automatically:
+
+```json
+{ "project": "your-slug" }
+```
+
+The tool reads `projects/<slug>/<slug>-roadmap.md`, renames every bare goal heading in document order, commits the result, and returns the list of renamed headings. If all goals already have stable IDs it returns `noChangesNeeded: true` without writing.
+
+You can also rename headings manually:
 
 ```md
 <!-- Before -->
@@ -18,9 +26,10 @@ Milestone anchors reference goals by a stable `G-###` ID embedded in each goal's
 
 Rules:
 
-- Prefix is `G-` followed by one to six digits, zero-padded to at least three (`G-001`, `G-042`, `G-100`).
+- Prefix is `G-` followed by one to six digits (`G-1`, `G-42`, `G-100`, `G-001`). For consistency, prefer zero-padded three-digit IDs such as `G-001`.
 - IDs must be unique within a roadmap.
-- The server only **enforces** this format when a milestone in the same project uses `relations.goal_ids`. You can rename incrementally and the validator will not block existing anchors without milestones.
+- Goals with no title (e.g. `### Goal 3`) become `### Goal G-003` with no separator.
+- The server only **enforces** this format when a milestone in the same project uses `relations.goal_ids`. You can migrate incrementally; existing anchors without milestones are not affected.
 
 ## Creating a milestone anchor
 
@@ -74,7 +83,7 @@ None.
 | `theme` | string (1–480 chars) | Short label; matched against task terms by the planner |
 | `steel_thread` | string (1–480 chars) | Optional. The unifying outcome for this milestone |
 | `status` | `proposed` \| `active` \| `shipped` \| `cancelled` | `active` gets the strongest planner boost |
-| `relations.goal_ids` | array of `G-###` strings, min 1 | Must reference goals that exist in the sibling roadmap |
+| `relations.goal_ids` | array of `G-<digits>` strings, min 1 | Must reference goals that exist in the sibling roadmap |
 
 All standard anchor front-matter fields (`type`, `tags`, `summary`, `read_this_if`, `last_validated`) are also required.
 
@@ -91,6 +100,32 @@ When a milestone ships, set `status: shipped`, record the date in `## Current St
 
 ## MCP tools
 
+### `migrateRoadmapGoalIds`
+
+Assigns stable, conventionally three-digit `G-###` ids to bare goal headings in a project roadmap:
+
+```json
+{
+  "project": "your-slug",
+  "startFrom": 10
+}
+```
+
+`startFrom` is optional. By default numbering continues from the highest existing `G-<digits>` in the roadmap (or starts at `G-001` if none exist). Returns:
+
+```json
+{
+  "roadmap": "projects/your-slug/your-slug-roadmap.md",
+  "assigned": [
+    { "from": "### Goal 1 -- Alpha", "to": "### Goal G-001 -- Alpha" },
+    { "from": "### Goal 2 -- Beta",  "to": "### Goal G-002 -- Beta"  }
+  ],
+  "version": "<commit sha>",
+  "warnings": [],
+  "noChangesNeeded": false
+}
+```
+
 ### `listMilestones`
 
 Lists all milestone anchors for a project, with `status`, `theme`, and `goalIds` for each:
@@ -101,7 +136,7 @@ Lists all milestone anchors for a project, with `status`, `theme`, and `goalIds`
 
 ### `readMilestone`
 
-Returns the full milestone anchor plus the resolved sibling roadmap and a `goals` array confirming each referenced `G-###` heading was found:
+Returns the full milestone anchor plus the resolved sibling roadmap and a `goals` array confirming each referenced `G-<digits>` heading was found:
 
 ```json
 { "name": "projects/your-slug/milestones/your-milestone.md" }
@@ -137,12 +172,13 @@ The `reason` field for included anchors will include `"milestone theme matched t
 
 | Code | Trigger | Severity |
 |---|---|---|
-| `milestone_goal_id_not_found` | A `goal_ids` entry has no matching `### Goal G-###` heading in the sibling roadmap | BLOCK |
-| `milestone_goal_missing_acceptance_criteria` | A referenced goal exists but has no `#### Acceptance Criteria` section | WARN |
-| `milestone_roadmap_not_found` | No roadmap file found under `projects/<slug>/` | BLOCK |
+| `front_matter_typed_schema` | `schema_version`, `theme`, `status`, or `relations.goal_ids` fail the milestone Zod schema | BLOCK |
+| `milestone_goal_unknown` | A `goal_ids` entry has no matching `### Goal G-<digits>` heading in the sibling roadmap | BLOCK |
+| `milestone_goal_missing_ac` | A referenced goal exists but has no `#### Acceptance Criteria` section | WARN |
+| `milestone_roadmap_missing` | No roadmap file found under `projects/<slug>/` | BLOCK |
+| `roadmap_goal_duplicate_id` | The sibling roadmap uses the same stable goal ID on more than one heading | BLOCK |
 | `roadmap_goal_stable_id_required` | A roadmap goal uses the old `### Goal N` format and the project has a milestone with `goal_ids` | BLOCK |
 | `relations_shape` | `relations:` is not a mapping object, or a value is not an array of strings | BLOCK |
-| `typed_overlay_*` | `schema_version`, `theme`, `status`, or `relations.goal_ids` fail the milestone Zod schema | BLOCK |
 
 To unblock incremental migration while cleaning up goal headings, run the server with `--migration-warn-only`. This downgrades all new BLOCK codes to WARN until you remove the flag.
 
@@ -150,7 +186,7 @@ To unblock incremental migration while cleaning up goal headings, run the server
 
 The `context-conductor` project itself uses this pattern. After upgrading:
 
-- `projects/context-conductor/context-conductor-roadmap.md` — goals `G-001` through `G-014` with acceptance criteria; `G-015` (the milestone infrastructure steel thread) in `## Completed`
-- `projects/context-conductor/milestones/retrieval-quality-v1.md` — groups `G-006` (hybrid retrieval) and `G-013` (evaluation harness) under the theme `"Retrieval quality and measurability"`, status `proposed`
+- `projects/context-conductor/context-conductor-roadmap.md` — goals `G-001` through `G-003` with acceptance criteria
+- `projects/context-conductor/milestones/steel-thread-v1.md` — groups `G-003` (milestones typed schemas and anchor relations) under the theme `"Milestones typed schemas relations planner CONTEXT-ROOT"`, status `active`
 
 Call `readMilestone` on that anchor to see a fully-resolved response with both goals confirmed.

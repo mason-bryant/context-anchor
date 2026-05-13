@@ -50,6 +50,17 @@ export const validateMilestoneGoalRefs: Validator = async (context) => {
   }
 
   const details = listRoadmapGoalDetails(roadmapContent);
+  const duplicateIds = findDuplicateGoalIds(details);
+  if (duplicateIds.length > 0) {
+    return duplicateIds.map((id) =>
+      maybeMigrationBlock(
+        context,
+        "roadmap_goal_duplicate_id",
+        `Sibling roadmap "${roadmapName}" contains duplicate goal id "${id}".`,
+      ),
+    );
+  }
+
   const byId = new Map(details.filter((g) => g.id).map((g) => [g.id as string, g]));
 
   const violations = [];
@@ -79,3 +90,19 @@ export const validateMilestoneGoalRefs: Validator = async (context) => {
 
   return violations;
 };
+
+function findDuplicateGoalIds(details: Array<{ id?: string }>): string[] {
+  const seen = new Set<string>();
+  const duplicates = new Set<string>();
+  for (const detail of details) {
+    if (!detail.id) {
+      continue;
+    }
+    if (seen.has(detail.id)) {
+      duplicates.add(detail.id);
+    } else {
+      seen.add(detail.id);
+    }
+  }
+  return [...duplicates].sort();
+}
