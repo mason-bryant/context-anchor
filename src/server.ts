@@ -61,8 +61,8 @@ readAnchor(...) only for deeper detail -> only then git diff and start review.
 
 ## When writing anchors
 Do not edit anchor markdown in the server's \`--repo\` tree directly on disk (editor, patch tools, or shell). That \
-bypasses validators and the server's git commits, so MCP reads and the working tree can disagree. Use writeAnchor and \
-the partial-write tools for every anchor change.
+bypasses validators and the server's git commits, so MCP reads and the working tree can disagree. Use the MCP write \
+tools (writeAnchor, deleteAnchor, renameAnchor, and the partial-write tools) for every anchor change.
 
 Writes may return BLOCK or WARN; do not ignore them. BLOCK rejects the write and must be fixed before retrying. WARN \
 succeeds but flags a quality issue to address.
@@ -377,21 +377,23 @@ the index when your workflow checks in that file.`,
     {
       title: "Update Anchor Section",
       description:
-        "Replace the body of one ## H2 section (heading may be passed as \"## PRs\" or \"PRs\"). Content must not include the heading line.",
+        "Replace the body of one ## H2 section (heading may be passed as \"## PRs\" or \"PRs\"). Content must not include the heading line. Pass lastValidated (YYYY-MM-DD) to bump the date atomically in the same commit when editing a substantive section.",
       inputSchema: z
         .object({
           name: z.string(),
           heading: z.string(),
           content: z.string(),
+          lastValidated: z.string().optional(),
         })
         .extend(SharedWriteOptsSchema.shape),
       annotations: { destructiveHint: false, idempotentHint: false },
     },
-    async ({ name, heading, content, message, approved, coAuthor, expectedFileCommit }) => {
+    async ({ name, heading, content, lastValidated, message, approved, coAuthor, expectedFileCommit }) => {
       const result = await service.updateAnchorSection({
         name,
         heading,
         content,
+        lastValidated,
         message,
         approved,
         coAuthor,
@@ -405,21 +407,24 @@ the index when your workflow checks in that file.`,
     "appendToAnchorSection",
     {
       title: "Append To Anchor Section",
-      description: "Append markdown to the end of one ## H2 section body.",
+      description:
+        "Append markdown to the end of one ## H2 section body. Pass lastValidated (YYYY-MM-DD) to bump the date atomically in the same commit when editing a substantive section.",
       inputSchema: z
         .object({
           name: z.string(),
           heading: z.string(),
           content: z.string(),
+          lastValidated: z.string().optional(),
         })
         .extend(SharedWriteOptsSchema.shape),
       annotations: { destructiveHint: false, idempotentHint: false },
     },
-    async ({ name, heading, content, message, approved, coAuthor, expectedFileCommit }) => {
+    async ({ name, heading, content, lastValidated, message, approved, coAuthor, expectedFileCommit }) => {
       const result = await service.appendToAnchorSection({
         name,
         heading,
         content,
+        lastValidated,
         message,
         approved,
         coAuthor,
@@ -433,19 +438,22 @@ the index when your workflow checks in that file.`,
     "deleteAnchorSection",
     {
       title: "Delete Anchor Section",
-      description: "Remove an entire ## H2 section including its heading. Deleting required sections will fail validation.",
+      description:
+        "Remove an entire ## H2 section including its heading. Deleting required sections will fail validation. Pass lastValidated (YYYY-MM-DD) to bump the date atomically in the same commit when removing a substantive section.",
       inputSchema: z
         .object({
           name: z.string(),
           heading: z.string(),
+          lastValidated: z.string().optional(),
         })
         .extend(SharedWriteOptsSchema.shape),
       annotations: { destructiveHint: false, idempotentHint: false },
     },
-    async ({ name, heading, message, approved, coAuthor, expectedFileCommit }) => {
+    async ({ name, heading, lastValidated, message, approved, coAuthor, expectedFileCommit }) => {
       const result = await service.deleteAnchorSection({
         name,
         heading,
+        lastValidated,
         message,
         approved,
         coAuthor,

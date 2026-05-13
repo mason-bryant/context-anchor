@@ -220,6 +220,37 @@ None.
     expect(approved.version).toMatch(/[a-f0-9]{40}/);
   });
 
+  it("section tools with lastValidated bump the date atomically in the same commit", async () => {
+    await service.writeAnchor({
+      name: "projects/demo/demo",
+      content: projectAnchorContent(),
+      message: "test: add demo anchor",
+    });
+
+    // Without lastValidated: appending to a substantive section blocks on last_validated_bump.
+    const withoutBump = await service.appendToAnchorSection({
+      name: "projects/demo/demo",
+      heading: "Current State",
+      content: "- Extra observation.",
+    });
+    expect(withoutBump.version).toBeUndefined();
+    expect(withoutBump.warnings.map((w) => w.code)).toContain("last_validated_bump");
+
+    // With lastValidated: section append + date bump succeed in one call.
+    const withBump = await service.appendToAnchorSection({
+      name: "projects/demo/demo",
+      heading: "Current State",
+      content: "- Extra observation.",
+      lastValidated: "2026-05-14",
+    });
+    expect(withBump.version).toMatch(/[a-f0-9]{40}/);
+    expect(withBump.warnings).toEqual([]);
+
+    const read = await service.readAnchor("projects/demo/demo");
+    expect(read.frontmatter.last_validated).toBe("2026-05-14");
+    expect(read.content).toContain("- Extra observation.");
+  });
+
   it("deleteAnchor requires approval before removing a file", async () => {
     await service.writeAnchor({
       name: "shared/to-delete",

@@ -486,6 +486,7 @@ export class AnchorService {
     name: string;
     heading: string;
     content: string;
+    lastValidated?: string;
     message?: string;
     approved?: boolean;
     coAuthor?: string;
@@ -493,6 +494,7 @@ export class AnchorService {
   }): Promise<WriteAnchorResult> {
     return this.applyAnchorContentPatch({
       name: input.name,
+      lastValidated: input.lastValidated,
       message: input.message,
       approved: input.approved,
       coAuthor: input.coAuthor,
@@ -505,6 +507,7 @@ export class AnchorService {
     name: string;
     heading: string;
     content: string;
+    lastValidated?: string;
     message?: string;
     approved?: boolean;
     coAuthor?: string;
@@ -512,6 +515,7 @@ export class AnchorService {
   }): Promise<WriteAnchorResult> {
     return this.applyAnchorContentPatch({
       name: input.name,
+      lastValidated: input.lastValidated,
       message: input.message,
       approved: input.approved,
       coAuthor: input.coAuthor,
@@ -523,6 +527,7 @@ export class AnchorService {
   async deleteAnchorSection(input: {
     name: string;
     heading: string;
+    lastValidated?: string;
     message?: string;
     approved?: boolean;
     coAuthor?: string;
@@ -530,6 +535,7 @@ export class AnchorService {
   }): Promise<WriteAnchorResult> {
     return this.applyAnchorContentPatch({
       name: input.name,
+      lastValidated: input.lastValidated,
       message: input.message,
       approved: input.approved,
       coAuthor: input.coAuthor,
@@ -540,6 +546,7 @@ export class AnchorService {
 
   private async applyAnchorContentPatch(input: {
     name: string;
+    lastValidated?: string;
     message?: string;
     approved?: boolean;
     coAuthor?: string;
@@ -583,6 +590,10 @@ export class AnchorService {
           },
         ],
       };
+    }
+
+    if (input.lastValidated) {
+      newContent = mergeAnchorFrontmatter(newContent, { last_validated: input.lastValidated });
     }
 
     return this.writeAnchor({

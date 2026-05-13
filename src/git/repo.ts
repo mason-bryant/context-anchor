@@ -393,8 +393,11 @@ export class AnchorRepository {
       const resolved = this.resolveAnchor(input.name);
       try {
         await stat(resolved.absolutePath);
-      } catch {
-        throw new Error(`Anchor file not found: ${resolved.name}`);
+      } catch (error) {
+        if (isNodeFsErrorCode(error, "ENOENT")) {
+          throw new Error(`Anchor file not found: ${resolved.name}`);
+        }
+        throw error;
       }
 
       await unlink(resolved.absolutePath);
@@ -446,17 +449,25 @@ export class AnchorRepository {
 
       try {
         await stat(fromResolved.absolutePath);
-      } catch {
-        throw new Error(`Anchor file not found: ${fromResolved.name}`);
+      } catch (error) {
+        if (isNodeFsErrorCode(error, "ENOENT")) {
+          throw new Error(`Anchor file not found: ${fromResolved.name}`);
+        }
+        throw error;
       }
 
+      let destinationExists = true;
       try {
         await stat(toResolved.absolutePath);
-        throw new Error(`Destination already exists: ${toResolved.name}`);
       } catch (error) {
-        if (error instanceof Error && error.message.startsWith("Destination already exists:")) {
+        if (isNodeFsErrorCode(error, "ENOENT")) {
+          destinationExists = false;
+        } else {
           throw error;
         }
+      }
+      if (destinationExists) {
+        throw new Error(`Destination already exists: ${toResolved.name}`);
       }
 
       await mkdir(path.dirname(toResolved.absolutePath), { recursive: true });
@@ -548,6 +559,15 @@ export class AnchorRepository {
 
     return files;
   }
+}
+
+function isNodeFsErrorCode(error: unknown, code: string): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    (error as { code?: unknown }).code === code
+  );
 }
 
 function isProjectRoadmapType(type: unknown): boolean {
