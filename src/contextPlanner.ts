@@ -57,10 +57,11 @@ export function buildContextBundlePlan(
   const maxAnchors = Math.max(1, Math.floor(input.maxAnchors ?? DEFAULT_MAX_ANCHORS));
   const maxExcluded = Math.max(0, Math.floor(input.maxExcluded ?? DEFAULT_MAX_EXCLUDED));
   const taskTerms = tokenize(input.task);
+  const activeGoalIdsBySlug = buildActiveMilestoneGoalSetBySlug(anchors);
 
   const scored = anchors
-    .map((anchor) => scoreAnchor(anchor, input, taskTerms))
-    .sort(compareScoredAnchors);
+    .map((anchor) => scoreAnchor(anchor, input, taskTerms, activeGoalIdsBySlug))
+    .sort((left, right) => compareScoredAnchors(left, right, taskTerms, activeGoalIdsBySlug));
 
   const included: ScoredAnchor[] = [];
   const excluded: ScoredAnchor[] = [];
@@ -114,7 +115,27 @@ export function buildContextBundlePlan(
   };
 }
 
-function scoreAnchor(anchor: AnchorMeta, input: PlanContextBundleInput, taskTerms: string[]): ScoredAnchor {
+function buildActiveMilestoneGoalSetBySlug(anchors: AnchorMeta[]): Map<string, Set<string>> {
+  const map = new Map<string, Set<string>>();
+  for (const anchor of anchors) {
+    if (anchor.projectSlug !== undefined && anchor.milestone?.status === "active") {
+      if (!map.has(anchor.projectSlug)) {
+        map.set(anchor.projectSlug, new Set());
+      }
+      for (const gid of anchor.milestone.goalIds) {
+        map.get(anchor.projectSlug)!.add(gid.toLowerCase());
+      }
+    }
+  }
+  return map;
+}
+
+function scoreAnchor(
+  anchor: AnchorMeta,
+  input: PlanContextBundleInput,
+  taskTerms: string[],
+  activeGoalIdsBySlug: Map<string, Set<string>>,
+): ScoredAnchor {
   let score = 0;
   const matchedTerms = new Set<string>();
   const reasons: string[] = [];
@@ -175,6 +196,40 @@ function scoreAnchor(anchor: AnchorMeta, input: PlanContextBundleInput, taskTerm
   if (anchor.category === "invariants" && taskTerms.some((term) => ["invariant", "constraint", "rule"].includes(term))) {
     score += 8;
     reasons.push("invariant anchor matches task intent");
+  }
+
+  if (anchor.milestone) {
+    const m = anchor.milestone;
+    const themeTerms = tokenize(m.theme);
+    for (const term of taskTerms) {
+      if (anchor.name.toLowerCase().includes(term)) {
+        score += 10;
+        reasons.push("task term matched milestone anchor path");
+        break;
+      }
+    }
+    for (const term of taskTerms) {
+      if (themeTerms.includes(term)) {
+        score += 9;
+        reasons.push(`milestone theme matched task term "${term}"`);
+        break;
+      }
+    }
+    if (taskTerms.some((t) => m.goalIds.some((g) => g.toLowerCase() === t))) {
+      score += 14;
+      reasons.push("task matched a milestone goal id");
+    }
+  }
+
+  if (
+    anchor.projectSlug &&
+    anchor.name === `projects/${anchor.projectSlug}/${anchor.projectSlug}-roadmap.md`
+  ) {
+    const gset = activeGoalIdsBySlug.get(anchor.projectSlug);
+    if (gset && taskTerms.some((t) => gset.has(t))) {
+      score += 12;
+      reasons.push("task matched goal id linked from an active milestone");
+    }
   }
 
   return {
@@ -241,6 +296,30 @@ export function collectRoadmapAcceptanceMissingSignals(anchors: AnchorMeta[]): s
   return out;
 }
 
+/** Missing-context lines when milestones reference roadmap goals without acceptance criteria. */
+export function collectMilestoneAcceptanceMissingSignals(anchors: AnchorMeta[]): string[] {
+  const out: string[] = [];
+  const missingGoalIdsByRoadmapName = new Map<string, Set<string>>();
+  for (const anchor of anchors) {
+    if (!anchor.acceptanceCriteria?.goalsMissingCriteriaIds?.length) {
+      continue;
+    }
+    missingGoalIdsByRoadmapName.set(anchor.name, new Set(anchor.acceptanceCriteria.goalsMissingCriteriaIds));
+  }
+
+  for (const anchor of anchors) {
+    if (!anchor.milestone?.goalIds.length || !anchor.projectSlug) {
+      continue;
+    }
+    const missingIds = missingGoalIdsByRoadmapName.get(`projects/${anchor.projectSlug}/${anchor.projectSlug}-roadmap.md`);
+    const hit = missingIds ? anchor.milestone.goalIds.filter((gid) => missingIds.has(gid)) : [];
+    if (hit.length > 0) {
+      out.push(`Milestone "${anchor.name}" has goal(s) without acceptance criteria: ${hit.join(", ")}.`);
+    }
+  }
+  return out;
+}
+
 function estimateAnchorTokens(anchor: AnchorMeta): number {
   const metadataText = [
     anchor.name,
@@ -255,13 +334,42 @@ function estimateAnchorTokens(anchor: AnchorMeta): number {
   return Math.max(120, Math.ceil(metadataText.length / 4) + 220);
 }
 
-function compareScoredAnchors(left: ScoredAnchor, right: ScoredAnchor): number {
+function activeCanonicalRoadmapBoost(
+  anchor: ScoredAnchor,
+  taskTerms: string[],
+  activeGoalIdsBySlug: Map<string, Set<string>>,
+): number {
+  if (
+    !anchor.projectSlug ||
+    anchor.name !== `projects/${anchor.projectSlug}/${anchor.projectSlug}-roadmap.md`
+  ) {
+    return 0;
+  }
+  const gset = activeGoalIdsBySlug.get(anchor.projectSlug);
+  if (!gset) {
+    return 0;
+  }
+  return taskTerms.some((t) => gset.has(t)) ? 1 : 0;
+}
+
+function compareScoredAnchors(
+  left: ScoredAnchor,
+  right: ScoredAnchor,
+  taskTerms: string[],
+  activeGoalIdsBySlug: Map<string, Set<string>>,
+): number {
   if (left.score !== right.score) {
     return right.score - left.score;
   }
 
   if (left.projectMatches !== right.projectMatches) {
     return left.projectMatches ? -1 : 1;
+  }
+
+  const leftRoadmapBoost = activeCanonicalRoadmapBoost(left, taskTerms, activeGoalIdsBySlug);
+  const rightRoadmapBoost = activeCanonicalRoadmapBoost(right, taskTerms, activeGoalIdsBySlug);
+  if (leftRoadmapBoost !== rightRoadmapBoost) {
+    return rightRoadmapBoost - leftRoadmapBoost;
   }
 
   const categoryDelta = discoveryCategoryIndex(left.category) - discoveryCategoryIndex(right.category);
@@ -312,13 +420,17 @@ function containsTerm(text: string, term: string): boolean {
 }
 
 function tokenize(text: string): string[] {
+  const goalIds = text.match(/\bG-\d{1,6}\b/gi)?.map((id) => id.toLowerCase()) ?? [];
   return dedupe(
-    text
-      .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
-      .toLowerCase()
-      .split(/[^a-z0-9]+/)
-      .filter((term) => term.length > 1)
-      .filter((term) => !STOPWORDS.has(term)),
+    [
+      ...goalIds,
+      ...text
+        .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+        .toLowerCase()
+        .split(/[^a-z0-9]+/)
+        .filter((term) => term.length > 1)
+        .filter((term) => !STOPWORDS.has(term)),
+    ],
   );
 }
 

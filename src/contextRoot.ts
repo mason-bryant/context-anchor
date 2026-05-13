@@ -46,12 +46,59 @@ export function renderContextRootMarkdown(entries: ContextRootEntry[], generated
     }
 
     lines.push(`## ${discoveryCategoryTitle(category)}`, "");
-    for (const entry of group) {
-      lines.push(...renderContextRootEntryBlock(entry));
+    if (category === "projects") {
+      lines.push(...renderProjectsSection(group));
+    } else {
+      for (const entry of group) {
+        lines.push(...renderContextRootEntryBlock(entry));
+      }
     }
   }
 
   return `${lines.join("\n").trimEnd()}\n`;
+}
+
+function renderProjectsSection(entries: ContextRootEntry[]): string[] {
+  const hasMilestone = entries.some((entry) => entry.name.includes("/milestones/"));
+  if (!hasMilestone) {
+    return entries.flatMap((entry) => renderContextRootEntryBlock(entry));
+  }
+
+  const bySlug = new Map<string, ContextRootEntry[]>();
+  for (const entry of entries) {
+    const slug = entry.projectSlug ?? "__none__";
+    if (!bySlug.has(slug)) {
+      bySlug.set(slug, []);
+    }
+    bySlug.get(slug)!.push(entry);
+  }
+
+  const lines: string[] = [];
+  for (const slug of [...bySlug.keys()].sort()) {
+    const list = bySlug.get(slug) ?? [];
+    const milestones = list.filter((e) => e.name.includes("/milestones/")).sort((a, b) => a.name.localeCompare(b.name));
+    const others = list.filter((e) => !e.name.includes("/milestones/")).sort((a, b) => a.name.localeCompare(b.name));
+
+    if (slug !== "__none__") {
+      lines.push(`### Project \`${slug}\``, "");
+    }
+
+    if (milestones.length > 0) {
+      lines.push("#### Milestones", "");
+      for (const m of milestones) {
+        const label = m.title || m.name;
+        const st = m.milestoneStatus ?? "unknown";
+        lines.push(`- [${escapeMarkdown(label)}](${m.path}) — **${escapeMarkdown(st)}** — ${escapeMarkdown(m.summary)}`);
+      }
+      lines.push("");
+    }
+
+    for (const entry of others) {
+      lines.push(...renderContextRootEntryBlock(entry));
+    }
+  }
+
+  return lines;
 }
 
 function renderContextRootEntryBlock(entry: ContextRootEntry): string[] {
@@ -100,6 +147,7 @@ function toContextRootEntry(anchor: AnchorMeta): ContextRootEntry {
     origin: anchor.origin,
     policyVersion: anchor.policyVersion,
     acceptanceCriteria: anchor.acceptanceCriteria,
+    milestoneStatus: anchor.milestone?.status,
   };
 }
 

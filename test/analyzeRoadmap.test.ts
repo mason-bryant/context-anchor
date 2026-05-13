@@ -52,6 +52,61 @@ c
     expect(r.activeGoals).toBe(2);
     expect(r.goalsMissingCriteria).toEqual(["Goal B"]);
     expect(r.goalsWithCriteria).toBe(1);
+    expect(r.goalsWithoutStableIds).toEqual(["Goal A", "Goal B"]);
+  });
+
+  it("tracks valid, invalid, and duplicate stable goal ids", () => {
+    const md = `---
+type: project-roadmap
+tags: []
+summary: "R"
+read_this_if:
+  - "Plan"
+last_validated: 2026-05-10
+---
+
+# R
+
+## Goals
+
+### Goal G-1 -- Alpha
+
+#### Acceptance Criteria
+
+#### Approved
+
+- [ ] AC-001: Alpha. Evidence: test.
+
+### Goal G-1 -- Alpha duplicate
+
+#### Acceptance Criteria
+
+#### Approved
+
+- [ ] AC-002: Alpha duplicate. Evidence: test.
+
+### Goal G-1234567 -- Too many digits
+
+#### Acceptance Criteria
+
+#### Approved
+
+- [ ] AC-003: Invalid id. Evidence: test.
+
+### Goal g-002 -- Lowercase prefix
+
+#### Acceptance Criteria
+
+#### Approved
+
+- [ ] AC-004: Lowercase id. Evidence: test.
+`;
+    const r = analyzeRoadmapFromContent(md, { isProjectRoadmap: true });
+    expect(r.goalsDuplicateStableIds).toEqual(["G-1"]);
+    expect(r.goalsWithoutStableIds).toEqual([
+      "Goal G-1234567 -- Too many digits",
+      "Goal g-002 -- Lowercase prefix",
+    ]);
   });
 
   it("flags proposed checklist lines missing AC-P id", () => {
