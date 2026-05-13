@@ -1,0 +1,5 @@
+#!/bin/sh
+# Runs before `git push` when this repo uses `core.hooksPath` → `githooks`.
+# Install once from the repo root: npm run install-git-hooks
+set -eu
+npm run typecheck

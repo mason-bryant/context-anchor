@@ -42,6 +42,8 @@ npm install
 npm run build
 ```
 
+Optional: run **`npm run install-git-hooks`** once per clone to point Git at [`githooks/`](githooks/) so **`git push`** runs **`npm run typecheck`** first (see [`githooks/README.md`](githooks/README.md)).
+
 In this checkout, run the built binary:
 
 ```sh

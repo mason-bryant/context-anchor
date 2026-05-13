@@ -190,7 +190,7 @@ the index when your workflow checks in that file.`,
     {
       title: "List Milestones",
       description:
-        "List `type: project-milestone` anchors under `projects/<slug>/milestones/` with status, theme, and referenced goal ids.",
+        "List `type: project-milestone` anchors under `projects/<slug>/milestones/` with status, theme, referenced goal ids, optional `milestoneId` / `sequence`, derived `displayId` (`M<sequence>` or `backlog`), sorted by sequence (backlog and unsequenced last).",
       inputSchema: z.object({
         project: z.string().optional(),
       }),

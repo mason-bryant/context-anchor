@@ -87,6 +87,8 @@ summary: "Acme milestone linking roadmap goals."
 read_this_if:
   - "Testing milestone reads."
 last_validated: 2026-05-12
+milestone_id: M1
+sequence: 1
 theme: "Acme vertical slice"
 steel_thread: "Prove taxonomy and relations."
 status: active
@@ -178,6 +180,9 @@ None.
     const listed = await service.listMilestones("acme");
     expect(listed).toHaveLength(1);
     expect(listed[0]?.goalIds).toEqual(["G-001", "G-002"]);
+    expect(listed[0]?.displayId).toBe("M1");
+    expect(listed[0]?.milestoneId).toBe("M1");
+    expect(listed[0]?.sequence).toBe(1);
 
     const bundle = await service.planContextBundle({
       task: "Work on G-001 slice for acme",
@@ -554,6 +559,394 @@ describe("collectMilestoneAcceptanceMissingSignals", () => {
     expect(collectMilestoneAcceptanceMissingSignals(anchors)).toEqual([
       'Milestone "projects/acme/milestones/m1.md" has goal(s) without acceptance criteria: G-002.',
     ]);
+  });
+});
+
+describe("milestone ordering and id uniqueness", () => {
+  const roadmapThreeGoals = `---
+project:
+  - acme
+type: project-roadmap
+tags:
+  - roadmap
+summary: "Acme roadmap for ordering tests."
+read_this_if:
+  - "Testing milestone ordering."
+last_validated: 2026-05-12
+---
+
+# Acme roadmap
+
+## Goals
+
+### Goal G-001 -- First
+
+#### Acceptance Criteria
+
+#### Approved
+
+- [x] AC-001: First. Evidence: test.
+
+### Goal G-002 -- Second
+
+#### Acceptance Criteria
+
+#### Approved
+
+- [x] AC-002: Second. Evidence: test.
+
+### Goal G-003 -- Third
+
+#### Acceptance Criteria
+
+#### Approved
+
+- [x] AC-003: Third. Evidence: test.
+
+## Current State
+
+- Exists.
+
+## Decisions
+
+- None.
+
+## Constraints
+
+- None.
+
+## PRs
+
+None.
+`;
+
+  it("listMilestones sorts by sequence with backlog last", async () => {
+    await service.writeAnchor({
+      name: "projects/acme/acme-roadmap",
+      content: roadmapThreeGoals,
+      message: "test: roadmap three goals",
+      approved: true,
+    });
+
+    const mBacklog = `---
+project:
+  - acme
+type: project-milestone
+schema_version: 1
+tags:
+  - milestone
+summary: "Backlog bucket."
+read_this_if:
+  - "Testing backlog."
+last_validated: 2026-05-12
+milestone_id: backlog
+theme: "Backlog"
+status: proposed
+relations:
+  goal_ids:
+    - G-003
+---
+
+# Backlog
+
+## Current State
+
+- Holding.
+
+## Decisions
+
+- None.
+
+## Constraints
+
+- None.
+
+## PRs
+
+None.
+`;
+
+    const m2 = `---
+project:
+  - acme
+type: project-milestone
+schema_version: 1
+tags:
+  - milestone
+summary: "Second milestone."
+read_this_if:
+  - "Testing order."
+last_validated: 2026-05-12
+milestone_id: M2
+sequence: 2
+theme: "Second"
+status: proposed
+relations:
+  goal_ids:
+    - G-002
+---
+
+# M2
+
+## Current State
+
+- Second.
+
+## Decisions
+
+- None.
+
+## Constraints
+
+- None.
+
+## PRs
+
+None.
+`;
+
+    const m1 = `---
+project:
+  - acme
+type: project-milestone
+schema_version: 1
+tags:
+  - milestone
+summary: "First milestone."
+read_this_if:
+  - "Testing order."
+last_validated: 2026-05-12
+milestone_id: M1
+sequence: 1
+theme: "First"
+status: proposed
+relations:
+  goal_ids:
+    - G-001
+---
+
+# M1
+
+## Current State
+
+- First.
+
+## Decisions
+
+- None.
+
+## Constraints
+
+- None.
+
+## PRs
+
+None.
+`;
+
+    await service.writeAnchor({ name: "projects/acme/milestones/backlog", content: mBacklog, message: "b", approved: true });
+    await service.writeAnchor({ name: "projects/acme/milestones/m-2", content: m2, message: "m2", approved: true });
+    await service.writeAnchor({ name: "projects/acme/milestones/m-1", content: m1, message: "m1", approved: true });
+
+    const listed = await service.listMilestones("acme");
+    expect(listed.map((r) => r.name)).toEqual([
+      "projects/acme/milestones/m-1.md",
+      "projects/acme/milestones/m-2.md",
+      "projects/acme/milestones/backlog.md",
+    ]);
+    expect(listed[0]?.displayId).toBe("M1");
+    expect(listed[1]?.displayId).toBe("M2");
+    expect(listed[2]?.displayId).toBe("backlog");
+  });
+
+  it("blocks duplicate milestone_id in the same project", async () => {
+    await service.writeAnchor({
+      name: "projects/acme/acme-roadmap",
+      content: roadmapThreeGoals,
+      message: "test: roadmap",
+      approved: true,
+    });
+
+    const body = (slug: string, goal: string) => `---
+project:
+  - acme
+type: project-milestone
+schema_version: 1
+tags:
+  - milestone
+summary: "Milestone ${slug}."
+read_this_if:
+  - "Testing."
+last_validated: 2026-05-12
+milestone_id: M1
+sequence: 1
+theme: "Theme ${slug}"
+status: proposed
+relations:
+  goal_ids:
+    - ${goal}
+---
+
+# ${slug}
+
+## Current State
+
+- X.
+
+## Decisions
+
+- None.
+
+## Constraints
+
+- None.
+
+## PRs
+
+None.
+`;
+
+    await service.writeAnchor({
+      name: "projects/acme/milestones/a",
+      content: body("a", "G-001"),
+      message: "a",
+      approved: true,
+    });
+
+    const dup = await service.writeAnchor({
+      name: "projects/acme/milestones/b",
+      content: body("b", "G-002").replace("sequence: 1", "sequence: 2"),
+      message: "b",
+      approved: true,
+    });
+    expect(dup.warnings.some((w) => w.severity === "BLOCK" && w.code === "milestone_duplicate_id")).toBe(true);
+  });
+
+  it("blocks duplicate sequence in the same project", async () => {
+    await service.writeAnchor({
+      name: "projects/acme/acme-roadmap",
+      content: roadmapThreeGoals,
+      message: "test: roadmap",
+      approved: true,
+    });
+
+    const body = (file: string, mid: string, goal: string) => `---
+project:
+  - acme
+type: project-milestone
+schema_version: 1
+tags:
+  - milestone
+summary: "Milestone ${file}."
+read_this_if:
+  - "Testing."
+last_validated: 2026-05-12
+milestone_id: ${mid}
+sequence: 1
+theme: "Theme ${file}"
+status: proposed
+relations:
+  goal_ids:
+    - ${goal}
+---
+
+# ${file}
+
+## Current State
+
+- X.
+
+## Decisions
+
+- None.
+
+## Constraints
+
+- None.
+
+## PRs
+
+None.
+`;
+
+    await service.writeAnchor({
+      name: "projects/acme/milestones/a",
+      content: body("a", "M1", "G-001"),
+      message: "a",
+      approved: true,
+    });
+
+    const dupSeq = await service.writeAnchor({
+      name: "projects/acme/milestones/b",
+      content: body("b", "M2", "G-002"),
+      message: "b",
+      approved: true,
+    });
+    expect(dupSeq.warnings.some((w) => w.severity === "BLOCK" && w.code === "milestone_duplicate_sequence")).toBe(
+      true,
+    );
+  });
+
+  it("blocks second backlog milestone_id in the same project", async () => {
+    await service.writeAnchor({
+      name: "projects/acme/acme-roadmap",
+      content: roadmapThreeGoals,
+      message: "test: roadmap",
+      approved: true,
+    });
+
+    const backlogBody = (goal: string) => `---
+project:
+  - acme
+type: project-milestone
+schema_version: 1
+tags:
+  - milestone
+summary: "Backlog."
+read_this_if:
+  - "Testing."
+last_validated: 2026-05-12
+milestone_id: backlog
+theme: "Backlog theme"
+status: proposed
+relations:
+  goal_ids:
+    - ${goal}
+---
+
+# B
+
+## Current State
+
+- X.
+
+## Decisions
+
+- None.
+
+## Constraints
+
+- None.
+
+## PRs
+
+None.
+`;
+
+    await service.writeAnchor({
+      name: "projects/acme/milestones/b1",
+      content: backlogBody("G-001"),
+      message: "b1",
+      approved: true,
+    });
+
+    const second = await service.writeAnchor({
+      name: "projects/acme/milestones/b2",
+      content: backlogBody("G-002"),
+      message: "b2",
+      approved: true,
+    });
+    expect(second.warnings.some((w) => w.severity === "BLOCK" && w.code === "milestone_duplicate_id")).toBe(true);
   });
 });
 

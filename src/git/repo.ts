@@ -7,6 +7,7 @@ import { AnchorParseCache } from "../storage/cache.js";
 import { analyzeRoadmapFromContent } from "../roadmap/analyzeRoadmap.js";
 import { parseAnchor } from "../storage/markdown.js";
 import { classifyAnchorPath, CONTEXT_ROOT_FILE, type AnchorCategory } from "../taxonomy.js";
+import { normalizedMilestoneId, normalizedSequenceFromFm } from "../milestoneFrontmatter.js";
 import { isProjectMilestoneType } from "../schema/milestoneTypes.js";
 import type {
   AnchorMeta,
@@ -155,6 +156,8 @@ export class AnchorRepository {
         const goalIds = Array.isArray(rel?.goal_ids)
           ? rel!.goal_ids.filter((item): item is string => typeof item === "string")
           : [];
+        const milestoneId = normalizedMilestoneId(parsed.frontmatter.milestone_id);
+        const sequence = normalizedSequenceFromFm(parsed.frontmatter);
         if (
           typeof status === "string" &&
           ["proposed", "active", "shipped", "cancelled"].includes(status) &&
@@ -165,6 +168,8 @@ export class AnchorRepository {
             theme,
             steelThread: typeof steelThread === "string" && steelThread.length > 0 ? steelThread : undefined,
             goalIds,
+            ...(milestoneId !== undefined ? { milestoneId } : {}),
+            ...(sequence !== undefined ? { sequence } : {}),
           };
         }
       }

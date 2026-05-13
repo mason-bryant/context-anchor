@@ -13,6 +13,7 @@ import {
   validateRoadmapAcceptanceShape,
 } from "./roadmapAcceptanceShape.js";
 import { validateMilestoneGoalRefs } from "./milestoneGoalRefs.js";
+import { validateMilestoneProjectUniqueness } from "./milestoneProjectUniqueness.js";
 import { validateRelationsShape } from "./relations.js";
 import { validateRoadmapGoalIdsForMilestones } from "./roadmapGoalIdsForMilestones.js";
 import { validateSectionShape } from "./sectionShape.js";
@@ -32,6 +33,7 @@ const VALIDATORS: Validator[] = [
   validateRelationsShape,
   validateRoadmapGoalIdsForMilestones,
   validateMilestoneGoalRefs,
+  validateMilestoneProjectUniqueness,
   validateNonDestructive,
   validateCompactionThresholds,
   validatePolicyWeakeningActiveWarn,

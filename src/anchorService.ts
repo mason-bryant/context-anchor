@@ -8,7 +8,7 @@ import {
 } from "./anchorPatch.js";
 import { buildContextRoot } from "./contextRoot.js";
 import {
-  ACCEPTANCE_CRITERIA_NAME,
+  canonicalBuiltInAnchorName,
   isBuiltInAnchorName,
   listBuiltInAnchorMetas,
   readBuiltInAnchor,
@@ -68,7 +68,7 @@ export class AnchorService {
 
   private resolveDiscoveryAnchorName(name: string): string {
     if (isBuiltInAnchorName(name)) {
-      return ACCEPTANCE_CRITERIA_NAME;
+      return canonicalBuiltInAnchorName(name);
     }
     return this.repo.resolveAnchor(name).name;
   }
@@ -531,18 +531,65 @@ export class AnchorService {
   }
 
   async listMilestones(project?: string): Promise<
-    Array<{ name: string; path: string; status: string; theme: string; goalIds: string[] }>
+    Array<{
+      name: string;
+      path: string;
+      status: string;
+      theme: string;
+      goalIds: string[];
+      milestoneId?: string;
+      sequence?: number;
+      displayId?: string;
+    }>
   > {
     const anchors = await this.repo.listAnchors({ project });
-    return anchors
+    const rows = anchors
       .filter((anchor) => anchor.name.includes("/milestones/") && anchor.milestone)
-      .map((anchor) => ({
-        name: anchor.name,
-        path: anchor.path,
-        status: anchor.milestone!.status,
-        theme: anchor.milestone!.theme,
-        goalIds: anchor.milestone!.goalIds,
-      }));
+      .map((anchor) => {
+        const m = anchor.milestone!;
+        let displayId: string | undefined;
+        if (m.milestoneId === "backlog") {
+          displayId = "backlog";
+        } else if (m.sequence !== undefined) {
+          displayId = `M${m.sequence}`;
+        } else if (m.milestoneId !== undefined && /^M\d+$/.test(m.milestoneId)) {
+          displayId = m.milestoneId;
+        }
+        return {
+          name: anchor.name,
+          path: anchor.path,
+          status: m.status,
+          theme: m.theme,
+          goalIds: m.goalIds,
+          ...(m.milestoneId !== undefined ? { milestoneId: m.milestoneId } : {}),
+          ...(m.sequence !== undefined ? { sequence: m.sequence } : {}),
+          ...(displayId !== undefined ? { displayId } : {}),
+        };
+      });
+
+    const group = (row: { milestoneId?: string; sequence?: number }) => {
+      if (row.milestoneId === "backlog") {
+        return 2;
+      }
+      if (row.sequence !== undefined) {
+        return 0;
+      }
+      return 1;
+    };
+
+    rows.sort((a, b) => {
+      const ga = group(a);
+      const gb = group(b);
+      if (ga !== gb) {
+        return ga - gb;
+      }
+      if (ga === 0) {
+        return (a.sequence ?? 0) - (b.sequence ?? 0);
+      }
+      return a.name.localeCompare(b.name);
+    });
+
+    return rows;
   }
 
   async readMilestone(name: string): Promise<{
