@@ -26,16 +26,6 @@ The tool reads `projects/<slug>/<slug>-roadmap.md`, renames every bare goal head
 document order, commits the result, and returns the list of renamed headings. If all
 goals already have stable IDs it returns `noChangesNeeded: true` without writing.
 
-You can also rename headings manually:
-
-```md
-<!-- Before -->
-### Goal 1 -- Define next milestone
-
-<!-- After -->
-### Goal G-001 -- Define next milestone
-```
-
 Rules:
 
 - Prefix is `G-` followed by one to six digits (`G-1`, `G-42`, `G-100`, `G-001`). For
@@ -94,9 +84,9 @@ proposed → active → shipped
                  ↘ cancelled
 ```
 
-When a milestone ships, set `status: shipped`, record the date in `## Current State`
-using `updateAnchorSection`, and move the corresponding goal entries in the roadmap to
-`## Completed`.
+When a milestone ships, set `status: shipped` and record the date in `## Current State`
+using `updateAnchorSection`. Then move the corresponding goal entries in the roadmap's
+`## Completed` table using `updateAnchorSection` on the roadmap anchor.
 
 ## MCP tools
 
