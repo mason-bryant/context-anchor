@@ -3,9 +3,16 @@
 Use this file to convert an existing collection of context-anchor markdown documents
 into the format expected by anchor-mcp. Work through each section in order.
 
+> **Two-tier workflow:** Steps 1 and 2 require direct access to the backing git
+> repository and are performed once during initial setup by whoever owns the repo.
+> Steps 2.5 through 5 can be performed entirely through the MCP tools — no shell
+> access to the repo is needed.
+
 ---
 
 ## Step 1 — Initialise the Git Repository
+
+> **Requires repo access.** This is a one-time bootstrap step.
 
 anchor-mcp requires a git repository. Every write is committed; background sync uses
 `git pull --rebase`. Without git, all writes fail.
@@ -20,6 +27,10 @@ git commit -m "initial: import existing context documents"
 ---
 
 ## Step 2 — Fix Directory Taxonomy
+
+> **Requires repo access** for any files that are in the wrong location.
+> Files outside the valid taxonomy are invisible to the MCP tools and cannot
+> be moved or deleted through them.
 
 anchor-mcp only recognises six top-level categories. Files outside these directories
 are invisible to reads and blocked on writes.
@@ -41,16 +52,23 @@ are invisible to reads and blocked on writes.
 - Project anchors: either `projects/<project-slug>/<file>.md` **or** `projects/<project-slug>/milestones/<file>.md` for milestone anchors (`type: project-milestone`). No other nested directories under `projects/<slug>/` are allowed.
 - `CONTEXT-ROOT.md` at the repo root is reserved and generated automatically. Do not move it.
 
-**How to find invalid paths:**
+**Audit what is currently visible to the MCP:**
 
-List every `.md` file whose top-level directory is not in the valid set:
+Call `listAnchors` (with `includeArchive: true` to include archived files) to see
+every anchor the server can read:
 
-```bash
-find . -name "*.md" ! -path "./.git/*" | awk -F/ '{print $2}' | sort -u
+```json
+CallMcpTool(
+  server="anchor-mcp",
+  toolName="listAnchors",
+  arguments={ "includeArchive": true }
+)
 ```
 
-Any name in the output that is not one of the six valid categories (and not `CONTEXT-ROOT.md`)
-needs to be moved. For each such directory, decide the right target:
+Any `.md` file that does not appear in this list is either in the wrong location or
+missing required front matter. Those files must be fixed directly in the repo.
+
+**Routing guide for misplaced files:**
 
 - Agent behaviour / coding rules / role documents → `agent-rules/`
 - General references, workflows, how-to guides → `shared/`
@@ -58,16 +76,17 @@ needs to be moved. For each such directory, decide the right target:
 - Conflict-resolution notes → `conflicts/`
 - Inactive / superseded → `archive/`
 
-Also check for files nested more than one level deep inside a non-`projects` category
-(two or more `/` after the category name). Flatten them to `<category>/<file>.md`.
+Also check for files nested more than one level deep inside a non-`projects` category.
+Flatten them to `<category>/<file>.md`.
 
-Move files with `git mv` to preserve history:
+**Move files with `git mv` to preserve history:**
 
 ```bash
 git mv <old-path> <new-path>
 ```
 
 Remove any empty directories left behind. Commit when all files are in valid locations.
+After committing, re-run `listAnchors` to confirm every file now appears.
 
 ---
 
@@ -84,10 +103,30 @@ regenerated from front matter.
 
 ### A. Identify hardcoded sections to migrate
 
+Read the current state of the root using `contextRoot`:
+
+```json
+CallMcpTool(
+  server="anchor-mcp",
+  toolName="contextRoot",
+  arguments={ "format": "markdown" }
+)
+```
+
 Look for signs that the root is legacy/manual:
 - front matter present at top of `CONTEXT-ROOT.md`
 - long prose sections and operational instructions
 - links to non-existent paths or old taxonomy names
+
+Use `searchAnchors` to locate any references to old taxonomy paths:
+
+```json
+CallMcpTool(
+  server="anchor-mcp",
+  toolName="searchAnchors",
+  arguments={ "query": "context-engineering" }
+)
+```
 
 ### B. Route content to the right category
 
@@ -106,10 +145,32 @@ If a single legacy section mixes multiple concerns, split it into multiple files
 
 ### C. Create/update anchors and remove legacy-only root prose
 
-For each extracted chunk:
-1. Create or update the target anchor.
-2. Add valid front matter (`type`, `tags`, `summary`, `read_this_if`, `last_validated`, and `project` when under `projects/`).
-3. Ensure required sections exist (`## Current State`, `## Decisions`, `## Constraints`, `## PRs`).
+For each extracted chunk, create the target anchor using `writeAnchor`:
+
+```json
+CallMcpTool(
+  server="anchor-mcp",
+  toolName="writeAnchor",
+  arguments={
+    "name": "agent-rules/my-rule.md",
+    "content": "---\ntype: agent-roles\ntags:\n  - example\nsummary: \"One sentence describing this anchor.\"\nread_this_if:\n  - \"You need guidance on <topic>.\"\nlast_validated: 2026-01-01\n---\n\n## Current State\n\n...\n\n## Decisions\n\n...\n\n## Constraints\n\n...\n\n## PRs\n\nNone.\n"
+  }
+)
+```
+
+To update an existing anchor's front matter without resending the full body, use
+`updateAnchorFrontmatter`:
+
+```json
+CallMcpTool(
+  server="anchor-mcp",
+  toolName="updateAnchorFrontmatter",
+  arguments={
+    "name": "agent-rules/my-rule.md",
+    "updates": { "summary": "Updated summary text.", "last_validated": "2026-01-01" }
+  }
+)
+```
 
 Do not preserve migrated prose by hand-editing `CONTEXT-ROOT.md`; preserve it in anchors.
 
@@ -125,7 +186,7 @@ CallMcpTool(
 )
 ```
 
-Then verify stale links are gone (for example old directories that no longer exist).
+Then verify stale links are gone by calling `contextRoot` again and reading the output.
 
 ### E. Do not synthesize root sections by hand
 
@@ -145,8 +206,8 @@ Those are migration debt. Move content into anchors and regenerate.
 
 ### F. Migration acceptance checks for root generation
 
-After running `writeContextRoot`, verify all of the following:
-- The file starts with `# CONTEXT-ROOT`.
+After running `writeContextRoot`, call `contextRoot` and verify all of the following:
+- The output starts with `# CONTEXT-ROOT`.
 - It contains the generator marker: `Generated by anchor-mcp from anchor front matter.`
 - It contains no leftover legacy front matter block at the top.
 - It contains no stale taxonomy links (for example `./context-engineering/`).
@@ -180,27 +241,65 @@ project:
 
 ### How to find front-matter violations
 
-**Missing `summary` or `read_this_if`:**
-```bash
-grep -rL "^summary:" --include="*.md" . | grep -v CONTEXT-ROOT
-grep -rL "^read_this_if:" --include="*.md" . | grep -v CONTEXT-ROOT
+Call `listAnchors` to retrieve all anchors with their front matter metadata. Review the
+returned `summary`, `read_this_if`, `last_validated`, and `project` fields for each entry:
+
+```json
+CallMcpTool(
+  server="anchor-mcp",
+  toolName="listAnchors",
+  arguments={ "includeArchive": true }
+)
 ```
 
-**Malformed `last_validated` (catches trailing characters, wrong format):**
-```bash
-grep -rn "^last_validated:" --include="*.md" . \
-  | grep -Ev "last_validated: [0-9]{4}-[0-9]{2}-[0-9]{2}$"
+For a closer look at a specific anchor's full front matter and body, use `readAnchor`:
+
+```json
+CallMcpTool(
+  server="anchor-mcp",
+  toolName="readAnchor",
+  arguments={ "name": "projects/my-project/my-anchor.md" }
+)
 ```
 
-**Project slug mismatch under `projects/`:**
-For each file at `projects/<slug>/…`, confirm its `project` front-matter value equals
-`<slug>`. Extract and compare:
-```bash
-for f in projects/*/**.md; do
-  slug=$(echo "$f" | cut -d/ -f2)
-  grep "project:" "$f" | grep -qv "$slug" && echo "MISMATCH: $f (expected slug: $slug)"
-done
+**Checking for project slug mismatches under `projects/`:**
+
+List anchors filtered by project and verify the returned `project` field matches the
+directory slug for each result:
+
+```json
+CallMcpTool(
+  server="anchor-mcp",
+  toolName="listAnchors",
+  arguments={ "project": "my-project" }
+)
 ```
+
+Any anchor whose `project` front matter value does not match `my-project` needs to
+be corrected.
+
+### Fixing violations
+
+Use `updateAnchorFrontmatter` to correct individual fields without resending the body.
+Pass `null` as a value to remove a key:
+
+```json
+CallMcpTool(
+  server="anchor-mcp",
+  toolName="updateAnchorFrontmatter",
+  arguments={
+    "name": "shared/my-guide.md",
+    "updates": {
+      "summary": "A guide to doing X in this project.",
+      "read_this_if": ["You need to understand how X is done."],
+      "last_validated": "2026-01-01"
+    }
+  }
+)
+```
+
+If the anchor's front matter is too far from valid to patch incrementally, read it
+with `readAnchor`, correct the full content, and rewrite it with `writeAnchor`.
 
 ### Writing good `summary` and `read_this_if` values
 
@@ -223,12 +322,63 @@ Every anchor body must contain these four H2 headings:
 ## PRs
 ```
 
-**How to find files missing a section:**
-```bash
-for section in "Current State" "Decisions" "Constraints" "PRs"; do
-  echo "=== Missing '## $section' ==="
-  grep -rL "^## $section" --include="*.md" . | grep -v CONTEXT-ROOT
-done
+### How to find anchors missing a section
+
+There is no single query that lists all anchors missing a given section. The reliable
+approach is to enumerate anchors and read each one:
+
+1. Call `listAnchors` to get all anchor names.
+2. For each anchor, call `readAnchor` and check whether the four required headings appear
+   in the returned body.
+
+To quickly search for anchors that reference (or notably lack) a particular heading,
+use `searchAnchors`:
+
+```json
+CallMcpTool(
+  server="anchor-mcp",
+  toolName="searchAnchors",
+  arguments={ "query": "## Current State" }
+)
+```
+
+Anchors that do not appear in the results are candidates for missing that section.
+
+### Fixing missing sections
+
+**If the section exists but has wrong or empty content**, use `updateAnchorSection`
+(content must not include the heading line itself):
+
+```json
+CallMcpTool(
+  server="anchor-mcp",
+  toolName="updateAnchorSection",
+  arguments={
+    "name": "shared/my-guide.md",
+    "heading": "Current State",
+    "content": "This guide covers X. It is actively maintained."
+  }
+)
+```
+
+**If the section is completely absent**, read the full anchor with `readAnchor`, add
+the missing sections to the body, and rewrite it with `writeAnchor`. The server
+blocks writes that are still missing required sections, so the write itself confirms
+compliance.
+
+**To append content to an existing section** without replacing it, use
+`appendToAnchorSection`:
+
+```json
+CallMcpTool(
+  server="anchor-mcp",
+  toolName="appendToAnchorSection",
+  arguments={
+    "name": "shared/my-guide.md",
+    "heading": "PRs",
+    "content": "- [PR Add feature X - #42](https://github.com/org/repo/pull/42)"
+  }
+)
 ```
 
 **What belongs in each section:**
@@ -242,39 +392,69 @@ done
 - **`## PRs`** — Related pull requests. Format: `[PR <title> - #<number>](<url>)`.
   Group by status (Merged / Open / Closed). If none exist, write `None.`
 
-> **Tip:** Start the server with `--migration-warn-only` while adding sections.
-> This demotes missing-section violations from BLOCK to WARN, allowing incremental
-> migration without blocking all writes.
+> **Tip:** Start the server with `--migration-warn-only` to demote missing-section
+> violations from BLOCK to WARN, allowing incremental migration without blocking all
+> writes. This is a server configuration flag — see the Reference section below.
 
 ---
 
 ## Step 5 — Verification
 
-Run through this checklist before connecting the repo to anchor-mcp.
+Run through this checklist before treating the migration as complete.
 
 **Taxonomy**
-- [ ] `find . -name "*.md" ! -path "./.git/*" | awk -F/ '{print $2}' | sort -u`
-      returns only valid category names (plus blank for root-level `CONTEXT-ROOT.md`)
-- [ ] No `.md` files are nested more than one level inside a non-`projects` category
-- [ ] No empty directories remain
+
+Call `listAnchors` with `includeArchive: true` and verify:
+- [ ] Every expected anchor appears in the results.
+- [ ] No anchor has a path outside the six valid categories.
+- [ ] No project anchor is nested deeper than `projects/<slug>/<file>.md` (or
+      `projects/<slug>/milestones/<file>.md` for milestone anchors).
+
+```json
+CallMcpTool(
+  server="anchor-mcp",
+  toolName="listAnchors",
+  arguments={ "includeArchive": true }
+)
+```
 
 **Front matter**
-- [ ] `grep -rL "^summary:" --include="*.md" . | grep -v CONTEXT-ROOT` is empty
-- [ ] `grep -rL "^read_this_if:" --include="*.md" . | grep -v CONTEXT-ROOT` is empty
-- [ ] `grep -rn "^last_validated:" --include="*.md" . | grep -Ev "last_validated: [0-9]{4}-[0-9]{2}-[0-9]{2}$"` is empty
-- [ ] All `projects/<slug>/` files have `project: <slug>` in their front matter
+
+- [ ] Every anchor returned by `listAnchors` has non-empty `summary` and `read_this_if`
+      values in the result metadata.
+- [ ] All `last_validated` values are strict ISO dates (`YYYY-MM-DD`, no trailing text).
+- [ ] All anchors under `projects/<slug>/` have `project: [<slug>]` in their front matter.
+
+Any write that passed without a BLOCK error has already been validated — validation is
+enforced at write time, not separately.
 
 **Sections**
-- [ ] All four required H2 sections present in every anchor (or `--migration-warn-only`
-      is set while you complete them incrementally)
 
-**Git**
-- [ ] `git status` is clean (all changes committed)
-- [ ] `git log --oneline -1` shows at least one commit
+- [ ] For any anchor added or updated during migration, `readAnchor` shows all four
+      required sections (`## Current State`, `## Decisions`, `## Constraints`, `## PRs`).
+
+Again, a successful `writeAnchor` (non-warn-only mode) guarantees sections are present.
+
+**Context root**
+
+- [ ] `contextRoot` returns output beginning with `# CONTEXT-ROOT` and containing no
+      stale paths.
+
+```json
+CallMcpTool(
+  server="anchor-mcp",
+  toolName="contextRoot",
+  arguments={ "format": "markdown" }
+)
+```
 
 ---
 
 ## Reference — anchor-mcp Configuration (stdio)
+
+The server must be running and pointed at your anchor repo before any MCP tool calls
+will work. Replace `anchor-mcp` with whatever name you give the server in your MCP
+client config — that name is what you pass as the `server` argument in every tool call.
 
 ```json
 {
