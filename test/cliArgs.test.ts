@@ -75,3 +75,61 @@ describe("CLI args", () => {
     expect(options.allowedHosts).toEqual(["flag.ngrok-free.dev"]);
   });
 });
+
+describe("CLI args — authToken", () => {
+  it("returns undefined when no token source is provided", () => {
+    const options = parseCliArgs(["--transport", "http"], {});
+    expect(options.authToken).toBeUndefined();
+  });
+
+  it("reads authToken from the --auth-token flag", () => {
+    const options = parseCliArgs(["--transport", "http", "--auth-token", "flag-token"], {});
+    expect(options.authToken).toBe("flag-token");
+  });
+
+  it("reads authToken from the environment variable", () => {
+    const options = parseCliArgs(["--transport", "http"], { ANCHOR_MCP_AUTH_TOKEN: "env-token" });
+    expect(options.authToken).toBe("env-token");
+  });
+
+  it("reads authToken from the config file", async () => {
+    const tmpDir = await mkdtemp(path.join(os.tmpdir(), "anchor-mcp-config-"));
+    const configPath = path.join(tmpDir, "anchor-mcp.config.json");
+    await writeFile(configPath, JSON.stringify({ authToken: "config-token" }), "utf8");
+
+    const options = parseCliArgs(["--transport", "http", "--config", configPath], {});
+    expect(options.authToken).toBe("config-token");
+  });
+
+  it("CLI flag takes precedence over env var and config file", async () => {
+    const tmpDir = await mkdtemp(path.join(os.tmpdir(), "anchor-mcp-config-"));
+    const configPath = path.join(tmpDir, "anchor-mcp.config.json");
+    await writeFile(configPath, JSON.stringify({ authToken: "config-token" }), "utf8");
+
+    const options = parseCliArgs(["--transport", "http", "--auth-token", "flag-token", "--config", configPath], {
+      ANCHOR_MCP_AUTH_TOKEN: "env-token",
+    });
+    expect(options.authToken).toBe("flag-token");
+  });
+
+  it("env var takes precedence over config file", async () => {
+    const tmpDir = await mkdtemp(path.join(os.tmpdir(), "anchor-mcp-config-"));
+    const configPath = path.join(tmpDir, "anchor-mcp.config.json");
+    await writeFile(configPath, JSON.stringify({ authToken: "config-token" }), "utf8");
+
+    const options = parseCliArgs(["--transport", "http", "--config", configPath], {
+      ANCHOR_MCP_AUTH_TOKEN: "env-token",
+    });
+    expect(options.authToken).toBe("env-token");
+  });
+
+  it("rejects a non-string authToken in the config file", async () => {
+    const tmpDir = await mkdtemp(path.join(os.tmpdir(), "anchor-mcp-config-"));
+    const configPath = path.join(tmpDir, "anchor-mcp.config.json");
+    await writeFile(configPath, JSON.stringify({ authToken: 12345 }), "utf8");
+
+    expect(() => parseCliArgs(["--transport", "http", "--config", configPath], {})).toThrow(
+      /Expected config field authToken to be a string/,
+    );
+  });
+});

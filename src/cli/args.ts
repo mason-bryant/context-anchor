@@ -55,7 +55,10 @@ export function parseCliArgs(argv: string[], env: NodeJS.ProcessEnv = process.en
     host: stringFlag(flags, "host") ?? env.ANCHOR_MCP_HOST ?? "127.0.0.1",
     port: numberFlag(flags, "port") ?? numberEnv(env.ANCHOR_MCP_PORT) ?? 3000,
     allowedHosts,
-    authToken: stringFlag(flags, "auth-token") ?? env.ANCHOR_MCP_AUTH_TOKEN,
+    authToken:
+      stringFlag(flags, "auth-token") ??
+      env.ANCHOR_MCP_AUTH_TOKEN ??
+      stringConfigValue(fileConfig.authToken, "authToken"),
     stateless: !booleanFlag(flags, "stateful"),
     config: {
       repoPath: path.resolve(expandHome(repo)),
@@ -71,6 +74,7 @@ export function parseCliArgs(argv: string[], env: NodeJS.ProcessEnv = process.en
 
 type CliConfigFile = {
   allowedHosts?: unknown;
+  authToken?: unknown;
 };
 
 function readConfigFile(flags: Map<string, string | boolean>, env: NodeJS.ProcessEnv): CliConfigFile {
@@ -137,6 +141,18 @@ function listEnv(value: string | undefined): string[] | undefined {
     .filter((item) => item.length > 0);
 
   return items.length > 0 ? items : undefined;
+}
+
+function stringConfigValue(value: unknown, key: string): string | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (typeof value !== "string") {
+    throw new Error(`Expected config field ${key} to be a string`);
+  }
+
+  return value || undefined;
 }
 
 function listConfigValue(value: unknown, key: string): string[] | undefined {

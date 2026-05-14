@@ -90,6 +90,21 @@ ln -sfn ~/agent-context /path/to/your-project/.agents/context
 
 ## Connecting to Cursor (HTTP)
 
+HTTP transport always requires an auth token — even on localhost — because a localhost-bound
+server can be exposed externally at any time (for example via ngrok) without changing the
+bind address. Generate one first:
+
+```sh
+node -e "console.log(require('crypto').randomBytes(32).toString('base64url'))"
+```
+
+Create a config file (and lock down its permissions since it holds the token):
+
+```sh
+echo '{"authToken":"your-generated-token"}' > anchor-mcp.config.json
+chmod 600 anchor-mcp.config.json
+```
+
 Start the server (no build step required):
 
 ```sh
@@ -97,7 +112,8 @@ npx tsx src/bin/anchor-mcp.ts \
   --repo ~/agent-context \
   --transport http \
   --host 127.0.0.1 \
-  --port 3333
+  --port 3333 \
+  --config ./anchor-mcp.config.json
 ```
 
 To auto-restart when source files change, add the `watch` flag:
@@ -107,7 +123,8 @@ npx tsx watch src/bin/anchor-mcp.ts \
   --repo ~/agent-context \
   --transport http \
   --host 127.0.0.1 \
-  --port 3333
+  --port 3333 \
+  --config ./anchor-mcp.config.json
 ```
 
 > **Note:** The `node dist/bin/anchor-mcp.js` form requires `npm run build` first and is intended for production deployments. Use `tsx` for local development.
@@ -118,7 +135,10 @@ Then add to your Cursor MCP settings (`~/.cursor/mcp.json`):
 {
   "mcpServers": {
     "anchor-mcp": {
-      "url": "http://127.0.0.1:3333/mcp"
+      "url": "http://127.0.0.1:3333/mcp",
+      "headers": {
+        "Authorization": "Bearer your-generated-token"
+      }
     }
   }
 }
@@ -126,18 +146,42 @@ Then add to your Cursor MCP settings (`~/.cursor/mcp.json`):
 
 ### Accessing HTTP through ngrok
 
-Keep the server bound to localhost, and allow only the tunnel hostname through
-MCP Express Host header validation:
+When exposing the server externally, keep it bound to `127.0.0.1` and let ngrok tunnel
+to it. You will already have an `authToken` from the local setup above — add
+`allowedHosts` to the same config file:
+
+- **`allowedHosts`** — the `@modelcontextprotocol/express` layer validates the `Host`
+  header on every request. Requests arriving through ngrok carry the ngrok hostname, so
+  it must be listed here or every request will be rejected before reaching your auth
+  middleware.
+
+#### 1. Generate a secure token
+
+If you haven't already (see [Connecting to Cursor (HTTP)](#connecting-to-cursor-http)):
+
+```sh
+node -e "console.log(require('crypto').randomBytes(32).toString('base64url'))"
+```
+
+#### 2. Update your config file
 
 ```json
 {
+  "authToken": "your-generated-token",
   "allowedHosts": [
-    "your-tunnel.ngrok-free.dev"
+    "your-tunnel.ngrok-free.app"
   ]
 }
 ```
 
-Save that as `anchor-mcp.config.json`, then start the server with:
+Save this as `anchor-mcp.config.json` and restrict its permissions so only your user
+can read it (it contains the bearer token):
+
+```sh
+chmod 600 anchor-mcp.config.json
+```
+
+#### 3. Start the server
 
 ```sh
 npx tsx src/bin/anchor-mcp.ts \
@@ -146,6 +190,21 @@ npx tsx src/bin/anchor-mcp.ts \
   --host 127.0.0.1 \
   --port 3333 \
   --config ./anchor-mcp.config.json
+```
+
+#### 4. Add the token to your MCP client config
+
+```json
+{
+  "mcpServers": {
+    "anchor-mcp": {
+      "url": "https://your-tunnel.ngrok-free.app/mcp",
+      "headers": {
+        "Authorization": "Bearer your-generated-token"
+      }
+    }
+  }
+}
 ```
 
 `allowedHosts` accepts hostnames or full URLs. The same setting is available for
@@ -170,26 +229,77 @@ The MCP server also ships session instructions (`src/server.ts`) telling agents 
 - **Approval** → changes to Decisions/Constraints (or removing bullets) require the same write tool (`writeAnchor` or a chunked write) with `approved: true` after explicit user confirmation. **`deleteAnchor` and `renameAnchor` always require `approved: true`** before the server will remove or move an anchor file.
 - **Roadmaps** → keep forward-looking specs and completed history in the project’s roadmap anchor when you use that pattern; heed write warnings for oversized roadmaps or `## Completed` tables and use `compactionReport` to plan cleanup.
 
-### Authentication (optional)
+### Authentication
 
-Set a shared secret to restrict access:
+A bearer token is **required** for HTTP transport regardless of bind address. The server
+refuses to start without one. A localhost-bound server can be exposed externally at any
+time (for example via ngrok) without changing the bind address, so there is no safe
+"localhost-only" exception.
+
+#### Generating a token
+
+Use Node's built-in `crypto` module to produce a cryptographically random token:
 
 ```sh
-ANCHOR_MCP_AUTH_TOKEN=secret node dist/bin/anchor-mcp.js \
-  --repo ~/agent-context \
-  --transport http
+node -e "console.log(require('crypto').randomBytes(32).toString('base64url'))"
 ```
 
-Clients send either:
+This produces a 43-character URL-safe base64 string. Do not use a short or guessable
+value — the token is the only secret protecting the MCP endpoint.
 
-```txt
-Authorization: Bearer secret
+#### Setting the token
+
+Preferred — store it in the config file alongside `allowedHosts` (see ngrok section):
+
+```json
+{
+  "authToken": "your-generated-token"
+}
 ```
 
-or:
+Pass the config file at startup:
+
+```sh
+anchor-mcp --transport http --config ~/anchor-mcp.config.json
+```
+
+Alternatively, pass it as a CLI flag or environment variable:
+
+```sh
+# CLI flag
+anchor-mcp --transport http --auth-token your-generated-token
+
+# Environment variable (keeps token out of shell history)
+ANCHOR_MCP_AUTH_TOKEN=your-generated-token anchor-mcp --transport http
+```
+
+Precedence order when multiple sources are set: CLI flag → environment variable → config file.
+
+#### Client requests
+
+Clients must include the token on every request using either header:
 
 ```txt
-x-anchor-mcp-token: secret
+Authorization: Bearer your-generated-token
+```
+
+```txt
+x-anchor-mcp-token: your-generated-token
+```
+
+In a JSON MCP client config:
+
+```json
+{
+  "mcpServers": {
+    "anchor-mcp": {
+      "url": "http://127.0.0.1:3333/mcp",
+      "headers": {
+        "Authorization": "Bearer your-generated-token"
+      }
+    }
+  }
+}
 ```
 
 ### Stdio (debugging only)
