@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { randomUUID, timingSafeEqual } from "node:crypto";
 import type { Server } from "node:http";
 
 import { createMcpExpressApp } from "@modelcontextprotocol/express";
@@ -18,11 +18,34 @@ export type HttpServerOptions = {
   stateless: boolean;
 };
 
+const LOCALHOST_HOSTS = new Set(["localhost", "127.0.0.1", "::1", "[::1]"]);
 const LOCALHOST_ALLOWED_HOSTS = ["localhost", "127.0.0.1", "[::1]"];
 
+function isLocalhostBinding(host: string): boolean {
+  return LOCALHOST_HOSTS.has(host);
+}
+
 export async function startHttpServer(config: ServerConfig, options: HttpServerOptions): Promise<Server> {
+  if (!isLocalhostBinding(options.host) && !options.authToken) {
+    throw new Error(
+      `HTTP server is bound to ${options.host} but no --auth-token is configured. ` +
+        `Refusing to start an unauthenticated server on a non-localhost interface. ` +
+        `Pass --auth-token <token> or set ANCHOR_MCP_AUTH_TOKEN, or bind to 127.0.0.1.`,
+    );
+  }
+
   const runtime = await createAnchorRuntime(config);
   runtime.startAutoSync();
+
+  const corsOrigin = isLocalhostBinding(options.host)
+    ? (origin: string | undefined, cb: (err: Error | null, allow?: boolean) => void) => {
+        if (!origin || LOCALHOST_HOSTS.has(new URL(origin).hostname)) {
+          cb(null, true);
+        } else {
+          cb(null, false);
+        }
+      }
+    : false;
 
   const app = createMcpExpressApp({
     host: options.host,
@@ -31,7 +54,7 @@ export async function startHttpServer(config: ServerConfig, options: HttpServerO
   });
   app.use(
     cors({
-      origin: true,
+      origin: corsOrigin,
       exposedHeaders: ["WWW-Authenticate", "Mcp-Session-Id", "Last-Event-Id", "Mcp-Protocol-Version"],
     }),
   );
@@ -92,13 +115,24 @@ export function buildAllowedHosts(configuredHosts: string[] | undefined): string
   return [...new Set([...LOCALHOST_ALLOWED_HOSTS, ...configuredHosts])];
 }
 
+function safeTokenCompare(provided: string, expected: string): boolean {
+  const a = Buffer.from(provided);
+  const b = Buffer.from(expected);
+  if (a.length !== b.length) {
+    timingSafeEqual(b, b);
+    return false;
+  }
+  return timingSafeEqual(a, b);
+}
+
 function bearerAuth(expectedToken: string) {
   return (req: Request, res: Response, next: NextFunction) => {
     const header = req.header("authorization");
     const bearer = header?.match(/^Bearer\s+(.+)$/i)?.[1];
     const explicit = req.header("x-anchor-mcp-token");
 
-    if (bearer === expectedToken || explicit === expectedToken) {
+    const candidate = bearer ?? explicit ?? "";
+    if (candidate && safeTokenCompare(candidate, expectedToken)) {
       next();
       return;
     }
