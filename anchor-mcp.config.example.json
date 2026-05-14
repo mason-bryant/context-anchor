@@ -1,4 +1,5 @@
 {
+  "authToken": "replace-with-output-of: node -e \"console.log(require('crypto').randomBytes(32).toString('base64url'))\"",
   "allowedHosts": [
     "your-tunnel.ngrok-free.dev"
   ]
