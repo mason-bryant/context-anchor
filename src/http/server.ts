@@ -26,11 +26,10 @@ function isLocalhostBinding(host: string): boolean {
 }
 
 export async function startHttpServer(config: ServerConfig, options: HttpServerOptions): Promise<Server> {
-  if (!isLocalhostBinding(options.host) && !options.authToken) {
+  if (!options.authToken) {
     throw new Error(
-      `HTTP server is bound to ${options.host} but no auth token is configured. ` +
-        `Refusing to start an unauthenticated server on a non-localhost interface. ` +
-        `Supply a token via --auth-token <token>, ANCHOR_MCP_AUTH_TOKEN, or "authToken" in --config, or bind to 127.0.0.1.`,
+      `HTTP transport requires an auth token. ` +
+        `Supply one via --auth-token <token>, ANCHOR_MCP_AUTH_TOKEN, or "authToken" in --config.`,
     );
   }
 

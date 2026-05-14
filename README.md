@@ -90,6 +90,21 @@ ln -sfn ~/agent-context /path/to/your-project/.agents/context
 
 ## Connecting to Cursor (HTTP)
 
+HTTP transport always requires an auth token — even on localhost — because a localhost-bound
+server can be exposed externally at any time (for example via ngrok) without changing the
+bind address. Generate one first:
+
+```sh
+node -e "console.log(require('crypto').randomBytes(32).toString('base64url'))"
+```
+
+Create a config file (and lock down its permissions since it holds the token):
+
+```sh
+echo '{"authToken":"your-generated-token"}' > anchor-mcp.config.json
+chmod 600 anchor-mcp.config.json
+```
+
 Start the server (no build step required):
 
 ```sh
@@ -97,7 +112,8 @@ npx tsx src/bin/anchor-mcp.ts \
   --repo ~/agent-context \
   --transport http \
   --host 127.0.0.1 \
-  --port 3333
+  --port 3333 \
+  --config ./anchor-mcp.config.json
 ```
 
 To auto-restart when source files change, add the `watch` flag:
@@ -107,7 +123,8 @@ npx tsx watch src/bin/anchor-mcp.ts \
   --repo ~/agent-context \
   --transport http \
   --host 127.0.0.1 \
-  --port 3333
+  --port 3333 \
+  --config ./anchor-mcp.config.json
 ```
 
 > **Note:** The `node dist/bin/anchor-mcp.js` form requires `npm run build` first and is intended for production deployments. Use `tsx` for local development.
@@ -118,7 +135,10 @@ Then add to your Cursor MCP settings (`~/.cursor/mcp.json`):
 {
   "mcpServers": {
     "anchor-mcp": {
-      "url": "http://127.0.0.1:3333/mcp"
+      "url": "http://127.0.0.1:3333/mcp",
+      "headers": {
+        "Authorization": "Bearer your-generated-token"
+      }
     }
   }
 }
@@ -127,10 +147,9 @@ Then add to your Cursor MCP settings (`~/.cursor/mcp.json`):
 ### Accessing HTTP through ngrok
 
 When exposing the server externally, keep it bound to `127.0.0.1` and let ngrok tunnel
-to it. Two things are required:
+to it. You will already have an `authToken` from the local setup above — add
+`allowedHosts` to the same config file:
 
-- **`authToken`** — the server refuses to start on a non-localhost interface without one,
-  and any external connection is otherwise unauthenticated.
 - **`allowedHosts`** — the `@modelcontextprotocol/express` layer validates the `Host`
   header on every request. Requests arriving through ngrok carry the ngrok hostname, so
   it must be listed here or every request will be rejected before reaching your auth
@@ -138,13 +157,13 @@ to it. Two things are required:
 
 #### 1. Generate a secure token
 
+If you haven't already (see [Connecting to Cursor (HTTP)](#connecting-to-cursor-http)):
+
 ```sh
 node -e "console.log(require('crypto').randomBytes(32).toString('base64url'))"
 ```
 
-Copy the output — you will use it as `authToken` in the next step.
-
-#### 2. Create a config file
+#### 2. Update your config file
 
 ```json
 {
@@ -212,9 +231,10 @@ The MCP server also ships session instructions (`src/server.ts`) telling agents 
 
 ### Authentication
 
-A bearer token is **required** when the server is bound to any interface other than
-`localhost` / `127.0.0.1` / `::1`. The server will refuse to start without one in that
-case. For localhost-only use it is optional but still recommended.
+A bearer token is **required** for HTTP transport regardless of bind address. The server
+refuses to start without one. A localhost-bound server can be exposed externally at any
+time (for example via ngrok) without changing the bind address, so there is no safe
+"localhost-only" exception.
 
 #### Generating a token
 
