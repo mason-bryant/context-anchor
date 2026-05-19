@@ -82,8 +82,8 @@ If work reveals durable truth (what shipped, decisions, limits), persist it with
 on the relevant anchor — not only in chat. Section mapping: observable reality → ## Current State; settled choices → \
 ## Decisions; hard limits → ## Constraints; pull requests → ## PRs (use the enforced PR link text shape).
 
-Bump last_validated (YYYY-MM-DD) whenever you materially edit Current State, Decisions, or Constraints; the server blocks \
-same-day substantive edits if the date is unchanged.
+Set last_validated (YYYY-MM-DD) to today's date whenever you materially edit Current State, Decisions, or Constraints; \
+same-day substantive edits may reuse today's date.
 
 Edits to Decisions or Constraints, or deleting existing bullets, need explicit human approval: retry the same write tool \
 with approved: true after the user confirms.
@@ -377,7 +377,7 @@ the index when your workflow checks in that file.`,
     {
       title: "Update Anchor Section",
       description:
-        "Replace the body of one ## H2 section (heading may be passed as \"## PRs\" or \"PRs\"). Content must not include the heading line. Pass lastValidated (YYYY-MM-DD) to bump the date atomically in the same commit when editing a substantive section.",
+        "Replace the body of one ## H2 section (heading may be passed as \"## PRs\" or \"PRs\"). Content must not include the heading line. Pass lastValidated (YYYY-MM-DD) to refresh a stale validation date atomically in the same commit when editing a substantive section.",
       inputSchema: z
         .object({
           name: z.string(),
@@ -408,7 +408,7 @@ the index when your workflow checks in that file.`,
     {
       title: "Append To Anchor Section",
       description:
-        "Append markdown to the end of one ## H2 section body. Pass lastValidated (YYYY-MM-DD) to bump the date atomically in the same commit when editing a substantive section.",
+        "Append markdown to the end of one ## H2 section body. Pass lastValidated (YYYY-MM-DD) to refresh a stale validation date atomically in the same commit when editing a substantive section.",
       inputSchema: z
         .object({
           name: z.string(),
@@ -439,7 +439,7 @@ the index when your workflow checks in that file.`,
     {
       title: "Delete Anchor Section",
       description:
-        "Remove an entire ## H2 section including its heading. Deleting required sections will fail validation. Pass lastValidated (YYYY-MM-DD) to bump the date atomically in the same commit when removing a substantive section.",
+        "Remove an entire ## H2 section including its heading. Deleting required sections will fail validation. Pass lastValidated (YYYY-MM-DD) to refresh a stale validation date atomically in the same commit when removing a substantive section.",
       inputSchema: z
         .object({
           name: z.string(),

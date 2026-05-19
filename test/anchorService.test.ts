@@ -172,20 +172,40 @@ None.
   });
 
   it("requires last_validated to change when substantive sections change", async () => {
+    const staleDate = "1900-01-01";
     await service.writeAnchor({
       name: "projects/demo/demo",
-      content: projectAnchorContent(),
+      content: projectAnchorContent({ lastValidated: staleDate }),
       message: "test: add demo anchor",
     });
 
     const result = await service.writeAnchor({
       name: "projects/demo/demo",
-      content: projectAnchorContent({ currentState: "- Updated but same validation date." }),
+      content: projectAnchorContent({ currentState: "- Updated but same validation date.", lastValidated: staleDate }),
       message: "test: update current state",
     });
 
     expect(result.version).toBeUndefined();
     expect(result.warnings.map((warning) => warning.code)).toContain("last_validated_bump");
+  });
+
+  it("allows same-day substantive edits when last_validated already matches today", async () => {
+    const today = todayDateKey();
+    await service.writeAnchor({
+      name: "projects/demo/demo",
+      content: projectAnchorContent({ lastValidated: today }),
+      message: "test: add demo anchor",
+    });
+
+    const result = await service.appendToAnchorSection({
+      name: "projects/demo/demo",
+      heading: "Current State",
+      content: "- Updated again on the same day.",
+      message: "test: update current state again",
+    });
+
+    expect(result.version).toMatch(/[a-f0-9]{40}/);
+    expect(result.warnings).toEqual([]);
   });
 
   it("requires explicit approval for decisions changes", async () => {
@@ -221,9 +241,10 @@ None.
   });
 
   it("section tools with lastValidated bump the date atomically in the same commit", async () => {
+    const staleDate = "1900-01-01";
     await service.writeAnchor({
       name: "projects/demo/demo",
-      content: projectAnchorContent(),
+      content: projectAnchorContent({ lastValidated: staleDate }),
       message: "test: add demo anchor",
     });
 
@@ -784,6 +805,14 @@ ${overrides.constraints ?? "- Preserve existing claims."}
 
 - [PR Add anchor MCP - #123](https://github.com/example/repo/pull/123)
 `;
+}
+
+function todayDateKey(): string {
+  const now = new Date();
+  const year = String(now.getFullYear()).padStart(4, "0");
+  const month = String(now.getMonth() + 1).padStart(2, "0");
+  const day = String(now.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
 }
 
 function sharedAnchorContent(
