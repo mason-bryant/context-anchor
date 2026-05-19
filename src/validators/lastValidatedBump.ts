@@ -19,7 +19,9 @@ export const validateLastValidatedBump: Validator = (context) => {
     return [];
   }
 
-  if (dateKey(oldParsed.frontmatter.last_validated) !== dateKey(newParsed.frontmatter.last_validated)) {
+  const oldDate = dateKey(oldParsed.frontmatter.last_validated);
+  const newDate = dateKey(newParsed.frontmatter.last_validated);
+  if (oldDate !== newDate || newDate === currentLocalDateKey()) {
     return [];
   }
 
@@ -27,11 +29,19 @@ export const validateLastValidatedBump: Validator = (context) => {
     maybeMigrationBlock(
       context,
       "last_validated_bump",
-      "Substantive section changes require a last_validated date bump.",
+      "Substantive section changes require last_validated to change or already match today's date.",
     ),
   ];
 };
 
 function dateKey(value: unknown): unknown {
   return value instanceof Date ? value.toISOString().slice(0, 10) : value;
+}
+
+function currentLocalDateKey(): string {
+  const now = new Date();
+  const year = String(now.getFullYear()).padStart(4, "0");
+  const month = String(now.getMonth() + 1).padStart(2, "0");
+  const day = String(now.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
 }

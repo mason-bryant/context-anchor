@@ -225,7 +225,7 @@ Add a short rule under `.cursor/rules/` (or your global Cursor rules) so agents 
 
 The MCP server also ships session instructions (`src/server.ts`) telling agents to **write back** durable discoveries, not only answer in-thread, and to **avoid editing anchor files under `--repo` directly on disk** (use MCP write tools so validation and server-side commits stay aligned):
 
-- **Facts** → map to `## Current State`, `## Decisions`, or `## Constraints`, bump `last_validated` when those sections change materially, and add PR rows under `## PRs` with link text `PR <title> - #<number>`.
+- **Facts** → map to `## Current State`, `## Decisions`, or `## Constraints`, keep `last_validated` fresh when those sections change materially, and add PR rows under `## PRs` with link text `PR <title> - #<number>`.
 - **Approval** → changes to Decisions/Constraints (or removing bullets) require the same write tool (`writeAnchor` or a chunked write) with `approved: true` after explicit user confirmation. **`deleteAnchor` and `renameAnchor` always require `approved: true`** before the server will remove or move an anchor file.
 - **Roadmaps** → keep forward-looking specs and completed history in the project’s roadmap anchor when you use that pattern; heed write warnings for oversized roadmaps or `## Completed` tables and use `compactionReport` to plan cleanup.
 
@@ -332,7 +332,7 @@ Blocks:
 - `projects/<project-slug>/<anchor>.md` anchors require `project` front matter containing `<project-slug>`
 - required sections: `## Current State`, `## Decisions`, `## Constraints`, `## PRs`
 - PR link text format: `PR <title> - #<number>`
-- `last_validated` must change when Current State, Decisions, or Constraints change
+- `last_validated` must change when Current State, Decisions, or Constraints change, unless it already matches today's date
 - `CLAUDE.md` requires sibling `AGENTS.md` containing `@CLAUDE.md`
 - edits changing Decisions/Constraints or removing bullets require `approved: true`
 - built-in `server-rules/*` policy anchors cannot be edited via write tools
