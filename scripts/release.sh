@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Bump version and/or push a semver tag so GitHub Actions can publish to npm
-# and create a GitHub Release. Requires Actions secret NPM_TOKEN on the repo.
+# Prepare release PRs and publish semver tags for GitHub Actions.
+# Requires Actions secret NPM_TOKEN on the repo for npm publishing.
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -13,22 +13,33 @@ while [[ "${1:-}" == "--dry-run" ]]; do
 done
 
 usage() {
-  cat <<'EOF' >&2
-Usage: scripts/release.sh [--dry-run] [patch | minor | major | tag]
+  local status="${1:-1}"
+  if [[ "$status" -eq 0 ]]; then
+    print_usage
+  else
+    print_usage >&2
+  fi
+  exit "$status"
+}
 
-  patch | minor | major   Run npm version on a clean main branch, then push
-                            the branch and the new v* tag (triggers Release workflow).
+print_usage() {
+  cat <<'EOF'
+Usage: scripts/release.sh [--dry-run] <command>
 
-  tag                     Create an annotated tag v$(version) at HEAD and push
-                            only that tag (default). package.json must already
-                            list the version you intend to ship.
+Commands:
+  prepare <patch|minor|major>
+                          Create a release branch from origin/main, bump
+                          package.json/package-lock.json without tagging,
+                          run checks, commit, push, and open a PR.
+
+  publish                 Tag the version currently on main and push only the
+                          v* tag, triggering the Release workflow.
 
   --dry-run               Print what would run without changing git or npm.
 
-Requires: clean working tree. For bumps, current branch must be main.
+Requires: clean working tree.
 Configure GitHub Actions secret NPM_TOKEN before expecting npm publish to succeed.
 EOF
-  exit 1
 }
 
 run() {
@@ -38,6 +49,16 @@ run() {
     printf '\n' >&2
   else
     "$@"
+  fi
+}
+
+require_command() {
+  if [[ "$DRY_RUN" -eq 1 ]]; then
+    return 0
+  fi
+  if ! command -v "$1" >/dev/null 2>&1; then
+    echo "error: required command not found: $1" >&2
+    exit 1
   fi
 }
 
@@ -51,45 +72,180 @@ require_clean_tree() {
   fi
 }
 
-require_main() {
+bump_version() {
+  local current="$1"
+  local bump="$2"
+  node -e '
+const [current, bump] = process.argv.slice(1);
+const match = current.match(/^([0-9]+)\.([0-9]+)\.([0-9]+)$/);
+if (!match) {
+  console.error(`error: expected simple semver version, got ${current}`);
+  process.exit(1);
+}
+let major = Number(match[1]);
+let minor = Number(match[2]);
+let patch = Number(match[3]);
+switch (bump) {
+  case "major":
+    major += 1;
+    minor = 0;
+    patch = 0;
+    break;
+  case "minor":
+    minor += 1;
+    patch = 0;
+    break;
+  case "patch":
+    patch += 1;
+    break;
+  default:
+    console.error(`error: unsupported bump type ${bump}`);
+    process.exit(1);
+}
+console.log(`${major}.${minor}.${patch}`);
+' "$current" "$bump"
+}
+
+package_version_from_ref() {
+  local ref="$1"
+  git show "${ref}:package.json" | node -e '
+let input = "";
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", (chunk) => input += chunk);
+process.stdin.on("end", () => {
+  console.log(JSON.parse(input).version);
+});
+'
+}
+
+require_tag_available() {
   if [[ "$DRY_RUN" -eq 1 ]]; then
     return 0
   fi
-  local branch
-  branch="$(git branch --show-current)"
-  if [[ "$branch" != "main" ]]; then
-    echo "error: must be on main (current branch: ${branch})." >&2
+
+  local tag="$1"
+  if git rev-parse -q --verify "refs/tags/${tag}" >/dev/null; then
+    echo "error: tag ${tag} already exists locally." >&2
+    exit 1
+  fi
+  if git ls-remote --tags origin "refs/tags/${tag}" | grep -q .; then
+    echo "error: tag ${tag} already exists on origin." >&2
     exit 1
   fi
 }
 
-cmd="${1:-tag}"
-case "$cmd" in
-  -h | --help | help) usage ;;
-  patch | minor | major)
-    [[ $# -eq 1 ]] || usage
-    require_clean_tree
-    require_main
-    run npm version "$cmd" -m "Release v%s"
-    run git push origin "$(git branch --show-current)" --follow-tags
-    ;;
-  tag)
-    if [[ $# -gt 1 ]]; then
-      usage
+require_branch_available() {
+  if [[ "$DRY_RUN" -eq 1 ]]; then
+    return 0
+  fi
+
+  local branch="$1"
+  if git show-ref --verify --quiet "refs/heads/${branch}"; then
+    echo "error: branch ${branch} already exists locally." >&2
+    exit 1
+  fi
+  if git ls-remote --heads origin "$branch" | grep -q .; then
+    echo "error: branch ${branch} already exists on origin." >&2
+    exit 1
+  fi
+}
+
+prepare_release() {
+  local bump="$1"
+  require_clean_tree
+  require_command gh
+
+  run git fetch origin --tags
+
+  local base_version
+  base_version="$(package_version_from_ref origin/main)"
+
+  local next_version
+  next_version="$(bump_version "$base_version" "$bump")"
+
+  local tag="v${next_version}"
+  require_tag_available "$tag"
+
+  local branch="codex/release-${tag}"
+  require_branch_available "$branch"
+
+  run git switch -c "$branch" origin/main
+  run npm version "$bump" --no-git-tag-version
+
+  if [[ "$DRY_RUN" -eq 0 ]]; then
+    local actual_version
+    actual_version="$(node -p "require('./package.json').version")"
+    if [[ "$actual_version" != "$next_version" ]]; then
+      echo "error: expected version ${next_version}, got ${actual_version}." >&2
+      exit 1
     fi
-    require_clean_tree
+  fi
+
+  run npm run typecheck
+  run npm test
+  run git add package.json package-lock.json
+  run git commit -m "Release ${tag}"
+  run git push -u origin "$branch"
+  run gh pr create --base main --head "$branch" --title "Release ${tag}" --body "Release ${tag}"
+}
+
+publish_release() {
+  require_clean_tree
+
+  run git fetch origin --tags
+  run git switch main
+  run git pull --ff-only origin main
+
+  if [[ "$DRY_RUN" -eq 0 ]]; then
+    local local_head
+    local_head="$(git rev-parse HEAD)"
+
+    local remote_head
+    remote_head="$(git rev-parse origin/main)"
+
+    if [[ "$local_head" != "$remote_head" ]]; then
+      echo "error: local main does not match origin/main after pull." >&2
+      echo "       Refusing to tag a commit that is not the protected main head." >&2
+      exit 1
+    fi
+  fi
+
+  local version
+  if [[ "$DRY_RUN" -eq 1 ]]; then
+    version="$(package_version_from_ref origin/main)"
+  else
     version="$(node -p "require('./package.json').version")"
-    tag="v${version}"
-    if git rev-parse "$tag" >/dev/null 2>&1; then
-      echo "error: tag ${tag} already exists locally." >&2
-      exit 1
-    fi
-    if git ls-remote --tags origin "refs/tags/${tag}" | grep -q .; then
-      echo "error: tag ${tag} already exists on origin." >&2
-      exit 1
-    fi
-    run git tag -a "$tag" -m "Release ${tag}"
-    run git push origin "refs/tags/${tag}"
+  fi
+
+  local tag="v${version}"
+  require_tag_available "$tag"
+
+  run git tag -a "$tag" -m "Release ${tag}"
+  run git push origin "refs/tags/${tag}"
+}
+
+if [[ $# -eq 0 ]]; then
+  usage 0
+fi
+
+cmd="$1"
+shift
+case "$cmd" in
+  -h | --help | help) usage 0 ;;
+  prepare)
+    [[ $# -eq 1 ]] || usage
+    case "$1" in
+      patch | minor | major)
+        prepare_release "$1"
+        ;;
+      *)
+        usage
+        ;;
+    esac
+    ;;
+  publish)
+    [[ $# -eq 0 ]] || usage
+    publish_release
     ;;
   *)
     usage
