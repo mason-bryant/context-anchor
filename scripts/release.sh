@@ -32,8 +32,9 @@ Commands:
                           package.json/package-lock.json without tagging,
                           run checks, commit, push, and open a PR.
 
-  publish                 Tag the version currently on main and push only the
-                          v* tag, triggering the Release workflow.
+  publish                 After the release PR is merged, tag the version
+                          currently on main and push only the v* tag,
+                          triggering the Release workflow.
 
   --dry-run               Print what would run without changing git or npm.
 
@@ -124,14 +125,24 @@ require_tag_available() {
   fi
 
   local tag="$1"
-  if git rev-parse -q --verify "refs/tags/${tag}" >/dev/null; then
+  if tag_exists_locally "$tag"; then
     echo "error: tag ${tag} already exists locally." >&2
     exit 1
   fi
-  if git ls-remote --tags origin "refs/tags/${tag}" | grep -q .; then
+  if tag_exists_on_origin "$tag"; then
     echo "error: tag ${tag} already exists on origin." >&2
     exit 1
   fi
+}
+
+tag_exists_locally() {
+  local tag="$1"
+  git rev-parse -q --verify "refs/tags/${tag}" >/dev/null
+}
+
+tag_exists_on_origin() {
+  local tag="$1"
+  git ls-remote --tags origin "refs/tags/${tag}" | grep -q .
 }
 
 require_branch_available() {
@@ -146,6 +157,59 @@ require_branch_available() {
   fi
   if git ls-remote --heads origin "$branch" | grep -q .; then
     echo "error: branch ${branch} already exists on origin." >&2
+    exit 1
+  fi
+}
+
+pending_release_branches() {
+  {
+    git branch --format='%(refname:short)' --no-merged main 'codex/release-v*'
+    git branch -r --format='%(refname:short)' --no-merged origin/main 'origin/codex/release-v*' | sed 's#^origin/##'
+  } | sort -u
+}
+
+require_current_release_branch_merged() {
+  if [[ "$DRY_RUN" -eq 1 ]]; then
+    return 0
+  fi
+
+  local branch
+  branch="$(git branch --show-current)"
+  case "$branch" in
+    codex/release-v*)
+      if ! git merge-base --is-ancestor "$branch" origin/main; then
+        local version
+        version="$(node -p "require('./package.json').version")"
+
+        echo "error: ${branch} contains v${version}, but it has not been merged into main." >&2
+        echo "       publish only tags the protected main branch." >&2
+        echo "       Merge the release PR first, then run:" >&2
+        echo "       ./scripts/release.sh publish" >&2
+        exit 1
+      fi
+      ;;
+  esac
+}
+
+require_publish_tag_available() {
+  if [[ "$DRY_RUN" -eq 1 ]]; then
+    return 0
+  fi
+
+  local version="$1"
+  local tag="$2"
+  if tag_exists_locally "$tag" || tag_exists_on_origin "$tag"; then
+    echo "error: main is at package.json version ${version}, but tag ${tag} already exists." >&2
+    echo "       Nothing new can be published from the current main branch." >&2
+    echo "       If you just ran 'prepare', merge the release PR first, then run:" >&2
+    echo "       ./scripts/release.sh publish" >&2
+
+    local pending
+    pending="$(pending_release_branches | paste -sd ', ' -)"
+    if [[ -n "$pending" ]]; then
+      echo "       Unmerged release branch(es): ${pending}" >&2
+    fi
+
     exit 1
   fi
 }
@@ -193,6 +257,7 @@ publish_release() {
   require_clean_tree
 
   run git fetch origin --tags
+  require_current_release_branch_merged
   run git switch main
   run git pull --ff-only origin main
 
@@ -218,7 +283,7 @@ publish_release() {
   fi
 
   local tag="v${version}"
-  require_tag_available "$tag"
+  require_publish_tag_available "$version" "$tag"
 
   run git tag -a "$tag" -m "Release ${tag}"
   run git push origin "refs/tags/${tag}"
