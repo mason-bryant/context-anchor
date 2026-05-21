@@ -469,6 +469,11 @@ select {
   border-radius: 7px;
 }
 
+.unsafe-link {
+  color: var(--muted);
+  text-decoration: line-through;
+}
+
 .raw-view {
   padding: 18px;
   min-height: 360px;
@@ -582,7 +587,7 @@ export const UI_JS = `(function () {
   var state = {
     anchors: [],
     root: null,
-    pendingAnchor: new URLSearchParams(window.location.search).get("anchor"),
+    pendingAnchor: readAnchorFromLocation(),
     selectedName: null,
     rootMode: "rendered",
     detailMode: "rendered",
@@ -590,6 +595,36 @@ export const UI_JS = `(function () {
   };
 
   var categories = ["", "server-rules", "agent-rules", "projects", "invariants", "conflicts", "shared", "archive"];
+
+  function readAnchorFromLocation() {
+    var queryAnchor = new URLSearchParams(window.location.search).get("anchor");
+    if (queryAnchor) {
+      return queryAnchor;
+    }
+    var hash = window.location.hash || "";
+    if (hash.indexOf("#anchor=") !== 0) {
+      return null;
+    }
+    try {
+      return decodeURIComponent(hash.slice("#anchor=".length));
+    } catch (_error) {
+      return hash.slice("#anchor=".length);
+    }
+  }
+
+  function anchorHref(anchorName) {
+    return "?anchor=" + encodeURIComponent(anchorName);
+  }
+
+  function updateAnchorLocation(anchorName) {
+    if (!window.history || !window.history.pushState) {
+      return;
+    }
+    var next = new URL(window.location.href);
+    next.searchParams.set("anchor", anchorName);
+    next.hash = "";
+    window.history.pushState(null, "", next.pathname + next.search);
+  }
 
   function el(id) {
     return document.getElementById(id);
@@ -828,8 +863,12 @@ export const UI_JS = `(function () {
     });
   }
 
-  async function selectAnchor(name) {
+  async function selectAnchor(name, options) {
+    var opts = options || {};
     state.selectedName = name;
+    if (!opts.skipLocationUpdate) {
+      updateAnchorLocation(name);
+    }
     renderAnchorList();
     showTab("detail");
     setBanner("Loading anchor detail...", "info");
@@ -854,7 +893,7 @@ export const UI_JS = `(function () {
       return;
     }
     state.pendingAnchor = null;
-    selectAnchor(match.name);
+    selectAnchor(match.name, { skipLocationUpdate: true });
   }
 
   function renderDetail(anchor) {
@@ -981,7 +1020,27 @@ export const UI_JS = `(function () {
     return escapeHtml(value)
       .replace(/\\*\\*(.+?)\\*\\*/g, "<strong>$1</strong>")
       .replace(new RegExp(tick + "([^" + tick + "]+)" + tick, "g"), "<code>$1</code>")
-      .replace(/\\[([^\\]]+)\\]\\(([^)]+)\\)/g, "<a href=\\"$2\\" target=\\"_blank\\" rel=\\"noreferrer\\">$1</a>");
+      .replace(/\\[([^\\]]+)\\]\\(([^)]+)\\)/g, function (_match, label, href) {
+        var safeHref = sanitizeLinkHref(href);
+        if (!safeHref) {
+          return "<span class=\\"unsafe-link\\" title=\\"Unsafe link removed\\">" + label + "</span>";
+        }
+        return "<a href=\\"" + safeHref + "\\" target=\\"_blank\\" rel=\\"noreferrer\\">" + label + "</a>";
+      });
+  }
+
+  function sanitizeLinkHref(href) {
+    var value = String(href || "").trim();
+    if (!value || value.indexOf("//") === 0) {
+      return null;
+    }
+    var schemeProbe = value.replace(/[\\u0000-\\u001f\\u007f\\s]+/g, "");
+    var scheme = schemeProbe.match(/^([a-zA-Z][a-zA-Z0-9+.-]*):/);
+    if (!scheme) {
+      return value;
+    }
+    var protocol = scheme[1].toLowerCase();
+    return protocol === "http" || protocol === "https" || protocol === "mailto" ? value : null;
   }
 
   function decorateAnchorLinks(container) {
@@ -993,7 +1052,7 @@ export const UI_JS = `(function () {
       link.dataset.anchorName = anchorName;
       link.removeAttribute("target");
       link.removeAttribute("rel");
-      link.setAttribute("href", "#anchor=" + encodeURIComponent(anchorName));
+      link.setAttribute("href", anchorHref(anchorName));
       link.setAttribute("title", "Open anchor detail");
     });
   }
@@ -1036,6 +1095,11 @@ export const UI_JS = `(function () {
     };
   }
 
+  function handleLocationAnchorChange() {
+    state.pendingAnchor = readAnchorFromLocation();
+    openPendingAnchor();
+  }
+
   function bind() {
     el("token-input").value = token();
     el("token-form").addEventListener("submit", function (event) {
@@ -1072,6 +1136,16 @@ export const UI_JS = `(function () {
     document.querySelectorAll("[data-detail-mode]").forEach(function (button) {
       button.addEventListener("click", function () { showDetailMode(button.dataset.detailMode); });
     });
+    window.addEventListener("popstate", handleLocationAnchorChange);
+    window.addEventListener("hashchange", handleLocationAnchorChange);
+  }
+
+  if (window.__ANCHOR_MCP_UI_TEST_HOOKS__) {
+    window.__ANCHOR_MCP_UI_TEST_HOOKS__.renderMarkdown = renderMarkdown;
+    window.__ANCHOR_MCP_UI_TEST_HOOKS__.sanitizeLinkHref = sanitizeLinkHref;
+    window.__ANCHOR_MCP_UI_TEST_HOOKS__.anchorHref = anchorHref;
+    window.__ANCHOR_MCP_UI_TEST_HOOKS__.readAnchorFromLocation = readAnchorFromLocation;
+    return;
   }
 
   bind();
