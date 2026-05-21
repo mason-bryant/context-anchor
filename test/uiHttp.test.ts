@@ -75,6 +75,15 @@ describe("UI HTTP routes", () => {
     expect(html).toContain("/ui/app.js");
   });
 
+  it("redirects anchor markdown paths back into the UI", async () => {
+    const response = await fetch(`${baseUrl}/server-rules/acceptance-criteria.md`, {
+      redirect: "manual",
+    });
+
+    expect(response.status).toBe(302);
+    expect(response.headers.get("location")).toBe("/ui?anchor=server-rules%2Facceptance-criteria.md");
+  });
+
   it("protects UI API routes with the HTTP auth token", async () => {
     const unauthorized = await fetch(`${baseUrl}/api/ui/anchors`);
     expect(unauthorized.status).toBe(401);

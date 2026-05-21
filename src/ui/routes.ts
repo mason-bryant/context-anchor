@@ -16,6 +16,10 @@ export function registerUiRoutes(
   } = {},
 ): void {
   app.get("/", (_req, res) => res.redirect(302, "/ui"));
+  app.get(/^\/(?:server-rules|agent-rules|projects|invariants|conflicts|shared|archive)\/.*\.md$/, (req, res) => {
+    const anchorName = req.path.replace(/^\/+/, "");
+    res.redirect(302, `/ui?anchor=${encodeURIComponent(anchorName)}`);
+  });
   app.get("/ui", (_req, res) => {
     res.type("html").send(UI_HTML);
   });

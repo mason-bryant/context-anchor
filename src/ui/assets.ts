@@ -55,7 +55,7 @@ export const UI_HTML = `<!doctype html>
           </section>
         </aside>
 
-        <section class="content-area">
+        <section id="content-area" class="content-area">
           <section id="status-banner" class="status-banner" hidden></section>
 
           <nav class="tabs" aria-label="Primary views">
@@ -582,6 +582,7 @@ export const UI_JS = `(function () {
   var state = {
     anchors: [],
     root: null,
+    pendingAnchor: new URLSearchParams(window.location.search).get("anchor"),
     selectedName: null,
     rootMode: "rendered",
     detailMode: "rendered",
@@ -705,6 +706,7 @@ export const UI_JS = `(function () {
     populateFilterOptions();
     renderAnchorList();
     renderRoot();
+    openPendingAnchor();
     setBanner("", "info");
   }
 
@@ -792,6 +794,7 @@ export const UI_JS = `(function () {
     var markdown = state.root && state.root.markdown ? state.root.markdown : "";
     el("root-generated").textContent = state.root ? "Generated " + state.root.generatedAt + " from " + state.root.entries.length + " entries" : "Generated root output";
     el("root-rendered").innerHTML = renderMarkdown(markdown);
+    decorateAnchorLinks(el("root-rendered"));
     el("root-raw").textContent = markdown;
     showRootMode(state.rootMode);
   }
@@ -839,6 +842,21 @@ export const UI_JS = `(function () {
     }
   }
 
+  function openPendingAnchor() {
+    if (!state.pendingAnchor) {
+      return;
+    }
+    var requested = state.pendingAnchor;
+    var match = state.anchors.find(function (anchor) {
+      return anchor.name === requested || anchor.path === requested;
+    });
+    if (!match) {
+      return;
+    }
+    state.pendingAnchor = null;
+    selectAnchor(match.name);
+  }
+
   function renderDetail(anchor) {
     el("detail-empty").hidden = true;
     el("detail-content").hidden = false;
@@ -852,6 +870,7 @@ export const UI_JS = `(function () {
     }).join("");
     el("validation-status").innerHTML = renderIssues(anchor.ui.health);
     el("detail-rendered").innerHTML = renderMarkdown(markdownBody(anchor.content || ""));
+    decorateAnchorLinks(el("detail-rendered"));
     el("detail-raw").textContent = anchor.content || "";
     el("detail-frontmatter").textContent = JSON.stringify(anchor.frontmatter || {}, null, 2);
     showDetailMode(state.detailMode);
@@ -965,6 +984,50 @@ export const UI_JS = `(function () {
       .replace(/\\[([^\\]]+)\\]\\(([^)]+)\\)/g, "<a href=\\"$2\\" target=\\"_blank\\" rel=\\"noreferrer\\">$1</a>");
   }
 
+  function decorateAnchorLinks(container) {
+    container.querySelectorAll("a[href]").forEach(function (link) {
+      var anchorName = resolveAnchorHref(link.getAttribute("href") || "");
+      if (!anchorName) {
+        return;
+      }
+      link.dataset.anchorName = anchorName;
+      link.removeAttribute("target");
+      link.removeAttribute("rel");
+      link.setAttribute("href", "#anchor=" + encodeURIComponent(anchorName));
+      link.setAttribute("title", "Open anchor detail");
+    });
+  }
+
+  function resolveAnchorHref(href) {
+    if (!href || href.charAt(0) === "#") {
+      return null;
+    }
+
+    var raw = href;
+    try {
+      var parsed = new URL(href, window.location.href);
+      if (parsed.origin !== window.location.origin) {
+        return null;
+      }
+      raw = parsed.pathname;
+    } catch (_error) {
+      raw = href;
+    }
+
+    raw = raw.split("#", 1)[0].split("?", 1)[0];
+    try {
+      raw = decodeURIComponent(raw);
+    } catch (_error) {
+      // Keep the original value if it was not valid URI-encoded text.
+    }
+    raw = raw.replace(/^\\/+/, "").replace(/^\\.\\//, "");
+
+    var match = state.anchors.find(function (anchor) {
+      return anchor.name === raw || anchor.path === raw;
+    });
+    return match ? match.name : null;
+  }
+
   function debounce(fn, delay) {
     var handle;
     return function () {
@@ -991,6 +1054,14 @@ export const UI_JS = `(function () {
       if (row) {
         selectAnchor(row.dataset.name);
       }
+    });
+    el("content-area").addEventListener("click", function (event) {
+      var link = event.target.closest("a[data-anchor-name]");
+      if (!link) {
+        return;
+      }
+      event.preventDefault();
+      selectAnchor(link.dataset.anchorName);
     });
     document.querySelectorAll(".tab").forEach(function (button) {
       button.addEventListener("click", function () { showTab(button.dataset.tab); });
