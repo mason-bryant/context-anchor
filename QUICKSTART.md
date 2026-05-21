@@ -29,14 +29,21 @@ From this project (`context-conductor`):
 ```bash
 npm install
 npm run build
-node dist/bin/anchor-mcp.js --repo /path/to/your-context-repo --transport http --host 127.0.0.1 --port 3333
+node -e "console.log(require('crypto').randomBytes(32).toString('base64url'))"
+echo '{"authToken":"paste-generated-token-here"}' > anchor-mcp.config.json
+chmod 600 anchor-mcp.config.json
+node dist/bin/anchor-mcp.js --repo /path/to/your-context-repo --transport http --host 127.0.0.1 --port 3333 --config ./anchor-mcp.config.json
 ```
 
 Optional (local dev with auto-reload):
 
 ```bash
-npx tsx watch src/bin/anchor-mcp.ts --repo /path/to/your-context-repo --transport http --host 127.0.0.1 --port 3333
+npx tsx watch src/bin/anchor-mcp.ts --repo /path/to/your-context-repo --transport http --host 127.0.0.1 --port 3333 --config ./anchor-mcp.config.json
 ```
+
+Open `http://127.0.0.1:3333/ui` for the read-only explorer. Enter the same
+token there to preview the generated context root, browse anchors and roadmaps,
+search/facet the index, and inspect anchor validation badges.
 
 If you expose the local HTTP server through ngrok, keep `--host 127.0.0.1` and
 put the tunnel hostname in `anchor-mcp.config.json`:
@@ -76,7 +83,10 @@ Add to `~/.cursor/mcp.json`:
 {
   "mcpServers": {
     "anchor-mcp": {
-      "url": "http://127.0.0.1:3333/mcp"
+      "url": "http://127.0.0.1:3333/mcp",
+      "headers": {
+        "Authorization": "Bearer paste-generated-token-here"
+      }
     }
   }
 }
