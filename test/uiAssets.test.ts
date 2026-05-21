@@ -2,19 +2,46 @@ import vm from "node:vm";
 
 import { describe, expect, it } from "vitest";
 
-import { UI_JS } from "../src/ui/assets.js";
+import { UI_CSS, UI_JS } from "../src/ui/assets.js";
 
 type UiAssetHooks = {
   renderMarkdown(markdown: string): string;
   sanitizeLinkHref(href: string): string | null;
   anchorHref(name: string): string;
   readAnchorFromLocation(): string | null;
+  token(): string;
+  saveToken(value: string): void;
+  renderAnchorRow(anchor: Record<string, unknown>): string;
+  shouldHandleClientNavigation(event: Record<string, unknown>, link: { getAttribute(name: string): string | null }): boolean;
 };
 
-function loadHooks(options: { search?: string; hash?: string } = {}): UiAssetHooks {
+type TestStorage = {
+  getItem(key: string): string | null;
+  setItem(key: string, value: string): void;
+  removeItem(key: string): void;
+};
+
+function createStorage(initial: Record<string, string> = {}): TestStorage {
+  const values = new Map(Object.entries(initial));
+  return {
+    getItem: (key) => values.get(key) ?? null,
+    setItem: (key, value) => {
+      values.set(key, value);
+    },
+    removeItem: (key) => {
+      values.delete(key);
+    },
+  };
+}
+
+function loadHooks(
+  options: { search?: string; hash?: string; localStorage?: TestStorage; sessionStorage?: TestStorage } = {},
+): UiAssetHooks {
   const hooks: Partial<UiAssetHooks> = {};
   const search = options.search ?? "";
   const hash = options.hash ?? "";
+  const localStorage = options.localStorage ?? createStorage();
+  const sessionStorage = options.sessionStorage ?? createStorage();
 
   vm.runInNewContext(UI_JS, {
     URL,
@@ -28,6 +55,8 @@ function loadHooks(options: { search?: string; hash?: string } = {}): UiAssetHoo
         origin: "http://localhost:3333",
         pathname: "/ui",
       },
+      localStorage,
+      sessionStorage,
       __ANCHOR_MCP_UI_TEST_HOOKS__: hooks,
     },
   });
@@ -36,6 +65,31 @@ function loadHooks(options: { search?: string; hash?: string } = {}): UiAssetHoo
 }
 
 describe("UI browser assets", () => {
+  it("persists bearer tokens in localStorage for same-origin tabs", () => {
+    const sharedLocalStorage = createStorage();
+    const firstTab = loadHooks({ localStorage: sharedLocalStorage });
+    firstTab.saveToken(" test-token ");
+
+    const secondTab = loadHooks({ localStorage: sharedLocalStorage });
+
+    expect(secondTab.token()).toBe("test-token");
+  });
+
+  it("migrates existing session bearer tokens to localStorage", () => {
+    const localStorage = createStorage();
+    const sessionStorage = createStorage({ "anchor-mcp-token": "old-session-token" });
+    const hooks = loadHooks({ localStorage, sessionStorage });
+
+    expect(hooks.token()).toBe("old-session-token");
+    expect(localStorage.getItem("anchor-mcp-token")).toBe("old-session-token");
+  });
+
+  it("does not apply inline-code highlighting inside fenced code blocks", () => {
+    expect(UI_CSS).toContain(".markdown pre code");
+    expect(UI_CSS).toContain("background: transparent");
+    expect(UI_CSS).toContain("color: inherit");
+  });
+
   it("neutralizes unsafe markdown link schemes", () => {
     const hooks = loadHooks();
     const html = hooks.renderMarkdown(
@@ -72,5 +126,35 @@ describe("UI browser assets", () => {
     const hooks = loadHooks({ hash: "#anchor=projects%2Fdemo%2Fdemo.md" });
 
     expect(hooks.readAnchorFromLocation()).toBe("projects/demo/demo.md");
+  });
+
+  it("renders anchor list rows as durable links", () => {
+    const hooks = loadHooks();
+    const html = hooks.renderAnchorRow({
+      name: "projects/demo/demo.md",
+      category: "projects",
+      projectSlug: "demo",
+      summary: "Demo anchor summary.",
+      ui: {
+        label: "Demo Anchor",
+        health: { status: "ok" },
+      },
+    });
+
+    expect(html).toContain('<a class="anchor-row" href="?anchor=projects%2Fdemo%2Fdemo.md"');
+    expect(html).toContain('data-name="projects/demo/demo.md"');
+    expect(html).not.toContain("<button");
+  });
+
+  it("only intercepts plain same-tab anchor navigation", () => {
+    const hooks = loadHooks();
+    const sameTabLink = { getAttribute: () => "" };
+    const blankTargetLink = { getAttribute: () => "_blank" };
+
+    expect(hooks.shouldHandleClientNavigation({ button: 0 }, sameTabLink)).toBe(true);
+    expect(hooks.shouldHandleClientNavigation({ button: 1 }, sameTabLink)).toBe(false);
+    expect(hooks.shouldHandleClientNavigation({ button: 0, metaKey: true }, sameTabLink)).toBe(false);
+    expect(hooks.shouldHandleClientNavigation({ button: 0, ctrlKey: true }, sameTabLink)).toBe(false);
+    expect(hooks.shouldHandleClientNavigation({ button: 0 }, blankTargetLink)).toBe(false);
   });
 });

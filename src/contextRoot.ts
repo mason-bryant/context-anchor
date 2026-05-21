@@ -76,7 +76,7 @@ function renderProjectsSection(entries: ContextRootEntry[]): string[] {
   const lines: string[] = [];
   for (const slug of [...bySlug.keys()].sort()) {
     const list = bySlug.get(slug) ?? [];
-    const milestones = list.filter((e) => e.name.includes("/milestones/")).sort((a, b) => a.name.localeCompare(b.name));
+    const milestones = list.filter((e) => e.name.includes("/milestones/")).sort(compareMilestoneEntries);
     const others = list.filter((e) => !e.name.includes("/milestones/")).sort((a, b) => a.name.localeCompare(b.name));
 
     if (slug !== "__none__") {
@@ -86,7 +86,7 @@ function renderProjectsSection(entries: ContextRootEntry[]): string[] {
     if (milestones.length > 0) {
       lines.push("#### Milestones", "");
       for (const m of milestones) {
-        const label = m.title || m.name;
+        const label = milestoneLabel(m);
         const st = m.milestoneStatus ?? "unknown";
         lines.push(`- [${escapeMarkdown(label)}](${m.path}) — **${escapeMarkdown(st)}** — ${escapeMarkdown(m.summary)}`);
       }
@@ -132,6 +132,7 @@ function renderContextRootEntryBlock(entry: ContextRootEntry): string[] {
 }
 
 function toContextRootEntry(anchor: AnchorMeta): ContextRootEntry {
+  const milestoneDisplayId = milestoneDisplayIdFor(anchor.milestone);
   return {
     name: anchor.name,
     path: anchor.path,
@@ -148,7 +149,66 @@ function toContextRootEntry(anchor: AnchorMeta): ContextRootEntry {
     policyVersion: anchor.policyVersion,
     acceptanceCriteria: anchor.acceptanceCriteria,
     milestoneStatus: anchor.milestone?.status,
+    milestoneId: anchor.milestone?.milestoneId,
+    milestoneSequence: anchor.milestone?.sequence,
+    ...(milestoneDisplayId !== undefined ? { milestoneDisplayId } : {}),
   };
+}
+
+function milestoneDisplayIdFor(milestone: AnchorMeta["milestone"]): string | undefined {
+  if (!milestone) {
+    return undefined;
+  }
+  if (milestone.milestoneId === "backlog") {
+    return "backlog";
+  }
+  if (milestone.sequence !== undefined) {
+    return `M${milestone.sequence}`;
+  }
+  if (milestone.milestoneId !== undefined && /^M\d+$/.test(milestone.milestoneId)) {
+    return milestone.milestoneId;
+  }
+  return undefined;
+}
+
+function milestoneLabel(entry: ContextRootEntry): string {
+  const base = entry.title || entry.name;
+  const displayId = entry.milestoneDisplayId;
+  if (!displayId) {
+    return base;
+  }
+
+  if (base.toLowerCase() === displayId.toLowerCase() || base.startsWith(`${displayId} `)) {
+    return base;
+  }
+
+  const titleWithoutGenericPrefix = base.replace(/^Milestone\s+--\s+/i, "");
+  if (displayId.toLowerCase() === "backlog" && titleWithoutGenericPrefix.toLowerCase() === "backlog") {
+    return titleWithoutGenericPrefix;
+  }
+  return `${displayId} -- ${titleWithoutGenericPrefix}`;
+}
+
+function compareMilestoneEntries(left: ContextRootEntry, right: ContextRootEntry): number {
+  const leftGroup = milestoneSortGroup(left);
+  const rightGroup = milestoneSortGroup(right);
+  if (leftGroup !== rightGroup) {
+    return leftGroup - rightGroup;
+  }
+  if (leftGroup === 0) {
+    return (left.milestoneSequence ?? 0) - (right.milestoneSequence ?? 0);
+  }
+  return left.name.localeCompare(right.name);
+}
+
+function milestoneSortGroup(entry: ContextRootEntry): number {
+  if (entry.milestoneId === "backlog") {
+    return 2;
+  }
+  if (entry.milestoneSequence !== undefined) {
+    return 0;
+  }
+  return 1;
 }
 
 function compareContextEntries(left: ContextRootEntry, right: ContextRootEntry): number {
@@ -169,4 +229,3 @@ function compareContextEntries(left: ContextRootEntry, right: ContextRootEntry):
 function escapeMarkdown(input: string): string {
   return input.replaceAll("[", "\\[").replaceAll("]", "\\]");
 }
-
