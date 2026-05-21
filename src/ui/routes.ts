@@ -57,12 +57,8 @@ export function registerUiRoutes(
     ...protect,
     jsonRoute(async (req) => {
       const name = requiredQueryString(req, "name");
-      const [anchor, metas] = await Promise.all([
-        service.readAnchor(name),
-        service.listAnchors({ includeArchive: true }),
-      ]);
-      const meta = metas.find((row) => row.name === anchor.name);
-      return { anchor: toAnchorUiDetail(anchor, meta) };
+      const anchor = await service.readAnchor(name);
+      return { anchor: toAnchorUiDetail(anchor) };
     }),
   );
 

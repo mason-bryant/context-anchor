@@ -122,6 +122,63 @@ None.
     ]);
   });
 
+  it("derives roadmap health from anchor detail without a preloaded meta row", () => {
+    const detail = toAnchorUiDetail(
+      validRead({
+        name: "projects/demo/demo-roadmap.md",
+        frontmatter: {
+          project: ["demo"],
+          type: "project-roadmap",
+          tags: ["project-roadmap"],
+          summary: "Demo roadmap summary.",
+          read_this_if: ["You need demo roadmap context."],
+          last_validated: "2026-05-20",
+        },
+        content: `---
+project:
+  - demo
+type: project-roadmap
+tags:
+  - project-roadmap
+summary: "Demo roadmap summary."
+read_this_if:
+  - "You need demo roadmap context."
+last_validated: 2026-05-20
+---
+
+# Demo Roadmap
+
+## Current State
+
+Exists.
+
+## Decisions
+
+None.
+
+## Constraints
+
+None.
+
+## PRs
+
+None.
+
+## Goals
+
+### Goal G-001 -- Missing criteria
+
+#### Requirements
+
+- Ship a thing.
+`,
+      }),
+    );
+
+    expect(detail.ui.health.status).toBe("warn");
+    expect(detail.ui.health.issues.map((issue) => issue.code)).toContain("roadmap_missing_acceptance_criteria");
+  });
+
   it("surfaces missing section and project mismatch blocks on detail", () => {
     const detail = toAnchorUiDetail(
       validRead({

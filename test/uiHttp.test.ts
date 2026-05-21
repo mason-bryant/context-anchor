@@ -3,7 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { AnchorService } from "../src/anchorService.js";
 import { AnchorRepository } from "../src/git/repo.js";
@@ -55,6 +55,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
+  vi.restoreAllMocks();
   if (server) {
     await new Promise<void>((resolve, reject) => {
       server!.close((error) => (error ? reject(error) : resolve()));
@@ -128,6 +129,15 @@ describe("UI HTTP routes", () => {
       PRs: true,
     });
     expect(detail.anchor.ui.health.status).toBe("ok");
+  });
+
+  it("does not rescan the anchor index for detail requests", async () => {
+    const listAnchors = vi.spyOn(AnchorService.prototype, "listAnchors");
+
+    const detail = await fetchJson<{ anchor: { name: string } }>("/api/ui/anchor?name=projects%2Fdemo%2Fdemo.md");
+
+    expect(detail.anchor.name).toBe("projects/demo/demo.md");
+    expect(listAnchors).not.toHaveBeenCalled();
   });
 
   it("returns 400 for invalid UI API filters", async () => {

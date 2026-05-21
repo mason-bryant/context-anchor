@@ -1,6 +1,9 @@
-import { classifyAnchorPath } from "../taxonomy.js";
+import { classifyAnchorPath, SERVER_RULES_DISCOVERY_CATEGORY } from "../taxonomy.js";
+import { normalizedMilestoneId, normalizedSequenceFromFm } from "../milestoneFrontmatter.js";
+import { analyzeRoadmapFromContent } from "../roadmap/analyzeRoadmap.js";
+import { isProjectMilestoneType } from "../schema/milestoneTypes.js";
 import { parseAnchor } from "../storage/markdown.js";
-import type { AnchorMeta, AnchorRead, ValidationSeverity } from "../types.js";
+import type { AnchorMeta, AnchorRead, MilestonePlannerMeta, ValidationSeverity } from "../types.js";
 
 const REQUIRED_SECTIONS = ["Current State", "Decisions", "Constraints", "PRs"] as const;
 
@@ -184,11 +187,14 @@ function anchorReadToMeta(anchor: AnchorRead): AnchorMeta {
   const classification = classifyAnchorPath(anchor.name);
   const frontmatter = anchor.frontmatter;
   const parsed = parseAnchor(anchor.content);
-
-  return {
+  const meta: AnchorMeta = {
     name: anchor.name,
     path: anchor.path,
-    category: classification.kind === "anchor" ? classification.category : "shared",
+    category: anchor.name.startsWith("server-rules/")
+      ? SERVER_RULES_DISCOVERY_CATEGORY
+      : classification.kind === "anchor"
+        ? classification.category
+        : "shared",
     projectSlug: classification.kind === "anchor" ? classification.projectSlug : undefined,
     title: parsed.title,
     project: frontmatter.project,
@@ -199,8 +205,71 @@ function anchorReadToMeta(anchor: AnchorRead): AnchorMeta {
       ? frontmatter.read_this_if.filter((item): item is string => typeof item === "string")
       : [],
     last_validated: frontmatter.last_validated,
-    origin: "repo",
+    origin: anchor.name.startsWith("server-rules/") ? "built-in" : "repo",
   };
+
+  if (isProjectRoadmapType(frontmatter.type)) {
+    const analysis = analyzeRoadmapFromContent(anchor.content, { isProjectRoadmap: true });
+    meta.acceptanceCriteria = {
+      activeGoals: analysis.activeGoals,
+      goalsWithCriteria: analysis.goalsWithCriteria,
+      goalsMissingCriteria: analysis.goalsMissingCriteria,
+      goalsMissingCriteriaIds:
+        (analysis.goalsMissingCriteriaIds?.length ?? 0) > 0 ? analysis.goalsMissingCriteriaIds : undefined,
+      goalsWithoutStableIds:
+        (analysis.goalsWithoutStableIds?.length ?? 0) > 0 ? analysis.goalsWithoutStableIds : undefined,
+      goalsDuplicateStableIds:
+        (analysis.goalsDuplicateStableIds?.length ?? 0) > 0 ? analysis.goalsDuplicateStableIds : undefined,
+      hasProposedCriteria: analysis.hasProposedCriteria,
+      criteriaViolations: analysis.criteriaViolations.length > 0 ? analysis.criteriaViolations : undefined,
+    };
+  }
+
+  if (isProjectMilestoneType(frontmatter.type)) {
+    meta.milestone = milestoneMetaFromFrontmatter(frontmatter);
+  }
+
+  return meta;
+}
+
+function milestoneMetaFromFrontmatter(frontmatter: Record<string, unknown>): MilestonePlannerMeta | undefined {
+  const status = frontmatter.status;
+  const theme = frontmatter.theme;
+  if (
+    typeof status !== "string" ||
+    !["proposed", "active", "shipped", "cancelled"].includes(status) ||
+    typeof theme !== "string" ||
+    theme.length === 0
+  ) {
+    return undefined;
+  }
+
+  const rel = frontmatter.relations as { goal_ids?: unknown } | undefined;
+  const goalIds = Array.isArray(rel?.goal_ids)
+    ? rel.goal_ids.filter((item): item is string => typeof item === "string")
+    : [];
+  const milestoneId = normalizedMilestoneId(frontmatter.milestone_id);
+  const sequence = normalizedSequenceFromFm(frontmatter);
+  const steelThread = frontmatter.steel_thread;
+
+  return {
+    status: status as MilestonePlannerMeta["status"],
+    theme,
+    steelThread: typeof steelThread === "string" && steelThread.length > 0 ? steelThread : undefined,
+    goalIds,
+    ...(milestoneId !== undefined ? { milestoneId } : {}),
+    ...(sequence !== undefined ? { sequence } : {}),
+  };
+}
+
+function isProjectRoadmapType(type: unknown): boolean {
+  if (type === "project-roadmap") {
+    return true;
+  }
+  if (Array.isArray(type)) {
+    return type.some((item) => item === "project-roadmap");
+  }
+  return false;
 }
 
 function isNonEmptyString(value: unknown): value is string {
