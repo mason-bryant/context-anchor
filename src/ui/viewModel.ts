@@ -183,13 +183,14 @@ export function summarizeAnchorHealth(anchor: AnchorMeta, sections?: RequiredSec
 function anchorReadToMeta(anchor: AnchorRead): AnchorMeta {
   const classification = classifyAnchorPath(anchor.name);
   const frontmatter = anchor.frontmatter;
+  const parsed = parseAnchor(anchor.content);
 
   return {
     name: anchor.name,
     path: anchor.path,
     category: classification.kind === "anchor" ? classification.category : "shared",
     projectSlug: classification.kind === "anchor" ? classification.projectSlug : undefined,
-    title: titleFromMarkdown(anchor.content),
+    title: parsed.title,
     project: frontmatter.project,
     type: frontmatter.type,
     tags: frontmatter.tags,
@@ -200,10 +201,6 @@ function anchorReadToMeta(anchor: AnchorRead): AnchorMeta {
     last_validated: frontmatter.last_validated,
     origin: "repo",
   };
-}
-
-function titleFromMarkdown(content: string): string | undefined {
-  return content.match(/^#\s+(.+?)\s*$/m)?.[1];
 }
 
 function isNonEmptyString(value: unknown): value is string {

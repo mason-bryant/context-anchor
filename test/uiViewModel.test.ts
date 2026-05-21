@@ -61,6 +61,45 @@ Real section outside the fence.
     expect(meta.ui.health.issues).toEqual([]);
   });
 
+  it("uses shared title parsing for detail fallback labels", () => {
+    const detail = toAnchorUiDetail(
+      validRead({
+        content: `---
+project:
+  - demo
+type: context-anchor
+tags:
+  - context-anchor
+summary: "Demo anchor summary."
+read_this_if:
+  - "You need demo context."
+last_validated: 2026-05-20
+---
+
+# Demo Anchor ###
+
+## Current State
+
+Exists.
+
+## Decisions
+
+None.
+
+## Constraints
+
+None.
+
+## PRs
+
+None.
+`,
+      }),
+    );
+
+    expect(detail.ui.label).toBe("Demo Anchor");
+  });
+
   it("surfaces roadmap acceptance warnings", () => {
     const meta = toAnchorUiMeta({
       ...validMeta({
