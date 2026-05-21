@@ -129,6 +129,9 @@ export type ContextRootEntry = {
   policyVersion?: string;
   acceptanceCriteria?: RoadmapAcceptanceCriteriaSummary;
   milestoneStatus?: string;
+  milestoneId?: string;
+  milestoneSequence?: number;
+  milestoneDisplayId?: string;
 };
 
 export type ContextRootResult = {

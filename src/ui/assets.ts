@@ -306,8 +306,17 @@ select {
   text-align: left;
   display: grid;
   gap: 4px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--text);
+  text-decoration: none;
   padding: 10px;
   border-radius: 7px;
+  cursor: pointer;
+}
+
+.anchor-row:hover {
+  border-color: #aeb9c5;
 }
 
 .anchor-row.active {
@@ -469,6 +478,13 @@ select {
   border-radius: 7px;
 }
 
+.markdown pre code {
+  background: transparent;
+  color: inherit;
+  padding: 0;
+  border-radius: 0;
+}
+
 .unsafe-link {
   color: var(--muted);
   text-decoration: line-through;
@@ -595,6 +611,7 @@ export const UI_JS = `(function () {
   };
 
   var categories = ["", "server-rules", "agent-rules", "projects", "invariants", "conflicts", "shared", "archive"];
+  var tokenStorageKey = "anchor-mcp-token";
 
   function readAnchorFromLocation() {
     var queryAnchor = new URLSearchParams(window.location.search).get("anchor");
@@ -638,8 +655,49 @@ export const UI_JS = `(function () {
       .replace(/"/g, "&quot;");
   }
 
+  function readTokenFromStorage(storage) {
+    try {
+      return storage ? storage.getItem(tokenStorageKey) || "" : "";
+    } catch (_error) {
+      return "";
+    }
+  }
+
+  function writeTokenToStorage(storage, value) {
+    try {
+      if (!storage) {
+        return false;
+      }
+      if (value) {
+        storage.setItem(tokenStorageKey, value);
+      } else {
+        storage.removeItem(tokenStorageKey);
+      }
+      return true;
+    } catch (_error) {
+      return false;
+    }
+  }
+
   function token() {
-    return window.sessionStorage.getItem("anchor-mcp-token") || "";
+    var localToken = readTokenFromStorage(window.localStorage);
+    if (localToken) {
+      return localToken;
+    }
+    var sessionToken = readTokenFromStorage(window.sessionStorage);
+    if (sessionToken) {
+      writeTokenToStorage(window.localStorage, sessionToken);
+    }
+    return sessionToken;
+  }
+
+  function saveToken(value) {
+    var nextToken = String(value || "").trim();
+    if (writeTokenToStorage(window.localStorage, nextToken)) {
+      writeTokenToStorage(window.sessionStorage, "");
+      return;
+    }
+    writeTokenToStorage(window.sessionStorage, nextToken);
   }
 
   function setBanner(message, tone) {
@@ -818,11 +876,11 @@ export const UI_JS = `(function () {
       var meta = [anchor.category, projectOf(anchor)].filter(Boolean).map(function (item) {
         return "<span class=\\"badge\\">" + escapeHtml(item) + "</span>";
       }).join("");
-      return "<button class=\\"anchor-row" + active + "\\" type=\\"button\\" data-name=\\"" + escapeHtml(anchor.name) + "\\">"
+      return "<a class=\\"anchor-row" + active + "\\" href=\\"" + escapeHtml(anchorHref(anchor.name)) + "\\" data-name=\\"" + escapeHtml(anchor.name) + "\\">"
         + "<span class=\\"anchor-title\\">" + escapeHtml(anchor.ui.label) + "</span>"
         + "<span class=\\"anchor-summary\\">" + escapeHtml(anchor.summary || anchor.name) + "</span>"
         + "<span class=\\"anchor-meta\\">" + healthBadge(anchor.ui.health) + meta + "</span>"
-        + "</button>";
+        + "</a>";
   }
 
   function renderRoot() {
@@ -1057,6 +1115,17 @@ export const UI_JS = `(function () {
     });
   }
 
+  function shouldHandleClientNavigation(event, link) {
+    if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) {
+      return false;
+    }
+    if (typeof event.button === "number" && event.button !== 0) {
+      return false;
+    }
+    var target = (link.getAttribute("target") || "").toLowerCase();
+    return !target || target === "_self";
+  }
+
   function resolveAnchorHref(href) {
     if (!href || href.charAt(0) === "#") {
       return null;
@@ -1104,7 +1173,7 @@ export const UI_JS = `(function () {
     el("token-input").value = token();
     el("token-form").addEventListener("submit", function (event) {
       event.preventDefault();
-      window.sessionStorage.setItem("anchor-mcp-token", el("token-input").value.trim());
+      saveToken(el("token-input").value);
       load().catch(function (error) { setBanner(error.message, "error"); });
     });
     ["project-filter", "category-filter", "tag-filter", "archive-filter"].forEach(function (id) {
@@ -1115,13 +1184,14 @@ export const UI_JS = `(function () {
     el("search-input").addEventListener("input", debounce(renderAnchorList, 120));
     el("anchor-list").addEventListener("click", function (event) {
       var row = event.target.closest("[data-name]");
-      if (row) {
+      if (row && shouldHandleClientNavigation(event, row)) {
+        event.preventDefault();
         selectAnchor(row.dataset.name);
       }
     });
     el("content-area").addEventListener("click", function (event) {
       var link = event.target.closest("a[data-anchor-name]");
-      if (!link) {
+      if (!link || !shouldHandleClientNavigation(event, link)) {
         return;
       }
       event.preventDefault();
@@ -1145,6 +1215,10 @@ export const UI_JS = `(function () {
     window.__ANCHOR_MCP_UI_TEST_HOOKS__.sanitizeLinkHref = sanitizeLinkHref;
     window.__ANCHOR_MCP_UI_TEST_HOOKS__.anchorHref = anchorHref;
     window.__ANCHOR_MCP_UI_TEST_HOOKS__.readAnchorFromLocation = readAnchorFromLocation;
+    window.__ANCHOR_MCP_UI_TEST_HOOKS__.token = token;
+    window.__ANCHOR_MCP_UI_TEST_HOOKS__.saveToken = saveToken;
+    window.__ANCHOR_MCP_UI_TEST_HOOKS__.renderAnchorRow = renderAnchorRow;
+    window.__ANCHOR_MCP_UI_TEST_HOOKS__.shouldHandleClientNavigation = shouldHandleClientNavigation;
     return;
   }
 

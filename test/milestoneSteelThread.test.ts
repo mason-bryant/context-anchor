@@ -647,7 +647,7 @@ relations:
     - G-003
 ---
 
-# Backlog
+# Milestone -- Backlog
 
 ## Current State
 
@@ -686,7 +686,7 @@ relations:
     - G-002
 ---
 
-# M2
+# Milestone -- Second
 
 ## Current State
 
@@ -725,7 +725,7 @@ relations:
     - G-001
 ---
 
-# M1
+# Milestone -- First
 
 ## Current State
 
@@ -757,6 +757,17 @@ None.
     expect(listed[0]?.displayId).toBe("M1");
     expect(listed[1]?.displayId).toBe("M2");
     expect(listed[2]?.displayId).toBe("backlog");
+
+    const root = buildContextRoot(await service.listAnchors({ project: "acme" }), {
+      format: "markdown",
+      generatedAt: "2026-05-12T00:00:00.000Z",
+    });
+    const markdown = root.markdown ?? "";
+    expect(markdown).toContain("[M1 -- First](projects/acme/milestones/m-1.md)");
+    expect(markdown).toContain("[M2 -- Second](projects/acme/milestones/m-2.md)");
+    expect(markdown).toContain("[Backlog](projects/acme/milestones/backlog.md)");
+    expect(markdown.indexOf("[M1 -- First]")).toBeLessThan(markdown.indexOf("[M2 -- Second]"));
+    expect(markdown.indexOf("[M2 -- Second]")).toBeLessThan(markdown.indexOf("[Backlog]"));
   });
 
   it("blocks duplicate milestone_id in the same project", async () => {
