@@ -9,6 +9,7 @@ import type { NextFunction, Request, Response } from "express";
 import { createAnchorRuntime } from "../runtime.js";
 import { createAnchorMcpServer } from "../server.js";
 import type { ServerConfig } from "../types.js";
+import { registerUiRoutes } from "../ui/routes.js";
 
 export type HttpServerOptions = {
   host: string;
@@ -58,9 +59,9 @@ export async function startHttpServer(config: ServerConfig, options: HttpServerO
     }),
   );
 
-  if (options.authToken) {
-    app.use("/mcp", bearerAuth(options.authToken));
-  }
+  const auth = bearerAuth(options.authToken);
+  app.use("/mcp", auth);
+  registerUiRoutes(app, runtime.service, { authMiddleware: auth });
 
   if (options.stateless) {
     const transport = new NodeStreamableHTTPServerTransport({ sessionIdGenerator: undefined });

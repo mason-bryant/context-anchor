@@ -129,6 +129,12 @@ npx tsx watch src/bin/anchor-mcp.ts \
 
 > **Note:** The `node dist/bin/anchor-mcp.js` form requires `npm run build` first and is intended for production deployments. Use `tsx` for local development.
 
+The same HTTP server also serves a read-only explorer UI at
+`http://127.0.0.1:3333/ui`. The UI previews the generated context root, lists
+anchors and roadmaps with search/facet controls, and shows rendered anchor detail,
+front matter, required-section status, and validation badges. Enter the same bearer
+token in the UI that you use for MCP requests; all `/api/ui/*` reads are protected.
+
 Then add to your Cursor MCP settings (`~/.cursor/mcp.json`):
 
 ```json
