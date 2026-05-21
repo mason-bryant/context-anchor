@@ -1,4 +1,5 @@
 import { classifyAnchorPath } from "../taxonomy.js";
+import { parseAnchor } from "../storage/markdown.js";
 import type { AnchorMeta, AnchorRead, ValidationSeverity } from "../types.js";
 
 const REQUIRED_SECTIONS = ["Current State", "Decisions", "Constraints", "PRs"] as const;
@@ -59,19 +60,13 @@ export function toAnchorUiDetail(anchor: AnchorRead, meta?: AnchorMeta): AnchorU
 }
 
 export function requiredSectionStatus(content: string): RequiredSectionStatus {
-  const present = new Set<string>();
-  const headingPattern = /^##\s+(.+?)\s*$/gm;
-  let match: RegExpExecArray | null;
-
-  while ((match = headingPattern.exec(content)) !== null) {
-    present.add(normalizeHeading(match[1] ?? ""));
-  }
+  const sections = parseAnchor(content).sections;
 
   return {
-    "Current State": present.has(normalizeHeading("Current State")),
-    Decisions: present.has(normalizeHeading("Decisions")),
-    Constraints: present.has(normalizeHeading("Constraints")),
-    PRs: present.has(normalizeHeading("PRs")),
+    "Current State": sections.has("Current State"),
+    Decisions: sections.has("Decisions"),
+    Constraints: sections.has("Constraints"),
+    PRs: sections.has("PRs"),
   };
 }
 
@@ -205,10 +200,6 @@ function anchorReadToMeta(anchor: AnchorRead): AnchorMeta {
     last_validated: frontmatter.last_validated,
     origin: "repo",
   };
-}
-
-function normalizeHeading(value: string): string {
-  return value.trim().toLowerCase();
 }
 
 function titleFromMarkdown(content: string): string | undefined {

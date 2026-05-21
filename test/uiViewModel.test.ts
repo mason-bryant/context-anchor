@@ -26,6 +26,33 @@ None.
     expect(sections.PRs).toBe(false);
   });
 
+  it("uses the same H2 parsing semantics as section validation", () => {
+    const sections = requiredSectionStatus(`# Demo
+
+## current state
+
+Lowercase heading should not satisfy the exact required title.
+
+## Decisions ##
+
+Trailing closing hashes are accepted by the shared parser.
+
+\`\`\`md
+## Constraints
+## PRs
+\`\`\`
+
+## Constraints
+
+Real section outside the fence.
+`);
+
+    expect(sections["Current State"]).toBe(false);
+    expect(sections.Decisions).toBe(true);
+    expect(sections.Constraints).toBe(true);
+    expect(sections.PRs).toBe(false);
+  });
+
   it("marks healthy anchor metadata as ok", () => {
     const meta = toAnchorUiMeta(validMeta());
 
