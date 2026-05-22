@@ -205,8 +205,14 @@ None.
 
     const anchors = await service.listAnchors({ project: "acme" });
     const root = buildContextRoot(anchors, { format: "markdown", generatedAt: "2026-05-12T00:00:00.000Z" });
-    expect(root.markdown).toContain("#### Milestones");
-    expect(root.markdown).toContain("projects/acme/milestones/m1.md");
+    expect(root.entries.map((entry) => entry.name)).toContain("projects/acme/acme-roadmap.md");
+    expect(root.entries.map((entry) => entry.name)).toContain("projects/acme/acme.md");
+    expect(root.entries.map((entry) => entry.name)).not.toContain("projects/acme/milestones/m1.md");
+    expect(root.markdown).toContain("### Project `acme`");
+    expect(root.markdown).toContain("#### [Acme roadmap](projects/acme/acme-roadmap.md)");
+    expect(root.markdown).toContain("Tags: `roadmap`");
+    expect(root.markdown).not.toContain("#### Milestones");
+    expect(root.markdown).not.toContain("projects/acme/milestones/m1.md");
   });
 
   it("blocks milestone goal references when the sibling roadmap has duplicate goal ids", async () => {
@@ -763,11 +769,10 @@ None.
       generatedAt: "2026-05-12T00:00:00.000Z",
     });
     const markdown = root.markdown ?? "";
-    expect(markdown).toContain("[M1 -- First](projects/acme/milestones/m-1.md)");
-    expect(markdown).toContain("[M2 -- Second](projects/acme/milestones/m-2.md)");
-    expect(markdown).toContain("[Backlog](projects/acme/milestones/backlog.md)");
-    expect(markdown.indexOf("[M1 -- First]")).toBeLessThan(markdown.indexOf("[M2 -- Second]"));
-    expect(markdown.indexOf("[M2 -- Second]")).toBeLessThan(markdown.indexOf("[Backlog]"));
+    expect(root.entries.map((entry) => entry.name)).not.toContain("projects/acme/milestones/m-1.md");
+    expect(markdown).not.toContain("projects/acme/milestones/m-1.md");
+    expect(markdown).not.toContain("projects/acme/milestones/m-2.md");
+    expect(markdown).not.toContain("projects/acme/milestones/backlog.md");
   });
 
   it("blocks duplicate milestone_id in the same project", async () => {

@@ -9,7 +9,7 @@ export function buildContextRoot(
   } = {},
 ): ContextRootResult {
   const generatedAt = options.generatedAt ?? new Date().toISOString();
-  const entries = anchors.map(toContextRootEntry).sort(compareContextEntries);
+  const entries = anchors.map(toContextRootEntry).filter(isContextRootEntry).sort(compareContextEntries);
   const format = options.format ?? "both";
 
   return {
@@ -59,11 +59,6 @@ export function renderContextRootMarkdown(entries: ContextRootEntry[], generated
 }
 
 function renderProjectsSection(entries: ContextRootEntry[]): string[] {
-  const hasMilestone = entries.some((entry) => entry.name.includes("/milestones/"));
-  if (!hasMilestone) {
-    return entries.flatMap((entry) => renderContextRootEntryBlock(entry));
-  }
-
   const bySlug = new Map<string, ContextRootEntry[]>();
   for (const entry of entries) {
     const slug = entry.projectSlug ?? "__none__";
@@ -76,51 +71,56 @@ function renderProjectsSection(entries: ContextRootEntry[]): string[] {
   const lines: string[] = [];
   for (const slug of [...bySlug.keys()].sort()) {
     const list = bySlug.get(slug) ?? [];
-    const milestones = list.filter((e) => e.name.includes("/milestones/")).sort(compareMilestoneEntries);
-    const others = list.filter((e) => !e.name.includes("/milestones/")).sort((a, b) => a.name.localeCompare(b.name));
+    const projectEntries = list.sort((a, b) => a.name.localeCompare(b.name));
 
     if (slug !== "__none__") {
       lines.push(`### Project \`${slug}\``, "");
     }
 
-    if (milestones.length > 0) {
-      lines.push("#### Milestones", "");
-      for (const m of milestones) {
-        const label = milestoneLabel(m);
-        const st = m.milestoneStatus ?? "unknown";
-        lines.push(`- [${escapeMarkdown(label)}](${m.path}) — **${escapeMarkdown(st)}** — ${escapeMarkdown(m.summary)}`);
-      }
-      lines.push("");
-    }
-
-    for (const entry of others) {
-      lines.push(...renderContextRootEntryBlock(entry));
+    for (const entry of projectEntries) {
+      lines.push(
+        ...renderContextRootEntryBlock(entry, {
+          headingLevel: slug === "__none__" ? 3 : 4,
+          includeAcceptanceCriteria: false,
+          includeMetadata: false,
+        }),
+      );
     }
   }
 
   return lines;
 }
 
-function renderContextRootEntryBlock(entry: ContextRootEntry): string[] {
+function renderContextRootEntryBlock(
+  entry: ContextRootEntry,
+  options: { headingLevel?: 3 | 4; includeAcceptanceCriteria?: boolean; includeMetadata?: boolean } = {},
+): string[] {
+  const heading = "#".repeat(options.headingLevel ?? 3);
+  const includeAcceptanceCriteria = options.includeAcceptanceCriteria ?? true;
+  const includeMetadata = options.includeMetadata ?? true;
   const out: string[] = [];
   const label = entry.title || entry.name;
-  out.push(`### [${escapeMarkdown(label)}](${entry.path})`, "");
+  out.push(`${heading} [${escapeMarkdown(label)}](${entry.path})`, "");
   out.push(entry.summary);
+  out.push("");
+  out.push(`Tags: ${formatTags(entry.tags)}`);
   out.push("");
   out.push("Read this if:");
   for (const instruction of entry.read_this_if) {
     out.push(`- ${instruction}`);
   }
   out.push("");
-  const metaBits = [`\`${entry.type}\``];
-  if (entry.projectSlug) {
-    metaBits.push(`project \`${entry.projectSlug}\``);
+  if (includeMetadata) {
+    const metaBits = [`\`${entry.type}\``];
+    if (entry.projectSlug) {
+      metaBits.push(`project \`${entry.projectSlug}\``);
+    }
+    if (entry.policyVersion) {
+      metaBits.push(`policy \`${entry.policyVersion}\``);
+    }
+    out.push(`Metadata: ${metaBits.join(", ")}`);
   }
-  if (entry.policyVersion) {
-    metaBits.push(`policy \`${entry.policyVersion}\``);
-  }
-  out.push(`Metadata: ${metaBits.join(", ")}`);
-  if (entry.acceptanceCriteria) {
+  if (includeAcceptanceCriteria && entry.acceptanceCriteria) {
     const ac = entry.acceptanceCriteria;
     out.push("");
     out.push(
@@ -129,6 +129,10 @@ function renderContextRootEntryBlock(entry: ContextRootEntry): string[] {
   }
   out.push("");
   return out;
+}
+
+function isContextRootEntry(entry: ContextRootEntry): boolean {
+  return !(entry.category === "projects" && entry.name.includes("/milestones/"));
 }
 
 function toContextRootEntry(anchor: AnchorMeta): ContextRootEntry {
@@ -228,4 +232,17 @@ function compareContextEntries(left: ContextRootEntry, right: ContextRootEntry):
 
 function escapeMarkdown(input: string): string {
   return input.replaceAll("[", "\\[").replaceAll("]", "\\]");
+}
+
+function formatTags(tags: unknown): string {
+  const values = Array.isArray(tags) ? tags : tags === undefined ? [] : [tags];
+  const normalized = values.map((tag) => String(tag).trim()).filter(Boolean);
+  if (normalized.length === 0) {
+    return "none";
+  }
+  return normalized.map((tag) => `\`${escapeInlineCode(tag)}\``).join(", ");
+}
+
+function escapeInlineCode(input: string): string {
+  return input.replaceAll("`", "\\`");
 }

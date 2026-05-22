@@ -9,6 +9,9 @@ type UiAssetHooks = {
   sanitizeLinkHref(href: string): string | null;
   anchorHref(name: string): string;
   readAnchorFromLocation(): string | null;
+  clearAnchorLocation(): void;
+  showSelectedAnchor(): void;
+  setSelectedNameForTest(name: string | null): void;
   token(): string;
   saveToken(value: string): void;
   renderAnchorRow(anchor: Record<string, unknown>): string;
@@ -35,7 +38,13 @@ function createStorage(initial: Record<string, string> = {}): TestStorage {
 }
 
 function loadHooks(
-  options: { search?: string; hash?: string; localStorage?: TestStorage; sessionStorage?: TestStorage } = {},
+  options: {
+    search?: string;
+    hash?: string;
+    localStorage?: TestStorage;
+    sessionStorage?: TestStorage;
+    historyUpdates?: string[];
+  } = {},
 ): UiAssetHooks {
   const hooks: Partial<UiAssetHooks> = {};
   const search = options.search ?? "";
@@ -47,6 +56,9 @@ function loadHooks(
     URL,
     URLSearchParams,
     decodeURIComponent,
+    document: {
+      querySelectorAll: () => [],
+    },
     window: {
       location: {
         href: `http://localhost:3333/ui${search}${hash}`,
@@ -57,6 +69,11 @@ function loadHooks(
       },
       localStorage,
       sessionStorage,
+      history: {
+        pushState: (_state: unknown, _title: string, url: string) => {
+          options.historyUpdates?.push(url);
+        },
+      },
       __ANCHOR_MCP_UI_TEST_HOOKS__: hooks,
     },
   });
@@ -75,6 +92,11 @@ describe("UI browser assets", () => {
     expect(UI_HTML).toContain('<use href="#icon-filter"></use>');
     expect(UI_HTML).toContain('<use href="#icon-save"></use>');
     expect(UI_CSS).toContain("stroke: currentColor");
+  });
+
+  it("labels the detail tab as a disabled selected-anchor tab", () => {
+    expect(UI_HTML).toContain("Selected Anchor");
+    expect(UI_HTML).toContain('data-tab="detail" type="button" disabled');
   });
 
   it("persists bearer tokens in localStorage for same-origin tabs", () => {
@@ -132,6 +154,30 @@ describe("UI browser assets", () => {
       "?anchor=server-rules%2Facceptance-criteria.md",
     );
     expect(hooks.readAnchorFromLocation()).toBe("server-rules/acceptance-criteria.md");
+  });
+
+  it("clears the anchor query when returning to context root", () => {
+    const historyUpdates: string[] = [];
+    const hooks = loadHooks({
+      search: "?project=demo&anchor=projects%2Fdemo%2Fdemo.md",
+      historyUpdates,
+    });
+
+    hooks.clearAnchorLocation();
+
+    expect(historyUpdates).toEqual(["/ui?project=demo"]);
+  });
+
+  it("restores the selected-anchor route when returning to detail", () => {
+    const historyUpdates: string[] = [];
+    const hooks = loadHooks({ historyUpdates });
+
+    hooks.showSelectedAnchor();
+    expect(historyUpdates).toEqual([]);
+
+    hooks.setSelectedNameForTest("projects/demo/demo.md");
+    hooks.showSelectedAnchor();
+    expect(historyUpdates).toEqual(["/ui?anchor=projects%2Fdemo%2Fdemo.md"]);
   });
 
   it("still reads legacy hash anchor links", () => {
