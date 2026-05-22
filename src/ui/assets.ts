@@ -60,7 +60,7 @@ export const UI_HTML = `<!doctype html>
 
           <nav class="tabs" aria-label="Primary views">
             <button class="tab active" data-tab="root" type="button">Context Root</button>
-            <button class="tab" data-tab="detail" type="button">Anchor Detail</button>
+            <button class="tab" data-tab="detail" type="button" disabled>Selected Anchor</button>
           </nav>
 
           <section id="root-view" class="view active">
@@ -163,6 +163,11 @@ button {
 
 button:hover {
   border-color: #aeb9c5;
+}
+
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
 }
 
 .app-shell {
@@ -643,6 +648,16 @@ export const UI_JS = `(function () {
     window.history.pushState(null, "", next.pathname + next.search);
   }
 
+  function clearAnchorLocation() {
+    if (!window.history || !window.history.pushState) {
+      return;
+    }
+    var next = new URL(window.location.href);
+    next.searchParams.delete("anchor");
+    next.hash = "";
+    window.history.pushState(null, "", next.pathname + next.search);
+  }
+
   function el(id) {
     return document.getElementById(id);
   }
@@ -914,11 +929,31 @@ export const UI_JS = `(function () {
   function showTab(tab) {
     state.activeTab = tab;
     document.querySelectorAll(".tab").forEach(function (button) {
+      if (button.dataset.tab === "detail") {
+        button.disabled = !state.selectedName;
+      }
       button.classList.toggle("active", button.dataset.tab === tab);
     });
     document.querySelectorAll(".view").forEach(function (view) {
       view.classList.toggle("active", view.id === tab + "-view");
     });
+  }
+
+  function showSelectedAnchor() {
+    if (!state.selectedName) {
+      return;
+    }
+    updateAnchorLocation(state.selectedName);
+    showTab("detail");
+  }
+
+  function showRoot(options) {
+    var opts = options || {};
+    if (!opts.skipLocationUpdate) {
+      clearAnchorLocation();
+    }
+    state.pendingAnchor = null;
+    showTab("root");
   }
 
   async function selectAnchor(name, options) {
@@ -1166,7 +1201,11 @@ export const UI_JS = `(function () {
 
   function handleLocationAnchorChange() {
     state.pendingAnchor = readAnchorFromLocation();
-    openPendingAnchor();
+    if (state.pendingAnchor) {
+      openPendingAnchor();
+    } else {
+      showRoot({ skipLocationUpdate: true });
+    }
   }
 
   function bind() {
@@ -1198,7 +1237,17 @@ export const UI_JS = `(function () {
       selectAnchor(link.dataset.anchorName);
     });
     document.querySelectorAll(".tab").forEach(function (button) {
-      button.addEventListener("click", function () { showTab(button.dataset.tab); });
+      button.addEventListener("click", function () {
+        if (button.dataset.tab === "root") {
+          showRoot();
+          return;
+        }
+        if (button.dataset.tab === "detail") {
+          showSelectedAnchor();
+          return;
+        }
+        showTab(button.dataset.tab);
+      });
     });
     document.querySelectorAll("[data-root-mode]").forEach(function (button) {
       button.addEventListener("click", function () { showRootMode(button.dataset.rootMode); });
@@ -1215,6 +1264,9 @@ export const UI_JS = `(function () {
     window.__ANCHOR_MCP_UI_TEST_HOOKS__.sanitizeLinkHref = sanitizeLinkHref;
     window.__ANCHOR_MCP_UI_TEST_HOOKS__.anchorHref = anchorHref;
     window.__ANCHOR_MCP_UI_TEST_HOOKS__.readAnchorFromLocation = readAnchorFromLocation;
+    window.__ANCHOR_MCP_UI_TEST_HOOKS__.clearAnchorLocation = clearAnchorLocation;
+    window.__ANCHOR_MCP_UI_TEST_HOOKS__.showSelectedAnchor = showSelectedAnchor;
+    window.__ANCHOR_MCP_UI_TEST_HOOKS__.setSelectedNameForTest = function (name) { state.selectedName = name; };
     window.__ANCHOR_MCP_UI_TEST_HOOKS__.token = token;
     window.__ANCHOR_MCP_UI_TEST_HOOKS__.saveToken = saveToken;
     window.__ANCHOR_MCP_UI_TEST_HOOKS__.renderAnchorRow = renderAnchorRow;

@@ -9,7 +9,7 @@ summary: "Roadmap and acceptance criteria for the anchor-mcp / context-conductor
 read_this_if:
   - "Planning or prioritizing anchor-mcp work."
   - "Checking definition of done for context-conductor milestones."
-last_validated: 2026-05-12
+last_validated: 2026-05-22
 ---
 
 # Context conductor roadmap
@@ -44,7 +44,7 @@ last_validated: 2026-05-12
 
 - Extend `projects/<slug>/` taxonomy with reserved `milestones/` subdirectory and ship `type: project-milestone` anchors.
 - Add typed front-matter overlay validation (`schema_version`, milestone fields) and `relations` shape validation with milestone `goal_ids` resolution against `<slug>-roadmap.md`.
-- Ship `listMilestones`, `readMilestone`, and `getRelated` MCP tools; enrich `planContextBundle` with milestone-aware scoring and missing-context signals; render optional milestone subsection in `CONTEXT-ROOT.md`.
+- Ship `listMilestones`, `readMilestone`, and `getRelated` MCP tools; enrich `planContextBundle` with milestone-aware scoring and missing-context signals; keep `CONTEXT-ROOT.md` focused on project anchors and roadmaps.
 
 #### Acceptance Criteria
 
@@ -56,7 +56,7 @@ last_validated: 2026-05-12
 
 - [ ] AC-007: `planContextBundle` boosts canonical roadmaps and milestone anchors when the task matches active milestone goal ids or milestone theme tokens; emits milestone missing-AC signals. Evidence: `test/milestoneSteelThread.test.ts` or equivalent.
 
-- [ ] AC-008: `CONTEXT-ROOT.md` markdown groups `## Projects` with `#### Milestones` per slug when milestone anchors exist. Evidence: `npm test` context root assertions.
+- [x] AC-008: `CONTEXT-ROOT.md` omits project milestone anchors and groups project context/roadmap links with summary, tags, and read-this-if text. Evidence: `test/milestoneSteelThread.test.ts` context root assertions.
 
 #### Decisions (pre-ship)
 

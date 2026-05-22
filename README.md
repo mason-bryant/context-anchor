@@ -403,7 +403,7 @@ shared
 archive
 ```
 
-Archive entries are excluded unless `includeArchive: true` or `category: "archive"` is passed. Use `category: "server-rules"` to list only built-in policy entries.
+Archive entries are excluded unless `includeArchive: true` or `category: "archive"` is passed. Project milestone anchors are intentionally excluded from the context-root index so startup discovery stays focused on project anchors and roadmaps; use `listMilestones` or `readMilestone` for milestone detail. Use `category: "server-rules"` to list only built-in policy entries.
 
 `writeContextRoot` writes and commits a generated `CONTEXT-ROOT.md` at the anchor root. The generated file is excluded from `listAnchors`, validation, and future context-root entries. The markdown snapshot includes a **Built-in server policy — not in git** section when applicable.
 
