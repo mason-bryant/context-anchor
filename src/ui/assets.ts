@@ -7,6 +7,31 @@ export const UI_HTML = `<!doctype html>
     <link rel="stylesheet" href="/ui/app.css">
   </head>
   <body>
+    <svg class="icon-library" aria-hidden="true" focusable="false">
+      <symbol id="icon-home" viewBox="0 0 24 24">
+        <path d="M4 11.5 12 5l8 6.5"></path>
+        <path d="M6.5 10.5V19h11v-8.5"></path>
+        <path d="M10 19v-5h4v5"></path>
+      </symbol>
+      <symbol id="icon-anchor" viewBox="0 0 24 24">
+        <circle cx="12" cy="5" r="2.5"></circle>
+        <path d="M12 7.5V18"></path>
+        <path d="M8 10h8"></path>
+        <path d="M5 14c.6 3.2 3.2 5 7 5s6.4-1.8 7-5"></path>
+        <path d="M5 14h3"></path>
+        <path d="M19 14h-3"></path>
+      </symbol>
+      <symbol id="icon-filter" viewBox="0 0 24 24">
+        <path d="M5 6h14"></path>
+        <path d="M8 12h8"></path>
+        <path d="M10.5 18h3"></path>
+      </symbol>
+      <symbol id="icon-save" viewBox="0 0 24 24">
+        <path d="M6 4h10l2 2v14H6z"></path>
+        <path d="M9 4v5h6V4"></path>
+        <path d="M9 16h6"></path>
+      </symbol>
+    </svg>
     <div class="app-shell">
       <header class="topbar">
         <div>
@@ -16,14 +41,14 @@ export const UI_HTML = `<!doctype html>
         <form id="token-form" class="token-form">
           <label for="token-input">API token</label>
           <input id="token-input" type="password" autocomplete="off" placeholder="Bearer token">
-          <button type="submit">Save</button>
+          <button type="submit"><span class="icon-label"><svg class="icon" aria-hidden="true"><use href="#icon-save"></use></svg><span>Save</span></span></button>
         </form>
       </header>
 
       <main class="workspace">
         <aside class="sidebar" aria-label="Filters and anchors">
           <section class="panel">
-            <h2>Filters</h2>
+            <h2><span class="icon-label"><svg class="icon" aria-hidden="true"><use href="#icon-filter"></use></svg><span>Filters</span></span></h2>
             <label>
               Search
               <input id="search-input" type="search" placeholder="Anchor, summary, tag">
@@ -48,7 +73,7 @@ export const UI_HTML = `<!doctype html>
 
           <section class="panel anchor-list-panel">
             <div class="panel-heading">
-              <h2>Anchors</h2>
+              <h2><span class="icon-label"><svg class="icon" aria-hidden="true"><use href="#icon-anchor"></use></svg><span>Anchors</span></span></h2>
               <span id="anchor-count" class="count">0</span>
             </div>
             <div id="anchor-list" class="anchor-list"></div>
@@ -59,8 +84,8 @@ export const UI_HTML = `<!doctype html>
           <section id="status-banner" class="status-banner" hidden></section>
 
           <nav class="tabs" aria-label="Primary views">
-            <button class="tab active" data-tab="root" type="button">Context Root</button>
-            <button class="tab" data-tab="detail" type="button" disabled>Selected Anchor</button>
+            <button class="tab active" data-tab="root" type="button"><span class="icon-label"><svg class="icon" aria-hidden="true"><use href="#icon-home"></use></svg><span>Context Root</span></span></button>
+            <button class="tab" data-tab="detail" type="button" disabled><span class="icon-label"><svg class="icon" aria-hidden="true"><use href="#icon-anchor"></use></svg><span>Selected Anchor</span></span></button>
           </nav>
 
           <section id="root-view" class="view active">
@@ -159,6 +184,9 @@ button {
   border-radius: 6px;
   padding: 8px 11px;
   cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 
 button:hover {
@@ -168,6 +196,38 @@ button:hover {
 button:disabled {
   cursor: not-allowed;
   opacity: 0.55;
+}
+
+.icon-library {
+  position: absolute;
+  width: 0;
+  height: 0;
+  overflow: hidden;
+}
+
+.icon {
+  width: 16px;
+  height: 16px;
+  flex: none;
+  display: inline-block;
+  color: currentColor;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.icon-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+
+.panel h2 .icon,
+.anchor-title .icon {
+  color: var(--muted);
 }
 
 .app-shell {
@@ -330,6 +390,10 @@ select {
 }
 
 .anchor-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
   font-weight: 650;
   line-height: 1.25;
 }
@@ -892,7 +956,7 @@ export const UI_JS = `(function () {
         return "<span class=\\"badge\\">" + escapeHtml(item) + "</span>";
       }).join("");
       return "<a class=\\"anchor-row" + active + "\\" href=\\"" + escapeHtml(anchorHref(anchor.name)) + "\\" data-name=\\"" + escapeHtml(anchor.name) + "\\">"
-        + "<span class=\\"anchor-title\\">" + escapeHtml(anchor.ui.label) + "</span>"
+        + "<span class=\\"anchor-title\\"><svg class=\\"icon\\" aria-hidden=\\"true\\"><use href=\\"#icon-anchor\\"></use></svg><span>" + escapeHtml(anchor.ui.label) + "</span></span>"
         + "<span class=\\"anchor-summary\\">" + escapeHtml(anchor.summary || anchor.name) + "</span>"
         + "<span class=\\"anchor-meta\\">" + healthBadge(anchor.ui.health) + meta + "</span>"
         + "</a>";
