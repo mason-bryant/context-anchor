@@ -82,6 +82,18 @@ function loadHooks(
 }
 
 describe("UI browser assets", () => {
+  it("provides a small monochrome icon library for core controls", () => {
+    expect(UI_HTML).toContain('id="icon-home"');
+    expect(UI_HTML).toContain('id="icon-anchor"');
+    expect(UI_HTML).toContain('id="icon-filter"');
+    expect(UI_HTML).toContain('id="icon-save"');
+    expect(UI_HTML).toContain('<use href="#icon-home"></use>');
+    expect(UI_HTML).toContain('<use href="#icon-anchor"></use>');
+    expect(UI_HTML).toContain('<use href="#icon-filter"></use>');
+    expect(UI_HTML).toContain('<use href="#icon-save"></use>');
+    expect(UI_CSS).toContain("stroke: currentColor");
+  });
+
   it("labels the detail tab as a disabled selected-anchor tab", () => {
     expect(UI_HTML).toContain("Selected Anchor");
     expect(UI_HTML).toContain('data-tab="detail" type="button" disabled');
@@ -188,6 +200,7 @@ describe("UI browser assets", () => {
     });
 
     expect(html).toContain('<a class="anchor-row" href="?anchor=projects%2Fdemo%2Fdemo.md"');
+    expect(html).toContain('<use href="#icon-anchor"></use>');
     expect(html).toContain('data-name="projects/demo/demo.md"');
     expect(html).not.toContain("<button");
   });
