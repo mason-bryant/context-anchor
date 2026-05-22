@@ -13,27 +13,18 @@ type UiAssetHooks = {
   showSelectedAnchor(): void;
   setSelectedNameForTest(name: string | null): void;
   token(): string;
-  storeToken(value: string): void;
-  shouldHandleAnchorLinkInApp(
-    event: {
-      defaultPrevented?: boolean;
-      button?: number;
-      metaKey?: boolean;
-      ctrlKey?: boolean;
-      shiftKey?: boolean;
-      altKey?: boolean;
-    },
-    link: { getAttribute(name: string): string | null },
-  ): boolean;
+  saveToken(value: string): void;
+  renderAnchorRow(anchor: Record<string, unknown>): string;
+  shouldHandleClientNavigation(event: Record<string, unknown>, link: { getAttribute(name: string): string | null }): boolean;
 };
 
-type FakeStorage = {
+type TestStorage = {
   getItem(key: string): string | null;
   setItem(key: string, value: string): void;
   removeItem(key: string): void;
 };
 
-function storage(initial: Record<string, string> = {}): FakeStorage {
+function createStorage(initial: Record<string, string> = {}): TestStorage {
   const values = new Map(Object.entries(initial));
   return {
     getItem: (key) => values.get(key) ?? null,
@@ -50,16 +41,16 @@ function loadHooks(
   options: {
     search?: string;
     hash?: string;
-    sessionStorage?: FakeStorage;
-    localStorage?: FakeStorage;
+    localStorage?: TestStorage;
+    sessionStorage?: TestStorage;
     historyUpdates?: string[];
   } = {},
 ): UiAssetHooks {
   const hooks: Partial<UiAssetHooks> = {};
   const search = options.search ?? "";
   const hash = options.hash ?? "";
-  const sessionStorage = options.sessionStorage ?? storage();
-  const localStorage = options.localStorage ?? storage();
+  const localStorage = options.localStorage ?? createStorage();
+  const sessionStorage = options.sessionStorage ?? createStorage();
 
   vm.runInNewContext(UI_JS, {
     URL,
@@ -76,8 +67,8 @@ function loadHooks(
         origin: "http://localhost:3333",
         pathname: "/ui",
       },
-      sessionStorage,
       localStorage,
+      sessionStorage,
       history: {
         pushState: (_state: unknown, _title: string, url: string) => {
           options.historyUpdates?.push(url);
@@ -96,7 +87,26 @@ describe("UI browser assets", () => {
     expect(UI_HTML).toContain('data-tab="detail" type="button" disabled');
   });
 
-  it("keeps fenced code blocks readable when inline code styles exist", () => {
+  it("persists bearer tokens in localStorage for same-origin tabs", () => {
+    const sharedLocalStorage = createStorage();
+    const firstTab = loadHooks({ localStorage: sharedLocalStorage });
+    firstTab.saveToken(" test-token ");
+
+    const secondTab = loadHooks({ localStorage: sharedLocalStorage });
+
+    expect(secondTab.token()).toBe("test-token");
+  });
+
+  it("migrates existing session bearer tokens to localStorage", () => {
+    const localStorage = createStorage();
+    const sessionStorage = createStorage({ "anchor-mcp-token": "old-session-token" });
+    const hooks = loadHooks({ localStorage, sessionStorage });
+
+    expect(hooks.token()).toBe("old-session-token");
+    expect(localStorage.getItem("anchor-mcp-token")).toBe("old-session-token");
+  });
+
+  it("does not apply inline-code highlighting inside fenced code blocks", () => {
     expect(UI_CSS).toContain(".markdown pre code");
     expect(UI_CSS).toContain("background: transparent");
     expect(UI_CSS).toContain("color: inherit");
@@ -164,39 +174,33 @@ describe("UI browser assets", () => {
     expect(hooks.readAnchorFromLocation()).toBe("projects/demo/demo.md");
   });
 
-  it("keeps browser-native new-tab gestures for internal anchor links", () => {
+  it("renders anchor list rows as durable links", () => {
     const hooks = loadHooks();
-    const link = { getAttribute: () => null };
+    const html = hooks.renderAnchorRow({
+      name: "projects/demo/demo.md",
+      category: "projects",
+      projectSlug: "demo",
+      summary: "Demo anchor summary.",
+      ui: {
+        label: "Demo Anchor",
+        health: { status: "ok" },
+      },
+    });
 
-    expect(hooks.shouldHandleAnchorLinkInApp({ button: 0 }, link)).toBe(true);
-    expect(hooks.shouldHandleAnchorLinkInApp({ button: 0, metaKey: true }, link)).toBe(false);
-    expect(hooks.shouldHandleAnchorLinkInApp({ button: 0, ctrlKey: true }, link)).toBe(false);
-    expect(hooks.shouldHandleAnchorLinkInApp({ button: 0, shiftKey: true }, link)).toBe(false);
-    expect(hooks.shouldHandleAnchorLinkInApp({ button: 1 }, link)).toBe(false);
-    expect(hooks.shouldHandleAnchorLinkInApp({ button: 0 }, { getAttribute: () => "_blank" })).toBe(false);
+    expect(html).toContain('<a class="anchor-row" href="?anchor=projects%2Fdemo%2Fdemo.md"');
+    expect(html).toContain('data-name="projects/demo/demo.md"');
+    expect(html).not.toContain("<button");
   });
 
-  it("shares stored auth token across same-origin UI tabs", () => {
-    const localStorage = storage({ "anchor-mcp-token": "shared-token" });
-    const sessionStorage = storage();
-    const hooks = loadHooks({ localStorage, sessionStorage });
+  it("only intercepts plain same-tab anchor navigation", () => {
+    const hooks = loadHooks();
+    const sameTabLink = { getAttribute: () => "" };
+    const blankTargetLink = { getAttribute: () => "_blank" };
 
-    expect(hooks.token()).toBe("shared-token");
-    hooks.storeToken("new-token");
-    expect(localStorage.getItem("anchor-mcp-token")).toBe("new-token");
-    expect(sessionStorage.getItem("anchor-mcp-token")).toBe("new-token");
-
-    hooks.storeToken("");
-    expect(localStorage.getItem("anchor-mcp-token")).toBeNull();
-    expect(sessionStorage.getItem("anchor-mcp-token")).toBeNull();
-  });
-
-  it("migrates an existing tab token into shared storage", () => {
-    const localStorage = storage();
-    const sessionStorage = storage({ "anchor-mcp-token": "legacy-session-token" });
-    const hooks = loadHooks({ localStorage, sessionStorage });
-
-    expect(hooks.token()).toBe("legacy-session-token");
-    expect(localStorage.getItem("anchor-mcp-token")).toBe("legacy-session-token");
+    expect(hooks.shouldHandleClientNavigation({ button: 0 }, sameTabLink)).toBe(true);
+    expect(hooks.shouldHandleClientNavigation({ button: 1 }, sameTabLink)).toBe(false);
+    expect(hooks.shouldHandleClientNavigation({ button: 0, metaKey: true }, sameTabLink)).toBe(false);
+    expect(hooks.shouldHandleClientNavigation({ button: 0, ctrlKey: true }, sameTabLink)).toBe(false);
+    expect(hooks.shouldHandleClientNavigation({ button: 0 }, blankTargetLink)).toBe(false);
   });
 });

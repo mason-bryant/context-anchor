@@ -311,8 +311,17 @@ select {
   text-align: left;
   display: grid;
   gap: 4px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--text);
+  text-decoration: none;
   padding: 10px;
   border-radius: 7px;
+  cursor: pointer;
+}
+
+.anchor-row:hover {
+  border-color: #aeb9c5;
 }
 
 .anchor-row.active {
@@ -477,8 +486,8 @@ select {
 .markdown pre code {
   background: transparent;
   color: inherit;
-  border-radius: 0;
   padding: 0;
+  border-radius: 0;
 }
 
 .unsafe-link {
@@ -661,45 +670,49 @@ export const UI_JS = `(function () {
       .replace(/"/g, "&quot;");
   }
 
-  function token() {
-    var sharedToken = readStorage(window.localStorage, tokenStorageKey);
-    if (sharedToken) {
-      return sharedToken;
-    }
-    var sessionToken = readStorage(window.sessionStorage, tokenStorageKey);
-    if (sessionToken) {
-      writeStorage(window.localStorage, tokenStorageKey, sessionToken);
-    }
-    return sessionToken;
-  }
-
-  function storeToken(value) {
-    var normalized = String(value || "").trim();
-    writeStorage(window.sessionStorage, tokenStorageKey, normalized);
-    writeStorage(window.localStorage, tokenStorageKey, normalized);
-  }
-
-  function readStorage(storage, key) {
+  function readTokenFromStorage(storage) {
     try {
-      return storage ? storage.getItem(key) || "" : "";
+      return storage ? storage.getItem(tokenStorageKey) || "" : "";
     } catch (_error) {
       return "";
     }
   }
 
-  function writeStorage(storage, key, value) {
+  function writeTokenToStorage(storage, value) {
     try {
       if (!storage) {
-        return;
+        return false;
       }
       if (value) {
-        storage.setItem(key, value);
+        storage.setItem(tokenStorageKey, value);
       } else {
-        storage.removeItem(key);
+        storage.removeItem(tokenStorageKey);
       }
+      return true;
     } catch (_error) {
-      // Some browsers disable storage in restricted contexts; the token form can still be resubmitted.
+      return false;
     }
+  }
+
+  function token() {
+    var localToken = readTokenFromStorage(window.localStorage);
+    if (localToken) {
+      return localToken;
+    }
+    var sessionToken = readTokenFromStorage(window.sessionStorage);
+    if (sessionToken) {
+      writeTokenToStorage(window.localStorage, sessionToken);
+    }
+    return sessionToken;
+  }
+
+  function saveToken(value) {
+    var nextToken = String(value || "").trim();
+    if (writeTokenToStorage(window.localStorage, nextToken)) {
+      writeTokenToStorage(window.sessionStorage, "");
+      return;
+    }
+    writeTokenToStorage(window.sessionStorage, nextToken);
   }
 
   function setBanner(message, tone) {
@@ -878,11 +891,11 @@ export const UI_JS = `(function () {
       var meta = [anchor.category, projectOf(anchor)].filter(Boolean).map(function (item) {
         return "<span class=\\"badge\\">" + escapeHtml(item) + "</span>";
       }).join("");
-      return "<button class=\\"anchor-row" + active + "\\" type=\\"button\\" data-name=\\"" + escapeHtml(anchor.name) + "\\">"
+      return "<a class=\\"anchor-row" + active + "\\" href=\\"" + escapeHtml(anchorHref(anchor.name)) + "\\" data-name=\\"" + escapeHtml(anchor.name) + "\\">"
         + "<span class=\\"anchor-title\\">" + escapeHtml(anchor.ui.label) + "</span>"
         + "<span class=\\"anchor-summary\\">" + escapeHtml(anchor.summary || anchor.name) + "</span>"
         + "<span class=\\"anchor-meta\\">" + healthBadge(anchor.ui.health) + meta + "</span>"
-        + "</button>";
+        + "</a>";
   }
 
   function renderRoot() {
@@ -1137,6 +1150,17 @@ export const UI_JS = `(function () {
     });
   }
 
+  function shouldHandleClientNavigation(event, link) {
+    if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) {
+      return false;
+    }
+    if (typeof event.button === "number" && event.button !== 0) {
+      return false;
+    }
+    var target = (link.getAttribute("target") || "").toLowerCase();
+    return !target || target === "_self";
+  }
+
   function resolveAnchorHref(href) {
     if (!href || href.charAt(0) === "#") {
       return null;
@@ -1184,26 +1208,11 @@ export const UI_JS = `(function () {
     }
   }
 
-  function shouldHandleAnchorLinkInApp(event, link) {
-    if (
-      event.defaultPrevented ||
-      event.button !== 0 ||
-      event.metaKey ||
-      event.ctrlKey ||
-      event.shiftKey ||
-      event.altKey
-    ) {
-      return false;
-    }
-    var target = link.getAttribute("target");
-    return !target || target === "_self";
-  }
-
   function bind() {
     el("token-input").value = token();
     el("token-form").addEventListener("submit", function (event) {
       event.preventDefault();
-      storeToken(el("token-input").value);
+      saveToken(el("token-input").value);
       load().catch(function (error) { setBanner(error.message, "error"); });
     });
     ["project-filter", "category-filter", "tag-filter", "archive-filter"].forEach(function (id) {
@@ -1214,16 +1223,14 @@ export const UI_JS = `(function () {
     el("search-input").addEventListener("input", debounce(renderAnchorList, 120));
     el("anchor-list").addEventListener("click", function (event) {
       var row = event.target.closest("[data-name]");
-      if (row) {
+      if (row && shouldHandleClientNavigation(event, row)) {
+        event.preventDefault();
         selectAnchor(row.dataset.name);
       }
     });
     el("content-area").addEventListener("click", function (event) {
       var link = event.target.closest("a[data-anchor-name]");
-      if (!link) {
-        return;
-      }
-      if (!shouldHandleAnchorLinkInApp(event, link)) {
+      if (!link || !shouldHandleClientNavigation(event, link)) {
         return;
       }
       event.preventDefault();
@@ -1260,9 +1267,10 @@ export const UI_JS = `(function () {
     window.__ANCHOR_MCP_UI_TEST_HOOKS__.clearAnchorLocation = clearAnchorLocation;
     window.__ANCHOR_MCP_UI_TEST_HOOKS__.showSelectedAnchor = showSelectedAnchor;
     window.__ANCHOR_MCP_UI_TEST_HOOKS__.setSelectedNameForTest = function (name) { state.selectedName = name; };
-    window.__ANCHOR_MCP_UI_TEST_HOOKS__.shouldHandleAnchorLinkInApp = shouldHandleAnchorLinkInApp;
     window.__ANCHOR_MCP_UI_TEST_HOOKS__.token = token;
-    window.__ANCHOR_MCP_UI_TEST_HOOKS__.storeToken = storeToken;
+    window.__ANCHOR_MCP_UI_TEST_HOOKS__.saveToken = saveToken;
+    window.__ANCHOR_MCP_UI_TEST_HOOKS__.renderAnchorRow = renderAnchorRow;
+    window.__ANCHOR_MCP_UI_TEST_HOOKS__.shouldHandleClientNavigation = shouldHandleClientNavigation;
     return;
   }
 
