@@ -60,7 +60,7 @@ export const UI_HTML = `<!doctype html>
 
           <nav class="tabs" aria-label="Primary views">
             <button class="tab active" data-tab="root" type="button">Context Root</button>
-            <button class="tab" data-tab="detail" type="button">Anchor Detail</button>
+            <button class="tab" data-tab="detail" type="button" disabled>Selected Anchor</button>
           </nav>
 
           <section id="root-view" class="view active">
@@ -163,6 +163,11 @@ button {
 
 button:hover {
   border-color: #aeb9c5;
+}
+
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
 }
 
 .app-shell {
@@ -469,6 +474,13 @@ select {
   border-radius: 7px;
 }
 
+.markdown pre code {
+  background: transparent;
+  color: inherit;
+  border-radius: 0;
+  padding: 0;
+}
+
 .unsafe-link {
   color: var(--muted);
   text-decoration: line-through;
@@ -595,6 +607,7 @@ export const UI_JS = `(function () {
   };
 
   var categories = ["", "server-rules", "agent-rules", "projects", "invariants", "conflicts", "shared", "archive"];
+  var tokenStorageKey = "anchor-mcp-token";
 
   function readAnchorFromLocation() {
     var queryAnchor = new URLSearchParams(window.location.search).get("anchor");
@@ -626,6 +639,16 @@ export const UI_JS = `(function () {
     window.history.pushState(null, "", next.pathname + next.search);
   }
 
+  function clearAnchorLocation() {
+    if (!window.history || !window.history.pushState) {
+      return;
+    }
+    var next = new URL(window.location.href);
+    next.searchParams.delete("anchor");
+    next.hash = "";
+    window.history.pushState(null, "", next.pathname + next.search);
+  }
+
   function el(id) {
     return document.getElementById(id);
   }
@@ -639,7 +662,44 @@ export const UI_JS = `(function () {
   }
 
   function token() {
-    return window.sessionStorage.getItem("anchor-mcp-token") || "";
+    var sharedToken = readStorage(window.localStorage, tokenStorageKey);
+    if (sharedToken) {
+      return sharedToken;
+    }
+    var sessionToken = readStorage(window.sessionStorage, tokenStorageKey);
+    if (sessionToken) {
+      writeStorage(window.localStorage, tokenStorageKey, sessionToken);
+    }
+    return sessionToken;
+  }
+
+  function storeToken(value) {
+    var normalized = String(value || "").trim();
+    writeStorage(window.sessionStorage, tokenStorageKey, normalized);
+    writeStorage(window.localStorage, tokenStorageKey, normalized);
+  }
+
+  function readStorage(storage, key) {
+    try {
+      return storage ? storage.getItem(key) || "" : "";
+    } catch (_error) {
+      return "";
+    }
+  }
+
+  function writeStorage(storage, key, value) {
+    try {
+      if (!storage) {
+        return;
+      }
+      if (value) {
+        storage.setItem(key, value);
+      } else {
+        storage.removeItem(key);
+      }
+    } catch (_error) {
+      // Some browsers disable storage in restricted contexts; the token form can still be resubmitted.
+    }
   }
 
   function setBanner(message, tone) {
@@ -856,11 +916,31 @@ export const UI_JS = `(function () {
   function showTab(tab) {
     state.activeTab = tab;
     document.querySelectorAll(".tab").forEach(function (button) {
+      if (button.dataset.tab === "detail") {
+        button.disabled = !state.selectedName;
+      }
       button.classList.toggle("active", button.dataset.tab === tab);
     });
     document.querySelectorAll(".view").forEach(function (view) {
       view.classList.toggle("active", view.id === tab + "-view");
     });
+  }
+
+  function showSelectedAnchor() {
+    if (!state.selectedName) {
+      return;
+    }
+    updateAnchorLocation(state.selectedName);
+    showTab("detail");
+  }
+
+  function showRoot(options) {
+    var opts = options || {};
+    if (!opts.skipLocationUpdate) {
+      clearAnchorLocation();
+    }
+    state.pendingAnchor = null;
+    showTab("root");
   }
 
   async function selectAnchor(name, options) {
@@ -1097,14 +1177,33 @@ export const UI_JS = `(function () {
 
   function handleLocationAnchorChange() {
     state.pendingAnchor = readAnchorFromLocation();
-    openPendingAnchor();
+    if (state.pendingAnchor) {
+      openPendingAnchor();
+    } else {
+      showRoot({ skipLocationUpdate: true });
+    }
+  }
+
+  function shouldHandleAnchorLinkInApp(event, link) {
+    if (
+      event.defaultPrevented ||
+      event.button !== 0 ||
+      event.metaKey ||
+      event.ctrlKey ||
+      event.shiftKey ||
+      event.altKey
+    ) {
+      return false;
+    }
+    var target = link.getAttribute("target");
+    return !target || target === "_self";
   }
 
   function bind() {
     el("token-input").value = token();
     el("token-form").addEventListener("submit", function (event) {
       event.preventDefault();
-      window.sessionStorage.setItem("anchor-mcp-token", el("token-input").value.trim());
+      storeToken(el("token-input").value);
       load().catch(function (error) { setBanner(error.message, "error"); });
     });
     ["project-filter", "category-filter", "tag-filter", "archive-filter"].forEach(function (id) {
@@ -1124,11 +1223,24 @@ export const UI_JS = `(function () {
       if (!link) {
         return;
       }
+      if (!shouldHandleAnchorLinkInApp(event, link)) {
+        return;
+      }
       event.preventDefault();
       selectAnchor(link.dataset.anchorName);
     });
     document.querySelectorAll(".tab").forEach(function (button) {
-      button.addEventListener("click", function () { showTab(button.dataset.tab); });
+      button.addEventListener("click", function () {
+        if (button.dataset.tab === "root") {
+          showRoot();
+          return;
+        }
+        if (button.dataset.tab === "detail") {
+          showSelectedAnchor();
+          return;
+        }
+        showTab(button.dataset.tab);
+      });
     });
     document.querySelectorAll("[data-root-mode]").forEach(function (button) {
       button.addEventListener("click", function () { showRootMode(button.dataset.rootMode); });
@@ -1145,6 +1257,12 @@ export const UI_JS = `(function () {
     window.__ANCHOR_MCP_UI_TEST_HOOKS__.sanitizeLinkHref = sanitizeLinkHref;
     window.__ANCHOR_MCP_UI_TEST_HOOKS__.anchorHref = anchorHref;
     window.__ANCHOR_MCP_UI_TEST_HOOKS__.readAnchorFromLocation = readAnchorFromLocation;
+    window.__ANCHOR_MCP_UI_TEST_HOOKS__.clearAnchorLocation = clearAnchorLocation;
+    window.__ANCHOR_MCP_UI_TEST_HOOKS__.showSelectedAnchor = showSelectedAnchor;
+    window.__ANCHOR_MCP_UI_TEST_HOOKS__.setSelectedNameForTest = function (name) { state.selectedName = name; };
+    window.__ANCHOR_MCP_UI_TEST_HOOKS__.shouldHandleAnchorLinkInApp = shouldHandleAnchorLinkInApp;
+    window.__ANCHOR_MCP_UI_TEST_HOOKS__.token = token;
+    window.__ANCHOR_MCP_UI_TEST_HOOKS__.storeToken = storeToken;
     return;
   }
 

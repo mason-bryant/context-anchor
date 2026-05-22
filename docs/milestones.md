@@ -244,3 +244,7 @@ CallMcpTool(
   arguments={ "name": "projects/context-conductor/milestones/steel-thread-v1.md" }
 )
 ```
+
+Milestones are intentionally not listed in `contextRoot`; that index stays focused on
+project anchors and roadmaps. Use `listMilestones` for milestone discovery and
+`readMilestone` for resolved goal details.
