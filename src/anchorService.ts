@@ -752,15 +752,15 @@ export class AnchorService {
   }
 
   async planContextBundle(input: PlanContextBundleInput): Promise<PlanContextBundleResult> {
-    const anchors = await this.repo.listAnchors({
-      category:
-        input.category && input.category !== SERVER_RULES_DISCOVERY_CATEGORY
-          ? (input.category as AnchorCategory)
-          : undefined,
-      tag: input.tag,
-      runtime: input.runtime,
-      includeArchive: input.includeArchive,
-    });
+    const anchors =
+      input.category === SERVER_RULES_DISCOVERY_CATEGORY
+        ? listBuiltInAnchorMetas()
+        : await this.repo.listAnchors({
+            category: input.category ? (input.category as AnchorCategory) : undefined,
+            tag: input.tag,
+            runtime: input.runtime,
+            includeArchive: input.includeArchive,
+          });
 
     const plan = buildContextBundlePlan(anchors, input);
     const builtNames = listBuiltInAnchorMetas().map((meta) => meta.name);

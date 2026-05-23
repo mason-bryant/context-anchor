@@ -26,6 +26,13 @@ export const UI_HTML = `<!doctype html>
         <path d="M8 12h8"></path>
         <path d="M10.5 18h3"></path>
       </symbol>
+      <symbol id="icon-plan" viewBox="0 0 24 24">
+        <path d="M5 6h14"></path>
+        <path d="M5 12h8"></path>
+        <path d="M5 18h5"></path>
+        <path d="M15 15l3 3-3 3"></path>
+        <path d="M12 18h6"></path>
+      </symbol>
       <symbol id="icon-save" viewBox="0 0 24 24">
         <path d="M6 4h10l2 2v14H6z"></path>
         <path d="M9 4v5h6V4"></path>
@@ -85,6 +92,7 @@ export const UI_HTML = `<!doctype html>
 
           <nav class="tabs" aria-label="Primary views">
             <button class="tab active" data-tab="root" type="button"><span class="icon-label"><svg class="icon" aria-hidden="true"><use href="#icon-home"></use></svg><span>Context Root</span></span></button>
+            <button class="tab" data-tab="planner" type="button"><span class="icon-label"><svg class="icon" aria-hidden="true"><use href="#icon-plan"></use></svg><span>Planner</span></span></button>
             <button class="tab" data-tab="detail" type="button" disabled><span class="icon-label"><svg class="icon" aria-hidden="true"><use href="#icon-anchor"></use></svg><span>Selected Anchor</span></span></button>
           </nav>
 
@@ -101,6 +109,92 @@ export const UI_HTML = `<!doctype html>
             </div>
             <article id="root-rendered" class="markdown"></article>
             <pre id="root-raw" class="raw-view" hidden></pre>
+          </section>
+
+          <section id="planner-view" class="view">
+            <div class="view-header">
+              <div>
+                <h2>Context Bundle Planner</h2>
+                <p id="planner-status">No plan run yet</p>
+              </div>
+            </div>
+            <form id="planner-form" class="planner-form">
+              <label class="planner-task">
+                Task
+                <textarea id="planner-task" rows="4" placeholder="Update anchor-mcp UI planning context"></textarea>
+              </label>
+              <div class="planner-controls">
+                <label>
+                  Project
+                  <select id="planner-project"></select>
+                </label>
+                <label>
+                  Category
+                  <select id="planner-category"></select>
+                </label>
+                <label>
+                  Tag
+                  <select id="planner-tag"></select>
+                </label>
+                <label>
+                  Runtime
+                  <input id="planner-runtime" type="text" placeholder="optional">
+                </label>
+                <label>
+                  Token budget
+                  <input id="planner-budget" type="number" min="1" max="200000" value="4000">
+                </label>
+                <label>
+                  Max anchors
+                  <input id="planner-max-anchors" type="number" min="1" max="500" value="12">
+                </label>
+                <label>
+                  Max excluded
+                  <input id="planner-max-excluded" type="number" min="0" max="500" value="20">
+                </label>
+                <label class="checkbox-row planner-checkbox">
+                  <input id="planner-archive" type="checkbox">
+                  Include archive
+                </label>
+              </div>
+              <button type="submit"><span class="icon-label"><svg class="icon" aria-hidden="true"><use href="#icon-plan"></use></svg><span>Run Plan</span></span></button>
+            </form>
+
+            <div id="planner-empty" class="empty-state">Submit a task to inspect planner output.</div>
+            <div id="planner-results" class="planner-results" hidden>
+              <section id="planner-summary" class="planner-summary"></section>
+              <section class="planner-grid">
+                <div class="metadata-box">
+                  <h3>Included</h3>
+                  <div id="planner-included" class="planner-list"></div>
+                </div>
+                <div class="metadata-box">
+                  <h3>Excluded</h3>
+                  <div id="planner-excluded" class="planner-list"></div>
+                </div>
+              </section>
+              <section class="planner-grid">
+                <div class="metadata-box">
+                  <h3>Missing Context</h3>
+                  <div id="planner-missing" class="planner-list"></div>
+                </div>
+                <div class="metadata-box">
+                  <div class="panel-heading">
+                    <h3>Suggested loadContext</h3>
+                    <button id="copy-load-context" type="button">Copy</button>
+                  </div>
+                  <pre id="planner-load-context" class="compact-raw"></pre>
+                </div>
+              </section>
+              <section class="metadata-box" id="planner-comparison-box">
+                <h3>Run Comparison</h3>
+                <div id="planner-comparison" class="planner-list"></div>
+              </section>
+              <section class="metadata-box">
+                <h3>Raw Result</h3>
+                <pre id="planner-raw" class="compact-raw"></pre>
+              </section>
+            </div>
           </section>
 
           <section id="detail-view" class="view">
@@ -173,7 +267,8 @@ body {
 
 button,
 input,
-select {
+select,
+textarea {
   font: inherit;
 }
 
@@ -274,13 +369,20 @@ button:disabled {
 }
 
 input,
-select {
+select,
+textarea {
   width: 100%;
   border: 1px solid var(--border);
   border-radius: 6px;
   background: var(--panel);
   color: var(--text);
   padding: 8px 10px;
+}
+
+textarea {
+  resize: vertical;
+  min-height: 96px;
+  line-height: 1.4;
 }
 
 .workspace {
@@ -322,7 +424,8 @@ select {
 }
 
 .panel input,
-.panel select {
+.panel select,
+.panel textarea {
   margin-top: 5px;
 }
 
@@ -580,6 +683,120 @@ select {
   font-size: 14px;
 }
 
+.planner-form {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: var(--shadow);
+  padding: 16px;
+  margin-bottom: 14px;
+}
+
+.planner-form label {
+  display: block;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.planner-task {
+  margin-bottom: 12px;
+}
+
+.planner-controls {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.planner-checkbox {
+  align-self: end;
+  min-height: 38px;
+}
+
+.planner-results {
+  display: grid;
+  gap: 14px;
+}
+
+.planner-summary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.metric {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: var(--shadow);
+  padding: 13px;
+}
+
+.metric strong {
+  display: block;
+  font-size: 18px;
+  line-height: 1.2;
+}
+
+.metric span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.planner-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.planner-list {
+  display: grid;
+  gap: 8px;
+}
+
+.planner-card {
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  padding: 10px;
+  background: #fbfcfd;
+}
+
+.planner-card-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 5px;
+  font-weight: 650;
+}
+
+.planner-card-title span:first-child {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.planner-card p {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.compact-raw {
+  margin: 0;
+  max-height: 360px;
+  overflow: auto;
+  white-space: pre-wrap;
+  background: #15202b;
+  color: #eef6ff;
+  border-radius: 7px;
+  padding: 12px;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
 .badges,
 .section-status,
 .issue-list {
@@ -661,7 +878,10 @@ select {
   }
 
   .view-header,
-  .detail-grid {
+  .detail-grid,
+  .planner-controls,
+  .planner-summary,
+  .planner-grid {
     grid-template-columns: 1fr;
     flex-direction: column;
   }
@@ -676,7 +896,9 @@ export const UI_JS = `(function () {
     selectedName: null,
     rootMode: "rendered",
     detailMode: "rendered",
-    activeTab: "root"
+    activeTab: "root",
+    plannerPlans: [],
+    plannerLastLoadContext: null
   };
 
   var categories = ["", "server-rules", "agent-rules", "projects", "invariants", "conflicts", "shared", "archive"];
@@ -866,6 +1088,34 @@ export const UI_JS = `(function () {
     return params.toString();
   }
 
+  function currentPlannerInput() {
+    return {
+      task: el("planner-task").value.trim(),
+      project: el("planner-project").value,
+      category: el("planner-category").value,
+      tag: el("planner-tag").value,
+      runtime: el("planner-runtime").value.trim(),
+      includeArchive: el("planner-archive").checked,
+      budgetTokens: el("planner-budget").value.trim(),
+      maxAnchors: el("planner-max-anchors").value.trim(),
+      maxExcluded: el("planner-max-excluded").value.trim()
+    };
+  }
+
+  function queryFromPlannerInput(input) {
+    var params = new URLSearchParams();
+    params.set("task", input.task);
+    ["project", "category", "tag", "runtime", "budgetTokens", "maxAnchors", "maxExcluded"].forEach(function (key) {
+      if (input[key]) {
+        params.set(key, input[key]);
+      }
+    });
+    if (input.includeArchive) {
+      params.set("includeArchive", "true");
+    }
+    return params.toString();
+  }
+
   async function load() {
     var filters = currentFilters();
     var query = queryFromFilters(filters);
@@ -888,15 +1138,27 @@ export const UI_JS = `(function () {
     var projectSelect = el("project-filter");
     var tagSelect = el("tag-filter");
     var categorySelect = el("category-filter");
+    var plannerProjectSelect = el("planner-project");
+    var plannerTagSelect = el("planner-tag");
+    var plannerCategorySelect = el("planner-category");
     var currentProject = projectSelect.value;
     var currentTag = tagSelect.value;
     var currentCategory = categorySelect.value;
+    var currentPlannerProject = plannerProjectSelect.value;
+    var currentPlannerTag = plannerTagSelect.value;
+    var currentPlannerCategory = plannerCategorySelect.value;
     projectSelect.innerHTML = optionList(projects, "All projects");
     tagSelect.innerHTML = optionList(tags, "All tags");
     categorySelect.innerHTML = optionList(categories.slice(1), "All categories");
+    plannerProjectSelect.innerHTML = optionList(projects, "All projects");
+    plannerTagSelect.innerHTML = optionList(tags, "All tags");
+    plannerCategorySelect.innerHTML = optionList(categories.slice(1), "All categories");
     projectSelect.value = projects.includes(currentProject) ? currentProject : "";
     tagSelect.value = tags.includes(currentTag) ? currentTag : "";
     categorySelect.value = categories.includes(currentCategory) ? currentCategory : "";
+    plannerProjectSelect.value = projects.includes(currentPlannerProject) ? currentPlannerProject : "";
+    plannerTagSelect.value = tags.includes(currentPlannerTag) ? currentPlannerTag : "";
+    plannerCategorySelect.value = categories.includes(currentPlannerCategory) ? currentPlannerCategory : "";
   }
 
   function filteredAnchors() {
@@ -971,6 +1233,127 @@ export const UI_JS = `(function () {
     showRootMode(state.rootMode);
   }
 
+  async function runPlanner() {
+    var input = currentPlannerInput();
+    if (!input.task) {
+      setBanner("Planner task is required.", "warn");
+      return;
+    }
+
+    setBanner("Planning context bundle...", "info");
+    var plan = await api("/api/ui/context-plan?" + queryFromPlannerInput(input));
+    state.plannerPlans.unshift(plan);
+    state.plannerPlans = state.plannerPlans.slice(0, 2);
+    state.plannerLastLoadContext = plan.loadContext;
+    renderPlanner(plan, state.plannerPlans[1]);
+    showTab("planner");
+    setBanner("", "info");
+  }
+
+  function renderPlanner(plan, previous) {
+    el("planner-empty").hidden = true;
+    el("planner-results").hidden = false;
+    el("planner-status").textContent = "Generated " + plan.generatedAt + " from " + plan.totalCandidates + " candidates";
+    el("planner-summary").innerHTML = [
+      renderMetric(plan.included.length, "included"),
+      renderMetric(plan.excluded.length, "excluded shown"),
+      renderMetric(plan.estimatedTokens + " / " + plan.budgetTokens, "estimated tokens"),
+      renderMetric(plan.missingContext.length, "missing signals")
+    ].join("");
+    el("planner-included").innerHTML = renderPlannerItems(plan.included, "No anchors selected.");
+    el("planner-excluded").innerHTML = renderPlannerItems(plan.excluded, "No excluded anchors returned.");
+    el("planner-missing").innerHTML = renderMissingContext(plan.missingContext);
+    el("planner-load-context").textContent = JSON.stringify(plan.loadContext, null, 2);
+    el("planner-raw").textContent = JSON.stringify(plan, null, 2);
+    el("planner-comparison").innerHTML = renderPlanComparison(plan, previous);
+  }
+
+  function renderMetric(value, label) {
+    return "<div class=\\"metric\\"><strong>" + escapeHtml(value) + "</strong><span>" + escapeHtml(label) + "</span></div>";
+  }
+
+  function renderPlannerItems(items, emptyText) {
+    if (!Array.isArray(items) || items.length === 0) {
+      return "<div class=\\"planner-card\\"><p>" + escapeHtml(emptyText) + "</p></div>";
+    }
+    return items.map(renderPlannerItem).join("");
+  }
+
+  function renderPlannerItem(item) {
+    var title = item.title || item.name;
+    var terms = Array.isArray(item.matchedTerms) && item.matchedTerms.length
+      ? item.matchedTerms.join(", ")
+      : "none";
+    return "<div class=\\"planner-card\\">"
+      + "<div class=\\"planner-card-title\\"><span>" + escapeHtml(title) + "</span><span class=\\"badge\\">score " + escapeHtml(item.score) + "</span></div>"
+      + "<p>" + escapeHtml(item.name) + "</p>"
+      + "<p>" + escapeHtml(item.reason || "No reason returned.") + "</p>"
+      + "<p>Matched: " + escapeHtml(terms) + " | Tokens: " + escapeHtml(item.estimatedTokens) + "</p>"
+      + "</div>";
+  }
+
+  function renderMissingContext(items) {
+    if (!Array.isArray(items) || items.length === 0) {
+      return "<span class=\\"badge ok\\">No missing-context signals</span>";
+    }
+    return items.map(function (item) {
+      return "<div class=\\"planner-card\\"><p>" + escapeHtml(item) + "</p></div>";
+    }).join("");
+  }
+
+  function comparePlannerRuns(current, previous) {
+    if (!current || !previous) {
+      return null;
+    }
+    return {
+      includedAdded: namesAdded(current.included, previous.included),
+      includedRemoved: namesAdded(previous.included, current.included),
+      excludedAdded: namesAdded(current.excluded, previous.excluded),
+      excludedRemoved: namesAdded(previous.excluded, current.excluded),
+      tokenDelta: current.estimatedTokens - previous.estimatedTokens
+    };
+  }
+
+  function namesAdded(left, right) {
+    var rightNames = new Set((right || []).map(function (item) { return item.name; }));
+    return (left || []).map(function (item) { return item.name; }).filter(function (name) { return !rightNames.has(name); });
+  }
+
+  function renderPlanComparison(current, previous) {
+    var diff = comparePlannerRuns(current, previous);
+    if (!diff) {
+      return "<div class=\\"planner-card\\"><p>No previous planner run in this session.</p></div>";
+    }
+    return [
+      renderComparisonCard("Included added", diff.includedAdded),
+      renderComparisonCard("Included removed", diff.includedRemoved),
+      renderComparisonCard("Excluded added", diff.excludedAdded),
+      renderComparisonCard("Excluded removed", diff.excludedRemoved),
+      "<div class=\\"planner-card\\"><div class=\\"planner-card-title\\"><span>Token delta</span><span class=\\"badge\\">" + escapeHtml(signedNumber(diff.tokenDelta)) + "</span></div></div>"
+    ].join("");
+  }
+
+  function renderComparisonCard(title, names) {
+    return "<div class=\\"planner-card\\"><div class=\\"planner-card-title\\"><span>" + escapeHtml(title) + "</span><span class=\\"badge\\">" + escapeHtml(names.length) + "</span></div><p>" + escapeHtml(names.length ? names.join(", ") : "None") + "</p></div>";
+  }
+
+  function signedNumber(value) {
+    return value > 0 ? "+" + value : String(value);
+  }
+
+  async function copyLoadContext() {
+    if (!state.plannerLastLoadContext) {
+      return;
+    }
+    var text = JSON.stringify(state.plannerLastLoadContext, null, 2);
+    if (window.navigator && window.navigator.clipboard && window.navigator.clipboard.writeText) {
+      await window.navigator.clipboard.writeText(text);
+      setBanner("Copied suggested loadContext call.", "info");
+      return;
+    }
+    setBanner("Clipboard unavailable; inspect the suggested loadContext JSON.", "warn");
+  }
+
   function showRootMode(mode) {
     state.rootMode = mode;
     document.querySelectorAll("[data-root-mode]").forEach(function (button) {
@@ -1018,6 +1401,15 @@ export const UI_JS = `(function () {
     }
     state.pendingAnchor = null;
     showTab("root");
+  }
+
+  function showPlanner(options) {
+    var opts = options || {};
+    if (!opts.skipLocationUpdate) {
+      clearAnchorLocation();
+    }
+    state.pendingAnchor = null;
+    showTab("planner");
   }
 
   async function selectAnchor(name, options) {
@@ -1284,6 +1676,13 @@ export const UI_JS = `(function () {
         load().catch(function (error) { setBanner(error.message, "error"); });
       });
     });
+    el("planner-form").addEventListener("submit", function (event) {
+      event.preventDefault();
+      runPlanner().catch(function (error) { setBanner(error.message, "error"); });
+    });
+    el("copy-load-context").addEventListener("click", function () {
+      copyLoadContext().catch(function (error) { setBanner(error.message, "error"); });
+    });
     el("search-input").addEventListener("input", debounce(renderAnchorList, 120));
     el("anchor-list").addEventListener("click", function (event) {
       var row = event.target.closest("[data-name]");
@@ -1310,6 +1709,10 @@ export const UI_JS = `(function () {
           showSelectedAnchor();
           return;
         }
+        if (button.dataset.tab === "planner") {
+          showPlanner();
+          return;
+        }
         showTab(button.dataset.tab);
       });
     });
@@ -1334,6 +1737,8 @@ export const UI_JS = `(function () {
     window.__ANCHOR_MCP_UI_TEST_HOOKS__.token = token;
     window.__ANCHOR_MCP_UI_TEST_HOOKS__.saveToken = saveToken;
     window.__ANCHOR_MCP_UI_TEST_HOOKS__.renderAnchorRow = renderAnchorRow;
+    window.__ANCHOR_MCP_UI_TEST_HOOKS__.renderPlannerItem = renderPlannerItem;
+    window.__ANCHOR_MCP_UI_TEST_HOOKS__.comparePlannerRuns = comparePlannerRuns;
     window.__ANCHOR_MCP_UI_TEST_HOOKS__.shouldHandleClientNavigation = shouldHandleClientNavigation;
     return;
   }

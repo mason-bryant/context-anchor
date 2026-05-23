@@ -15,6 +15,17 @@ type UiAssetHooks = {
   token(): string;
   saveToken(value: string): void;
   renderAnchorRow(anchor: Record<string, unknown>): string;
+  renderPlannerItem(item: Record<string, unknown>): string;
+  comparePlannerRuns(
+    current: { included: Array<{ name: string }>; excluded: Array<{ name: string }>; estimatedTokens: number },
+    previous: { included: Array<{ name: string }>; excluded: Array<{ name: string }>; estimatedTokens: number },
+  ): {
+    includedAdded: string[];
+    includedRemoved: string[];
+    excludedAdded: string[];
+    excludedRemoved: string[];
+    tokenDelta: number;
+  } | null;
   shouldHandleClientNavigation(event: Record<string, unknown>, link: { getAttribute(name: string): string | null }): boolean;
 };
 
@@ -86,10 +97,12 @@ describe("UI browser assets", () => {
     expect(UI_HTML).toContain('id="icon-home"');
     expect(UI_HTML).toContain('id="icon-anchor"');
     expect(UI_HTML).toContain('id="icon-filter"');
+    expect(UI_HTML).toContain('id="icon-plan"');
     expect(UI_HTML).toContain('id="icon-save"');
     expect(UI_HTML).toContain('<use href="#icon-home"></use>');
     expect(UI_HTML).toContain('<use href="#icon-anchor"></use>');
     expect(UI_HTML).toContain('<use href="#icon-filter"></use>');
+    expect(UI_HTML).toContain('<use href="#icon-plan"></use>');
     expect(UI_HTML).toContain('<use href="#icon-save"></use>');
     expect(UI_CSS).toContain("stroke: currentColor");
   });
@@ -97,6 +110,20 @@ describe("UI browser assets", () => {
   it("labels the detail tab as a disabled selected-anchor tab", () => {
     expect(UI_HTML).toContain("Selected Anchor");
     expect(UI_HTML).toContain('data-tab="detail" type="button" disabled');
+  });
+
+  it("includes the planner tab, controls, and output regions", () => {
+    expect(UI_HTML).toContain('data-tab="planner"');
+    expect(UI_HTML).toContain('id="planner-task"');
+    expect(UI_HTML).toContain('id="planner-project"');
+    expect(UI_HTML).toContain('id="planner-category"');
+    expect(UI_HTML).toContain('id="planner-tag"');
+    expect(UI_HTML).toContain('id="planner-runtime"');
+    expect(UI_HTML).toContain('id="planner-budget"');
+    expect(UI_HTML).toContain('id="planner-max-anchors"');
+    expect(UI_HTML).toContain('id="planner-load-context"');
+    expect(UI_HTML).toContain('id="planner-comparison"');
+    expect(UI_HTML).toContain('id="planner-raw"');
   });
 
   it("persists bearer tokens in localStorage for same-origin tabs", () => {
@@ -203,6 +230,47 @@ describe("UI browser assets", () => {
     expect(html).toContain('<use href="#icon-anchor"></use>');
     expect(html).toContain('data-name="projects/demo/demo.md"');
     expect(html).not.toContain("<button");
+  });
+
+  it("renders planner items with escaped reasons and raw score data", () => {
+    const hooks = loadHooks();
+    const html = hooks.renderPlannerItem({
+      name: "projects/demo/demo.md",
+      title: "<Demo>",
+      score: 42,
+      estimatedTokens: 18,
+      matchedTerms: ["demo", "planner"],
+      reason: 'project matches "demo" <script>',
+    });
+
+    expect(html).toContain("&lt;Demo&gt;");
+    expect(html).toContain("score 42");
+    expect(html).toContain("project matches &quot;demo&quot; &lt;script&gt;");
+    expect(html).toContain("Matched: demo, planner | Tokens: 18");
+  });
+
+  it("compares planner runs by included, excluded, and token changes", () => {
+    const hooks = loadHooks();
+    const diff = hooks.comparePlannerRuns(
+      {
+        included: [{ name: "projects/demo/demo.md" }, { name: "shared/planner.md" }],
+        excluded: [{ name: "projects/other/other.md" }],
+        estimatedTokens: 140,
+      },
+      {
+        included: [{ name: "projects/demo/demo.md" }],
+        excluded: [{ name: "shared/planner.md" }],
+        estimatedTokens: 100,
+      },
+    );
+
+    expect(diff).toEqual({
+      includedAdded: ["shared/planner.md"],
+      includedRemoved: [],
+      excludedAdded: ["projects/other/other.md"],
+      excludedRemoved: ["shared/planner.md"],
+      tokenDelta: 40,
+    });
   });
 
   it("only intercepts plain same-tab anchor navigation", () => {

@@ -534,6 +534,26 @@ None.
     expect(planned.missingContext).toEqual([]);
   });
 
+  it("planContextBundle can plan over built-in server rules only", async () => {
+    await service.writeAnchor({
+      name: "projects/demo/demo",
+      content: projectAnchorContent({ summary: "Demo milestone context." }),
+      message: "test: add demo project",
+    });
+
+    const planned = await service.planContextBundle({
+      task: "Review milestone usage policy",
+      category: "server-rules",
+    });
+
+    expect(planned.totalCandidates).toBe(2);
+    expect(planned.included.map((anchor) => anchor.name)).toContain("server-rules/milestone-usage.md");
+    expect(planned.included.map((anchor) => anchor.name)).not.toContain("projects/demo/demo.md");
+    expect(new Set(planned.loadContext.names)).toEqual(
+      new Set(["server-rules/acceptance-criteria.md", "server-rules/milestone-usage.md"]),
+    );
+  });
+
   it("readAnchor returns fileCommit for latest reads", async () => {
     await service.writeAnchor({
       name: "shared/commit-meta",
