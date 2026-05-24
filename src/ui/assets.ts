@@ -1348,7 +1348,10 @@ export const UI_JS = `(function () {
   }
 
   function anchorTimestamp(anchor, field) {
-    var raw = anchor && (anchor[field] || anchor.last_validated);
+    var raw = anchor && anchor[field];
+    if (!raw && field !== "createdAt") {
+      raw = anchor && anchor.last_validated;
+    }
     var time = Date.parse(raw);
     return Number.isNaN(time) ? NaN : time;
   }

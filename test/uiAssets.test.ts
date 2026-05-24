@@ -304,6 +304,25 @@ describe("UI browser assets", () => {
     expect(hooks.sortAnchorGroups(groups).map((group) => group.label)).toEqual(["middle", "alpha", "zeta"]);
   });
 
+  it("does not use last_validated as a created date fallback when sorting groups", () => {
+    const hooks = loadHooks();
+    const groups = [
+      {
+        key: "project:missing-created",
+        label: "missing-created",
+        anchors: [{ last_validated: "2026-05-24" }],
+      },
+      {
+        key: "project:created",
+        label: "created",
+        anchors: [{ createdAt: "2026-05-01T10:00:00.000Z" }],
+      },
+    ];
+
+    hooks.setAnchorGroupSortForTest("created");
+    expect(hooks.sortAnchorGroups(groups).map((group) => group.label)).toEqual(["created", "missing-created"]);
+  });
+
   it("renders planner items with escaped reasons and raw score data", () => {
     const hooks = loadHooks();
     const html = hooks.renderPlannerItem({

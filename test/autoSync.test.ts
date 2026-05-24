@@ -33,6 +33,7 @@ function testLogger(): { logger: AppLogger; entries: LogEntry[] } {
 function testRepo(options: {
   status?: ConflictStatus;
   upstream?: string;
+  upstreamError?: Error;
 }): AnchorRepository & {
   conflictStatus: ReturnType<typeof vi.fn>;
   currentUpstream: ReturnType<typeof vi.fn>;
@@ -42,7 +43,12 @@ function testRepo(options: {
   return {
     repoPath: "/tmp/anchor-context",
     conflictStatus: vi.fn(async () => status),
-    currentUpstream: vi.fn(async () => options.upstream),
+    currentUpstream: vi.fn(async () => {
+      if (options.upstreamError) {
+        throw options.upstreamError;
+      }
+      return options.upstream;
+    }),
     pullRebase: vi.fn(async () => undefined),
   } as unknown as AnchorRepository & {
     conflictStatus: ReturnType<typeof vi.fn>;
@@ -52,7 +58,7 @@ function testRepo(options: {
 }
 
 describe("AutoSync", () => {
-  it("skips pull and logs once when the current branch has no upstream", async () => {
+  it("skips pull and logs once when HEAD has no upstream", async () => {
     const repo = testRepo({});
     const { logger, entries } = testLogger();
     const autoSync = new AutoSync(repo, 45_000, logger);
@@ -65,8 +71,33 @@ describe("AutoSync", () => {
     expect(entries.filter((entry) => entry.level === "warn")).toEqual([
       {
         level: "warn",
-        message: "auto sync skipped because current branch has no upstream",
+        message: "auto sync skipped because no upstream is configured for HEAD",
         meta: { repoPath: "/tmp/anchor-context" },
+      },
+    ]);
+  });
+
+  it("logs and skips pull when upstream lookup fails unexpectedly", async () => {
+    const repo = testRepo({ upstreamError: new Error("git rev-parse failed") });
+    const { logger, entries } = testLogger();
+    const autoSync = new AutoSync(repo, 45_000, logger);
+
+    const status = await autoSync.tick();
+
+    expect(status).toEqual({ state: "clean" });
+    expect(repo.currentUpstream).toHaveBeenCalledOnce();
+    expect(repo.pullRebase).not.toHaveBeenCalled();
+    expect(entries.filter((entry) => entry.level === "warn")).toEqual([
+      {
+        level: "warn",
+        message: "auto sync skipped because upstream lookup failed",
+        meta: {
+          repoPath: "/tmp/anchor-context",
+          error: expect.objectContaining({
+            name: "Error",
+            message: "git rev-parse failed",
+          }),
+        },
       },
     ]);
   });

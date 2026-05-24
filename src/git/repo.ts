@@ -114,6 +114,7 @@ export class AnchorRepository {
       }
 
       const repoRelativePath = toPosix(path.relative(this.repoPath, absolutePath));
+      const createdAt = (await this.firstCommitDateForFile(repoRelativePath)) ?? stats.birthtime.toISOString();
       const meta: AnchorMeta = {
         name: anchorRelativePath,
         path: repoRelativePath,
@@ -127,7 +128,7 @@ export class AnchorRepository {
         read_this_if: stringArrayValue(parsed.frontmatter.read_this_if),
         last_validated: parsed.frontmatter.last_validated,
         updatedAt: stats.mtime.toISOString(),
-        createdAt: stats.birthtime.toISOString(),
+        createdAt,
         origin: "repo",
       };
 
@@ -384,8 +385,11 @@ export class AnchorRepository {
     try {
       const upstream = await this.git.revparse(["--abbrev-ref", "--symbolic-full-name", "@{upstream}"]);
       return upstream.trim() || undefined;
-    } catch {
-      return undefined;
+    } catch (error) {
+      if (isExpectedMissingUpstreamError(error)) {
+        return undefined;
+      }
+      throw error;
     }
   }
 
@@ -569,6 +573,24 @@ export class AnchorRepository {
 
     return files;
   }
+
+  private async firstCommitDateForFile(repoRelativePath: string): Promise<string | undefined> {
+    try {
+      const output = await this.git.raw(["log", "--follow", "--format=%aI", "--reverse", "--", repoRelativePath]);
+      const firstDate = output
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .find((line) => line.length > 0);
+      if (!firstDate) {
+        return undefined;
+      }
+
+      const timestamp = Date.parse(firstDate);
+      return Number.isNaN(timestamp) ? undefined : new Date(timestamp).toISOString();
+    } catch {
+      return undefined;
+    }
+  }
 }
 
 function isNodeFsErrorCode(error: unknown, code: string): boolean {
@@ -578,6 +600,22 @@ function isNodeFsErrorCode(error: unknown, code: string): boolean {
     "code" in error &&
     (error as { code?: unknown }).code === code
   );
+}
+
+function isExpectedMissingUpstreamError(error: unknown): boolean {
+  const message = errorText(error);
+  return (
+    message.includes("no upstream configured") ||
+    message.includes("HEAD does not point to a branch") ||
+    message.includes("no such branch")
+  );
+}
+
+function errorText(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+  return String(error);
 }
 
 function isProjectRoadmapType(type: unknown): boolean {

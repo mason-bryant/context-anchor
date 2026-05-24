@@ -41,11 +41,22 @@ export class AutoSync {
       return current;
     }
 
-    const upstream = await this.repo.currentUpstream();
+    let upstream: string | undefined;
+    try {
+      upstream = await this.repo.currentUpstream();
+    } catch (error) {
+      this.lastConflict = current;
+      this.logger.warn("auto sync skipped because upstream lookup failed", {
+        repoPath: this.repo.repoPath,
+        error: errorMetadata(error),
+      });
+      return current;
+    }
+
     if (!upstream) {
       this.lastConflict = current;
       if (!this.missingUpstreamLogged) {
-        this.logger.warn("auto sync skipped because current branch has no upstream", {
+        this.logger.warn("auto sync skipped because no upstream is configured for HEAD", {
           repoPath: this.repo.repoPath,
         });
         this.missingUpstreamLogged = true;
