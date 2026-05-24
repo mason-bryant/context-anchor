@@ -252,6 +252,7 @@ export type ServerConfig = {
 
 export type LoggingConfig = {
   file?: FileLoggingConfig;
+  requests?: RequestLoggingConfig;
 };
 
 export type FileLoggingConfig = {
@@ -263,4 +264,11 @@ export type FileLoggingConfig = {
   maxSize?: string;
   maxFiles?: string;
   zippedArchive?: boolean;
+};
+
+export type RequestLoggingConfig = FileLoggingConfig & {
+  /** Include MCP tool arguments in the request log. Defaults to true when request logging is enabled. */
+  includeArguments?: boolean;
+  /** Redact large/sensitive argument values. Defaults to true; disable only for local debugging. */
+  redactArguments?: boolean;
 };

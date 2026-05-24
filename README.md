@@ -308,6 +308,37 @@ present and enabled. Use `true` for the defaults, or an object to override them:
 The defaults keep individual log files small (`10m`) and retain only the last
 14 days of compressed archives.
 
+#### Optional MCP request logging
+
+Add `logging.requests` to write one JSON record per MCP tool call to a separate
+rotated request log. Request logging is disabled unless this section is present
+and enabled. By default it records the tool name, duration, success/error state,
+and arguments with large/sensitive values redacted:
+
+```json
+{
+  "authToken": "your-generated-token",
+  "logging": {
+    "requests": {
+      "enabled": true,
+      "dirname": "~/.anchor-mcp/logs",
+      "filename": "anchor-mcp-requests-%DATE%.log",
+      "level": "info",
+      "datePattern": "YYYY-MM-DD",
+      "maxSize": "10m",
+      "maxFiles": "14d",
+      "zippedArchive": true,
+      "includeArguments": true,
+      "redactArguments": true
+    }
+  }
+}
+```
+
+Set `includeArguments` to `false` to log only tool names and outcomes. Set
+`redactArguments` to `false` only for local debugging when you are comfortable
+writing raw anchor content and request values to disk.
+
 #### Client requests
 
 Clients must include the token on every request using either header:

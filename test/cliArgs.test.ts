@@ -190,4 +190,64 @@ describe("CLI args — file logging", () => {
       /Expected config field logging\.file\.maxFiles to be a string/,
     );
   });
+
+  it("reads request logging defaults from the config file", async () => {
+    const tmpDir = await mkdtemp(path.join(os.tmpdir(), "anchor-mcp-config-"));
+    const configPath = path.join(tmpDir, "anchor-mcp.config.json");
+    await writeFile(configPath, JSON.stringify({ logging: { requests: true } }), "utf8");
+
+    const options = parseCliArgs(["--config", configPath], {});
+
+    expect(options.config.logging?.requests).toMatchObject({ enabled: true });
+  });
+
+  it("reads custom request logging options from the config file", async () => {
+    const tmpDir = await mkdtemp(path.join(os.tmpdir(), "anchor-mcp-config-"));
+    const configPath = path.join(tmpDir, "anchor-mcp.config.json");
+    await writeFile(
+      configPath,
+      JSON.stringify({
+        logging: {
+          requests: {
+            enabled: true,
+            dirname: "/tmp/anchor-mcp-test-request-logs",
+            filename: "requests-%DATE%.log",
+            level: "debug",
+            datePattern: "YYYY-MM-DD-HH",
+            maxSize: "2m",
+            maxFiles: "3d",
+            zippedArchive: false,
+            includeArguments: false,
+            redactArguments: false,
+          },
+        },
+      }),
+      "utf8",
+    );
+
+    const options = parseCliArgs(["--config", configPath], {});
+
+    expect(options.config.logging?.requests).toEqual({
+      enabled: true,
+      dirname: "/tmp/anchor-mcp-test-request-logs",
+      filename: "requests-%DATE%.log",
+      level: "debug",
+      datePattern: "YYYY-MM-DD-HH",
+      maxSize: "2m",
+      maxFiles: "3d",
+      zippedArchive: false,
+      includeArguments: false,
+      redactArguments: false,
+    });
+  });
+
+  it("rejects invalid request logging config", async () => {
+    const tmpDir = await mkdtemp(path.join(os.tmpdir(), "anchor-mcp-config-"));
+    const configPath = path.join(tmpDir, "anchor-mcp.config.json");
+    await writeFile(configPath, JSON.stringify({ logging: { requests: { includeArguments: "yes" } } }), "utf8");
+
+    expect(() => parseCliArgs(["--config", configPath], {})).toThrow(
+      /Expected config field logging\.requests\.includeArguments to be a boolean/,
+    );
+  });
 });
