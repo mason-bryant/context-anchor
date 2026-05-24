@@ -127,6 +127,7 @@ export class AnchorRepository {
         read_this_if: stringArrayValue(parsed.frontmatter.read_this_if),
         last_validated: parsed.frontmatter.last_validated,
         updatedAt: stats.mtime.toISOString(),
+        createdAt: stats.birthtime.toISOString(),
         origin: "repo",
       };
 

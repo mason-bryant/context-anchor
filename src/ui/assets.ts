@@ -81,7 +81,17 @@ export const UI_HTML = `<!doctype html>
           <section class="panel anchor-list-panel">
             <div class="panel-heading">
               <h2><span class="icon-label"><svg class="icon" aria-hidden="true"><use href="#icon-anchor"></use></svg><span>Anchors</span></span></h2>
-              <span id="anchor-count" class="count">0</span>
+              <div class="anchor-list-actions">
+                <label class="sort-control" for="anchor-group-sort">
+                  <span>Sort</span>
+                  <select id="anchor-group-sort">
+                    <option value="name">Project name</option>
+                    <option value="updated">Last update</option>
+                    <option value="created">Created date</option>
+                  </select>
+                </label>
+                <span id="anchor-count" class="count">0</span>
+              </div>
             </div>
             <div id="anchor-list" class="anchor-list"></div>
           </section>
@@ -444,6 +454,31 @@ textarea {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 10px;
+}
+
+.anchor-list-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.sort-control {
+  display: inline-flex !important;
+  align-items: center;
+  gap: 6px;
+  margin: 0 !important;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.sort-control select {
+  width: auto;
+  max-width: 142px;
+  margin: 0;
+  padding: 5px 28px 5px 8px;
+  font-size: 12px;
 }
 
 .count {
@@ -948,7 +983,8 @@ export const UI_JS = `(function () {
     activeTab: "root",
     plannerPlans: [],
     plannerLastLoadContext: null,
-    expandedAnchorGroups: new Set()
+    expandedAnchorGroups: new Set(),
+    anchorGroupSort: "name"
   };
 
   var categories = ["", "server-rules", "agent-rules", "projects", "invariants", "conflicts", "shared", "archive"];
@@ -1124,6 +1160,10 @@ export const UI_JS = `(function () {
     return { key: "category:" + category, label: categoryLabel(category) };
   }
 
+  function validAnchorGroupSort(value) {
+    return value === "updated" || value === "created" || value === "name" ? value : "name";
+  }
+
   function currentFilters() {
     return {
       search: el("search-input").value.trim().toLowerCase(),
@@ -1265,8 +1305,52 @@ export const UI_JS = `(function () {
       }
       groups.get(group.key).anchors.push(anchor);
     });
-    list.innerHTML = Array.from(groups.values()).map(renderAnchorGroup).join("");
+    list.innerHTML = sortAnchorGroups(Array.from(groups.values())).map(renderAnchorGroup).join("");
     bindAnchorGroupToggles(list);
+  }
+
+  function sortAnchorGroups(groups) {
+    return groups.slice().sort(compareAnchorGroups);
+  }
+
+  function compareAnchorGroups(left, right) {
+    var sort = validAnchorGroupSort(state.anchorGroupSort);
+    if (sort === "updated") {
+      return compareTimestamps(groupTimestamp(right, "updatedAt", "max"), groupTimestamp(left, "updatedAt", "max"))
+        || compareGroupLabels(left, right);
+    }
+    if (sort === "created") {
+      return compareTimestamps(groupTimestamp(right, "createdAt", "min"), groupTimestamp(left, "createdAt", "min"))
+        || compareGroupLabels(left, right);
+    }
+    return compareGroupLabels(left, right);
+  }
+
+  function compareGroupLabels(left, right) {
+    return String(left.label || "").localeCompare(String(right.label || ""));
+  }
+
+  function compareTimestamps(left, right) {
+    return left === right ? 0 : left < right ? -1 : 1;
+  }
+
+  function groupTimestamp(group, field, mode) {
+    var anchors = Array.isArray(group.anchors) ? group.anchors : [];
+    var times = anchors.map(function (anchor) {
+      return anchorTimestamp(anchor, field);
+    }).filter(function (time) {
+      return Number.isFinite(time);
+    });
+    if (!times.length) {
+      return 0;
+    }
+    return mode === "min" ? Math.min.apply(null, times) : Math.max.apply(null, times);
+  }
+
+  function anchorTimestamp(anchor, field) {
+    var raw = anchor && (anchor[field] || anchor.last_validated);
+    var time = Date.parse(raw);
+    return Number.isNaN(time) ? NaN : time;
   }
 
   function renderAnchorGroup(group) {
@@ -1756,6 +1840,11 @@ export const UI_JS = `(function () {
         load().catch(function (error) { setBanner(error.message, "error"); });
       });
     });
+    el("anchor-group-sort").addEventListener("change", function () {
+      state.anchorGroupSort = validAnchorGroupSort(el("anchor-group-sort").value);
+      el("anchor-group-sort").value = state.anchorGroupSort;
+      renderAnchorList();
+    });
     el("planner-form").addEventListener("submit", function (event) {
       event.preventDefault();
       runPlanner().catch(function (error) { setBanner(error.message, "error"); });
@@ -1818,6 +1907,10 @@ export const UI_JS = `(function () {
     window.__ANCHOR_MCP_UI_TEST_HOOKS__.saveToken = saveToken;
     window.__ANCHOR_MCP_UI_TEST_HOOKS__.renderAnchorGroup = renderAnchorGroup;
     window.__ANCHOR_MCP_UI_TEST_HOOKS__.renderAnchorRow = renderAnchorRow;
+    window.__ANCHOR_MCP_UI_TEST_HOOKS__.sortAnchorGroups = sortAnchorGroups;
+    window.__ANCHOR_MCP_UI_TEST_HOOKS__.setAnchorGroupSortForTest = function (value) {
+      state.anchorGroupSort = validAnchorGroupSort(value);
+    };
     window.__ANCHOR_MCP_UI_TEST_HOOKS__.renderPlannerItem = renderPlannerItem;
     window.__ANCHOR_MCP_UI_TEST_HOOKS__.comparePlannerRuns = comparePlannerRuns;
     window.__ANCHOR_MCP_UI_TEST_HOOKS__.shouldHandleClientNavigation = shouldHandleClientNavigation;

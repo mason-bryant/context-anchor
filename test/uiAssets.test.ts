@@ -16,6 +16,10 @@ type UiAssetHooks = {
   saveToken(value: string): void;
   renderAnchorGroup(group: { key: string; label: string; anchors: Array<Record<string, unknown>> }): string;
   renderAnchorRow(anchor: Record<string, unknown>): string;
+  sortAnchorGroups(
+    groups: Array<{ key: string; label: string; anchors: Array<Record<string, unknown>> }>,
+  ): Array<{ key: string; label: string; anchors: Array<Record<string, unknown>> }>;
+  setAnchorGroupSortForTest(value: string): void;
   renderPlannerItem(item: Record<string, unknown>): string;
   comparePlannerRuns(
     current: { included: Array<{ name: string }>; excluded: Array<{ name: string }>; estimatedTokens: number },
@@ -258,6 +262,46 @@ describe("UI browser assets", () => {
     expect(html).toContain('<span class="anchor-group-count">1</span>');
     expect(html).not.toContain(" open>");
     expect(UI_CSS).toContain(".anchor-group-title::before");
+  });
+
+  it("includes project group sort controls", () => {
+    expect(UI_HTML).toContain('id="anchor-group-sort"');
+    expect(UI_HTML).toContain('<option value="name">Project name</option>');
+    expect(UI_HTML).toContain('<option value="updated">Last update</option>');
+    expect(UI_HTML).toContain('<option value="created">Created date</option>');
+  });
+
+  it("sorts sidebar project groups by name, last update, or created date", () => {
+    const hooks = loadHooks();
+    const groups = [
+      {
+        key: "project:zeta",
+        label: "zeta",
+        anchors: [
+          { updatedAt: "2026-05-20T10:00:00.000Z", createdAt: "2026-05-01T10:00:00.000Z" },
+          { updatedAt: "2026-05-21T10:00:00.000Z", createdAt: "2026-05-03T10:00:00.000Z" },
+        ],
+      },
+      {
+        key: "project:alpha",
+        label: "alpha",
+        anchors: [{ updatedAt: "2026-05-24T10:00:00.000Z", createdAt: "2026-05-10T10:00:00.000Z" }],
+      },
+      {
+        key: "project:middle",
+        label: "middle",
+        anchors: [{ updatedAt: "2026-05-22T10:00:00.000Z", createdAt: "2026-05-18T10:00:00.000Z" }],
+      },
+    ];
+
+    hooks.setAnchorGroupSortForTest("name");
+    expect(hooks.sortAnchorGroups(groups).map((group) => group.label)).toEqual(["alpha", "middle", "zeta"]);
+
+    hooks.setAnchorGroupSortForTest("updated");
+    expect(hooks.sortAnchorGroups(groups).map((group) => group.label)).toEqual(["alpha", "middle", "zeta"]);
+
+    hooks.setAnchorGroupSortForTest("created");
+    expect(hooks.sortAnchorGroups(groups).map((group) => group.label)).toEqual(["middle", "alpha", "zeta"]);
   });
 
   it("renders planner items with escaped reasons and raw score data", () => {
