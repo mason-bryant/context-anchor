@@ -131,7 +131,7 @@ export const UI_HTML = `<!doctype html>
             <form id="planner-form" class="planner-form">
               <label class="planner-task">
                 Task
-                <textarea id="planner-task" rows="4" placeholder="Update anchor-mcp UI planning context"></textarea>
+                <textarea id="planner-task" rows="4" placeholder="Describe the task. Paste a request-log JSON line to auto-fill every planner field."></textarea>
               </label>
               <div class="planner-controls">
                 <label>
@@ -191,7 +191,10 @@ export const UI_HTML = `<!doctype html>
                 <div class="metadata-box">
                   <div class="panel-heading">
                     <h3>Suggested loadContext</h3>
-                    <button id="copy-load-context" type="button">Copy</button>
+                    <div class="planner-copy-actions">
+                      <button id="copy-load-context" type="button">Copy</button>
+                      <button id="copy-judge-prompt" type="button">Copy as judge prompt</button>
+                    </div>
                   </div>
                   <pre id="planner-load-context" class="compact-raw"></pre>
                 </div>
@@ -455,6 +458,13 @@ textarea {
   align-items: center;
   justify-content: space-between;
   gap: 10px;
+}
+
+.planner-copy-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
 }
 
 .anchor-list-actions {
@@ -983,6 +993,7 @@ export const UI_JS = `(function () {
     activeTab: "root",
     plannerPlans: [],
     plannerLastLoadContext: null,
+    plannerLastPlan: null,
     expandedAnchorGroups: new Set(),
     anchorGroupSort: "name"
   };
@@ -1205,6 +1216,123 @@ export const UI_JS = `(function () {
     };
   }
 
+  function parsePlannerLogPaste(text) {
+    if (typeof text !== "string") {
+      return null;
+    }
+    var trimmed = text.trim();
+    if (!trimmed || trimmed.charAt(0) !== "{") {
+      return null;
+    }
+    var parsed;
+    try {
+      parsed = JSON.parse(trimmed);
+    } catch (_error) {
+      return null;
+    }
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return null;
+    }
+    var source = parsed;
+    if (parsed.arguments && typeof parsed.arguments === "object" && !Array.isArray(parsed.arguments)) {
+      source = parsed.arguments;
+    }
+    if (typeof source.task !== "string" || !source.task.trim()) {
+      return null;
+    }
+    var result = { task: source.task };
+    if (typeof source.project === "string" && source.project) {
+      result.project = source.project;
+    }
+    if (typeof source.category === "string" && source.category) {
+      result.category = source.category;
+    }
+    if (typeof source.tag === "string" && source.tag) {
+      result.tag = source.tag;
+    }
+    if (typeof source.runtime === "string") {
+      result.runtime = source.runtime;
+    }
+    if (typeof source.includeArchive === "boolean") {
+      result.includeArchive = source.includeArchive;
+    }
+    if (typeof source.budgetTokens === "number" && Number.isFinite(source.budgetTokens)) {
+      result.budgetTokens = source.budgetTokens;
+    }
+    if (typeof source.maxAnchors === "number" && Number.isFinite(source.maxAnchors)) {
+      result.maxAnchors = source.maxAnchors;
+    }
+    if (typeof source.maxExcluded === "number" && Number.isFinite(source.maxExcluded)) {
+      result.maxExcluded = source.maxExcluded;
+    }
+    return result;
+  }
+
+  function setSelectValueAllowingNew(id, value) {
+    if (typeof value !== "string" || !value) {
+      return;
+    }
+    var select = el(id);
+    if (!select) {
+      return;
+    }
+    var options = select.options || [];
+    var found = false;
+    for (var i = 0; i < options.length; i += 1) {
+      if (options[i].value === value) {
+        found = true;
+        break;
+      }
+    }
+    if (!found) {
+      var option = document.createElement("option");
+      option.value = value;
+      option.textContent = value;
+      select.appendChild(option);
+    }
+    select.value = value;
+  }
+
+  function applyPlannerLogPaste(parsed) {
+    if (!parsed || typeof parsed !== "object") {
+      return;
+    }
+    el("planner-task").value = parsed.task;
+    setSelectValueAllowingNew("planner-project", parsed.project);
+    setSelectValueAllowingNew("planner-category", parsed.category);
+    setSelectValueAllowingNew("planner-tag", parsed.tag);
+    if (Object.prototype.hasOwnProperty.call(parsed, "runtime")) {
+      el("planner-runtime").value = parsed.runtime;
+    }
+    if (Object.prototype.hasOwnProperty.call(parsed, "includeArchive")) {
+      el("planner-archive").checked = Boolean(parsed.includeArchive);
+    }
+    if (Object.prototype.hasOwnProperty.call(parsed, "budgetTokens")) {
+      el("planner-budget").value = String(parsed.budgetTokens);
+    }
+    if (Object.prototype.hasOwnProperty.call(parsed, "maxAnchors")) {
+      el("planner-max-anchors").value = String(parsed.maxAnchors);
+    }
+    if (Object.prototype.hasOwnProperty.call(parsed, "maxExcluded")) {
+      el("planner-max-excluded").value = String(parsed.maxExcluded);
+    }
+  }
+
+  function handlePlannerTaskPaste(event) {
+    var clipboard = event.clipboardData || (typeof window !== "undefined" ? window.clipboardData : null);
+    if (!clipboard || typeof clipboard.getData !== "function") {
+      return;
+    }
+    var text = clipboard.getData("text") || clipboard.getData("text/plain") || "";
+    var parsed = parsePlannerLogPaste(text);
+    if (!parsed) {
+      return;
+    }
+    event.preventDefault();
+    applyPlannerLogPaste(parsed);
+    setBanner("Loaded planner inputs from pasted log line.", "info");
+  }
+
   function queryFromPlannerInput(input) {
     var params = new URLSearchParams();
     params.set("task", input.task);
@@ -1412,6 +1540,7 @@ export const UI_JS = `(function () {
     state.plannerPlans.unshift(plan);
     state.plannerPlans = state.plannerPlans.slice(0, 2);
     state.plannerLastLoadContext = plan.loadContext;
+    state.plannerLastPlan = plan;
     renderPlanner(plan, state.plannerPlans[1]);
     showTab("planner");
     setBanner("", "info");
@@ -1519,6 +1648,91 @@ export const UI_JS = `(function () {
       return;
     }
     setBanner("Clipboard unavailable; inspect the suggested loadContext JSON.", "warn");
+  }
+
+  function buildJudgePrompt(plan, anchorBodies) {
+    var safePlan = plan && typeof plan === "object" ? plan : {};
+    var loadContext = safePlan.loadContext && typeof safePlan.loadContext === "object" ? safePlan.loadContext : {};
+    var includedNames = Array.isArray(loadContext.names) ? loadContext.names : [];
+    var bodies = anchorBodies && typeof anchorBodies === "object" ? anchorBodies : {};
+    var trimmedPlan = {
+      task: typeof safePlan.task === "string" ? safePlan.task : "",
+      budgetTokens: safePlan.budgetTokens,
+      estimatedTokens: safePlan.estimatedTokens,
+      totalCandidates: safePlan.totalCandidates,
+      included: Array.isArray(safePlan.included) ? safePlan.included : [],
+      excluded: Array.isArray(safePlan.excluded) ? safePlan.excluded : [],
+      missingContext: Array.isArray(safePlan.missingContext) ? safePlan.missingContext : [],
+      loadContext: {
+        names: includedNames,
+        includeContent: loadContext.includeContent,
+        maxBytes: loadContext.maxBytes
+      }
+    };
+    var fence = String.fromCharCode(96, 96, 96);
+    var sections = [];
+    sections.push(
+      "You are evaluating a deterministic context-bundle planner. Judge the quality of its anchor selection for the task below. The planner picks anchor documents from a fixed corpus and returns scored included and excluded sets with reasons."
+    );
+    sections.push("# Task\\n\\n" + trimmedPlan.task);
+    sections.push(
+      "# Planner output\\n\\n" + fence + "json\\n" + JSON.stringify(trimmedPlan, null, 2) + "\\n" + fence
+    );
+    var bodyBlocks = includedNames.map(function (name) {
+      var body = typeof bodies[name] === "string" ? bodies[name] : "";
+      var content = body && body.length > 0 ? body : "(body not available)";
+      return "## " + name + "\\n\\n" + content;
+    });
+    sections.push("# Anchor body excerpts\\n\\n" + bodyBlocks.join("\\n\\n"));
+    var instructions = [
+      "For each INCLUDED anchor, rate relevance to the task on this scale:",
+      "  0 = irrelevant",
+      "  1 = tangential (could be skipped without harm)",
+      "  2 = relevant (genuinely useful)",
+      "  3 = essential (task can't be done well without it)",
+      "One-sentence justification each.",
+      "",
+      "For each EXCLUDED anchor, mark whether it should actually have been included: yes / no / maybe. One-sentence justification each.",
+      "",
+      "Then return a JSON object with:",
+      "{",
+      "  \\"included_ratings\\": { \\"<anchor-name>\\": { \\"score\\": 0-3, \\"why\\": \\"...\\" } },",
+      "  \\"excluded_judgments\\": { \\"<anchor-name>\\": { \\"should_include\\": \\"yes|no|maybe\\", \\"why\\": \\"...\\" } },",
+      "  \\"precision_proxy\\": <fraction of included rated >= 2, 0.0-1.0>,",
+      "  \\"missed_relevant\\": <count of excluded marked \\"yes\\">,",
+      "  \\"overall_quality\\": <1-5>,",
+      "  \\"improvement\\": \\"<one sentence: what change to task wording or filters would most improve this bundle?>\\"",
+      "}"
+    ].join("\\n");
+    sections.push("# Your evaluation\\n\\n" + instructions);
+    return sections.join("\\n\\n");
+  }
+
+  async function copyJudgePrompt() {
+    if (!state.plannerLastPlan) {
+      return;
+    }
+    var loadContext = state.plannerLastPlan.loadContext || {};
+    var names = Array.isArray(loadContext.names) ? loadContext.names : [];
+    setBanner("Loading anchor bodies for judge prompt...", "info");
+    var anchorBodies = {};
+    var fetches = names.map(function (name) {
+      return api("/api/ui/anchor?name=" + encodeURIComponent(name)).then(function (detail) {
+        var content = detail && detail.anchor && detail.anchor.content ? detail.anchor.content : "";
+        anchorBodies[name] = markdownBody(content);
+      }, function (error) {
+        anchorBodies[name] = "(failed to load: " + error.message + ")";
+      });
+    });
+    await Promise.all(fetches);
+    var prompt = buildJudgePrompt(state.plannerLastPlan, anchorBodies);
+    if (window.navigator && window.navigator.clipboard && window.navigator.clipboard.writeText) {
+      await window.navigator.clipboard.writeText(prompt);
+      setBanner("Copied judge prompt for " + names.length + " anchors.", "info");
+      return;
+    }
+    setBanner("Clipboard unavailable; judge prompt assembled in console.", "warn");
+    console.log(prompt);
   }
 
   function showRootMode(mode) {
@@ -1852,8 +2066,12 @@ export const UI_JS = `(function () {
       event.preventDefault();
       runPlanner().catch(function (error) { setBanner(error.message, "error"); });
     });
+    el("planner-task").addEventListener("paste", handlePlannerTaskPaste);
     el("copy-load-context").addEventListener("click", function () {
       copyLoadContext().catch(function (error) { setBanner(error.message, "error"); });
+    });
+    el("copy-judge-prompt").addEventListener("click", function () {
+      copyJudgePrompt().catch(function (error) { setBanner(error.message, "error"); });
     });
     el("search-input").addEventListener("input", debounce(renderAnchorList, 120));
     el("anchor-list").addEventListener("click", function (event) {
@@ -1917,6 +2135,8 @@ export const UI_JS = `(function () {
     window.__ANCHOR_MCP_UI_TEST_HOOKS__.renderPlannerItem = renderPlannerItem;
     window.__ANCHOR_MCP_UI_TEST_HOOKS__.comparePlannerRuns = comparePlannerRuns;
     window.__ANCHOR_MCP_UI_TEST_HOOKS__.shouldHandleClientNavigation = shouldHandleClientNavigation;
+    window.__ANCHOR_MCP_UI_TEST_HOOKS__.parsePlannerLogPaste = parsePlannerLogPaste;
+    window.__ANCHOR_MCP_UI_TEST_HOOKS__.buildJudgePrompt = buildJudgePrompt;
     return;
   }
 
