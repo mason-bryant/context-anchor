@@ -33,6 +33,7 @@ type UiAssetHooks = {
   } | null;
   shouldHandleClientNavigation(event: Record<string, unknown>, link: { getAttribute(name: string): string | null }): boolean;
   parsePlannerLogPaste(text: unknown): Record<string, unknown> | null;
+  buildJudgePrompt(plan: Record<string, unknown>, anchorBodies: Record<string, string>): string;
 };
 
 type TestStorage = {
@@ -470,6 +471,89 @@ describe("UI browser assets", () => {
     expect(UI_JS).toContain('el("planner-task").addEventListener("paste"');
     expect(UI_JS).toContain("Loaded planner inputs from pasted log line.");
     expect(UI_HTML).toContain("Paste a request-log JSON line to auto-fill");
+  });
+
+  it("renders the judge-prompt button in the planner UI", () => {
+    expect(UI_HTML).toContain('id="copy-judge-prompt"');
+    expect(UI_HTML).toContain("Copy as judge prompt");
+    expect(UI_JS).toContain('el("copy-judge-prompt").addEventListener("click"');
+    expect(UI_JS).toContain("Copied judge prompt for ");
+  });
+
+  it("builds a self-contained judge prompt with task, plan JSON, and anchor bodies", () => {
+    const hooks = loadHooks();
+    const plan = {
+      task: "Update planner UI",
+      totalCandidates: 5,
+      budgetTokens: 4000,
+      estimatedTokens: 1200,
+      included: [{ name: "projects/demo/demo.md", score: 50 }],
+      excluded: [{ name: "shared/other.md", score: 5 }],
+      missingContext: ["a missing signal"],
+      loadContext: {
+        names: ["projects/demo/demo.md", "shared/other.md"],
+        includeContent: "excerpt",
+        maxBytes: 16000,
+      },
+    };
+    const anchorBodies = {
+      "projects/demo/demo.md": "Demo body content.",
+      "shared/other.md": "Other body.",
+    };
+
+    const prompt = hooks.buildJudgePrompt(plan, anchorBodies);
+
+    expect(prompt.startsWith("You are evaluating a deterministic context-bundle planner")).toBe(true);
+    expect(prompt).toContain("# Task\n\nUpdate planner UI");
+    expect(prompt).toContain('"task": "Update planner UI"');
+    expect(prompt).toContain('"totalCandidates": 5');
+    expect(prompt).toContain("## projects/demo/demo.md\n\nDemo body content.");
+    expect(prompt).toContain("## shared/other.md\n\nOther body.");
+    expect(prompt).toContain("# Your evaluation");
+    expect(prompt).toContain('"precision_proxy":');
+    expect(prompt).toContain('"overall_quality":');
+  });
+
+  it("writes (body not available) when an anchor body is missing", () => {
+    const hooks = loadHooks();
+    const plan = {
+      task: "Inspect missing body",
+      totalCandidates: 1,
+      budgetTokens: 1000,
+      estimatedTokens: 200,
+      included: [{ name: "projects/demo/demo.md", score: 10 }],
+      excluded: [],
+      missingContext: [],
+      loadContext: {
+        names: ["projects/demo/demo.md"],
+        includeContent: "excerpt",
+        maxBytes: 8000,
+      },
+    };
+
+    const prompt = hooks.buildJudgePrompt(plan, {});
+
+    expect(prompt).toContain("## projects/demo/demo.md\n\n(body not available)");
+  });
+
+  it("omits noisy planner fields like generatedAt from the JSON block", () => {
+    const hooks = loadHooks();
+    const plan = {
+      task: "Strip noisy planner timestamp fields",
+      generatedAt: "2026-05-24T22:16:55.813Z",
+      totalCandidates: 2,
+      budgetTokens: 2000,
+      estimatedTokens: 400,
+      included: [],
+      excluded: [],
+      missingContext: [],
+      loadContext: { names: [], includeContent: "excerpt", maxBytes: 8000 },
+    };
+
+    const prompt = hooks.buildJudgePrompt(plan, {});
+
+    expect(prompt).not.toContain("generatedAt");
+    expect(prompt).not.toContain("2026-05-24T22:16:55.813Z");
   });
 
   it("only intercepts plain same-tab anchor navigation", () => {
