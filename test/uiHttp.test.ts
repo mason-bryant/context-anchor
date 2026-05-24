@@ -108,6 +108,26 @@ describe("UI HTTP routes", () => {
     expect(root.entries.map((entry) => entry.name)).toContain("projects/demo/demo.md");
   });
 
+  it("returns context planner output for the UI", async () => {
+    const plan = await fetchJson<{
+      included: Array<{ name: string; reason: string }>;
+      excluded: Array<{ name: string; reason: string }>;
+      loadContext: { names: string[]; includeContent: string; maxBytes: number };
+      missingContext: string[];
+    }>("/api/ui/context-plan?task=Update%20demo%20context&project=demo&budgetTokens=1200&maxAnchors=1&maxExcluded=5");
+
+    expect(plan.included[0]?.name).toBe("projects/demo/demo.md");
+    expect(plan.included[0]?.reason).toContain('project matches "demo"');
+    expect(plan.loadContext.names).toEqual([
+      "server-rules/acceptance-criteria.md",
+      "server-rules/milestone-usage.md",
+      "projects/demo/demo.md",
+    ]);
+    expect(plan.loadContext.includeContent).toBe("excerpt");
+    expect(plan.loadContext.maxBytes).toBe(4800);
+    expect(plan.missingContext).toEqual([]);
+  });
+
   it("returns anchor detail with required section status and front matter", async () => {
     const detail = await fetchJson<{
       anchor: {
@@ -148,6 +168,24 @@ describe("UI HTTP routes", () => {
 
     expect(response.status).toBe(400);
     expect(body.error.message).toContain("Invalid category");
+  });
+
+  it("returns 400 for invalid planner query parameters", async () => {
+    const missingTask = await fetch(`${baseUrl}/api/ui/context-plan?project=demo`, {
+      headers: { Authorization: `Bearer ${TOKEN}` },
+    });
+    const invalidBudget = await fetch(`${baseUrl}/api/ui/context-plan?task=demo&budgetTokens=0`, {
+      headers: { Authorization: `Bearer ${TOKEN}` },
+    });
+
+    expect(missingTask.status).toBe(400);
+    expect(((await missingTask.json()) as { error: { message: string } }).error.message).toContain(
+      "Missing required query parameter: task",
+    );
+    expect(invalidBudget.status).toBe(400);
+    expect(((await invalidBudget.json()) as { error: { message: string } }).error.message).toContain(
+      "Invalid budgetTokens",
+    );
   });
 });
 
