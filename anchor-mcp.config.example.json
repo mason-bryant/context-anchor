@@ -13,6 +13,18 @@
       "maxSize": "10m",
       "maxFiles": "14d",
       "zippedArchive": true
+    },
+    "requests": {
+      "enabled": false,
+      "dirname": "~/.anchor-mcp/logs",
+      "filename": "anchor-mcp-requests-%DATE%.log",
+      "level": "info",
+      "datePattern": "YYYY-MM-DD",
+      "maxSize": "10m",
+      "maxFiles": "14d",
+      "zippedArchive": true,
+      "includeArguments": true,
+      "redactArguments": true
     }
   }
 }

@@ -3,6 +3,7 @@ import { McpServer } from "@modelcontextprotocol/server";
 import * as z from "zod/v4";
 
 import type { AnchorService } from "./anchorService.js";
+import { errorMetadata, noopRequestLogger, type RequestLogger } from "./logger.js";
 import { isDiscoveryCategory, type DiscoveryCategory } from "./taxonomy.js";
 
 const CategorySchema = z
@@ -18,7 +19,10 @@ const SharedWriteOptsSchema = z.object({
   expectedFileCommit: z.string().optional(),
 });
 
-export function createAnchorMcpServer(service: AnchorService): McpServer {
+export function createAnchorMcpServer(
+  service: AnchorService,
+  options: { requestLogger?: RequestLogger } = {},
+): McpServer {
   const server = new McpServer(
     {
       name: "anchor-mcp",
@@ -109,6 +113,7 @@ After large front-matter or taxonomy sweeps, writeContextRoot() keeps an on-disk
 the index when your workflow checks in that file.`,
     },
   );
+  attachRequestLogging(server, options.requestLogger ?? noopRequestLogger);
 
   server.registerTool(
     "listAnchors",
@@ -581,3 +586,41 @@ function jsonResult(value: unknown, isError = false): CallToolResult {
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
+
+function attachRequestLogging(server: McpServer, requestLogger: RequestLogger): void {
+  if (!requestLogger.enabled) {
+    return;
+  }
+
+  const registerTool = server.registerTool.bind(server) as (
+    name: string,
+    config: unknown,
+    callback: ToolCallback,
+  ) => unknown;
+  server.registerTool = ((name: string, config: unknown, callback: ToolCallback) =>
+    registerTool(name, config, async (input: unknown, context: unknown) => {
+      const startedAt = Date.now();
+      try {
+        const result = await callback(input, context);
+        requestLogger.logToolCall({
+          toolName: name,
+          arguments: input,
+          durationMs: Date.now() - startedAt,
+          outcome: result.isError ? "mcp-error" : "success",
+          isError: result.isError,
+        });
+        return result;
+      } catch (error) {
+        requestLogger.logToolCall({
+          toolName: name,
+          arguments: input,
+          durationMs: Date.now() - startedAt,
+          outcome: "exception",
+          error: errorMetadata(error),
+        });
+        throw error;
+      }
+    })) as unknown as McpServer["registerTool"];
+}
+
+type ToolCallback = (input: unknown, context: unknown) => CallToolResult | Promise<CallToolResult>;

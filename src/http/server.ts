@@ -110,7 +110,7 @@ export async function startHttpServer(
             transports.delete(closingSessionId);
           }
         };
-        await createAnchorMcpServer(runtime.service).connect(transport);
+        await createAnchorMcpServer(runtime.service, { requestLogger: runtime.requestLogger }).connect(transport);
       }
 
       try {
@@ -140,6 +140,7 @@ export async function startHttpServer(
       port: options.port,
       error: errorMetadata(error),
     });
+    await runtime.requestLogger.close();
     await runtime.logger.close();
     throw error;
   }
@@ -148,7 +149,7 @@ export async function startHttpServer(
   server.once("close", () => {
     runtime.stopAutoSync();
     runtime.logger.info("http server closed", { host: options.host, port: options.port });
-    void runtime.logger.close();
+    void Promise.all([runtime.requestLogger.close(), runtime.logger.close()]);
   });
   return server;
 }

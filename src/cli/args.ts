@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
-import type { FileLoggingConfig, LoggingConfig, ServerConfig } from "../types.js";
+import type { FileLoggingConfig, LoggingConfig, RequestLoggingConfig, ServerConfig } from "../types.js";
 import { expandHome } from "../utils/path.js";
 
 export type CliOptions = {
@@ -218,7 +218,8 @@ function loggingConfigValue(value: unknown, key: string): LoggingConfig | undefi
   }
 
   const file = fileLoggingConfigValue(value.file, `${key}.file`);
-  return file ? { file } : undefined;
+  const requests = requestLoggingConfigValue(value.requests, `${key}.requests`);
+  return file || requests ? { ...(file ? { file } : {}), ...(requests ? { requests } : {}) } : undefined;
 }
 
 function fileLoggingConfigValue(value: unknown, key: string): FileLoggingConfig | undefined {
@@ -243,6 +244,23 @@ function fileLoggingConfigValue(value: unknown, key: string): FileLoggingConfig 
     maxSize: stringConfigValue(value.maxSize, `${key}.maxSize`),
     maxFiles: stringConfigValue(value.maxFiles, `${key}.maxFiles`),
     zippedArchive: booleanConfigValue(value.zippedArchive, `${key}.zippedArchive`),
+  };
+}
+
+function requestLoggingConfigValue(value: unknown, key: string): RequestLoggingConfig | undefined {
+  const file = fileLoggingConfigValue(value, key);
+  if (!file) {
+    return undefined;
+  }
+
+  if (!isRecord(value)) {
+    return file;
+  }
+
+  return {
+    ...file,
+    includeArguments: booleanConfigValue(value.includeArguments, `${key}.includeArguments`),
+    redactArguments: booleanConfigValue(value.redactArguments, `${key}.redactArguments`),
   };
 }
 

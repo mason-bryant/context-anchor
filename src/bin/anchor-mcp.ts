@@ -41,6 +41,7 @@ async function main(): Promise<void> {
     logger.info("anchor-mcp shutting down");
     runtime.stopAutoSync();
     await runtime.mcpServer.close();
+    await runtime.requestLogger.close();
     await logger.close();
   };
   process.once("SIGINT", () => void shutdown());
