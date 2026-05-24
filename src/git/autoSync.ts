@@ -1,3 +1,4 @@
+import { errorMetadata, noopLogger, type AppLogger } from "../logger.js";
 import type { ConflictStatus } from "../types.js";
 import type { AnchorRepository } from "./repo.js";
 
@@ -8,6 +9,7 @@ export class AutoSync {
   constructor(
     private readonly repo: AnchorRepository,
     private readonly intervalMs: number,
+    private readonly logger: AppLogger = noopLogger,
   ) {}
 
   start(): void {
@@ -19,12 +21,14 @@ export class AutoSync {
       void this.tick();
     }, this.intervalMs);
     this.timer.unref();
+    this.logger.info("auto sync started", { intervalMs: this.intervalMs });
   }
 
   stop(): void {
     if (this.timer) {
       clearInterval(this.timer);
       this.timer = undefined;
+      this.logger.info("auto sync stopped");
     }
   }
 
@@ -32,13 +36,15 @@ export class AutoSync {
     const current = await this.repo.conflictStatus();
     if (current.state === "conflicted") {
       this.lastConflict = current;
+      this.logger.warn("auto sync skipped while repository is conflicted", { paths: current.paths });
       return current;
     }
 
     try {
       await this.repo.pullRebase();
       this.lastConflict = await this.repo.conflictStatus();
-    } catch {
+    } catch (error) {
+      this.logger.warn("auto sync pull failed", { error: errorMetadata(error) });
       this.lastConflict = await this.repo.conflictStatus();
     }
 
@@ -49,4 +55,3 @@ export class AutoSync {
     return this.lastConflict;
   }
 }
-
