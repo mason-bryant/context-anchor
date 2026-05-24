@@ -43,6 +43,7 @@ export type AnchorMeta = {
   last_validated?: unknown;
   version?: string;
   updatedAt?: string;
+  createdAt?: string;
   origin?: "repo" | "built-in";
   /** Package version when this built-in policy row was materialized. */
   policyVersion?: string;

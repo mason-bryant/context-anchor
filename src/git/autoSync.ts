@@ -5,6 +5,7 @@ import type { AnchorRepository } from "./repo.js";
 export class AutoSync {
   private timer: NodeJS.Timeout | undefined;
   private lastConflict: ConflictStatus = { state: "clean" };
+  private missingUpstreamLogged = false;
 
   constructor(
     private readonly repo: AnchorRepository,
@@ -40,6 +41,30 @@ export class AutoSync {
       return current;
     }
 
+    let upstream: string | undefined;
+    try {
+      upstream = await this.repo.currentUpstream();
+    } catch (error) {
+      this.lastConflict = current;
+      this.logger.warn("auto sync skipped because upstream lookup failed", {
+        repoPath: this.repo.repoPath,
+        error: errorMetadata(error),
+      });
+      return current;
+    }
+
+    if (!upstream) {
+      this.lastConflict = current;
+      if (!this.missingUpstreamLogged) {
+        this.logger.warn("auto sync skipped because no upstream is configured for HEAD", {
+          repoPath: this.repo.repoPath,
+        });
+        this.missingUpstreamLogged = true;
+      }
+      return current;
+    }
+
+    this.missingUpstreamLogged = false;
     try {
       await this.repo.pullRebase();
       this.lastConflict = await this.repo.conflictStatus();
