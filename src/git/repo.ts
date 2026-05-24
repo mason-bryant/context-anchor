@@ -379,6 +379,15 @@ export class AnchorRepository {
     return { state: "clean" };
   }
 
+  async currentUpstream(): Promise<string | undefined> {
+    try {
+      const upstream = await this.git.revparse(["--abbrev-ref", "--symbolic-full-name", "@{upstream}"]);
+      return upstream.trim() || undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
   /**
    * Remove an anchor file from the working tree and record a git commit.
    * The path must already exist on disk.
