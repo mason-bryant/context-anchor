@@ -131,7 +131,7 @@ export const UI_HTML = `<!doctype html>
             <form id="planner-form" class="planner-form">
               <label class="planner-task">
                 Task
-                <textarea id="planner-task" rows="4" placeholder="Update anchor-mcp UI planning context"></textarea>
+                <textarea id="planner-task" rows="4" placeholder="Describe the task. Paste a request-log JSON line to auto-fill every planner field."></textarea>
               </label>
               <div class="planner-controls">
                 <label>
@@ -1205,6 +1205,123 @@ export const UI_JS = `(function () {
     };
   }
 
+  function parsePlannerLogPaste(text) {
+    if (typeof text !== "string") {
+      return null;
+    }
+    var trimmed = text.trim();
+    if (!trimmed || trimmed.charAt(0) !== "{") {
+      return null;
+    }
+    var parsed;
+    try {
+      parsed = JSON.parse(trimmed);
+    } catch (_error) {
+      return null;
+    }
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return null;
+    }
+    var source = parsed;
+    if (parsed.arguments && typeof parsed.arguments === "object" && !Array.isArray(parsed.arguments)) {
+      source = parsed.arguments;
+    }
+    if (typeof source.task !== "string" || !source.task.trim()) {
+      return null;
+    }
+    var result = { task: source.task };
+    if (typeof source.project === "string" && source.project) {
+      result.project = source.project;
+    }
+    if (typeof source.category === "string" && source.category) {
+      result.category = source.category;
+    }
+    if (typeof source.tag === "string" && source.tag) {
+      result.tag = source.tag;
+    }
+    if (typeof source.runtime === "string") {
+      result.runtime = source.runtime;
+    }
+    if (typeof source.includeArchive === "boolean") {
+      result.includeArchive = source.includeArchive;
+    }
+    if (typeof source.budgetTokens === "number" && Number.isFinite(source.budgetTokens)) {
+      result.budgetTokens = source.budgetTokens;
+    }
+    if (typeof source.maxAnchors === "number" && Number.isFinite(source.maxAnchors)) {
+      result.maxAnchors = source.maxAnchors;
+    }
+    if (typeof source.maxExcluded === "number" && Number.isFinite(source.maxExcluded)) {
+      result.maxExcluded = source.maxExcluded;
+    }
+    return result;
+  }
+
+  function setSelectValueAllowingNew(id, value) {
+    if (typeof value !== "string" || !value) {
+      return;
+    }
+    var select = el(id);
+    if (!select) {
+      return;
+    }
+    var options = select.options || [];
+    var found = false;
+    for (var i = 0; i < options.length; i += 1) {
+      if (options[i].value === value) {
+        found = true;
+        break;
+      }
+    }
+    if (!found) {
+      var option = document.createElement("option");
+      option.value = value;
+      option.textContent = value;
+      select.appendChild(option);
+    }
+    select.value = value;
+  }
+
+  function applyPlannerLogPaste(parsed) {
+    if (!parsed || typeof parsed !== "object") {
+      return;
+    }
+    el("planner-task").value = parsed.task;
+    setSelectValueAllowingNew("planner-project", parsed.project);
+    setSelectValueAllowingNew("planner-category", parsed.category);
+    setSelectValueAllowingNew("planner-tag", parsed.tag);
+    if (Object.prototype.hasOwnProperty.call(parsed, "runtime")) {
+      el("planner-runtime").value = parsed.runtime;
+    }
+    if (Object.prototype.hasOwnProperty.call(parsed, "includeArchive")) {
+      el("planner-archive").checked = Boolean(parsed.includeArchive);
+    }
+    if (Object.prototype.hasOwnProperty.call(parsed, "budgetTokens")) {
+      el("planner-budget").value = String(parsed.budgetTokens);
+    }
+    if (Object.prototype.hasOwnProperty.call(parsed, "maxAnchors")) {
+      el("planner-max-anchors").value = String(parsed.maxAnchors);
+    }
+    if (Object.prototype.hasOwnProperty.call(parsed, "maxExcluded")) {
+      el("planner-max-excluded").value = String(parsed.maxExcluded);
+    }
+  }
+
+  function handlePlannerTaskPaste(event) {
+    var clipboard = event.clipboardData || (typeof window !== "undefined" ? window.clipboardData : null);
+    if (!clipboard || typeof clipboard.getData !== "function") {
+      return;
+    }
+    var text = clipboard.getData("text") || clipboard.getData("text/plain") || "";
+    var parsed = parsePlannerLogPaste(text);
+    if (!parsed) {
+      return;
+    }
+    event.preventDefault();
+    applyPlannerLogPaste(parsed);
+    setBanner("Loaded planner inputs from pasted log line.", "info");
+  }
+
   function queryFromPlannerInput(input) {
     var params = new URLSearchParams();
     params.set("task", input.task);
@@ -1852,6 +1969,7 @@ export const UI_JS = `(function () {
       event.preventDefault();
       runPlanner().catch(function (error) { setBanner(error.message, "error"); });
     });
+    el("planner-task").addEventListener("paste", handlePlannerTaskPaste);
     el("copy-load-context").addEventListener("click", function () {
       copyLoadContext().catch(function (error) { setBanner(error.message, "error"); });
     });
@@ -1917,6 +2035,7 @@ export const UI_JS = `(function () {
     window.__ANCHOR_MCP_UI_TEST_HOOKS__.renderPlannerItem = renderPlannerItem;
     window.__ANCHOR_MCP_UI_TEST_HOOKS__.comparePlannerRuns = comparePlannerRuns;
     window.__ANCHOR_MCP_UI_TEST_HOOKS__.shouldHandleClientNavigation = shouldHandleClientNavigation;
+    window.__ANCHOR_MCP_UI_TEST_HOOKS__.parsePlannerLogPaste = parsePlannerLogPaste;
     return;
   }
 

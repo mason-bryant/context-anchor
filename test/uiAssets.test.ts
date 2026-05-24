@@ -32,6 +32,7 @@ type UiAssetHooks = {
     tokenDelta: number;
   } | null;
   shouldHandleClientNavigation(event: Record<string, unknown>, link: { getAttribute(name: string): string | null }): boolean;
+  parsePlannerLogPaste(text: unknown): Record<string, unknown> | null;
 };
 
 type TestStorage = {
@@ -362,6 +363,113 @@ describe("UI browser assets", () => {
       excludedRemoved: ["shared/planner.md"],
       tokenDelta: 40,
     });
+  });
+
+  it("extracts planner inputs from a pasted planContextBundle request-log line", () => {
+    const hooks = loadHooks();
+    const logLine = JSON.stringify({
+      argumentRedaction: "none",
+      arguments: {
+        includeArchive: false,
+        project: "anchor-mcp",
+        task: "Explain how to derive a Context Bundle Planner task input from request logs.",
+        budgetTokens: 4000,
+        maxAnchors: 12,
+      },
+      durationMs: 502,
+      isError: false,
+      level: "info",
+      log: "requests",
+      message: "mcp tool call",
+      outcome: "success",
+      service: "anchor-mcp",
+      timestamp: "2026-05-24T22:16:55.820Z",
+      toolName: "planContextBundle",
+    });
+
+    const parsed = hooks.parsePlannerLogPaste(logLine);
+
+    expect(parsed).toEqual({
+      task: "Explain how to derive a Context Bundle Planner task input from request logs.",
+      project: "anchor-mcp",
+      includeArchive: false,
+      budgetTokens: 4000,
+      maxAnchors: 12,
+    });
+  });
+
+  it("accepts a bare planner-arguments object pasted directly", () => {
+    const hooks = loadHooks();
+    const parsed = hooks.parsePlannerLogPaste(
+      JSON.stringify({
+        task: "Update planner UI",
+        project: "anchor-mcp",
+        runtime: "node",
+        maxExcluded: 20,
+      }),
+    );
+
+    expect(parsed).toEqual({
+      task: "Update planner UI",
+      project: "anchor-mcp",
+      runtime: "node",
+      maxExcluded: 20,
+    });
+  });
+
+  it("does not intercept plain task descriptions or non-object JSON", () => {
+    const hooks = loadHooks();
+
+    expect(hooks.parsePlannerLogPaste("Update anchor-mcp planning context")).toBeNull();
+    expect(hooks.parsePlannerLogPaste("")).toBeNull();
+    expect(hooks.parsePlannerLogPaste('"just a json string"')).toBeNull();
+    expect(hooks.parsePlannerLogPaste("42")).toBeNull();
+    expect(hooks.parsePlannerLogPaste("[1, 2, 3]")).toBeNull();
+    expect(hooks.parsePlannerLogPaste("{ not valid json")).toBeNull();
+    expect(hooks.parsePlannerLogPaste(undefined)).toBeNull();
+  });
+
+  it("does not intercept log lines from tools other than planContextBundle", () => {
+    const hooks = loadHooks();
+    const readAnchorLog = JSON.stringify({
+      arguments: { name: "projects/anchor-mcp/anchor-mcp-project-context.md" },
+      durationMs: 29,
+      isError: false,
+      level: "info",
+      log: "requests",
+      message: "mcp tool call",
+      outcome: "success",
+      service: "anchor-mcp",
+      timestamp: "2026-05-24T22:13:55.617Z",
+      toolName: "readAnchor",
+    });
+
+    expect(hooks.parsePlannerLogPaste(readAnchorLog)).toBeNull();
+  });
+
+  it("ignores planner fields with the wrong runtime type", () => {
+    const hooks = loadHooks();
+    const parsed = hooks.parsePlannerLogPaste(
+      JSON.stringify({
+        arguments: {
+          task: "Plan something",
+          project: 7,
+          includeArchive: "true",
+          budgetTokens: "4000",
+          tag: "",
+        },
+      }),
+    );
+
+    expect(parsed).toEqual({ task: "Plan something" });
+  });
+
+  it("wires the paste handler and parser into the planner task box", () => {
+    expect(UI_JS).toContain("parsePlannerLogPaste");
+    expect(UI_JS).toContain("applyPlannerLogPaste");
+    expect(UI_JS).toContain('el("planner-task").addEventListener("paste"');
+    expect(UI_JS).toContain("Loaded planner inputs from pasted log line.");
+    expect(UI_HTML).toContain("Paste a request-log JSON line to auto-fill");
   });
 
   it("only intercepts plain same-tab anchor navigation", () => {
