@@ -2,5 +2,17 @@
   "authToken": "replace-with-output-of: node -e \"console.log(require('crypto').randomBytes(32).toString('base64url'))\"",
   "allowedHosts": [
     "your-tunnel.ngrok-free.dev"
-  ]
+  ],
+  "logging": {
+    "file": {
+      "enabled": true,
+      "dirname": "~/.anchor-mcp/logs",
+      "filename": "anchor-mcp-%DATE%.log",
+      "level": "info",
+      "datePattern": "YYYY-MM-DD",
+      "maxSize": "10m",
+      "maxFiles": "14d",
+      "zippedArchive": true
+    }
+  }
 }

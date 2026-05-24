@@ -246,4 +246,20 @@ export type ServerConfig = {
   pushOnWrite: boolean;
   syncIntervalMs: number;
   migrationWarnOnly: boolean;
+  logging?: LoggingConfig;
+};
+
+export type LoggingConfig = {
+  file?: FileLoggingConfig;
+};
+
+export type FileLoggingConfig = {
+  enabled: boolean;
+  dirname?: string;
+  filename?: string;
+  level?: string;
+  datePattern?: string;
+  maxSize?: string;
+  maxFiles?: string;
+  zippedArchive?: boolean;
 };

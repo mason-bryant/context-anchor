@@ -281,6 +281,33 @@ ANCHOR_MCP_AUTH_TOKEN=your-generated-token anchor-mcp --transport http
 
 Precedence order when multiple sources are set: CLI flag → environment variable → config file.
 
+#### Optional file logging
+
+Add `logging.file` to the same JSON config to write server lifecycle and background
+sync events to a rotated log file. File logging is disabled unless this section is
+present and enabled. Use `true` for the defaults, or an object to override them:
+
+```json
+{
+  "authToken": "your-generated-token",
+  "logging": {
+    "file": {
+      "enabled": true,
+      "dirname": "~/.anchor-mcp/logs",
+      "filename": "anchor-mcp-%DATE%.log",
+      "level": "info",
+      "datePattern": "YYYY-MM-DD",
+      "maxSize": "10m",
+      "maxFiles": "14d",
+      "zippedArchive": true
+    }
+  }
+}
+```
+
+The defaults keep individual log files small (`10m`) and retain only the last
+14 days of compressed archives.
+
 #### Client requests
 
 Clients must include the token on every request using either header:
