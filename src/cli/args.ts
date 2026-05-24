@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
-import type { ServerConfig } from "../types.js";
+import type { FileLoggingConfig, LoggingConfig, ServerConfig } from "../types.js";
 import { expandHome } from "../utils/path.js";
 
 export type CliOptions = {
@@ -68,6 +68,7 @@ export function parseCliArgs(argv: string[], env: NodeJS.ProcessEnv = process.en
       syncIntervalMs:
         numberFlag(flags, "sync-interval-ms") ?? numberEnv(env.ANCHOR_MCP_SYNC_INTERVAL_MS) ?? 45_000,
       migrationWarnOnly: booleanFlag(flags, "migration-warn-only"),
+      logging: loggingConfigValue(fileConfig.logging, "logging"),
     },
   };
 }
@@ -75,6 +76,7 @@ export function parseCliArgs(argv: string[], env: NodeJS.ProcessEnv = process.en
 type CliConfigFile = {
   allowedHosts?: unknown;
   authToken?: unknown;
+  logging?: unknown;
 };
 
 function readConfigFile(flags: Map<string, string | boolean>, env: NodeJS.ProcessEnv): CliConfigFile {
@@ -179,7 +181,72 @@ function listConfigValue(value: unknown, key: string): string[] | undefined {
   return hosts.length > 0 ? hosts : undefined;
 }
 
-function isRecord(value: unknown): value is CliConfigFile {
+function booleanConfigValue(value: unknown, key: string): boolean | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (typeof value !== "boolean") {
+    throw new Error(`Expected config field ${key} to be a boolean`);
+  }
+
+  return value;
+}
+
+const LOG_LEVELS = new Set(["error", "warn", "info", "http", "verbose", "debug", "silly"]);
+
+function logLevelConfigValue(value: unknown, key: string): string | undefined {
+  const level = stringConfigValue(value, key);
+  if (level === undefined) {
+    return undefined;
+  }
+
+  if (!LOG_LEVELS.has(level)) {
+    throw new Error(`Expected config field ${key} to be one of ${[...LOG_LEVELS].join(", ")}`);
+  }
+
+  return level;
+}
+
+function loggingConfigValue(value: unknown, key: string): LoggingConfig | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (!isRecord(value)) {
+    throw new Error(`Expected config field ${key} to be an object`);
+  }
+
+  const file = fileLoggingConfigValue(value.file, `${key}.file`);
+  return file ? { file } : undefined;
+}
+
+function fileLoggingConfigValue(value: unknown, key: string): FileLoggingConfig | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (typeof value === "boolean") {
+    return { enabled: value };
+  }
+
+  if (!isRecord(value)) {
+    throw new Error(`Expected config field ${key} to be a boolean or object`);
+  }
+
+  return {
+    enabled: booleanConfigValue(value.enabled, `${key}.enabled`) ?? true,
+    dirname: stringConfigValue(value.dirname, `${key}.dirname`),
+    filename: stringConfigValue(value.filename, `${key}.filename`),
+    level: logLevelConfigValue(value.level, `${key}.level`),
+    datePattern: stringConfigValue(value.datePattern, `${key}.datePattern`),
+    maxSize: stringConfigValue(value.maxSize, `${key}.maxSize`),
+    maxFiles: stringConfigValue(value.maxFiles, `${key}.maxFiles`),
+    zippedArchive: booleanConfigValue(value.zippedArchive, `${key}.zippedArchive`),
+  };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 

@@ -6,6 +6,7 @@ import { NodeStreamableHTTPServerTransport } from "@modelcontextprotocol/node";
 import cors from "cors";
 import type { NextFunction, Request, Response } from "express";
 
+import { errorMetadata, type AppLogger } from "../logger.js";
 import { createAnchorRuntime } from "../runtime.js";
 import { createAnchorMcpServer } from "../server.js";
 import type { ServerConfig } from "../types.js";
@@ -26,7 +27,11 @@ function isLocalhostBinding(host: string): boolean {
   return LOCALHOST_HOSTS.has(host);
 }
 
-export async function startHttpServer(config: ServerConfig, options: HttpServerOptions): Promise<Server> {
+export async function startHttpServer(
+  config: ServerConfig,
+  options: HttpServerOptions,
+  runtimeOptions: { logger?: AppLogger } = {},
+): Promise<Server> {
   if (!options.authToken) {
     throw new Error(
       `HTTP transport requires an auth token. ` +
@@ -34,8 +39,14 @@ export async function startHttpServer(config: ServerConfig, options: HttpServerO
     );
   }
 
-  const runtime = await createAnchorRuntime(config);
+  const runtime = await createAnchorRuntime(config, runtimeOptions);
   runtime.startAutoSync();
+  runtime.logger.info("http server starting", {
+    host: options.host,
+    port: options.port,
+    stateless: options.stateless,
+    allowedHosts: options.allowedHosts,
+  });
 
   const corsOrigin = isLocalhostBinding(options.host)
     ? (origin: string | undefined, cb: (err: Error | null, allow?: boolean) => void) => {
@@ -67,7 +78,16 @@ export async function startHttpServer(config: ServerConfig, options: HttpServerO
     const transport = new NodeStreamableHTTPServerTransport({ sessionIdGenerator: undefined });
     await runtime.mcpServer.connect(transport);
     app.all("/mcp", async (req: Request, res: Response) => {
-      await transport.handleRequest(req, res, req.body);
+      try {
+        await transport.handleRequest(req, res, req.body);
+      } catch (error) {
+        runtime.logger.error("mcp http request failed", {
+          method: req.method,
+          path: req.path,
+          error: errorMetadata(error),
+        });
+        throw error;
+      }
     });
   } else {
     const transports = new Map<string, NodeStreamableHTTPServerTransport>();
@@ -93,17 +113,43 @@ export async function startHttpServer(config: ServerConfig, options: HttpServerO
         await createAnchorMcpServer(runtime.service).connect(transport);
       }
 
-      await transport.handleRequest(req, res, req.body);
+      try {
+        await transport.handleRequest(req, res, req.body);
+      } catch (error) {
+        runtime.logger.error("mcp http request failed", {
+          method: req.method,
+          path: req.path,
+          sessionId: transport.sessionId,
+          error: errorMetadata(error),
+        });
+        throw error;
+      }
     });
   }
 
   const server = app.listen(options.port, options.host);
-  await new Promise<void>((resolve, reject) => {
-    server.once("listening", resolve);
-    server.once("error", reject);
-  });
+  try {
+    await new Promise<void>((resolve, reject) => {
+      server.once("listening", resolve);
+      server.once("error", reject);
+    });
+  } catch (error) {
+    runtime.stopAutoSync();
+    runtime.logger.error("http server failed to start", {
+      host: options.host,
+      port: options.port,
+      error: errorMetadata(error),
+    });
+    await runtime.logger.close();
+    throw error;
+  }
 
-  server.once("close", () => runtime.stopAutoSync());
+  runtime.logger.info("http server listening", { host: options.host, port: options.port });
+  server.once("close", () => {
+    runtime.stopAutoSync();
+    runtime.logger.info("http server closed", { host: options.host, port: options.port });
+    void runtime.logger.close();
+  });
   return server;
 }
 

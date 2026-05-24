@@ -133,3 +133,61 @@ describe("CLI args — authToken", () => {
     );
   });
 });
+
+describe("CLI args — file logging", () => {
+  it("reads file logging defaults from the config file", async () => {
+    const tmpDir = await mkdtemp(path.join(os.tmpdir(), "anchor-mcp-config-"));
+    const configPath = path.join(tmpDir, "anchor-mcp.config.json");
+    await writeFile(configPath, JSON.stringify({ logging: { file: true } }), "utf8");
+
+    const options = parseCliArgs(["--config", configPath], {});
+
+    expect(options.config.logging?.file).toMatchObject({ enabled: true });
+  });
+
+  it("reads custom file logging options from the config file", async () => {
+    const tmpDir = await mkdtemp(path.join(os.tmpdir(), "anchor-mcp-config-"));
+    const configPath = path.join(tmpDir, "anchor-mcp.config.json");
+    await writeFile(
+      configPath,
+      JSON.stringify({
+        logging: {
+          file: {
+            enabled: true,
+            dirname: "/tmp/anchor-mcp-test-logs",
+            filename: "custom-%DATE%.log",
+            level: "debug",
+            datePattern: "YYYY-MM-DD-HH",
+            maxSize: "5m",
+            maxFiles: "7d",
+            zippedArchive: false,
+          },
+        },
+      }),
+      "utf8",
+    );
+
+    const options = parseCliArgs(["--config", configPath], {});
+
+    expect(options.config.logging?.file).toEqual({
+      enabled: true,
+      dirname: "/tmp/anchor-mcp-test-logs",
+      filename: "custom-%DATE%.log",
+      level: "debug",
+      datePattern: "YYYY-MM-DD-HH",
+      maxSize: "5m",
+      maxFiles: "7d",
+      zippedArchive: false,
+    });
+  });
+
+  it("rejects invalid file logging config", async () => {
+    const tmpDir = await mkdtemp(path.join(os.tmpdir(), "anchor-mcp-config-"));
+    const configPath = path.join(tmpDir, "anchor-mcp.config.json");
+    await writeFile(configPath, JSON.stringify({ logging: { file: { maxFiles: 14 } } }), "utf8");
+
+    expect(() => parseCliArgs(["--config", configPath], {})).toThrow(
+      /Expected config field logging\.file\.maxFiles to be a string/,
+    );
+  });
+});
