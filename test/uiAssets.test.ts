@@ -14,6 +14,7 @@ type UiAssetHooks = {
   setSelectedNameForTest(name: string | null): void;
   token(): string;
   saveToken(value: string): void;
+  renderAnchorGroup(group: { key: string; label: string; anchors: Array<Record<string, unknown>> }): string;
   renderAnchorRow(anchor: Record<string, unknown>): string;
   renderPlannerItem(item: Record<string, unknown>): string;
   comparePlannerRuns(
@@ -230,6 +231,33 @@ describe("UI browser assets", () => {
     expect(html).toContain('<use href="#icon-anchor"></use>');
     expect(html).toContain('data-name="projects/demo/demo.md"');
     expect(html).not.toContain("<button");
+  });
+
+  it("renders sidebar project groups as closed disclosure controls by default", () => {
+    const hooks = loadHooks();
+    const html = hooks.renderAnchorGroup({
+      key: "project:anchor-mcp",
+      label: "anchor-mcp",
+      anchors: [
+        {
+          name: "projects/anchor-mcp/anchor-mcp-roadmap.md",
+          category: "projects",
+          projectSlug: "anchor-mcp",
+          summary: "Roadmap summary.",
+          ui: {
+            label: "Anchor MCP Roadmap",
+            health: { status: "ok" },
+          },
+        },
+      ],
+    });
+
+    expect(html).toContain('<details class="anchor-group" data-group-key="project:anchor-mcp">');
+    expect(html).toContain('<summary class="anchor-group-title">');
+    expect(html).toContain('<span class="anchor-group-label">anchor-mcp</span>');
+    expect(html).toContain('<span class="anchor-group-count">1</span>');
+    expect(html).not.toContain(" open>");
+    expect(UI_CSS).toContain(".anchor-group-title::before");
   });
 
   it("renders planner items with escaped reasons and raw score data", () => {

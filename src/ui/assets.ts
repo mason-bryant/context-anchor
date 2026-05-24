@@ -453,32 +453,81 @@ textarea {
 
 .anchor-list {
   display: grid;
-  gap: 12px;
+  gap: 8px;
 }
 
 .anchor-group {
-  display: grid;
-  gap: 7px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--panel);
+  overflow: hidden;
 }
 
 .anchor-group-title {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  color: var(--text);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0;
+  padding: 8px 10px;
+  user-select: none;
+}
+
+.anchor-group-title::-webkit-details-marker {
+  display: none;
+}
+
+.anchor-group-title::marker {
+  content: "";
+}
+
+.anchor-group-title::before {
+  content: "";
+  width: 0;
+  height: 0;
+  border-top: 4px solid transparent;
+  border-bottom: 4px solid transparent;
+  border-left: 5px solid var(--muted);
+  transition: transform 120ms ease;
+}
+
+.anchor-group[open] .anchor-group-title::before {
+  transform: rotate(90deg);
+}
+
+.anchor-group-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.anchor-group-count {
   color: var(--muted);
   font-size: 11px;
-  font-weight: 750;
-  letter-spacing: 0;
-  text-transform: uppercase;
+  font-weight: 650;
+}
+
+.anchor-group-items {
+  display: grid;
+  gap: 6px;
+  padding: 0 8px 8px;
 }
 
 .anchor-row {
   width: 100%;
   text-align: left;
   display: grid;
-  gap: 4px;
+  gap: 3px;
   border: 1px solid var(--border);
   background: var(--panel);
   color: var(--text);
   text-decoration: none;
-  padding: 10px;
+  padding: 8px;
   border-radius: 7px;
   cursor: pointer;
 }
@@ -898,7 +947,8 @@ export const UI_JS = `(function () {
     detailMode: "rendered",
     activeTab: "root",
     plannerPlans: [],
-    plannerLastLoadContext: null
+    plannerLastLoadContext: null,
+    expandedAnchorGroups: new Set()
   };
 
   var categories = ["", "server-rules", "agent-rules", "projects", "invariants", "conflicts", "shared", "archive"];
@@ -1061,6 +1111,19 @@ export const UI_JS = `(function () {
     return "";
   }
 
+  function categoryLabel(category) {
+    return String(category || "other").replace(/-/g, " ");
+  }
+
+  function groupForAnchor(anchor) {
+    if (anchor.category === "projects" && projectOf(anchor)) {
+      var project = projectOf(anchor);
+      return { key: "project:" + project, label: project };
+    }
+    var category = anchor.category || "other";
+    return { key: "category:" + category, label: categoryLabel(category) };
+  }
+
   function currentFilters() {
     return {
       search: el("search-input").value.trim().toLowerCase(),
@@ -1196,20 +1259,37 @@ export const UI_JS = `(function () {
     }
     var groups = new Map();
     anchors.forEach(function (anchor) {
-      var groupName = anchor.category === "projects" && projectOf(anchor)
-        ? "projects / " + projectOf(anchor)
-        : anchor.category;
-      if (!groups.has(groupName)) {
-        groups.set(groupName, []);
+      var group = groupForAnchor(anchor);
+      if (!groups.has(group.key)) {
+        groups.set(group.key, { key: group.key, label: group.label, anchors: [] });
       }
-      groups.get(groupName).push(anchor);
+      groups.get(group.key).anchors.push(anchor);
     });
-    list.innerHTML = Array.from(groups.keys()).map(function (groupName) {
-      return "<div class=\\"anchor-group\\">"
-        + "<div class=\\"anchor-group-title\\">" + escapeHtml(groupName) + "</div>"
-        + groups.get(groupName).map(renderAnchorRow).join("")
-        + "</div>";
-    }).join("");
+    list.innerHTML = Array.from(groups.values()).map(renderAnchorGroup).join("");
+    bindAnchorGroupToggles(list);
+  }
+
+  function renderAnchorGroup(group) {
+    var open = state.expandedAnchorGroups.has(group.key) ? " open" : "";
+    return "<details class=\\"anchor-group\\" data-group-key=\\"" + escapeHtml(group.key) + "\\"" + open + ">"
+      + "<summary class=\\"anchor-group-title\\">"
+      + "<span class=\\"anchor-group-label\\">" + escapeHtml(group.label) + "</span>"
+      + "<span class=\\"anchor-group-count\\">" + escapeHtml(String(group.anchors.length)) + "</span>"
+      + "</summary>"
+      + "<div class=\\"anchor-group-items\\">" + group.anchors.map(renderAnchorRow).join("") + "</div>"
+      + "</details>";
+  }
+
+  function bindAnchorGroupToggles(list) {
+    list.querySelectorAll("details[data-group-key]").forEach(function (details) {
+      details.addEventListener("toggle", function () {
+        if (details.open) {
+          state.expandedAnchorGroups.add(details.dataset.groupKey);
+        } else {
+          state.expandedAnchorGroups.delete(details.dataset.groupKey);
+        }
+      });
+    });
   }
 
   function renderAnchorRow(anchor) {
@@ -1736,6 +1816,7 @@ export const UI_JS = `(function () {
     window.__ANCHOR_MCP_UI_TEST_HOOKS__.setSelectedNameForTest = function (name) { state.selectedName = name; };
     window.__ANCHOR_MCP_UI_TEST_HOOKS__.token = token;
     window.__ANCHOR_MCP_UI_TEST_HOOKS__.saveToken = saveToken;
+    window.__ANCHOR_MCP_UI_TEST_HOOKS__.renderAnchorGroup = renderAnchorGroup;
     window.__ANCHOR_MCP_UI_TEST_HOOKS__.renderAnchorRow = renderAnchorRow;
     window.__ANCHOR_MCP_UI_TEST_HOOKS__.renderPlannerItem = renderPlannerItem;
     window.__ANCHOR_MCP_UI_TEST_HOOKS__.comparePlannerRuns = comparePlannerRuns;
