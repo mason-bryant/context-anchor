@@ -129,7 +129,13 @@ the index when your workflow checks in that file.`,
       }),
       annotations: { readOnlyHint: true },
     },
-    async (input) => jsonResult({ anchors: await service.listAnchors(input) }),
+    async (input) => {
+      const { anchors, projectFilter } = await service.listAnchorsDiscovery(input);
+      return jsonResult({
+        anchors,
+        ...(projectFilter ? { projectFilter } : {}),
+      });
+    },
   );
 
   server.registerTool(

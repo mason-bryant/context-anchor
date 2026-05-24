@@ -55,11 +55,16 @@ import type {
   LoadContextSelectionReason,
   PlanContextBundleInput,
   PlanContextBundleResult,
+  ProjectFilterResolution,
   SearchHit,
   ValidationViolation,
   WriteAnchorInput,
   WriteAnchorResult,
 } from "./types.js";
+import {
+  buildProjectAliasIndex,
+  resolveProjectFilter,
+} from "./projectAliases.js";
 import { runValidators } from "./validators/pipeline.js";
 
 export class AnchorService {
@@ -101,6 +106,26 @@ export class AnchorService {
     return null;
   }
 
+  private async resolveProjectFilter(requested?: string): Promise<{
+    projectFilter?: ProjectFilterResolution;
+    effectiveProject?: string;
+  }> {
+    if (!requested?.trim()) {
+      return {};
+    }
+
+    const allMetas = await this.repo.listAnchors({});
+    const index = buildProjectAliasIndex(allMetas);
+    const projectFilter = resolveProjectFilter(requested, allMetas, index);
+    if (!projectFilter) {
+      return {};
+    }
+
+    const effectiveProject =
+      projectFilter.via === "unresolved" ? projectFilter.requested : projectFilter.resolved;
+    return { projectFilter, effectiveProject };
+  }
+
   private async mergeDiscoveryAnchors(filter: {
     project?: string;
     category?: DiscoveryCategory;
@@ -109,22 +134,47 @@ export class AnchorService {
     includeArchive?: boolean;
     runtime?: string;
   } = {}): Promise<AnchorMeta[]> {
+    const { anchors } = await this.mergeDiscoveryAnchorsWithResolution(filter);
+    return anchors;
+  }
+
+  private async mergeDiscoveryAnchorsWithResolution(filter: {
+    project?: string;
+    category?: DiscoveryCategory;
+    tag?: string;
+    since?: string;
+    includeArchive?: boolean;
+    runtime?: string;
+  } = {}): Promise<{ anchors: AnchorMeta[]; projectFilter?: ProjectFilterResolution }> {
+    const { projectFilter, effectiveProject } = await this.resolveProjectFilter(filter.project);
     const built = listBuiltInAnchorMetas();
     if (filter.category === SERVER_RULES_DISCOVERY_CATEGORY) {
-      return built;
+      return { anchors: built, projectFilter };
     }
 
-    const { category, ...rest } = filter;
+    const { category, project: _project, ...rest } = filter;
     const repoMetas = await this.repo.listAnchors({
       ...rest,
+      ...(effectiveProject ? { project: effectiveProject } : {}),
       category: category as AnchorCategory | undefined,
     });
 
     if (category) {
-      return repoMetas;
+      return { anchors: repoMetas, projectFilter };
     }
 
-    return [...built, ...repoMetas];
+    return { anchors: [...built, ...repoMetas], projectFilter };
+  }
+
+  async listAnchorsDiscovery(filter?: {
+    project?: string;
+    tag?: string;
+    since?: string;
+    category?: DiscoveryCategory;
+    includeArchive?: boolean;
+    runtime?: string;
+  }): Promise<{ anchors: AnchorMeta[]; projectFilter?: ProjectFilterResolution }> {
+    return this.mergeDiscoveryAnchorsWithResolution(filter);
   }
 
   listAnchors(filter?: {
@@ -622,7 +672,7 @@ export class AnchorService {
     includeArchive?: boolean;
     format?: ContextRootFormat;
   } = {}): Promise<ContextRootResult> {
-    const anchors = await this.mergeDiscoveryAnchors({
+    const { anchors, projectFilter } = await this.mergeDiscoveryAnchorsWithResolution({
       project: input.project,
       category: input.category,
       tag: input.tag,
@@ -630,7 +680,10 @@ export class AnchorService {
       includeArchive: input.includeArchive,
     });
 
-    return buildContextRoot(anchors, { format: input.format });
+    return {
+      ...buildContextRoot(anchors, { format: input.format }),
+      ...(projectFilter ? { projectFilter } : {}),
+    };
   }
 
   /**
@@ -654,6 +707,12 @@ export class AnchorService {
       includeArchive: decoded?.filter.includeArchive ?? input.includeArchive ?? false,
     };
 
+    const { projectFilter, effectiveProject } = await this.resolveProjectFilter(filter.project);
+    const resolvedFilter = {
+      ...filter,
+      ...(effectiveProject ? { project: effectiveProject } : {}),
+    };
+
     const offset = decoded?.offset ?? 0;
 
     let selectionReason: LoadContextSelectionReason;
@@ -664,7 +723,7 @@ export class AnchorService {
       if (selectionReason === "explicit_names") {
         orderedNames = decoded.explicitNames ?? [];
       } else {
-        const metas = await this.mergeDiscoveryAnchors(filter);
+        const { anchors: metas } = await this.mergeDiscoveryAnchorsWithResolution(resolvedFilter);
         const ordered = buildContextRoot(metas, { format: "json" });
         orderedNames = ordered.entries.map((entry) => entry.name);
       }
@@ -673,7 +732,7 @@ export class AnchorService {
       orderedNames = dedupePreserveOrder(input.names.map((name) => this.resolveDiscoveryAnchorName(name)));
     } else {
       selectionReason = "filter";
-      const metas = await this.mergeDiscoveryAnchors(filter);
+      const { anchors: metas } = await this.mergeDiscoveryAnchorsWithResolution(resolvedFilter);
       const ordered = buildContextRoot(metas, { format: "json" });
       orderedNames = ordered.entries.map((entry) => entry.name);
     }
@@ -686,7 +745,7 @@ export class AnchorService {
       const byName = new Map(all.map((meta) => [meta.name, meta]));
       entriesMetas = orderedNames.map((name) => byName.get(name)).filter((meta): meta is AnchorMeta => Boolean(meta));
     } else {
-      entriesMetas = await this.mergeDiscoveryAnchors(filter);
+      entriesMetas = await this.mergeDiscoveryAnchors(resolvedFilter);
     }
 
     const root = buildContextRoot(entriesMetas, { format });
@@ -748,6 +807,7 @@ export class AnchorService {
       selectionReason,
       totalMatching,
       returnedCount,
+      ...(projectFilter ? { projectFilter } : {}),
     };
   }
 
@@ -762,7 +822,14 @@ export class AnchorService {
             includeArchive: input.includeArchive,
           });
 
-    const plan = buildContextBundlePlan(anchors, input);
+    const index = buildProjectAliasIndex(anchors);
+    const projectFilter = resolveProjectFilter(input.project, anchors, index);
+    const effectiveInput =
+      projectFilter && projectFilter.via !== "unresolved"
+        ? { ...input, project: projectFilter.resolved }
+        : input;
+
+    const plan = buildContextBundlePlan(anchors, effectiveInput, undefined, projectFilter);
     const builtNames = listBuiltInAnchorMetas().map((meta) => meta.name);
     const names = [...builtNames.filter((name) => !plan.loadContext.names.includes(name)), ...plan.loadContext.names];
     const roadmapSignals = collectRoadmapAcceptanceMissingSignals(anchors);
@@ -772,6 +839,7 @@ export class AnchorService {
       ...plan,
       missingContext: [...plan.missingContext, ...roadmapSignals, ...milestoneSignals],
       loadContext: { ...plan.loadContext, names },
+      ...(projectFilter ? { projectFilter } : {}),
     };
   }
 
@@ -787,7 +855,10 @@ export class AnchorService {
       displayId?: string;
     }>
   > {
-    const anchors = await this.repo.listAnchors({ project });
+    const { effectiveProject } = await this.resolveProjectFilter(project);
+    const anchors = await this.repo.listAnchors({
+      ...(effectiveProject ? { project: effectiveProject } : {}),
+    });
     const rows = anchors
       .filter((anchor) => anchor.name.includes("/milestones/") && anchor.milestone)
       .map((anchor) => {

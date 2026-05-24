@@ -3,8 +3,10 @@ import type {
   PlanContextBundleInput,
   PlanContextBundleItem,
   PlanContextBundleResult,
+  ProjectFilterResolution,
 } from "./types.js";
 import { discoveryCategoryIndex } from "./taxonomy.js";
+import { anchorMatchesProject } from "./projectAliases.js";
 
 const DEFAULT_BUDGET_TOKENS = 4000;
 const DEFAULT_MAX_ANCHORS = 12;
@@ -52,6 +54,7 @@ export function buildContextBundlePlan(
   anchors: AnchorMeta[],
   input: PlanContextBundleInput,
   generatedAt = new Date().toISOString(),
+  projectFilter?: ProjectFilterResolution,
 ): PlanContextBundleResult {
   const budgetTokens = Math.max(1, Math.floor(input.budgetTokens ?? DEFAULT_BUDGET_TOKENS));
   const maxAnchors = Math.max(1, Math.floor(input.maxAnchors ?? DEFAULT_MAX_ANCHORS));
@@ -106,12 +109,15 @@ export function buildContextBundlePlan(
       included,
       excluded,
       taskTerms,
+      projectFilter,
     }),
     loadContext: {
       names: included.map((anchor) => anchor.name),
       includeContent: "excerpt",
       maxBytes: budgetTokens * 4,
+      ...(input.project ? { project: input.project } : {}),
     },
+    ...(projectFilter ? { projectFilter } : {}),
   };
 }
 
@@ -139,7 +145,7 @@ function scoreAnchor(
   let score = 0;
   const matchedTerms = new Set<string>();
   const reasons: string[] = [];
-  const projectMatches = Boolean(input.project && anchorProjectIncludes(anchor, input.project));
+  const projectMatches = Boolean(input.project && anchorMatchesProject(anchor, input.project));
 
   if (projectMatches) {
     score += 16;
@@ -253,17 +259,19 @@ function buildMissingContextSignals(params: {
   included: ScoredAnchor[];
   excluded: ScoredAnchor[];
   taskTerms: string[];
+  projectFilter?: ProjectFilterResolution;
 }): string[] {
   const signals: string[] = [];
-  const { input, anchors, included, excluded, taskTerms } = params;
+  const { input, anchors, included, excluded, taskTerms, projectFilter } = params;
 
   if (included.length === 0) {
     signals.push("No anchors fit the task and budget. Increase budgetTokens, raise maxAnchors, or loosen filters.");
   }
 
-  const project = input.project;
-  if (project && !anchors.some((anchor) => anchorProjectIncludes(anchor, project))) {
-    signals.push(`No candidate anchor declares project "${project}".`);
+  if (projectFilter?.via === "unresolved") {
+    signals.push(`No candidate anchor declares project "${projectFilter.requested}".`);
+  } else if (input.project && !projectFilter && !anchors.some((anchor) => anchorMatchesProject(anchor, input.project!))) {
+    signals.push(`No candidate anchor declares project "${input.project}".`);
   }
 
   if (included.length > 0 && included.every((anchor) => anchor.matchedTerms.length === 0)) {
@@ -393,10 +401,6 @@ function stripPlannerFields(anchor: ScoredAnchor): PlanContextBundleItem {
     matchedTerms: anchor.matchedTerms,
     reason: anchor.reason,
   };
-}
-
-function anchorProjectIncludes(anchor: AnchorMeta, project: string): boolean {
-  return anchor.projectSlug === project || frontmatterValueIncludes(anchor.project, project);
 }
 
 function frontmatterValueIncludes(value: unknown, needle: string): boolean {
