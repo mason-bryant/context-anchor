@@ -50,6 +50,8 @@ export type AnchorMeta = {
   acceptanceCriteria?: RoadmapAcceptanceCriteriaSummary;
   /** Present for `type: project-milestone` anchors when front matter is parseable. */
   milestone?: MilestonePlannerMeta;
+  /** Alternate project slugs declared on the project context anchor. */
+  aliases?: string[];
 };
 
 export type AnchorRead = {
@@ -135,10 +137,19 @@ export type ContextRootEntry = {
   milestoneDisplayId?: string;
 };
 
+/** How a requested project filter was resolved against canonical slugs and aliases. */
+export type ProjectFilterResolution = {
+  requested: string;
+  resolved: string;
+  via: "canonical" | "alias" | "unresolved";
+  matchedAlias?: string;
+};
+
 export type ContextRootResult = {
   generatedAt: string;
   entries: ContextRootEntry[];
   markdown?: string;
+  projectFilter?: ProjectFilterResolution;
 };
 
 /** How much anchor body to include in `loadContext` results. */
@@ -193,6 +204,7 @@ export type LoadContextResult = {
   totalMatching: number;
   /** How many anchors were returned in `anchors` this page. */
   returnedCount: number;
+  projectFilter?: ProjectFilterResolution;
 };
 
 /** Input for a task-aware context bundle planning tool. */
@@ -233,10 +245,12 @@ export type PlanContextBundleResult = {
   included: PlanContextBundleItem[];
   excluded: PlanContextBundleItem[];
   missingContext: string[];
+  projectFilter?: ProjectFilterResolution;
   loadContext: {
     names: string[];
     includeContent: "excerpt";
     maxBytes: number;
+    project?: string;
   };
 };
 

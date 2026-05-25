@@ -534,6 +534,43 @@ None.
     expect(planned.missingContext).toEqual([]);
   });
 
+  it("planContextBundle resolves project aliases to canonical slugs", async () => {
+    await service.writeAnchor({
+      name: "projects/demo/demo-project-context",
+      content: projectContextAnchorContent({ aliases: ["context-conductor"] }),
+      message: "test: add demo project context with alias",
+    });
+
+    const planned = await service.planContextBundle({
+      task: "Update demo storage decisions",
+      project: "context-conductor",
+      budgetTokens: 1200,
+    });
+
+    expect(planned.projectFilter).toEqual({
+      requested: "context-conductor",
+      resolved: "demo",
+      via: "alias",
+      matchedAlias: "context-conductor",
+    });
+    expect(planned.included[0]?.name).toBe("projects/demo/demo-project-context.md");
+    expect(planned.loadContext.project).toBe("demo");
+    expect(planned.missingContext.some((signal) => signal.includes('declares project "context-conductor"'))).toBe(false);
+  });
+
+  it("listAnchorsDiscovery returns projectFilter for alias resolution", async () => {
+    await service.writeAnchor({
+      name: "projects/demo/demo-project-context",
+      content: projectContextAnchorContent({ aliases: ["context-conductor"] }),
+      message: "test: add demo project context with alias",
+    });
+
+    const discovery = await service.listAnchorsDiscovery({ project: "context-conductor" });
+
+    expect(discovery.projectFilter?.via).toBe("alias");
+    expect(discovery.anchors.map((anchor) => anchor.name)).toContain("projects/demo/demo-project-context.md");
+  });
+
   it("planContextBundle can plan over built-in server rules only", async () => {
     await service.writeAnchor({
       name: "projects/demo/demo",
@@ -782,6 +819,50 @@ ${extraLine}---
 ## PRs
 
 - [PR Demo roadmap - #1](https://github.com/example/repo/pull/1)
+`;
+}
+
+function projectContextAnchorContent(
+  overrides: {
+    summary?: string;
+    aliases?: string[];
+    project?: string;
+  } = {},
+): string {
+  const project = overrides.project ?? "demo";
+  const aliasBlock =
+    overrides.aliases && overrides.aliases.length > 0
+      ? `aliases:\n${overrides.aliases.map((alias) => `  - ${alias}`).join("\n")}\n`
+      : "";
+  return `---
+project:
+  - ${project}
+${aliasBlock}type: context-anchor
+tags:
+  - context
+summary: "${overrides.summary ?? "Demo project context summary."}"
+read_this_if:
+  - "You are working on the demo project."
+last_validated: 2026-05-10
+---
+
+# Demo Project Context
+
+## Current State
+
+- The demo project context exists.
+
+## Decisions
+
+- Keep storage git-backed.
+
+## Constraints
+
+- Preserve existing claims.
+
+## PRs
+
+- [PR Add anchor MCP - #123](https://github.com/example/repo/pull/123)
 `;
 }
 

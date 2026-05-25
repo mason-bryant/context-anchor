@@ -1542,14 +1542,30 @@ export const UI_JS = `(function () {
     state.plannerLastLoadContext = plan.loadContext;
     state.plannerLastPlan = plan;
     renderPlanner(plan, state.plannerPlans[1]);
+    if (plan.projectFilter && plan.projectFilter.via === "alias") {
+      setSelectValueAllowingNew("planner-project", plan.projectFilter.resolved);
+      setBanner(
+        "Resolved project alias " + plan.projectFilter.requested + " to " + plan.projectFilter.resolved + ".",
+        "info",
+      );
+    } else {
+      setBanner("", "info");
+    }
     showTab("planner");
-    setBanner("", "info");
+  }
+
+  function formatPlannerStatus(plan) {
+    var status = "Generated " + plan.generatedAt + " from " + plan.totalCandidates + " candidates";
+    if (plan.projectFilter && plan.projectFilter.via === "alias") {
+      status += " · project alias " + plan.projectFilter.requested + " → " + plan.projectFilter.resolved;
+    }
+    return status;
   }
 
   function renderPlanner(plan, previous) {
     el("planner-empty").hidden = true;
     el("planner-results").hidden = false;
-    el("planner-status").textContent = "Generated " + plan.generatedAt + " from " + plan.totalCandidates + " candidates";
+    el("planner-status").textContent = formatPlannerStatus(plan);
     el("planner-summary").innerHTML = [
       renderMetric(plan.included.length, "included"),
       renderMetric(plan.excluded.length, "excluded shown"),

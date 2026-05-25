@@ -47,8 +47,11 @@ export function registerUiRoutes(
     "/api/ui/anchors",
     ...protect,
     jsonRoute(async (req) => {
-      const anchors = await service.listAnchors(readDiscoveryFilters(req));
-      return { anchors: anchors.map(toAnchorUiMeta) };
+      const { anchors, projectFilter } = await service.listAnchorsDiscovery(readDiscoveryFilters(req));
+      return {
+        anchors: anchors.map(toAnchorUiMeta),
+        ...(projectFilter ? { projectFilter } : {}),
+      };
     }),
   );
 

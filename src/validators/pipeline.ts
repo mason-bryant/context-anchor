@@ -7,6 +7,7 @@ import { validateFrontMatter } from "./frontMatter.js";
 import { validateLastValidatedBump } from "./lastValidatedBump.js";
 import { validateNonDestructive } from "./nonDestructive.js";
 import { validatePolicyWeakeningDeclaration } from "./policyWeakening.js";
+import { validateProjectAliases } from "./projectAliases.js";
 import { validatePrFormat } from "./prFormat.js";
 import {
   validatePolicyWeakeningActiveWarn,
@@ -22,6 +23,7 @@ import type { ValidationContext, Validator } from "./types.js";
 
 const VALIDATORS: Validator[] = [
   validateFrontMatter,
+  validateProjectAliases,
   validatePolicyWeakeningDeclaration,
   validateSectionShape,
   validatePrFormat,

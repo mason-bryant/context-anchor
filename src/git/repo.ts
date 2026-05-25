@@ -5,6 +5,7 @@ import { simpleGit, type SimpleGit } from "simple-git";
 
 import { AnchorParseCache } from "../storage/cache.js";
 import { analyzeRoadmapFromContent } from "../roadmap/analyzeRoadmap.js";
+import { parseProjectAliases, anchorMatchesProject } from "../projectAliases.js";
 import { parseAnchor } from "../storage/markdown.js";
 import { classifyAnchorPath, CONTEXT_ROOT_FILE, type AnchorCategory } from "../taxonomy.js";
 import { normalizedMilestoneId, normalizedSequenceFromFm } from "../milestoneFrontmatter.js";
@@ -132,6 +133,11 @@ export class AnchorRepository {
         origin: "repo",
       };
 
+      const aliases = parseProjectAliases(parsed.frontmatter.aliases);
+      if (aliases.length > 0) {
+        meta.aliases = aliases;
+      }
+
       if (isProjectRoadmapType(parsed.frontmatter.type)) {
         const analysis = analyzeRoadmapFromContent(content, { isProjectRoadmap: true });
         meta.acceptanceCriteria = {
@@ -176,7 +182,7 @@ export class AnchorRepository {
         }
       }
 
-      if (filter?.project && !frontmatterValueIncludes(meta.project, filter.project)) {
+      if (filter?.project && !anchorMatchesProject(meta, filter.project)) {
         continue;
       }
 
