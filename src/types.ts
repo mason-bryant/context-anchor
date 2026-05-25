@@ -26,6 +26,31 @@ export type MilestonePlannerMeta = {
   milestoneId?: string;
   /** Ordering within a project; display label is `M${sequence}` when set. */
   sequence?: number;
+  schedule?: MilestoneScheduleMeta;
+  tasks?: MilestoneTaskMeta[];
+};
+
+export type DateConfidence = "committed" | "internal_goal" | "estimated";
+
+export type MilestoneTaskStatus = "todo" | "active" | "blocked" | "done" | "cancelled";
+
+export type MilestoneScheduleMeta = {
+  start?: string;
+  target?: string;
+  shipped?: string;
+  dateConfidence?: DateConfidence;
+};
+
+export type MilestoneTaskMeta = {
+  id: string;
+  title: string;
+  status: MilestoneTaskStatus;
+  owner?: string;
+  goalIds?: string[];
+  due?: string;
+  completedOn?: string;
+  dateConfidence?: DateConfidence;
+  notes?: string;
 };
 
 export type AnchorMeta = {
@@ -252,6 +277,84 @@ export type PlanContextBundleResult = {
     maxBytes: number;
     project?: string;
   };
+};
+
+export type ProjectUpdateFormat = "markdown" | "slack" | "email";
+
+export type ProjectUpdateMilestoneStatus = MilestonePlannerMeta["status"];
+
+export type ProjectUpdateSnapshotInput = {
+  project: string;
+  milestone?: string;
+  statuses?: ProjectUpdateMilestoneStatus[];
+  includeBacklog?: boolean;
+  asOf?: string;
+};
+
+export type ProjectUpdateTask = {
+  id: string;
+  title: string;
+  status: MilestoneTaskStatus;
+  owner?: string;
+  goalIds?: string[];
+  due?: string;
+  completedOn?: string;
+  dateConfidence?: DateConfidence;
+  notes?: string;
+  source: "milestone";
+  anchor: string;
+};
+
+export type ProjectUpdateGoal = {
+  id: string;
+  title: string;
+  hasAcceptanceCriteria: boolean;
+  tasks: ProjectUpdateTask[];
+};
+
+export type ProjectUpdateMilestone = {
+  name: string;
+  path: string;
+  displayId?: string;
+  milestoneId?: string;
+  sequence?: number;
+  status: ProjectUpdateMilestoneStatus;
+  theme: string;
+  steelThread?: string;
+  goalIds: string[];
+  schedule?: MilestoneScheduleMeta;
+  goals: ProjectUpdateGoal[];
+  tasks: ProjectUpdateTask[];
+};
+
+export type ProjectUpdateSnapshot = {
+  generatedAt: string;
+  asOf: string;
+  project: string;
+  projectFilter?: ProjectFilterResolution;
+  roadmap?: { name: string; title?: string };
+  projectAnchor?: { name: string; title?: string };
+  progress: {
+    milestones: { shipped: number; active: number; proposed: number; cancelled: number; backlog: number; total: number };
+    tasks: { done: number; active: number; blocked: number; todo: number; cancelled: number; total: number };
+  };
+  milestones: ProjectUpdateMilestone[];
+  backlog?: ProjectUpdateMilestone;
+  warnings: string[];
+};
+
+export type RenderProjectUpdateInput = ProjectUpdateSnapshotInput & {
+  format: ProjectUpdateFormat;
+};
+
+export type RenderedProjectUpdate = {
+  format: ProjectUpdateFormat;
+  generatedAt: string;
+  asOf: string;
+  project: string;
+  subject?: string;
+  body: string;
+  snapshot: ProjectUpdateSnapshot;
 };
 
 export type ServerConfig = {

@@ -509,6 +509,12 @@ When `truncated` is true, call again with `nextCursor` from the previous respons
 
 Milestones group roadmap goals under a theme and integrate with `planContextBundle` for task-aware context boosts. See **[docs/milestones.md](docs/milestones.md)** for the full guide, including how to upgrade existing roadmaps to stable `G-<digits>` goal IDs.
 
+## Project updates and backlog
+
+Project updates summarize roadmap, milestone, and structured task state for humans. See **[docs/project-updates.md](docs/project-updates.md)** for the rendering and backlog rules. Built-in `server-rules/project-updates.md` says rendered updates end with backlog items when present because backlog grooming is always in progress.
+
+When a user asks to put a task on a project backlog, resolve or create the reserved `milestone_id: backlog` milestone, add the task to its structured `tasks`, do not assign `sequence`, and do not invent dates, owners, or goal ids.
+
 ## Plan context bundle
 
 `planContextBundle` is a read-only planning step for task-aware context assembly. It accepts a natural-language `task`, optional filters, and an approximate `budgetTokens`, then returns:

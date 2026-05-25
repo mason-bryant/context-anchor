@@ -121,6 +121,7 @@ describe("UI HTTP routes", () => {
     expect(plan.loadContext.names).toEqual([
       "server-rules/acceptance-criteria.md",
       "server-rules/milestone-usage.md",
+      "server-rules/project-updates.md",
       "projects/demo/demo.md",
     ]);
     expect(plan.loadContext.includeContent).toBe("excerpt");
