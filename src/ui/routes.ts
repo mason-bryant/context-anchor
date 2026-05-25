@@ -2,7 +2,7 @@ import type { NextFunction, Request, Response, Express } from "express";
 
 import type { AnchorService } from "../anchorService.js";
 import { isDiscoveryCategory, type DiscoveryCategory } from "../taxonomy.js";
-import type { ContextRootFormat, PlanContextBundleInput } from "../types.js";
+import type { ContextRootFormat, PlanContextBundleInput, ProposedChangeListInput, ProposedChangeStatus } from "../types.js";
 import { UI_CSS, UI_HTML, UI_JS } from "./assets.js";
 import { toAnchorUiDetail, toAnchorUiMeta } from "./viewModel.js";
 
@@ -82,6 +82,24 @@ export function registerUiRoutes(
     ...protect,
     jsonRoute(async (req) => service.readMilestone(requiredQueryString(req, "name"))),
   );
+
+  app.get(
+    "/api/ui/proposed-changes",
+    ...protect,
+    jsonRoute(async (req) => service.listProposedChanges(readProposedChangesInput(req))),
+  );
+
+  app.get(
+    "/api/ui/proposed-change",
+    ...protect,
+    jsonRoute(async (req) => service.readProposedChange(requiredQueryString(req, "id"))),
+  );
+
+  app.get(
+    "/api/ui/proposed-change-preview",
+    ...protect,
+    jsonRoute(async (req) => service.previewProposedChange(requiredQueryString(req, "id"))),
+  );
 }
 
 function jsonRoute(handler: (req: Request) => Promise<unknown>) {
@@ -137,6 +155,33 @@ function readPlannerInput(req: Request): PlanContextBundleInput {
     maxAnchors: positiveIntQuery(req, "maxAnchors", 500),
     maxExcluded: positiveIntQuery(req, "maxExcluded", 500, { allowZero: true }),
   };
+}
+
+function readProposedChangesInput(req: Request): ProposedChangeListInput {
+  const scope = optionalQueryString(req, "scope");
+  if (scope && scope !== "agent-rules") {
+    throw new UiHttpError(400, `Invalid scope: ${scope}`);
+  }
+  const status = optionalQueryString(req, "status");
+  if (status && !isProposedChangeStatus(status)) {
+    throw new UiHttpError(400, `Invalid status: ${status}`);
+  }
+
+  return {
+    project: optionalQueryString(req, "project"),
+    scope: scope as "agent-rules" | undefined,
+    status: status as ProposedChangeStatus | undefined,
+  };
+}
+
+function isProposedChangeStatus(value: string): value is ProposedChangeStatus {
+  return (
+    value === "pending" ||
+    value === "applied" ||
+    value === "rejected" ||
+    value === "changes_requested" ||
+    value === "superseded"
+  );
 }
 
 function requiredQueryString(req: Request, key: string): string {

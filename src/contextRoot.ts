@@ -1,4 +1,5 @@
 import type { AnchorMeta, ContextRootEntry, ContextRootFormat, ContextRootResult } from "./types.js";
+import { isProposedChangesType } from "./proposedChanges.js";
 import { ANCHOR_CATEGORIES, discoveryCategoryIndex, discoveryCategoryTitle } from "./taxonomy.js";
 
 export function buildContextRoot(
@@ -132,7 +133,7 @@ function renderContextRootEntryBlock(
 }
 
 function isContextRootEntry(entry: ContextRootEntry): boolean {
-  return !(entry.category === "projects" && entry.name.includes("/milestones/"));
+  return !(entry.category === "projects" && entry.name.includes("/milestones/")) && !isProposedChangesType(entry.type);
 }
 
 function toContextRootEntry(anchor: AnchorMeta): ContextRootEntry {

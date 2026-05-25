@@ -1,6 +1,11 @@
 import * as z from "zod/v4";
 
 import { isProjectMilestoneType } from "./milestoneTypes.js";
+import {
+  AGENT_RULE_PROPOSED_CHANGES_TYPE,
+  PROJECT_PROPOSED_CHANGES_TYPE,
+  isProposedChangesType,
+} from "../proposedChanges.js";
 
 /**
  * Extra front-matter fields for `type: project-milestone` (beyond universal anchor fields).
@@ -141,13 +146,68 @@ export const ProjectMilestoneTypedOverlaySchema = z
 
 export type ProjectMilestoneTypedOverlay = z.infer<typeof ProjectMilestoneTypedOverlaySchema>;
 
+const ProposalScopeSchema = z.discriminatedUnion("kind", [
+  z.object({
+    kind: z.literal("project"),
+    project: z.string().min(1),
+  }),
+  z.object({
+    kind: z.literal("agent-rules"),
+  }),
+]);
+
+export const ProposedChangesTypedOverlaySchema = z
+  .object({
+    schema_version: z.union([z.literal(1), z.literal("1")]),
+    proposal_scope: ProposalScopeSchema,
+  });
+
+function validateProposedChangesOverlay(frontmatter: Record<string, unknown>): {
+  code: string;
+  message: string;
+}[] {
+  const result = ProposedChangesTypedOverlaySchema.safeParse(frontmatter);
+  if (!result.success) {
+    return result.error.issues.map((issue) => ({
+      code: "front_matter_typed_schema",
+      message: `Typed front matter ${issue.path.join(".") || "root"}: ${issue.message}`,
+    }));
+  }
+
+  const type = frontmatter.type;
+  const scope = result.data.proposal_scope;
+  if (type === PROJECT_PROPOSED_CHANGES_TYPE && scope.kind !== "project") {
+    return [
+      {
+        code: "front_matter_typed_schema",
+        message: "Typed front matter proposal_scope.kind must be project for type: project-proposed-changes",
+      },
+    ];
+  }
+  if (type === AGENT_RULE_PROPOSED_CHANGES_TYPE && scope.kind !== "agent-rules") {
+    return [
+      {
+        code: "front_matter_typed_schema",
+        message: "Typed front matter proposal_scope.kind must be agent-rules for type: agent-rule-proposed-changes",
+      },
+    ];
+  }
+
+  return [];
+}
+
 const TYPED_OVERLAY_SCHEMAS: Array<{
   matches: (frontmatter: Record<string, unknown>) => boolean;
-  schema: z.ZodTypeAny;
+  schema?: z.ZodTypeAny;
+  validate?: (frontmatter: Record<string, unknown>) => { code: string; message: string }[];
 }> = [
   {
     matches: (fm) => isProjectMilestoneType(fm.type),
     schema: ProjectMilestoneTypedOverlaySchema,
+  },
+  {
+    matches: (fm) => isProposedChangesType(fm.type),
+    validate: validateProposedChangesOverlay,
   },
 ];
 
@@ -160,6 +220,12 @@ export function validateTypedFrontmatterOverlay(frontmatter: Record<string, unkn
   for (const entry of TYPED_OVERLAY_SCHEMAS) {
     if (!entry.matches(frontmatter)) {
       continue;
+    }
+    if (entry.validate) {
+      return entry.validate(frontmatter);
+    }
+    if (!entry.schema) {
+      return [];
     }
     const result = entry.schema.safeParse(frontmatter);
     if (result.success) {

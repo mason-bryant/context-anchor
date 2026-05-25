@@ -6,7 +6,7 @@
 
 - Phase 0 storage support: point the server at a private git repo, or run `scripts/anchor-context-sync.sh` for basic add/commit/pull/push sync without MCP.
 - Phase 1 read-only MCP tools: `listAnchors`, `readAnchor`, `readAnchorBatch`, `loadContext`, `planContextBundle`, `listMilestones`, `readMilestone`, `getRelated`, `searchAnchors`, and `listVersions`.
-- Phase 2 write tools and validators: `writeAnchor`, `deleteAnchor`, `renameAnchor`, `updateAnchorFrontmatter`, `updateAnchorSection`, `appendToAnchorSection`, `deleteAnchorSection`, `migrateRoadmapGoalIds`, `diffAnchor`, `revertAnchor`, `compactionReport`, `contextRoot`, `writeContextRoot`, and `conflictStatus`.
+- Phase 2 write tools and validators: `writeAnchor`, `deleteAnchor`, `renameAnchor`, `updateAnchorFrontmatter`, `updateAnchorSection`, `appendToAnchorSection`, `deleteAnchorSection`, `proposeChange`, `listProposedChanges`, `readProposedChange`, `previewProposedChange`, `reviewProposedChange`, `applyProposedChange`, `migrateRoadmapGoalIds`, `diffAnchor`, `revertAnchor`, `compactionReport`, `contextRoot`, `writeContextRoot`, and `conflictStatus`.
 - Phase 3 transport support: stdio for local tools and Streamable HTTP/SSE for remote or containerized agents.
 
 ## Install
@@ -234,6 +234,17 @@ The MCP server also ships session instructions (`src/server.ts`) telling agents 
 - **Facts** → map to `## Current State`, `## Decisions`, or `## Constraints`, keep `last_validated` fresh when those sections change materially, and add PR rows under `## PRs` with link text `PR <title> - #<number>`.
 - **Approval** → changes to Decisions/Constraints (or removing bullets) require the same write tool (`writeAnchor` or a chunked write) with `approved: true` after explicit user confirmation. **`deleteAnchor` and `renameAnchor` always require `approved: true`** before the server will remove or move an anchor file.
 - **Roadmaps** → keep forward-looking specs and completed history in the project’s roadmap anchor when you use that pattern; heed write warnings for oversized roadmaps or `## Completed` tables and use `compactionReport` to plan cleanup.
+
+### Proposed changes
+
+Use the proposed-change tools when you need reviewable draft write-intent instead of a durable edit. Proposed changes are stored in dedicated ledger anchors:
+
+- project scope: `projects/<slug>/<slug>-proposed-changes.md`
+- agent-rule scope: `agent-rules/agent-rules-proposed-changes.md`
+
+Those ledger anchors use `type: project-proposed-changes` or `type: agent-rule-proposed-changes`, `schema_version: 1`, `proposal_scope`, and a `## Proposed Changes` section. Normal context loading should not treat proposals as settled truth; use the proposed-change tools to create, list, inspect, preview, review, and apply them. Human approval still gates sensitive target writes at apply time.
+
+See [docs/proposed-changes.md](docs/proposed-changes.md) for the workflow and supported operations.
 
 ### Authentication
 
