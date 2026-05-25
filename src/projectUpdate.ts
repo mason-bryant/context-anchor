@@ -72,7 +72,7 @@ function renderMarkdownUpdate(snapshot: ProjectUpdateSnapshot): string {
     "",
     "## Progress",
     "",
-    `- Milestones: ${snapshot.progress.milestones.shipped} shipped, ${snapshot.progress.milestones.active} active, ${snapshot.progress.milestones.proposed} upcoming.`,
+    `- Milestones: ${milestoneProgressSummary(snapshot)}.`,
     `- Tasks: ${snapshot.progress.tasks.done} done, ${snapshot.progress.tasks.active} in progress, ${snapshot.progress.tasks.blocked} blocked, ${snapshot.progress.tasks.todo} not started.`,
     "",
   ];
@@ -88,7 +88,7 @@ function renderSlackUpdate(snapshot: ProjectUpdateSnapshot): string {
   const lines = [
     `*Project update: ${snapshot.project}*`,
     `As of ${snapshot.asOf}`,
-    `Progress: ${snapshot.progress.milestones.shipped} shipped, ${snapshot.progress.milestones.active} active, ${snapshot.progress.milestones.proposed} upcoming; ${snapshot.progress.tasks.done}/${snapshot.progress.tasks.total} tasks done.`,
+    `Progress: ${milestoneProgressSummary(snapshot)}; ${snapshot.progress.tasks.done}/${snapshot.progress.tasks.total} tasks done.`,
     "",
   ];
 
@@ -110,7 +110,7 @@ function renderEmailUpdate(snapshot: ProjectUpdateSnapshot): string {
     "",
     `As of: ${snapshot.asOf}`,
     "",
-    `Milestones: ${snapshot.progress.milestones.shipped} shipped, ${snapshot.progress.milestones.active} active, ${snapshot.progress.milestones.proposed} upcoming.`,
+    `Milestones: ${milestoneProgressSummary(snapshot)}.`,
     `Tasks: ${snapshot.progress.tasks.done} done, ${snapshot.progress.tasks.active} in progress, ${snapshot.progress.tasks.blocked} blocked, ${snapshot.progress.tasks.todo} not started.`,
     "",
   ];
@@ -128,6 +128,7 @@ function renderMilestoneGroups(snapshot: ProjectUpdateSnapshot, format: ProjectU
     { title: "Shipped Milestones", statuses: ["shipped"] },
     { title: "In Progress Milestones", statuses: ["active"] },
     { title: "Starting Soon", statuses: ["proposed"] },
+    { title: "Cancelled Milestones", statuses: ["cancelled"] },
   ];
 
   for (const group of groups) {
@@ -149,7 +150,7 @@ function renderMilestone(milestone: ProjectUpdateMilestone, format: ProjectUpdat
   const goals = milestone.goals.map((goal) => formatGoalLabel(goal)).join(", ");
   const lines = [
     format === "slack" ? `_${label}_ (${milestone.status})` : `### ${label}`,
-    `Status: ${milestone.status}`,
+    ...(format === "slack" ? [] : [`Status: ${milestone.status}`]),
     ...(milestone.schedule ? [formatSchedule(milestone)] : []),
     ...(goals ? [`Goals: ${goals}`] : []),
   ];
@@ -214,10 +215,15 @@ function formatSchedule(milestone: ProjectUpdateMilestone): string {
   }
   const bits = [
     schedule.start ? `starts ${schedule.start}` : undefined,
-    schedule.target ? `target ${schedule.target}${schedule.dateConfidence ? ` (${schedule.dateConfidence})` : ""}` : undefined,
+    schedule.target ? `target ${schedule.target}` : undefined,
     schedule.shipped ? `shipped ${schedule.shipped}` : undefined,
+    schedule.dateConfidence ? `confidence ${schedule.dateConfidence}` : undefined,
   ].filter((bit): bit is string => Boolean(bit));
   return bits.length > 0 ? `Schedule: ${bits.join("; ")}` : "";
+}
+
+function milestoneProgressSummary(snapshot: ProjectUpdateSnapshot): string {
+  return `${snapshot.progress.milestones.shipped} shipped, ${snapshot.progress.milestones.active} active, ${snapshot.progress.milestones.proposed} upcoming, ${snapshot.progress.milestones.cancelled} cancelled`;
 }
 
 function taskStatusHeading(status: ProjectUpdateTask["status"]): string {

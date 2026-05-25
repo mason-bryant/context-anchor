@@ -335,7 +335,7 @@ export type ProjectUpdateSnapshot = {
   roadmap?: { name: string; title?: string };
   projectAnchor?: { name: string; title?: string };
   progress: {
-    milestones: { shipped: number; active: number; proposed: number; backlog: number; total: number };
+    milestones: { shipped: number; active: number; proposed: number; cancelled: number; backlog: number; total: number };
     tasks: { done: number; active: number; blocked: number; todo: number; cancelled: number; total: number };
   };
   milestones: ProjectUpdateMilestone[];

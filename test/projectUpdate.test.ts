@@ -57,6 +57,38 @@ describe("project update snapshots", () => {
     expect(rendered.body).toContain("T-010: Decide owner mapping");
   });
 
+  it("renders cancelled milestones and start-only schedule confidence", async () => {
+    const snapshot = await service.projectUpdateSnapshot({
+      project: "acme",
+      statuses: ["cancelled"],
+      asOf: "2026-05-25",
+    });
+    expect(snapshot.milestones.map((milestone) => milestone.displayId)).toEqual(["M3"]);
+    expect(snapshot.progress.milestones).toMatchObject({ cancelled: 1, total: 1 });
+
+    const rendered = await service.renderProjectUpdate({
+      project: "acme",
+      format: "markdown",
+      statuses: ["cancelled"],
+      asOf: "2026-05-25",
+    });
+    expect(rendered.body).toContain("Milestones: 0 shipped, 0 active, 0 upcoming, 1 cancelled.");
+    expect(rendered.body).toContain("## Cancelled Milestones");
+    expect(rendered.body).toContain("Schedule: starts 2026-06-20; confidence estimated");
+  });
+
+  it("does not duplicate milestone status in Slack output", async () => {
+    const rendered = await service.renderProjectUpdate({
+      project: "acme",
+      format: "slack",
+      milestone: "M1",
+      asOf: "2026-05-25",
+    });
+
+    expect(rendered.body).toContain("_M1 - Snapshot generation_ (active)");
+    expect(rendered.body).not.toContain("Status: active");
+  });
+
   it("supports milestone selectors and includeBacklog", async () => {
     const byDisplayId = await service.projectUpdateSnapshot({
       project: "acme",
@@ -197,6 +229,29 @@ None.
     }),
     message: "test: add backlog",
   });
+  await service.writeAnchor({
+    name: "projects/acme/milestones/m3.md",
+    content: milestone({
+      milestoneId: "M3",
+      sequence: 3,
+      status: "cancelled",
+      theme: "Retired reporting slice",
+      goalIds: ["G-002"],
+      schedule: `
+schedule:
+  start: 2026-06-20
+  date_confidence: estimated
+`,
+      tasks: `
+  - id: T-004
+    title: "Retire duplicate renderer"
+    status: cancelled
+    goal_ids:
+      - G-002
+`,
+    }),
+    message: "test: add m3",
+  });
 }
 
 function baseAnchor(type: string, title: string, summary: string): string {
@@ -235,12 +290,14 @@ None.
 function milestone(input: {
   milestoneId: "backlog" | `M${number}`;
   sequence?: number;
-  status: "active" | "proposed";
+  status: "active" | "proposed" | "cancelled";
   theme: string;
   goalIds: string[];
+  schedule?: string;
   tasks: string;
 }): string {
   const sequence = input.sequence !== undefined ? `sequence: ${input.sequence}\n` : "";
+  const schedule = input.schedule ?? "";
   const goalIds =
     input.goalIds.length > 0
       ? `  goal_ids:\n${input.goalIds.map((goalId) => `    - ${goalId}`).join("\n")}`
@@ -262,6 +319,7 @@ steel_thread: "${input.theme}"
 status: ${input.status}
 relations:
 ${goalIds}
+${schedule}
 tasks:
 ${input.tasks}---
 

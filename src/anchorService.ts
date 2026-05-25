@@ -1283,7 +1283,7 @@ function selectProjectUpdateRows(
 
 function computeProjectUpdateProgress(milestones: ProjectUpdateMilestone[]): ProjectUpdateSnapshot["progress"] {
   const progress: ProjectUpdateSnapshot["progress"] = {
-    milestones: { shipped: 0, active: 0, proposed: 0, backlog: 0, total: 0 },
+    milestones: { shipped: 0, active: 0, proposed: 0, cancelled: 0, backlog: 0, total: 0 },
     tasks: { done: 0, active: 0, blocked: 0, todo: 0, cancelled: 0, total: 0 },
   };
 
@@ -1298,6 +1298,8 @@ function computeProjectUpdateProgress(milestones: ProjectUpdateMilestone[]): Pro
         progress.milestones.active += 1;
       } else if (milestone.status === "proposed") {
         progress.milestones.proposed += 1;
+      } else if (milestone.status === "cancelled") {
+        progress.milestones.cancelled += 1;
       }
     }
     for (const task of milestone.tasks) {
