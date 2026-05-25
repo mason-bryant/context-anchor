@@ -651,37 +651,35 @@ export class AnchorService {
   async proposeChange(input: ProposeChangeInput): Promise<ProposeChangeResult> {
     const scope = await this.resolveProposedChangeScope(input.scope);
     const target = this.repo.resolveAnchor(input.target).name;
+    const placeholder = (code: string, message: string): ProposeChangeResult => ({
+      proposal: placeholderProposalListItem(scope, target, input.summary, this.proposalLedgerPath(scope)),
+      warnings: [
+        {
+          severity: "BLOCK",
+          code,
+          message,
+        },
+      ],
+    });
     const targetViolation = validateProposalTarget(scope, target);
     if (targetViolation) {
-      return {
-        proposal: placeholderProposalListItem(scope, target, input.summary),
-        warnings: [
-          {
-            severity: "BLOCK",
-            code: "proposed_change_target_scope",
-            message: targetViolation,
-          },
-        ],
-      };
+      return placeholder("proposed_change_target_scope", targetViolation);
     }
 
     try {
       const oldContent = await this.repo.readRaw(target);
       applyProposalOperations(oldContent, input.operations);
     } catch (error) {
-      return {
-        proposal: placeholderProposalListItem(scope, target, input.summary),
-        warnings: [
-          {
-            severity: "BLOCK",
-            code: "proposed_change_operation",
-            message: error instanceof Error ? error.message : String(error),
-          },
-        ],
-      };
+      return placeholder("proposed_change_operation", errorMessage(error));
     }
 
-    const ledger = await this.ensureProposalLedger(scope);
+    let ledger: { read: AnchorRead };
+    try {
+      ledger = await this.ensureProposalLedger(scope);
+    } catch (error) {
+      return placeholder("proposed_change_ledger", errorMessage(error));
+    }
+
     const resolvedTarget = this.repo.resolveAnchor(target);
     const oldContent = await this.repo.readRaw(target);
     const baseFileCommit = oldContent === undefined ? undefined : await this.repo.lastCommitForFile(resolvedTarget.repoRelativePath);
@@ -700,7 +698,21 @@ export class AnchorService {
       operations: input.operations,
     };
 
-    const nextContent = appendProposalRecord(ledger.read.content, record);
+    let nextContent: string;
+    try {
+      nextContent = appendProposalRecord(ledger.read.content, record);
+    } catch (error) {
+      return {
+        proposal: this.toProposalListItem(record, ledger.read),
+        warnings: [
+          {
+            severity: "BLOCK",
+            code: "proposed_change_ledger_malformed",
+            message: errorMessage(error),
+          },
+        ],
+      };
+    }
     const write = await this.writeAnchor({
       name: ledger.read.name,
       content: nextContent,
@@ -1002,6 +1014,15 @@ export class AnchorService {
       ledgerPath: ledger.path,
       ...(ledger.fileCommit ? { ledgerFileCommit: ledger.fileCommit } : {}),
     };
+  }
+
+  private proposalLedgerPath(scope: ProposedChangeScope): string {
+    const name = proposedChangeLedgerName(scope);
+    try {
+      return this.repo.resolveAnchor(name).repoRelativePath;
+    } catch {
+      return name;
+    }
   }
 
   private async findProposedChange(id: string): Promise<ProposedChangeListItem> {
@@ -1731,6 +1752,7 @@ function placeholderProposalListItem(
   scope: ProposedChangeScope,
   target: string,
   summary: string,
+  ledgerPath: string,
 ): ProposedChangeListItem {
   const now = new Date().toISOString();
   return {
@@ -1743,8 +1765,12 @@ function placeholderProposalListItem(
     updatedAt: now,
     operations: [],
     ledgerName: proposedChangeLedgerName(scope),
-    ledgerPath: proposedChangeLedgerName(scope),
+    ledgerPath,
   };
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 function makeProposalId(summary: string, isoDate: string): string {

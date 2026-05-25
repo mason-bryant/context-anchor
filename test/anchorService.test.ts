@@ -915,6 +915,92 @@ None.
     expect(applied.targetVersion).toBeUndefined();
     expect(applied.warnings.map((warning) => warning.code)).toContain("stale_base");
   });
+
+  it("reports malformed proposal records without throwing during validation", async () => {
+    const result = await service.writeAnchor({
+      name: "projects/demo/demo-proposed-changes.md",
+      content: proposalLedgerContent({
+        proposedChanges: `### PC-20260525-missing-scope
+
+\`\`\`json anchor-mcp-proposed-change
+{
+  "id": "PC-20260525-missing-scope",
+  "status": "pending",
+  "summary": "Missing scope",
+  "target": "projects/demo/demo.md",
+  "createdAt": "2026-05-25T00:00:00.000Z",
+  "updatedAt": "2026-05-25T00:00:00.000Z",
+  "operations": [
+    {
+      "type": "section.append",
+      "heading": "Current State",
+      "content": "- Missing scope should be reported."
+    }
+  ]
+}
+\`\`\``,
+      }),
+      message: "test: malformed proposal record",
+    });
+
+    expect(result.version).toBeUndefined();
+    expect(result.warnings.map((warning) => warning.code)).toContain("proposed_changes_shape");
+    expect(result.warnings.map((warning) => warning.message)).toContain(
+      "Proposal fence does not contain a valid proposed-change record.",
+    );
+  });
+
+  it("returns a blocking warning when appending to a malformed proposal ledger", async () => {
+    await service.writeAnchor({
+      name: "projects/demo/demo",
+      content: projectAnchorContent(),
+      message: "test: add demo anchor",
+    });
+    await repo.commitAnchor({
+      name: "projects/demo/demo-proposed-changes.md",
+      content: proposalLedgerContent({ includeProposedChanges: false }),
+      message: "test: seed malformed proposal ledger",
+    });
+
+    const proposed = await service.proposeChange({
+      scope: { kind: "project", project: "demo" },
+      target: "projects/demo/demo.md",
+      summary: "Append via malformed ledger",
+      operations: [{ type: "section.append", heading: "Current State", content: "- Should not throw." }],
+    });
+
+    expect(proposed.version).toBeUndefined();
+    expect(proposed.warnings.map((warning) => warning.code)).toContain("proposed_change_ledger_malformed");
+    expect(proposed.warnings.map((warning) => warning.message)).toContain("No section matching heading: Proposed Changes");
+  });
+
+  it("rejects proposal type arrays with mismatched or conflicting scopes", async () => {
+    const mismatched = await service.writeAnchor({
+      name: "projects/demo/demo-proposed-changes.md",
+      content: proposalLedgerContent({
+        type: "[project-proposed-changes]",
+        proposalScope: "  kind: agent-rules",
+      }),
+      message: "test: mismatched proposal type array",
+    });
+    expect(mismatched.version).toBeUndefined();
+    expect(mismatched.warnings.map((warning) => warning.code)).toContain("front_matter_typed_schema");
+    expect(mismatched.warnings.map((warning) => warning.message)).toContain(
+      "Typed front matter proposal_scope.kind must be project for type: project-proposed-changes",
+    );
+
+    const conflicting = await service.writeAnchor({
+      name: "projects/demo/demo-proposed-changes.md",
+      content: proposalLedgerContent({
+        type: "[project-proposed-changes, agent-rule-proposed-changes]",
+      }),
+      message: "test: conflicting proposal type array",
+    });
+    expect(conflicting.version).toBeUndefined();
+    expect(conflicting.warnings.map((warning) => warning.message)).toContain(
+      "Typed front matter type must not include both proposed-change ledger types",
+    );
+  });
 });
 
 function roadmapAnchorContent(options: { extraFm?: string } = {}): string {
@@ -1053,6 +1139,57 @@ ${overrides.constraints ?? "- Preserve existing claims."}
 ## PRs
 
 - [PR Add anchor MCP - #123](https://github.com/example/repo/pull/123)
+`;
+}
+
+function proposalLedgerContent(
+  options: {
+    includeProposedChanges?: boolean;
+    proposedChanges?: string;
+    proposalScope?: string;
+    type?: string;
+  } = {},
+): string {
+  const proposalSection =
+    options.includeProposedChanges === false
+      ? ""
+      : `## Proposed Changes
+
+${options.proposedChanges ?? "None."}
+
+`;
+  return `---
+project:
+  - demo
+type: ${options.type ?? "project-proposed-changes"}
+tags:
+  - proposed-changes
+summary: "Reviewable proposed changes for project demo."
+read_this_if:
+  - "You are reviewing pending proposed changes for project demo."
+last_validated: 2026-05-25
+schema_version: 1
+proposal_scope:
+${options.proposalScope ?? "  kind: project\n  project: demo"}
+---
+
+# Proposed Changes -- demo
+
+## Current State
+
+- This ledger stores proposed changes for project \`demo\`.
+
+## Decisions
+
+- Review proposed changes before mutating target anchors.
+
+## Constraints
+
+- Pending proposals must not be treated as current project truth.
+
+${proposalSection}## PRs
+
+None.
 `;
 }
 

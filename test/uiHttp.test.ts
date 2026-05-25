@@ -190,13 +190,13 @@ describe("UI HTTP routes", () => {
   });
 
   it("routes proposed-change list requests with optional filters", async () => {
-    const restore = stubAnchorServiceMethod("listProposedChanges", vi.fn(async () => ({ items: ["a"] })));
+    const restore = stubAnchorServiceMethod("listProposedChanges", vi.fn(async () => ({ proposals: [{ id: "pc-1" }] })));
 
     try {
-      const response = await fetchJson<{ items: string[] }>(
+      const response = await fetchJson<{ proposals: Array<{ id: string }> }>(
         "/api/ui/proposed-changes?project=demo&scope=agent-rules&status=pending",
       );
-      expect(response.items).toEqual(["a"]);
+      expect(response.proposals).toEqual([{ id: "pc-1" }]);
       expect((AnchorService.prototype as unknown as { listProposedChanges: ReturnType<typeof vi.fn> }).listProposedChanges)
         .toHaveBeenCalledWith({ project: "demo", scope: "agent-rules", status: "pending" });
     } finally {

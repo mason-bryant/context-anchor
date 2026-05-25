@@ -174,9 +174,18 @@ function validateProposedChangesOverlay(frontmatter: Record<string, unknown>): {
     }));
   }
 
-  const type = frontmatter.type;
+  const hasProjectType = typeIncludes(frontmatter.type, PROJECT_PROPOSED_CHANGES_TYPE);
+  const hasAgentRulesType = typeIncludes(frontmatter.type, AGENT_RULE_PROPOSED_CHANGES_TYPE);
   const scope = result.data.proposal_scope;
-  if (type === PROJECT_PROPOSED_CHANGES_TYPE && scope.kind !== "project") {
+  if (hasProjectType && hasAgentRulesType) {
+    return [
+      {
+        code: "front_matter_typed_schema",
+        message: "Typed front matter type must not include both proposed-change ledger types",
+      },
+    ];
+  }
+  if (hasProjectType && scope.kind !== "project") {
     return [
       {
         code: "front_matter_typed_schema",
@@ -184,7 +193,7 @@ function validateProposedChangesOverlay(frontmatter: Record<string, unknown>): {
       },
     ];
   }
-  if (type === AGENT_RULE_PROPOSED_CHANGES_TYPE && scope.kind !== "agent-rules") {
+  if (hasAgentRulesType && scope.kind !== "agent-rules") {
     return [
       {
         code: "front_matter_typed_schema",
@@ -194,6 +203,16 @@ function validateProposedChangesOverlay(frontmatter: Record<string, unknown>): {
   }
 
   return [];
+}
+
+function typeIncludes(type: unknown, expected: string): boolean {
+  if (typeof type === "string") {
+    return type === expected;
+  }
+  if (Array.isArray(type)) {
+    return type.includes(expected);
+  }
+  return false;
 }
 
 const TYPED_OVERLAY_SCHEMAS: Array<{

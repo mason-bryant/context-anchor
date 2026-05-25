@@ -246,7 +246,9 @@ export function validateProposalRecord(record: ProposedChangeRecord, ledgerScope
   if (!record.id.match(/^PC-\d{8}-[A-Za-z0-9_-]{4,32}$/)) {
     violations.push(`Proposed change id must match PC-YYYYMMDD-<slug>: ${record.id}`);
   }
-  if (record.scope.kind !== ledgerScope.kind) {
+  if (!isProposalScope(record.scope)) {
+    violations.push(`Proposed change ${record.id} must include a valid scope.`);
+  } else if (record.scope.kind !== ledgerScope.kind) {
     violations.push(`Proposed change ${record.id} scope does not match ledger scope.`);
   } else if (
     record.scope.kind === "project" &&
@@ -259,11 +261,13 @@ export function validateProposalRecord(record: ProposedChangeRecord, ledgerScope
   if (targetViolation) {
     violations.push(`Proposed change ${record.id}: ${targetViolation}`);
   }
-  if (record.operations.length === 0) {
+  if (!Array.isArray(record.operations) || record.operations.length === 0) {
     violations.push(`Proposed change ${record.id} must include at least one operation.`);
   }
-  for (const [index, operation] of record.operations.entries()) {
-    violations.push(...validateProposalOperation(record.id, index, operation));
+  if (Array.isArray(record.operations)) {
+    for (const [index, operation] of record.operations.entries()) {
+      violations.push(...validateProposalOperation(record.id, index, operation));
+    }
   }
   return violations;
 }
@@ -488,8 +492,20 @@ function isProposalRecord(value: unknown): value is ProposedChangeRecord {
     typeof record.createdAt === "string" &&
     typeof record.updatedAt === "string" &&
     isProposalStatus(record.status) &&
+    isProposalScope(record.scope) &&
     Array.isArray(record.operations)
   );
+}
+
+function isProposalScope(value: unknown): value is ProposedChangeScope {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return false;
+  }
+  const scope = value as Partial<ProposedChangeScope>;
+  if (scope.kind === "project") {
+    return typeof scope.project === "string" && scope.project.trim().length > 0;
+  }
+  return scope.kind === "agent-rules";
 }
 
 function isProposalStatus(value: unknown): value is ProposedChangeStatus {
