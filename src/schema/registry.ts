@@ -17,6 +17,33 @@ const sequenceSchema = z.union([
     .pipe(z.number().int().positive()),
 ]);
 
+const isoDateSchema = z.union([z.string().regex(/^\d{4}-\d{2}-\d{2}$/), z.date()]);
+
+const nullableIsoDateSchema = z.union([isoDateSchema, z.null()]);
+
+const dateConfidenceSchema = z.enum(["committed", "internal_goal", "estimated"]);
+
+const milestoneTaskStatusSchema = z.enum(["todo", "active", "blocked", "done", "cancelled"]);
+
+const milestoneTaskSchema = z.object({
+  id: z.string().regex(/^T-\d{1,6}$/),
+  title: z.string().min(1).max(240),
+  status: milestoneTaskStatusSchema,
+  owner: z.string().min(1).max(160).optional(),
+  goal_ids: z.array(z.string().regex(/^G-\d{1,6}$/)).optional(),
+  due: nullableIsoDateSchema.optional(),
+  completed_on: nullableIsoDateSchema.optional(),
+  date_confidence: dateConfidenceSchema.optional(),
+  notes: z.string().min(1).max(480).optional(),
+});
+
+const milestoneScheduleSchema = z.object({
+  start: nullableIsoDateSchema.optional(),
+  target: nullableIsoDateSchema.optional(),
+  shipped: nullableIsoDateSchema.optional(),
+  date_confidence: dateConfidenceSchema.optional(),
+});
+
 export const ProjectMilestoneTypedOverlaySchema = z
   .object({
     schema_version: z.union([z.literal(1), z.literal("1")]),
@@ -24,10 +51,12 @@ export const ProjectMilestoneTypedOverlaySchema = z
     steel_thread: z.string().min(1).max(480).optional(),
     status: z.enum(["proposed", "active", "shipped", "cancelled"]),
     relations: z.object({
-      goal_ids: z.array(z.string().regex(/^G-\d{1,6}$/)).min(1),
+      goal_ids: z.array(z.string().regex(/^G-\d{1,6}$/)),
     }),
     milestone_id: milestoneIdSchema.optional(),
     sequence: sequenceSchema.optional(),
+    schedule: milestoneScheduleSchema.optional(),
+    tasks: z.array(milestoneTaskSchema).optional(),
   })
   .superRefine((data, ctx) => {
     if (data.milestone_id !== undefined && data.milestone_id !== "backlog") {
@@ -45,6 +74,68 @@ export const ProjectMilestoneTypedOverlaySchema = z
         message: "sequence must not be set when milestone_id is backlog",
         path: ["sequence"],
       });
+    }
+    if (data.milestone_id !== "backlog" && data.relations.goal_ids.length === 0) {
+      ctx.addIssue({
+        code: "custom",
+        message: "relations.goal_ids must include at least one goal id unless milestone_id is backlog",
+        path: ["relations", "goal_ids"],
+      });
+    }
+    if (data.schedule) {
+      const hasPlannedScheduleDate = data.schedule.start !== undefined && data.schedule.start !== null;
+      const hasTargetDate = data.schedule.target !== undefined && data.schedule.target !== null;
+      if ((hasPlannedScheduleDate || hasTargetDate) && data.schedule.date_confidence === undefined) {
+        ctx.addIssue({
+          code: "custom",
+          message: "schedule.date_confidence is required when schedule.start or schedule.target is set",
+          path: ["schedule", "date_confidence"],
+        });
+      }
+    }
+
+    const seenTaskIds = new Set<string>();
+    const milestoneGoalIds = new Set(data.relations.goal_ids);
+    for (const [index, task] of (data.tasks ?? []).entries()) {
+      if (seenTaskIds.has(task.id)) {
+        ctx.addIssue({
+          code: "custom",
+          message: `duplicate task id "${task.id}"`,
+          path: ["tasks", index, "id"],
+        });
+      }
+      seenTaskIds.add(task.id);
+
+      if (task.due !== undefined && task.due !== null && task.date_confidence === undefined) {
+        ctx.addIssue({
+          code: "custom",
+          message: "task.date_confidence is required when task.due is set",
+          path: ["tasks", index, "date_confidence"],
+        });
+      }
+      if (task.status === "done" && (task.completed_on === undefined || task.completed_on === null)) {
+        ctx.addIssue({
+          code: "custom",
+          message: "task.completed_on is required when task.status is done",
+          path: ["tasks", index, "completed_on"],
+        });
+      }
+      if (task.status !== "done" && task.completed_on !== undefined && task.completed_on !== null) {
+        ctx.addIssue({
+          code: "custom",
+          message: "task.completed_on must only be set when task.status is done",
+          path: ["tasks", index, "completed_on"],
+        });
+      }
+      for (const [goalIndex, goalId] of (task.goal_ids ?? []).entries()) {
+        if (!milestoneGoalIds.has(goalId)) {
+          ctx.addIssue({
+            code: "custom",
+            message: `task goal_id "${goalId}" is not listed in relations.goal_ids`,
+            path: ["tasks", index, "goal_ids", goalIndex],
+          });
+        }
+      }
     }
   });
 

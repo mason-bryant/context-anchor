@@ -345,6 +345,7 @@ None.
     expect(root.entries.map((entry) => entry.category)).toEqual([
       "server-rules",
       "server-rules",
+      "server-rules",
       "agent-rules",
       "projects",
       "shared",
@@ -392,16 +393,17 @@ None.
     });
 
     expect(loaded.selectionReason).toBe("filter");
-    expect(loaded.entries).toHaveLength(3);
+    expect(loaded.entries).toHaveLength(4);
     expect(loaded.entries.map((entry) => entry.name)).toEqual([
       "server-rules/acceptance-criteria.md",
       "server-rules/milestone-usage.md",
+      "server-rules/project-updates.md",
       "projects/demo/demo.md",
     ]);
-    expect(loaded.totalMatching).toBe(3);
-    expect(loaded.returnedCount).toBe(3);
+    expect(loaded.totalMatching).toBe(4);
+    expect(loaded.returnedCount).toBe(4);
     expect(loaded.truncated).toBe(false);
-    expect(loaded.anchors).toHaveLength(3);
+    expect(loaded.anchors).toHaveLength(4);
     expect(loaded.anchors[0]?.excerpt).toBeDefined();
     expect(loaded.anchors[0]?.content).toBeUndefined();
   });
@@ -425,7 +427,7 @@ None.
 
     const first = await service.loadContext({ limit: 1, format: "json" });
     expect(first.returnedCount).toBe(1);
-    expect(first.totalMatching).toBe(5);
+    expect(first.totalMatching).toBe(6);
     expect(first.truncated).toBe(true);
     expect(first.nextCursor).toBeDefined();
 
@@ -445,8 +447,13 @@ None.
 
     const fifth = await service.loadContext({ cursor: fourth.nextCursor });
     expect(fifth.returnedCount).toBe(1);
-    expect(fifth.truncated).toBe(false);
-    expect(fifth.nextCursor).toBeUndefined();
+    expect(fifth.truncated).toBe(true);
+    expect(fifth.nextCursor).toBeDefined();
+
+    const sixth = await service.loadContext({ cursor: fifth.nextCursor });
+    expect(sixth.returnedCount).toBe(1);
+    expect(sixth.truncated).toBe(false);
+    expect(sixth.nextCursor).toBeUndefined();
   });
 
   it("loadContext explicit names supports includeContent none", async () => {
@@ -502,6 +509,7 @@ None.
     expect(planned.loadContext.names).toEqual([
       "server-rules/acceptance-criteria.md",
       "server-rules/milestone-usage.md",
+      "server-rules/project-updates.md",
       ...planned.included.map((anchor) => anchor.name),
     ]);
     expect(planned.loadContext.includeContent).toBe("excerpt");
@@ -583,11 +591,15 @@ None.
       category: "server-rules",
     });
 
-    expect(planned.totalCandidates).toBe(2);
+    expect(planned.totalCandidates).toBe(3);
     expect(planned.included.map((anchor) => anchor.name)).toContain("server-rules/milestone-usage.md");
     expect(planned.included.map((anchor) => anchor.name)).not.toContain("projects/demo/demo.md");
     expect(new Set(planned.loadContext.names)).toEqual(
-      new Set(["server-rules/acceptance-criteria.md", "server-rules/milestone-usage.md"]),
+      new Set([
+        "server-rules/acceptance-criteria.md",
+        "server-rules/milestone-usage.md",
+        "server-rules/project-updates.md",
+      ]),
     );
   });
 
@@ -714,6 +726,14 @@ None.
     const resM = await service.writeAnchor({ name: readMilestone.name, content: readMilestone.content });
     expect(resM.version).toBeUndefined();
     expect(resM.warnings.some((w) => w.code === "reserved_builtin")).toBe(true);
+
+    const readUpdates = await service.readAnchor("server-rules/project-updates");
+    expect(readUpdates.content).toContain("put a task on a project backlog");
+    expect(readUpdates.content).toContain("ask the user for both the date");
+    expect(readUpdates.content).toContain("`committed`, an `internal_goal`, or `estimated`");
+    const resU = await service.writeAnchor({ name: readUpdates.name, content: readUpdates.content });
+    expect(resU.version).toBeUndefined();
+    expect(resU.warnings.some((w) => w.code === "reserved_builtin")).toBe(true);
   });
 
   it("lists only built-ins when discovery category is server-rules", async () => {
@@ -723,11 +743,12 @@ None.
       message: "test: add shared for list",
     });
     const only = await service.listAnchors({ category: "server-rules" });
-    expect(only).toHaveLength(2);
+    expect(only).toHaveLength(3);
     expect(only.every((a) => a.origin === "built-in")).toBe(true);
     const merged = await service.listAnchors({});
     expect(merged.some((a) => a.name === "server-rules/acceptance-criteria.md")).toBe(true);
     expect(merged.some((a) => a.name === "server-rules/milestone-usage.md")).toBe(true);
+    expect(merged.some((a) => a.name === "server-rules/project-updates.md")).toBe(true);
     expect(merged.some((a) => a.name === "shared/plan-list.md")).toBe(true);
   });
 

@@ -11,6 +11,15 @@ const CategorySchema = z
   .refine((value): value is DiscoveryCategory => isDiscoveryCategory(value), { message: "Invalid anchor category" });
 const ContextRootFormatSchema = z.enum(["json", "markdown", "both"]);
 const AnchorContentModeSchema = z.enum(["full", "excerpt", "none"]);
+const ProjectUpdateStatusSchema = z.enum(["proposed", "active", "shipped", "cancelled"]);
+const ProjectUpdateFormatSchema = z.enum(["markdown", "slack", "email"]);
+const ProjectUpdateSnapshotInputSchema = z.object({
+  project: z.string().min(1),
+  milestone: z.string().optional(),
+  statuses: z.array(ProjectUpdateStatusSchema).optional(),
+  includeBacklog: z.boolean().default(false),
+  asOf: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+});
 
 const SharedWriteOptsSchema = z.object({
   message: z.string().optional(),
@@ -239,6 +248,32 @@ the index when your workflow checks in that file.`,
       annotations: { readOnlyHint: true },
     },
     async ({ name }) => jsonResult(await service.readMilestone(name)),
+  );
+
+  server.registerTool(
+    "projectUpdateSnapshot",
+    {
+      title: "Project Update Snapshot",
+      description:
+        "Build a deterministic read-only project update snapshot from project context, roadmap goals, ordered milestones, structured milestone tasks, dates, and backlog items. Backlog items are returned separately and should render last.",
+      inputSchema: ProjectUpdateSnapshotInputSchema,
+      annotations: { readOnlyHint: true },
+    },
+    async (input) => jsonResult(await service.projectUpdateSnapshot(input)),
+  );
+
+  server.registerTool(
+    "renderProjectUpdate",
+    {
+      title: "Render Project Update",
+      description:
+        "Render a deterministic project update document in markdown, Slack, or email format from the project update snapshot. The output is generated text only and does not write anchors.",
+      inputSchema: ProjectUpdateSnapshotInputSchema.extend({
+        format: ProjectUpdateFormatSchema,
+      }),
+      annotations: { readOnlyHint: true },
+    },
+    async (input) => jsonResult(await service.renderProjectUpdate(input)),
   );
 
   server.registerTool(

@@ -31,6 +31,11 @@ import {
 } from "./contextPlanner.js";
 import type { AnchorRepository } from "./git/repo.js";
 import { listRoadmapGoalDetails } from "./roadmap/analyzeRoadmap.js";
+import {
+  renderProjectUpdate as renderProjectUpdateFromSnapshot,
+  sortUpdateTasks,
+  toProjectUpdateTask,
+} from "./projectUpdate.js";
 import { getRelatedAnchors } from "./relations/index.js";
 import { isProjectMilestoneType } from "./schema/milestoneTypes.js";
 import { countCompletedRows, parseAnchor } from "./storage/markdown.js";
@@ -56,6 +61,14 @@ import type {
   PlanContextBundleInput,
   PlanContextBundleResult,
   ProjectFilterResolution,
+  ProjectUpdateMilestone,
+  ProjectUpdateMilestoneStatus,
+  ProjectUpdateSnapshot,
+  ProjectUpdateSnapshotInput,
+  MilestoneScheduleMeta,
+  MilestoneTaskMeta,
+  RenderedProjectUpdate,
+  RenderProjectUpdateInput,
   SearchHit,
   ValidationViolation,
   WriteAnchorInput,
@@ -66,6 +79,20 @@ import {
   resolveProjectFilter,
 } from "./projectAliases.js";
 import { runValidators } from "./validators/pipeline.js";
+
+type MilestoneListRow = {
+  name: string;
+  path: string;
+  status: string;
+  theme: string;
+  steelThread?: string;
+  goalIds: string[];
+  milestoneId?: string;
+  sequence?: number;
+  displayId?: string;
+  schedule?: MilestoneScheduleMeta;
+  tasks?: MilestoneTaskMeta[];
+};
 
 export class AnchorService {
   constructor(
@@ -843,18 +870,7 @@ export class AnchorService {
     };
   }
 
-  async listMilestones(project?: string): Promise<
-    Array<{
-      name: string;
-      path: string;
-      status: string;
-      theme: string;
-      goalIds: string[];
-      milestoneId?: string;
-      sequence?: number;
-      displayId?: string;
-    }>
-  > {
+  async listMilestones(project?: string): Promise<MilestoneListRow[]> {
     const { effectiveProject } = await this.resolveProjectFilter(project);
     const anchors = await this.repo.listAnchors({
       ...(effectiveProject ? { project: effectiveProject } : {}),
@@ -876,10 +892,13 @@ export class AnchorService {
           path: anchor.path,
           status: m.status,
           theme: m.theme,
+          ...(m.steelThread !== undefined ? { steelThread: m.steelThread } : {}),
           goalIds: m.goalIds,
           ...(m.milestoneId !== undefined ? { milestoneId: m.milestoneId } : {}),
           ...(m.sequence !== undefined ? { sequence: m.sequence } : {}),
           ...(displayId !== undefined ? { displayId } : {}),
+          ...(m.schedule !== undefined ? { schedule: m.schedule } : {}),
+          ...(m.tasks !== undefined ? { tasks: m.tasks } : {}),
         };
       });
 
@@ -954,6 +973,104 @@ export class AnchorService {
     });
 
     return { milestone, roadmap, goals };
+  }
+
+  async projectUpdateSnapshot(input: ProjectUpdateSnapshotInput): Promise<ProjectUpdateSnapshot> {
+    const generatedAt = new Date().toISOString();
+    const asOf = input.asOf ?? generatedAt.slice(0, 10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(asOf)) {
+      throw new Error("projectUpdateSnapshot asOf must be YYYY-MM-DD when provided.");
+    }
+
+    const { projectFilter, effectiveProject } = await this.resolveProjectFilter(input.project);
+    const project = effectiveProject ?? input.project;
+    const warnings: string[] = [];
+    const anchors = await this.repo.listAnchors({ project });
+    const projectAnchor = findProjectAnchor(anchors, project);
+    const roadmap = findProjectRoadmap(anchors, project);
+    if (!projectAnchor) {
+      warnings.push(`No project context anchor found for project "${project}".`);
+    }
+    if (!roadmap) {
+      warnings.push(`No project roadmap anchor found for project "${project}".`);
+    }
+
+    const allRows = await this.listMilestones(project);
+    const backlogRow = allRows.find(isBacklogRow);
+    const selectedRows = selectProjectUpdateRows(allRows.filter((row) => !isBacklogRow(row)), input, warnings);
+
+    let backlog: ProjectUpdateMilestone | undefined;
+    const shouldIncludeBacklog =
+      Boolean(input.includeBacklog) ||
+      input.milestone?.toLowerCase() === "backlog" ||
+      Boolean(backlogRow && (backlogRow.tasks?.length ?? 0) > 0);
+    if (backlogRow && shouldIncludeBacklog) {
+      backlog = await this.projectUpdateMilestoneFromRow(backlogRow, warnings);
+    } else if (input.milestone?.toLowerCase() === "backlog") {
+      warnings.push(`No backlog milestone found for project "${project}".`);
+    }
+
+    const milestones = [];
+    for (const row of selectedRows) {
+      milestones.push(await this.projectUpdateMilestoneFromRow(row, warnings));
+    }
+
+    const snapshotMilestones = [...milestones, ...(backlog ? [backlog] : [])];
+    for (const milestone of snapshotMilestones) {
+      addMilestoneUpdateWarnings(milestone, warnings);
+    }
+
+    return {
+      generatedAt,
+      asOf,
+      project,
+      ...(projectFilter ? { projectFilter } : {}),
+      ...(roadmap ? { roadmap: { name: roadmap.name, ...(roadmap.title ? { title: roadmap.title } : {}) } } : {}),
+      ...(projectAnchor
+        ? { projectAnchor: { name: projectAnchor.name, ...(projectAnchor.title ? { title: projectAnchor.title } : {}) } }
+        : {}),
+      progress: computeProjectUpdateProgress(snapshotMilestones),
+      milestones,
+      ...(backlog ? { backlog } : {}),
+      warnings: dedupeStrings(warnings),
+    };
+  }
+
+  async renderProjectUpdate(input: RenderProjectUpdateInput): Promise<RenderedProjectUpdate> {
+    const snapshot = await this.projectUpdateSnapshot(input);
+    return renderProjectUpdateFromSnapshot(snapshot, input.format);
+  }
+
+  private async projectUpdateMilestoneFromRow(
+    row: MilestoneListRow,
+    warnings: string[],
+  ): Promise<ProjectUpdateMilestone> {
+    let resolvedGoals = row.goalIds.map((id) => ({ id, title: "(unknown)", hasAcceptanceCriteria: false }));
+    try {
+      const resolved = await this.readMilestone(row.name);
+      resolvedGoals = resolved.goals;
+    } catch (error) {
+      warnings.push(`Could not resolve milestone "${row.name}": ${error instanceof Error ? error.message : String(error)}.`);
+    }
+
+    const tasks = sortUpdateTasks((row.tasks ?? []).map((task) => toProjectUpdateTask(task, row.name)));
+    return {
+      name: row.name,
+      path: row.path,
+      ...(row.displayId ? { displayId: row.displayId } : {}),
+      ...(row.milestoneId ? { milestoneId: row.milestoneId } : {}),
+      ...(row.sequence !== undefined ? { sequence: row.sequence } : {}),
+      status: row.status as ProjectUpdateMilestoneStatus,
+      theme: row.theme,
+      ...(row.steelThread ? { steelThread: row.steelThread } : {}),
+      goalIds: row.goalIds,
+      ...(row.schedule ? { schedule: row.schedule } : {}),
+      goals: resolvedGoals.map((goal) => ({
+        ...goal,
+        tasks: tasks.filter((task) => task.goalIds?.includes(goal.id)),
+      })),
+      tasks,
+    };
   }
 
   getRelated(name: string, kind?: string): Promise<AnchorRead[]> {
@@ -1105,6 +1222,119 @@ export class AnchorService {
 
     return { signals, suggestedMoves };
   }
+}
+
+function findProjectAnchor(anchors: AnchorMeta[], project: string): AnchorMeta | undefined {
+  const exact = anchors.find((anchor) => anchor.name === `projects/${project}/${project}.md`);
+  if (exact) {
+    return exact;
+  }
+  return anchors
+    .filter((anchor) => anchor.category === "projects" && !anchor.name.includes("/milestones/"))
+    .find((anchor) => frontmatterTypeIncludes(anchor.type, "context-anchor"));
+}
+
+function findProjectRoadmap(anchors: AnchorMeta[], project: string): AnchorMeta | undefined {
+  const exact = anchors.find((anchor) => anchor.name === `projects/${project}/${project}-roadmap.md`);
+  if (exact) {
+    return exact;
+  }
+  return anchors
+    .filter((anchor) => anchor.category === "projects" && !anchor.name.includes("/milestones/"))
+    .find((anchor) => frontmatterTypeIncludes(anchor.type, "project-roadmap"));
+}
+
+function frontmatterTypeIncludes(raw: unknown, expected: string): boolean {
+  if (raw === expected) {
+    return true;
+  }
+  return Array.isArray(raw) && raw.some((item) => item === expected);
+}
+
+function isBacklogRow(row: MilestoneListRow): boolean {
+  return row.milestoneId === "backlog" || row.displayId === "backlog";
+}
+
+function selectProjectUpdateRows(
+  rows: MilestoneListRow[],
+  input: ProjectUpdateSnapshotInput,
+  warnings: string[],
+): MilestoneListRow[] {
+  const selector = input.milestone?.trim();
+  if (selector?.toLowerCase() === "backlog") {
+    return [];
+  }
+  if (selector && selector.toLowerCase() !== "active" && selector.toLowerCase() !== "backlog") {
+    const matches = rows.filter(
+      (row) =>
+        row.name === selector ||
+        row.milestoneId?.toLowerCase() === selector.toLowerCase() ||
+        row.displayId?.toLowerCase() === selector.toLowerCase(),
+    );
+    if (matches.length === 0) {
+      warnings.push(`No milestone matched selector "${selector}".`);
+    }
+    return matches;
+  }
+
+  const statuses = selector?.toLowerCase() === "active" ? ["active"] : input.statuses ?? ["shipped", "active", "proposed"];
+  return rows.filter((row) => statuses.includes(row.status as ProjectUpdateMilestoneStatus));
+}
+
+function computeProjectUpdateProgress(milestones: ProjectUpdateMilestone[]): ProjectUpdateSnapshot["progress"] {
+  const progress: ProjectUpdateSnapshot["progress"] = {
+    milestones: { shipped: 0, active: 0, proposed: 0, backlog: 0, total: 0 },
+    tasks: { done: 0, active: 0, blocked: 0, todo: 0, cancelled: 0, total: 0 },
+  };
+
+  for (const milestone of milestones) {
+    if (milestone.milestoneId === "backlog") {
+      progress.milestones.backlog += 1;
+    } else {
+      progress.milestones.total += 1;
+      if (milestone.status === "shipped") {
+        progress.milestones.shipped += 1;
+      } else if (milestone.status === "active") {
+        progress.milestones.active += 1;
+      } else if (milestone.status === "proposed") {
+        progress.milestones.proposed += 1;
+      }
+    }
+    for (const task of milestone.tasks) {
+      progress.tasks.total += 1;
+      progress.tasks[task.status] += 1;
+    }
+  }
+
+  return progress;
+}
+
+function addMilestoneUpdateWarnings(milestone: ProjectUpdateMilestone, warnings: string[]): void {
+  if (milestone.milestoneId === "backlog") {
+    if (milestone.sequence !== undefined) {
+      warnings.push(`Backlog milestone "${milestone.name}" should not have a sequence.`);
+    }
+    return;
+  }
+
+  if (milestone.status === "shipped" && !milestone.schedule?.shipped) {
+    warnings.push(`Shipped milestone "${milestone.name}" has no schedule.shipped date.`);
+  }
+  for (const task of milestone.tasks) {
+    if (task.status === "done" && !task.completedOn) {
+      warnings.push(`Completed task "${task.id}" in "${milestone.name}" has no completed_on date.`);
+    }
+    if ((task.status === "active" || task.status === "todo" || task.status === "blocked") && !task.due) {
+      warnings.push(`Incomplete task "${task.id}" in "${milestone.name}" has no due date.`);
+    }
+    if (task.due && !task.dateConfidence) {
+      warnings.push(`Task "${task.id}" in "${milestone.name}" has a due date without date_confidence.`);
+    }
+  }
+}
+
+function dedupeStrings(items: string[]): string[] {
+  return [...new Set(items)];
 }
 
 function changedSections(oldContent: string, newContent: string): string[] {

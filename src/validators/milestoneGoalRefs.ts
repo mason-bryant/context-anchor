@@ -36,6 +36,9 @@ export const validateMilestoneGoalRefs: Validator = async (context) => {
 
   const rel = parsed.frontmatter.relations as { goal_ids?: unknown } | undefined;
   const goalIds = Array.isArray(rel?.goal_ids) ? rel!.goal_ids.filter((x): x is string => typeof x === "string") : [];
+  if (goalIds.length === 0) {
+    return [];
+  }
 
   const roadmapName = expectedRoadmapName(slug);
   const roadmapContent = await context.repo.readRaw(roadmapName);

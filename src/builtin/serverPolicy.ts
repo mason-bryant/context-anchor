@@ -8,6 +8,7 @@ import { SERVER_RULES_DISCOVERY_CATEGORY } from "../taxonomy.js";
 
 export const ACCEPTANCE_CRITERIA_NAME = "server-rules/acceptance-criteria.md";
 export const MILESTONE_USAGE_NAME = "server-rules/milestone-usage.md";
+export const PROJECT_UPDATES_NAME = "server-rules/project-updates.md";
 
 function readPackageVersion(): string {
   try {
@@ -117,6 +118,61 @@ This file is **server-owned policy** materialized by anchor-mcp. Milestones live
 None.
 `;
 
+const PROJECT_UPDATES_BODY = `---
+type: agent-roles
+tags:
+  - anchor-mcp
+  - project-updates
+  - backlog
+  - server-policy
+summary: Built-in guidance for project update rendering, milestone task summaries, and reserved backlog task handling.
+read_this_if:
+  - Rendering or preparing a project update from milestones.
+  - Adding a user-requested task to a project backlog.
+  - Updating structured milestone tasks for status reporting.
+last_validated: 2026-05-25
+---
+
+# Project updates and backlog tasks (built-in policy)
+
+## Current State
+
+This file is **server-owned policy** materialized by anchor-mcp. Project updates are derived from project anchors, roadmaps, project milestones, and structured milestone tasks. Milestone task status values are \`todo\`, \`active\`, \`blocked\`, \`done\`, and \`cancelled\`. The reserved backlog milestone is the project-level holding bucket for unscheduled work and uses \`milestone_id: backlog\` with no \`sequence\`.
+
+## Decisions
+
+- Rendered project updates show scheduled milestone work first and end with backlog items when backlog items are present, because backlog grooming is always in progress.
+- Backlog task requests are represented as structured tasks on the reserved backlog milestone, not as sequenced milestone scope.
+- When a user asks to put a task on a project backlog, resolve the project's existing \`milestone_id: backlog\` milestone or create that reserved backlog milestone if it does not exist; add the task to its structured \`tasks\` list.
+- Backlog task handling must not assign \`sequence\` to the backlog milestone and must not invent dates, owners, or roadmap goal ids. Only record \`owner\`, \`due\`, \`completed_on\`, \`date_confidence\`, or \`goal_ids\` when the user or existing anchors provide them.
+- When a task date is needed for status reporting and no trusted value exists, ask the user for both the date and whether it is \`committed\`, an \`internal_goal\`, or \`estimated\` before recording \`due\`, \`completed_on\`, or \`date_confidence\`.
+- Keep backlog task ids stable once written so future updates can refer to the same task without duplicating it.
+
+## Constraints
+
+- Only one reserved backlog milestone is allowed per project: \`milestone_id: backlog\`.
+- A backlog milestone must not carry \`sequence\`; sequencing is only for scheduled milestones.
+- Do not infer owners, dates, date confidence, or goal ids from task wording. Ask the user or leave optional structured fields absent.
+- If existing validation requires additional milestone fields while creating the backlog milestone, satisfy only fields supported by existing project context or ask for the missing real value; do not fabricate planning metadata.
+
+## PRs
+
+None.
+
+---
+
+## Agent workflow
+
+1. During discovery, load built-in \`server-rules/*\` entries with repo anchors when preparing project updates or editing milestone tasks.
+2. For project update rendering, read the project context anchor, sibling roadmap, and milestones. Treat task metadata as status-reporting input, not as a substitute for durable Current State or Decisions.
+3. Render sequenced milestones in ascending \`sequence\` order. If the backlog milestone has tasks, render it last under backlog wording.
+4. For a user request like "put this on the project backlog", find the project, call \`listMilestones\`, and use the existing \`displayId: backlog\` / \`milestoneId: backlog\` entry when present.
+5. If no backlog milestone exists, create the reserved backlog milestone under \`projects/<slug>/milestones/\` with \`milestone_id: backlog\`, no \`sequence\`, and a neutral status such as \`proposed\` unless existing project policy says otherwise.
+6. Add the requested task to structured \`tasks\` with the minimal known fields: a stable \`id\`, the user-provided \`title\`, and \`status: todo\` unless the user explicitly gave another valid status.
+7. If the user expects the task to carry a date and no trusted date exists, prompt for the date and its confidence class: \`committed\`, \`internal_goal\`, or \`estimated\`.
+8. Do not add \`owner\`, \`due\`, \`completed_on\`, \`date_confidence\`, or \`goal_ids\` unless those values are explicitly supplied or already present in trusted project anchors.
+`;
+
 export function getServerPolicyVersion(): string {
   return POLICY_VERSION;
 }
@@ -127,12 +183,15 @@ export function canonicalBuiltInAnchorName(name: string): string {
   if (withMd === MILESTONE_USAGE_NAME) {
     return MILESTONE_USAGE_NAME;
   }
+  if (withMd === PROJECT_UPDATES_NAME) {
+    return PROJECT_UPDATES_NAME;
+  }
   return ACCEPTANCE_CRITERIA_NAME;
 }
 
 export function isBuiltInAnchorName(name: string): boolean {
   const normalized = name.endsWith(".md") ? name : `${name}.md`;
-  return normalized === ACCEPTANCE_CRITERIA_NAME || normalized === MILESTONE_USAGE_NAME;
+  return normalized === ACCEPTANCE_CRITERIA_NAME || normalized === MILESTONE_USAGE_NAME || normalized === PROJECT_UPDATES_NAME;
 }
 
 export function listBuiltInAnchorMetas(): AnchorMeta[] {
@@ -177,6 +236,26 @@ export function listBuiltInAnchorMetas(): AnchorMeta[] {
       origin: "built-in",
       policyVersion: POLICY_VERSION,
     },
+    {
+      name: PROJECT_UPDATES_NAME,
+      path: PROJECT_UPDATES_NAME,
+      category: SERVER_RULES_DISCOVERY_CATEGORY,
+      title: "Project updates and backlog tasks policy",
+      summary:
+        "Guidance for project update rendering, structured milestone task summaries, and reserved backlog task handling.",
+      read_this_if: [
+        "Rendering or preparing a project update from milestones.",
+        "Adding a user-requested task to a project backlog.",
+        "Updating structured milestone tasks for status reporting.",
+      ],
+      type: "agent-roles",
+      tags: ["anchor-mcp", "server-policy", "project-updates", "backlog"],
+      last_validated: "2026-05-25",
+      updatedAt: "2026-05-25T00:00:00.000Z",
+      createdAt: "2026-05-25T00:00:00.000Z",
+      origin: "built-in",
+      policyVersion: POLICY_VERSION,
+    },
   ];
 }
 
@@ -185,7 +264,12 @@ export function readBuiltInAnchor(name: string): AnchorRead | undefined {
     return undefined;
   }
   const canonical = canonicalBuiltInAnchorName(name);
-  const content = canonical === MILESTONE_USAGE_NAME ? MILESTONE_USAGE_BODY : ACCEPTANCE_CRITERIA_BODY;
+  const content =
+    canonical === MILESTONE_USAGE_NAME
+      ? MILESTONE_USAGE_BODY
+      : canonical === PROJECT_UPDATES_NAME
+        ? PROJECT_UPDATES_BODY
+        : ACCEPTANCE_CRITERIA_BODY;
   const { frontmatter } = parseAnchor(content);
   return {
     name: canonical,

@@ -1,5 +1,10 @@
 import { classifyAnchorPath, SERVER_RULES_DISCOVERY_CATEGORY } from "../taxonomy.js";
-import { normalizedMilestoneId, normalizedSequenceFromFm } from "../milestoneFrontmatter.js";
+import {
+  normalizedMilestoneId,
+  normalizedScheduleFromFm,
+  normalizedSequenceFromFm,
+  normalizedTasksFromFm,
+} from "../milestoneFrontmatter.js";
 import { analyzeRoadmapFromContent } from "../roadmap/analyzeRoadmap.js";
 import { isProjectMilestoneType } from "../schema/milestoneTypes.js";
 import { parseAnchor } from "../storage/markdown.js";
@@ -250,6 +255,8 @@ function milestoneMetaFromFrontmatter(frontmatter: Record<string, unknown>): Mil
     : [];
   const milestoneId = normalizedMilestoneId(frontmatter.milestone_id);
   const sequence = normalizedSequenceFromFm(frontmatter);
+  const schedule = normalizedScheduleFromFm(frontmatter);
+  const tasks = normalizedTasksFromFm(frontmatter);
   const steelThread = frontmatter.steel_thread;
 
   return {
@@ -259,6 +266,8 @@ function milestoneMetaFromFrontmatter(frontmatter: Record<string, unknown>): Mil
     goalIds,
     ...(milestoneId !== undefined ? { milestoneId } : {}),
     ...(sequence !== undefined ? { sequence } : {}),
+    ...(schedule !== undefined ? { schedule } : {}),
+    ...(tasks !== undefined ? { tasks } : {}),
   };
 }
 

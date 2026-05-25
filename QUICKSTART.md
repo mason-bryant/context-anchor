@@ -139,4 +139,5 @@ Put this in `.cursor/rules/` (or global Cursor rules) so it survives buried MCP 
 - Before any non-trivial tool use, call anchor-mcp `loadContext` first (or `contextRoot` if only the index is needed).
 - If overloaded or `truncated`: use `nextCursor`, or reduce `limit` / `maxBytes`, or set `includeContent` to `excerpt` or `none`.
 - Do not locate anchors via filesystem search; use MCP tools only.
+- For project updates or backlog requests, load built-in `server-rules/project-updates.md`; backlog tasks go on the reserved `milestone_id: backlog` milestone without `sequence`, invented dates, owners, or goal ids.
 ```
