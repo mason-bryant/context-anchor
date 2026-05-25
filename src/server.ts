@@ -13,6 +13,47 @@ const ContextRootFormatSchema = z.enum(["json", "markdown", "both"]);
 const AnchorContentModeSchema = z.enum(["full", "excerpt", "none"]);
 const ProjectUpdateStatusSchema = z.enum(["proposed", "active", "shipped", "cancelled"]);
 const ProjectUpdateFormatSchema = z.enum(["markdown", "slack", "email"]);
+const ProposedChangeStatusSchema = z.enum(["pending", "applied", "rejected", "changes_requested", "superseded"]);
+const ProposedChangeScopeSchema = z.discriminatedUnion("kind", [
+  z.object({
+    kind: z.literal("project"),
+    project: z.string().min(1),
+  }),
+  z.object({
+    kind: z.literal("agent-rules"),
+  }),
+]);
+const ProposedChangeOperationSchema = z.discriminatedUnion("type", [
+  z.object({
+    type: z.literal("frontmatter.merge"),
+    updates: z.record(z.string(), z.unknown()),
+  }),
+  z.object({
+    type: z.literal("section.replace"),
+    heading: z.string().min(1),
+    content: z.string(),
+    lastValidated: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  }),
+  z.object({
+    type: z.literal("section.append"),
+    heading: z.string().min(1),
+    content: z.string(),
+    lastValidated: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  }),
+  z.object({
+    type: z.literal("section.delete"),
+    heading: z.string().min(1),
+    lastValidated: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  }),
+  z.object({
+    type: z.literal("anchor.create"),
+    content: z.string().min(1),
+  }),
+  z.object({
+    type: z.literal("document.replace"),
+    content: z.string().min(1),
+  }),
+]);
 const ProjectUpdateSnapshotInputSchema = z.object({
   project: z.string().min(1),
   milestone: z.string().optional(),
@@ -89,6 +130,12 @@ Use full writeAnchor when restructuring an entire anchor or when bulk-replacing 
 
 \`deleteAnchor\` and \`renameAnchor\` remove or move entire anchor files as git commits; they always require \
 \`approved: true\` after explicit user confirmation, independent of validator-driven approval on ordinary writes.
+
+When autonomous or headless work should be reviewed later, use \`proposeChange\` instead of mutating the target anchor. \
+Project proposals live in \`projects/<slug>/<slug>-proposed-changes.md\`; agent-rule proposals live in \
+\`agent-rules/agent-rules-proposed-changes.md\`. Use \`previewProposedChange\` to inspect the exact diff and validation \
+result, \`reviewProposedChange\` to record feedback, and \`applyProposedChange\` only after explicit human approval. \
+Pending proposal ledgers are review artifacts, not durable truth for ordinary context loading.
 
 ## When you discover new facts
 If work reveals durable truth (what shipped, decisions, limits), persist it with writeAnchor or the chunked write tools \
@@ -289,6 +336,115 @@ the index when your workflow checks in that file.`,
       annotations: { readOnlyHint: true },
     },
     async ({ name, kind }) => jsonResult({ anchors: await service.getRelated(name, kind) }),
+  );
+
+  server.registerTool(
+    "proposeChange",
+    {
+      title: "Propose Change",
+      description:
+        "Create a reviewable proposed change in the project or agent-rule proposal ledger without mutating the target anchor.",
+      inputSchema: z.object({
+        scope: ProposedChangeScopeSchema,
+        target: z.string().min(1),
+        summary: z.string().min(1).max(240),
+        operations: z.array(ProposedChangeOperationSchema).min(1),
+        rationale: z.string().optional(),
+        createdBy: z.string().optional(),
+        message: z.string().optional(),
+      }),
+      annotations: { destructiveHint: false, idempotentHint: false },
+    },
+    async (input) => {
+      const result = await service.proposeChange(input);
+      return jsonResult(result, result.version ? false : hasBlockingWarnings(result.warnings));
+    },
+  );
+
+  server.registerTool(
+    "listProposedChanges",
+    {
+      title: "List Proposed Changes",
+      description:
+        "List reviewable proposed changes from project proposal ledgers or the agent-rule proposal ledger.",
+      inputSchema: z.object({
+        project: z.string().optional(),
+        scope: z.enum(["agent-rules"]).optional(),
+        status: ProposedChangeStatusSchema.optional(),
+      }),
+      annotations: { readOnlyHint: true },
+    },
+    async (input) => jsonResult(await service.listProposedChanges(input)),
+  );
+
+  server.registerTool(
+    "readProposedChange",
+    {
+      title: "Read Proposed Change",
+      description: "Read one proposed change record by id, including its ledger metadata and operations.",
+      inputSchema: z.object({
+        id: z.string().min(1),
+      }),
+      annotations: { readOnlyHint: true },
+    },
+    async ({ id }) => jsonResult(await service.readProposedChange(id)),
+  );
+
+  server.registerTool(
+    "previewProposedChange",
+    {
+      title: "Preview Proposed Change",
+      description:
+        "Apply a proposed change to an in-memory draft, run validators, and return diff/stale-base/approval signals without writing.",
+      inputSchema: z.object({
+        id: z.string().min(1),
+      }),
+      annotations: { readOnlyHint: true },
+    },
+    async ({ id }) => jsonResult(await service.previewProposedChange(id)),
+  );
+
+  server.registerTool(
+    "reviewProposedChange",
+    {
+      title: "Review Proposed Change",
+      description: "Record review feedback or status on a proposed change without mutating the target anchor.",
+      inputSchema: z.object({
+        id: z.string().min(1),
+        status: z.enum(["pending", "rejected", "changes_requested", "superseded"]),
+        note: z.string().optional(),
+        reviewedBy: z.string().optional(),
+        message: z.string().optional(),
+        expectedLedgerFileCommit: z.string().optional(),
+      }),
+      annotations: { destructiveHint: false, idempotentHint: false },
+    },
+    async (input) => {
+      const result = await service.reviewProposedChange(input);
+      return jsonResult(result, result.version ? false : hasBlockingWarnings(result.warnings));
+    },
+  );
+
+  server.registerTool(
+    "applyProposedChange",
+    {
+      title: "Apply Proposed Change",
+      description:
+        "Apply an approved proposed change to its target anchor, re-running normal validators and marking the proposal applied.",
+      inputSchema: z.object({
+        id: z.string().min(1),
+        approved: z.boolean().default(false),
+        appliedBy: z.string().optional(),
+        message: z.string().optional(),
+        coAuthor: z.string().optional(),
+        expectedLedgerFileCommit: z.string().optional(),
+      }),
+      annotations: { destructiveHint: false, idempotentHint: false },
+    },
+    async (input) => {
+      const result = await service.applyProposedChange(input);
+      return jsonResult(result, result.targetVersion ? false : hasBlockingWarnings(result.warnings));
+    },
   );
 
   server.registerTool(
@@ -622,6 +778,11 @@ function jsonResult(value: unknown, isError = false): CallToolResult {
     structuredContent: isRecord(value) ? value : { value },
     isError,
   };
+}
+
+function hasBlockingWarnings(value: Array<{ severity?: string }> | { warnings?: Array<{ severity?: string }> }): boolean {
+  const warnings = Array.isArray(value) ? value : value.warnings;
+  return Boolean(warnings?.some((warning) => warning.severity === "BLOCK"));
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

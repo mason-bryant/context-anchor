@@ -188,6 +188,53 @@ describe("UI HTTP routes", () => {
       "Invalid budgetTokens",
     );
   });
+
+  it("routes proposed-change list requests with optional filters", async () => {
+    const restore = stubAnchorServiceMethod("listProposedChanges", vi.fn(async () => ({ proposals: [{ id: "pc-1" }] })));
+
+    try {
+      const response = await fetchJson<{ proposals: Array<{ id: string }> }>(
+        "/api/ui/proposed-changes?project=demo&scope=agent-rules&status=pending",
+      );
+      expect(response.proposals).toEqual([{ id: "pc-1" }]);
+      expect((AnchorService.prototype as unknown as { listProposedChanges: ReturnType<typeof vi.fn> }).listProposedChanges)
+        .toHaveBeenCalledWith({ project: "demo", scope: "agent-rules", status: "pending" });
+    } finally {
+      restore();
+    }
+  });
+
+  it("routes proposed-change detail and preview requests by id", async () => {
+    const restoreRead = stubAnchorServiceMethod("readProposedChange", vi.fn(async () => ({ id: "pc-1" })));
+    const restorePreview = stubAnchorServiceMethod("previewProposedChange", vi.fn(async () => ({ id: "pc-1" })));
+
+    try {
+      const detail = await fetchJson<{ id: string }>("/api/ui/proposed-change?id=pc-1");
+      const preview = await fetchJson<{ id: string }>("/api/ui/proposed-change-preview?id=pc-1");
+
+      expect(detail.id).toBe("pc-1");
+      expect(preview.id).toBe("pc-1");
+      expect(
+        (AnchorService.prototype as unknown as { readProposedChange: ReturnType<typeof vi.fn> }).readProposedChange,
+      ).toHaveBeenCalledWith("pc-1");
+      expect(
+        (AnchorService.prototype as unknown as { previewProposedChange: ReturnType<typeof vi.fn> }).previewProposedChange,
+      ).toHaveBeenCalledWith("pc-1");
+    } finally {
+      restoreRead();
+      restorePreview();
+    }
+  });
+
+  it("returns 400 for invalid proposed-change list scope", async () => {
+    const response = await fetch(`${baseUrl}/api/ui/proposed-changes?scope=projects`, {
+      headers: { Authorization: `Bearer ${TOKEN}` },
+    });
+    const body = (await response.json()) as { error: { message: string } };
+
+    expect(response.status).toBe(400);
+    expect(body.error.message).toContain("Invalid scope");
+  });
 });
 
 async function fetchJson<T>(pathSuffix: string): Promise<T> {
@@ -231,4 +278,22 @@ last_validated: 2026-05-20
 
 None.
 `;
+}
+
+function stubAnchorServiceMethod(name: string, implementation: (...args: any[]) => unknown): () => void {
+  const prototype = AnchorService.prototype as Record<string, unknown>;
+  const original = Object.getOwnPropertyDescriptor(prototype, name);
+  Object.defineProperty(prototype, name, {
+    value: implementation,
+    configurable: true,
+    writable: true,
+  });
+
+  return () => {
+    if (original) {
+      Object.defineProperty(prototype, name, original);
+      return;
+    }
+    delete prototype[name];
+  };
 }

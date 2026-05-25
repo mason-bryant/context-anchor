@@ -134,6 +134,143 @@ export type WriteAnchorInput = {
   expectedFileCommit?: string;
 };
 
+export type ProposedChangeStatus = "pending" | "applied" | "rejected" | "changes_requested" | "superseded";
+
+export type ProposedChangeScope =
+  | {
+      kind: "project";
+      project: string;
+    }
+  | {
+      kind: "agent-rules";
+    };
+
+export type ProposedChangeOperation =
+  | {
+      type: "frontmatter.merge";
+      updates: Record<string, unknown>;
+    }
+  | {
+      type: "section.replace";
+      heading: string;
+      content: string;
+      lastValidated?: string;
+    }
+  | {
+      type: "section.append";
+      heading: string;
+      content: string;
+      lastValidated?: string;
+    }
+  | {
+      type: "section.delete";
+      heading: string;
+      lastValidated?: string;
+    }
+  | {
+      type: "anchor.create";
+      content: string;
+    }
+  | {
+      type: "document.replace";
+      content: string;
+    };
+
+export type ProposedChangeReview = {
+  status: ProposedChangeStatus;
+  reviewedAt: string;
+  reviewedBy?: string;
+  note?: string;
+};
+
+export type ProposedChangeRecord = {
+  id: string;
+  scope: ProposedChangeScope;
+  status: ProposedChangeStatus;
+  summary: string;
+  target: string;
+  baseFileCommit?: string;
+  createdAt: string;
+  updatedAt: string;
+  createdBy?: string;
+  rationale?: string;
+  operations: ProposedChangeOperation[];
+  reviews?: ProposedChangeReview[];
+  appliedAt?: string;
+  appliedBy?: string;
+  appliedVersion?: string;
+  applyWarnings?: ValidationViolation[];
+};
+
+export type ProposedChangeListInput = {
+  project?: string;
+  scope?: "agent-rules";
+  status?: ProposedChangeStatus;
+};
+
+export type ProposedChangeListItem = ProposedChangeRecord & {
+  ledgerName: string;
+  ledgerPath: string;
+  ledgerFileCommit?: string;
+};
+
+export type ProposeChangeInput = {
+  scope: ProposedChangeScope;
+  target: string;
+  summary: string;
+  operations: ProposedChangeOperation[];
+  rationale?: string;
+  createdBy?: string;
+  message?: string;
+};
+
+export type ProposedChangeRead = {
+  proposal: ProposedChangeListItem;
+};
+
+export type ProposeChangeResult = ProposedChangeRead & {
+  version?: string;
+  warnings: ValidationViolation[];
+};
+
+export type ProposedChangePreview = {
+  proposal: ProposedChangeListItem;
+  targetExists: boolean;
+  targetFileCommit?: string;
+  baseFileCommit?: string;
+  stale: boolean;
+  draftContent?: string;
+  diff?: string;
+  warnings: ValidationViolation[];
+  requiresApproval?: boolean;
+};
+
+export type ReviewProposedChangeInput = {
+  id: string;
+  status: Extract<ProposedChangeStatus, "rejected" | "changes_requested" | "superseded" | "pending">;
+  note?: string;
+  reviewedBy?: string;
+  message?: string;
+  expectedLedgerFileCommit?: string;
+};
+
+export type ApplyProposedChangeInput = {
+  id: string;
+  approved?: boolean;
+  appliedBy?: string;
+  message?: string;
+  coAuthor?: string;
+  expectedLedgerFileCommit?: string;
+};
+
+export type ApplyProposedChangeResult = {
+  proposal: ProposedChangeListItem;
+  targetVersion?: string;
+  ledgerVersion?: string;
+  warnings: ValidationViolation[];
+  requiresApproval?: boolean;
+};
+
 export type CompactionReport = {
   signals: ValidationViolation[];
   suggestedMoves: string[];

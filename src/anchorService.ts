@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import { readFile } from "node:fs/promises";
 
 import {
@@ -36,6 +37,20 @@ import {
   sortUpdateTasks,
   toProjectUpdateTask,
 } from "./projectUpdate.js";
+import {
+  addProposalReview,
+  appendProposalRecord,
+  applyProposalOperations,
+  createProposalLedgerContent,
+  isProposedChangesType,
+  normalizeProposalScope,
+  parseProposedChanges,
+  proposalScopeMatchesLedger,
+  proposedChangeLedgerName,
+  renderProposalDiff,
+  updateProposalRecord,
+  validateProposalTarget,
+} from "./proposedChanges.js";
 import { getRelatedAnchors } from "./relations/index.js";
 import { isProjectMilestoneType } from "./schema/milestoneTypes.js";
 import { countCompletedRows, parseAnchor } from "./storage/markdown.js";
@@ -60,11 +75,23 @@ import type {
   LoadContextSelectionReason,
   PlanContextBundleInput,
   PlanContextBundleResult,
+  ApplyProposedChangeInput,
+  ApplyProposedChangeResult,
   ProjectFilterResolution,
   ProjectUpdateMilestone,
   ProjectUpdateMilestoneStatus,
   ProjectUpdateSnapshot,
   ProjectUpdateSnapshotInput,
+  ProposeChangeInput,
+  ProposeChangeResult,
+  ProposedChangeListInput,
+  ProposedChangeListItem,
+  ProposedChangePreview,
+  ProposedChangeRead,
+  ProposedChangeRecord,
+  ProposedChangeScope,
+  ProposedChangeStatus,
+  ReviewProposedChangeInput,
   MilestoneScheduleMeta,
   MilestoneTaskMeta,
   RenderedProjectUpdate,
@@ -621,6 +648,259 @@ export class AnchorService {
     });
   }
 
+  async proposeChange(input: ProposeChangeInput): Promise<ProposeChangeResult> {
+    const scope = await this.resolveProposedChangeScope(input.scope);
+    const target = this.repo.resolveAnchor(input.target).name;
+    const placeholder = (code: string, message: string): ProposeChangeResult => ({
+      proposal: placeholderProposalListItem(scope, target, input.summary, this.proposalLedgerPath(scope)),
+      warnings: [
+        {
+          severity: "BLOCK",
+          code,
+          message,
+        },
+      ],
+    });
+    const targetViolation = validateProposalTarget(scope, target);
+    if (targetViolation) {
+      return placeholder("proposed_change_target_scope", targetViolation);
+    }
+
+    try {
+      const oldContent = await this.repo.readRaw(target);
+      applyProposalOperations(oldContent, input.operations);
+    } catch (error) {
+      return placeholder("proposed_change_operation", errorMessage(error));
+    }
+
+    let ledger: { read: AnchorRead };
+    try {
+      ledger = await this.ensureProposalLedger(scope);
+    } catch (error) {
+      return placeholder("proposed_change_ledger", errorMessage(error));
+    }
+
+    const resolvedTarget = this.repo.resolveAnchor(target);
+    const oldContent = await this.repo.readRaw(target);
+    const baseFileCommit = oldContent === undefined ? undefined : await this.repo.lastCommitForFile(resolvedTarget.repoRelativePath);
+    const now = new Date().toISOString();
+    const record: ProposedChangeRecord = {
+      id: makeProposalId(input.summary, now),
+      scope,
+      status: "pending",
+      summary: input.summary,
+      target,
+      ...(baseFileCommit ? { baseFileCommit } : {}),
+      createdAt: now,
+      updatedAt: now,
+      ...(input.createdBy ? { createdBy: input.createdBy } : {}),
+      ...(input.rationale ? { rationale: input.rationale } : {}),
+      operations: input.operations,
+    };
+
+    let nextContent: string;
+    try {
+      nextContent = appendProposalRecord(ledger.read.content, record);
+    } catch (error) {
+      return {
+        proposal: this.toProposalListItem(record, ledger.read),
+        warnings: [
+          {
+            severity: "BLOCK",
+            code: "proposed_change_ledger_malformed",
+            message: errorMessage(error),
+          },
+        ],
+      };
+    }
+    const write = await this.writeAnchor({
+      name: ledger.read.name,
+      content: nextContent,
+      message: input.message ?? `anchor-mcp: propose change ${record.id}`,
+      expectedFileCommit: ledger.read.fileCommit,
+    });
+    if (!write.version) {
+      return {
+        proposal: this.toProposalListItem(record, ledger.read),
+        warnings: write.warnings,
+      };
+    }
+
+    const reread = await this.readAnchor(ledger.read.name);
+    const proposal = this.proposalListItemsFromLedger(reread).find((item) => item.id === record.id) ?? this.toProposalListItem(record, reread);
+    return { proposal, version: write.version, warnings: write.warnings };
+  }
+
+  async listProposedChanges(input: ProposedChangeListInput = {}): Promise<{
+    proposals: ProposedChangeListItem[];
+    projectFilter?: ProjectFilterResolution;
+  }> {
+    const { projectFilter, effectiveProject } = await this.resolveProjectFilter(input.project);
+    const ledgerNames: string[] = [];
+    if (input.scope === "agent-rules") {
+      ledgerNames.push(proposedChangeLedgerName({ kind: "agent-rules" }));
+    } else if (effectiveProject) {
+      ledgerNames.push(proposedChangeLedgerName({ kind: "project", project: effectiveProject }));
+    } else {
+      const metas = await this.repo.listAnchors({ includeArchive: true });
+      ledgerNames.push(...metas.filter((meta) => isProposedChangesType(meta.type)).map((meta) => meta.name));
+    }
+
+    const proposals: ProposedChangeListItem[] = [];
+    for (const name of dedupePreserveOrder(ledgerNames)) {
+      const ledger = await this.readProposalLedger(name);
+      if (!ledger) {
+        continue;
+      }
+      proposals.push(...this.proposalListItemsFromLedger(ledger));
+    }
+
+    const filtered = input.status ? proposals.filter((proposal) => proposal.status === input.status) : proposals;
+    filtered.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt) || a.id.localeCompare(b.id));
+    return {
+      proposals: filtered,
+      ...(projectFilter ? { projectFilter } : {}),
+    };
+  }
+
+  async readProposedChange(id: string): Promise<ProposedChangeRead> {
+    return { proposal: await this.findProposedChange(id) };
+  }
+
+  async previewProposedChange(id: string): Promise<ProposedChangePreview> {
+    const proposal = await this.findProposedChange(id);
+    return this.previewProposal(proposal, false);
+  }
+
+  async reviewProposedChange(input: ReviewProposedChangeInput): Promise<ProposeChangeResult> {
+    const proposal = await this.findProposedChange(input.id);
+    if (input.expectedLedgerFileCommit && proposal.ledgerFileCommit !== input.expectedLedgerFileCommit) {
+      return {
+        proposal,
+        warnings: [
+          {
+            severity: "BLOCK",
+            code: "stale_base",
+            message: `Proposal ledger commit mismatch: expected ${input.expectedLedgerFileCommit}, found ${proposal.ledgerFileCommit ?? "none"}. Re-read the proposal and retry.`,
+          },
+        ],
+      };
+    }
+
+    const read = await this.readAnchor(proposal.ledgerName);
+    const nextRecord = addProposalReview(proposal, {
+      status: input.status,
+      note: input.note,
+      reviewedBy: input.reviewedBy,
+      reviewedAt: new Date().toISOString(),
+    });
+    const nextContent = updateProposalRecord(read.content, nextRecord);
+    const write = await this.writeAnchor({
+      name: read.name,
+      content: nextContent,
+      message: input.message ?? `anchor-mcp: review proposed change ${proposal.id}`,
+      expectedFileCommit: read.fileCommit,
+    });
+    const reread = write.version ? await this.readAnchor(read.name) : read;
+    const nextProposal = this.proposalListItemsFromLedger(reread).find((item) => item.id === proposal.id) ?? proposal;
+    return { proposal: nextProposal, version: write.version, warnings: write.warnings };
+  }
+
+  async applyProposedChange(input: ApplyProposedChangeInput): Promise<ApplyProposedChangeResult> {
+    const proposal = await this.findProposedChange(input.id);
+    if (!input.approved) {
+      return {
+        proposal,
+        warnings: [
+          {
+            severity: "BLOCK",
+            code: "requires_approval",
+            message: "applyProposedChange mutates the target anchor; retry with approved: true after explicit human approval.",
+          },
+        ],
+        requiresApproval: true,
+      };
+    }
+    if (proposal.status !== "pending") {
+      return {
+        proposal,
+        warnings: [
+          {
+            severity: "BLOCK",
+            code: "proposed_change_not_pending",
+            message: `Only pending proposed changes can be applied; ${proposal.id} is ${proposal.status}.`,
+          },
+        ],
+      };
+    }
+    if (input.expectedLedgerFileCommit && proposal.ledgerFileCommit !== input.expectedLedgerFileCommit) {
+      return {
+        proposal,
+        warnings: [
+          {
+            severity: "BLOCK",
+            code: "stale_base",
+            message: `Proposal ledger commit mismatch: expected ${input.expectedLedgerFileCommit}, found ${proposal.ledgerFileCommit ?? "none"}. Re-read the proposal and retry.`,
+          },
+        ],
+      };
+    }
+
+    const preview = await this.previewProposal(proposal, true);
+    const blocks = preview.warnings.filter((warning) => warning.severity === "BLOCK");
+    if (preview.stale || blocks.length > 0 || !preview.draftContent) {
+      return {
+        proposal,
+        warnings: preview.warnings,
+        requiresApproval: preview.requiresApproval,
+      };
+    }
+
+    const targetWrite = await this.writeAnchor({
+      name: proposal.target,
+      content: preview.draftContent,
+      message: input.message ?? `anchor-mcp: apply proposed change ${proposal.id}`,
+      approved: true,
+      coAuthor: input.coAuthor,
+      expectedFileCommit: proposal.baseFileCommit,
+    });
+    if (!targetWrite.version) {
+      return {
+        proposal,
+        warnings: targetWrite.warnings,
+        requiresApproval: targetWrite.requiresApproval,
+      };
+    }
+
+    const ledgerRead = await this.readAnchor(proposal.ledgerName);
+    const appliedAt = new Date().toISOString();
+    const appliedRecord: ProposedChangeRecord = {
+      ...proposal,
+      status: "applied",
+      updatedAt: appliedAt,
+      appliedAt,
+      ...(input.appliedBy ? { appliedBy: input.appliedBy } : {}),
+      appliedVersion: targetWrite.version,
+      applyWarnings: targetWrite.warnings,
+    };
+    const nextContent = updateProposalRecord(ledgerRead.content, appliedRecord);
+    const ledgerWrite = await this.writeAnchor({
+      name: ledgerRead.name,
+      content: nextContent,
+      message: `anchor-mcp: mark proposed change ${proposal.id} applied`,
+      expectedFileCommit: ledgerRead.fileCommit,
+    });
+    const reread = ledgerWrite.version ? await this.readAnchor(ledgerRead.name) : ledgerRead;
+    const nextProposal = this.proposalListItemsFromLedger(reread).find((item) => item.id === proposal.id) ?? proposal;
+    return {
+      proposal: nextProposal,
+      targetVersion: targetWrite.version,
+      ledgerVersion: ledgerWrite.version,
+      warnings: [...targetWrite.warnings, ...ledgerWrite.warnings],
+      requiresApproval: targetWrite.requiresApproval || ledgerWrite.requiresApproval,
+    };
+  }
+
   private async applyAnchorContentPatch(input: {
     name: string;
     lastValidated?: string;
@@ -681,6 +961,134 @@ export class AnchorService {
       coAuthor: input.coAuthor,
       expectedFileCommit: input.expectedFileCommit,
     });
+  }
+
+  private async resolveProposedChangeScope(scope: ProposedChangeScope): Promise<ProposedChangeScope> {
+    const normalized = normalizeProposalScope(scope);
+    if (normalized.kind === "agent-rules") {
+      return normalized;
+    }
+    const { effectiveProject } = await this.resolveProjectFilter(normalized.project);
+    return { kind: "project", project: effectiveProject ?? normalized.project };
+  }
+
+  private async ensureProposalLedger(scope: ProposedChangeScope): Promise<{ read: AnchorRead }> {
+    const name = proposedChangeLedgerName(scope);
+    const existing = await this.readProposalLedger(name);
+    if (existing) {
+      if (!proposalScopeMatchesLedger(scope, existing)) {
+        throw new Error(`Proposal ledger scope does not match requested scope: ${name}`);
+      }
+      return { read: existing };
+    }
+
+    const date = localDateKey();
+    const write = await this.writeAnchor({
+      name,
+      content: createProposalLedgerContent(scope, date),
+      message: `anchor-mcp: create proposed changes ledger ${name}`,
+    });
+    if (!write.version) {
+      throw new Error(`Could not create proposal ledger ${name}: ${write.warnings.map((w) => w.message).join("; ")}`);
+    }
+    return { read: await this.readAnchor(name) };
+  }
+
+  private async readProposalLedger(name: string): Promise<AnchorRead | undefined> {
+    try {
+      const read = await this.readAnchor(name);
+      return isProposedChangesType(read.frontmatter.type) ? read : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
+  private proposalListItemsFromLedger(read: AnchorRead): ProposedChangeListItem[] {
+    return parseProposedChanges(read.content).map((record) => this.toProposalListItem(record, read));
+  }
+
+  private toProposalListItem(record: ProposedChangeRecord, ledger: AnchorRead): ProposedChangeListItem {
+    return {
+      ...record,
+      ledgerName: ledger.name,
+      ledgerPath: ledger.path,
+      ...(ledger.fileCommit ? { ledgerFileCommit: ledger.fileCommit } : {}),
+    };
+  }
+
+  private proposalLedgerPath(scope: ProposedChangeScope): string {
+    const name = proposedChangeLedgerName(scope);
+    try {
+      return this.repo.resolveAnchor(name).repoRelativePath;
+    } catch {
+      return name;
+    }
+  }
+
+  private async findProposedChange(id: string): Promise<ProposedChangeListItem> {
+    const all = await this.listProposedChanges();
+    const match = all.proposals.find((proposal) => proposal.id === id);
+    if (!match) {
+      throw new Error(`Proposed change not found: ${id}`);
+    }
+    return match;
+  }
+
+  private async previewProposal(
+    proposal: ProposedChangeListItem,
+    approved: boolean,
+  ): Promise<ProposedChangePreview> {
+    const targetResolved = this.repo.resolveAnchor(proposal.target);
+    const oldContent = await this.repo.readRaw(proposal.target);
+    const targetFileCommit =
+      oldContent === undefined ? undefined : await this.repo.lastCommitForFile(targetResolved.repoRelativePath);
+    const stale = (proposal.baseFileCommit ?? undefined) !== (targetFileCommit ?? undefined);
+    const warnings: ValidationViolation[] = [];
+    if (stale) {
+      warnings.push({
+        severity: "BLOCK",
+        code: "stale_base",
+        message: `Target file commit mismatch: proposal expected ${proposal.baseFileCommit ?? "none"}, found ${targetFileCommit ?? "none"}.`,
+        path: proposal.target,
+      });
+    }
+
+    let draftContent: string | undefined;
+    let diff: string | undefined;
+    try {
+      draftContent = applyProposalOperations(oldContent, proposal.operations);
+      diff = renderProposalDiff(proposal.target, oldContent, draftContent);
+      warnings.push(
+        ...(await runValidators({
+          name: targetResolved.name,
+          repoRelativePath: targetResolved.repoRelativePath,
+          oldContent,
+          newContent: draftContent,
+          repo: this.repo,
+          migrationWarnOnly: this.options.migrationWarnOnly,
+          approved,
+        })),
+      );
+    } catch (error) {
+      warnings.push({
+        severity: "BLOCK",
+        code: "proposed_change_operation",
+        message: error instanceof Error ? error.message : String(error),
+        path: proposal.target,
+      });
+    }
+
+    return {
+      proposal,
+      targetExists: oldContent !== undefined,
+      ...(targetFileCommit ? { targetFileCommit } : {}),
+      ...(proposal.baseFileCommit ? { baseFileCommit: proposal.baseFileCommit } : {}),
+      stale,
+      ...(draftContent ? { draftContent } : {}),
+      ...(diff ? { diff } : {}),
+      warnings,
+      requiresApproval: warnings.some((warning) => warning.code === "requires_approval"),
+    };
   }
 
   async revertAnchor(name: string, toVersion: string, message?: string): Promise<{ newVersion?: string }> {
@@ -839,7 +1247,7 @@ export class AnchorService {
   }
 
   async planContextBundle(input: PlanContextBundleInput): Promise<PlanContextBundleResult> {
-    const anchors =
+    const anchorsRaw =
       input.category === SERVER_RULES_DISCOVERY_CATEGORY
         ? listBuiltInAnchorMetas()
         : await this.repo.listAnchors({
@@ -848,6 +1256,7 @@ export class AnchorService {
             runtime: input.runtime,
             includeArchive: input.includeArchive,
           });
+    const anchors = anchorsRaw.filter((anchor) => !isProposedChangesType(anchor.type));
 
     const index = buildProjectAliasIndex(anchors);
     const projectFilter = resolveProjectFilter(input.project, anchors, index);
@@ -1337,6 +1746,50 @@ function addMilestoneUpdateWarnings(milestone: ProjectUpdateMilestone, warnings:
 
 function dedupeStrings(items: string[]): string[] {
   return [...new Set(items)];
+}
+
+function placeholderProposalListItem(
+  scope: ProposedChangeScope,
+  target: string,
+  summary: string,
+  ledgerPath: string,
+): ProposedChangeListItem {
+  const now = new Date().toISOString();
+  return {
+    id: makeProposalId(summary, now),
+    scope,
+    status: "pending",
+    summary,
+    target,
+    createdAt: now,
+    updatedAt: now,
+    operations: [],
+    ledgerName: proposedChangeLedgerName(scope),
+    ledgerPath,
+  };
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function makeProposalId(summary: string, isoDate: string): string {
+  const date = isoDate.slice(0, 10).replaceAll("-", "");
+  const slug = summary
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "")
+    .slice(0, 16)
+    .replace(/-$/g, "") || "change";
+  return `PC-${date}-${slug}-${randomBytes(3).toString("hex")}`;
+}
+
+function localDateKey(): string {
+  const now = new Date();
+  const year = String(now.getFullYear()).padStart(4, "0");
+  const month = String(now.getMonth() + 1).padStart(2, "0");
+  const day = String(now.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
 }
 
 function changedSections(oldContent: string, newContent: string): string[] {
