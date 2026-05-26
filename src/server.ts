@@ -5,6 +5,13 @@ import * as z from "zod/v4";
 import type { AnchorService } from "./anchorService.js";
 import { errorMetadata, noopRequestLogger, type RequestLogger } from "./logger.js";
 import { isDiscoveryCategory, type DiscoveryCategory } from "./taxonomy.js";
+import type {
+  LoadContextInput,
+  ProjectUpdateSnapshotInput,
+  ProposeChangeInput,
+  ProposedChangeOperation,
+  RenderProjectUpdateInput,
+} from "./types.js";
 
 const CategorySchema = z
   .string()
@@ -14,7 +21,11 @@ const AnchorContentModeSchema = z.enum(["full", "excerpt", "none"]);
 const ProjectUpdateStatusSchema = z.enum(["proposed", "active", "shipped", "cancelled"]);
 const ProjectUpdateFormatSchema = z.enum(["markdown", "slack", "email"]);
 const ProposedChangeStatusSchema = z.enum(["pending", "applied", "rejected", "changes_requested", "superseded"]);
-const ProposedChangeScopeSchema = z.discriminatedUnion("kind", [
+const JsonStringSchema = z.string();
+const JsonRecordSchema = z.union([z.record(z.string(), z.unknown()), JsonStringSchema]);
+const StringArraySchema = z.union([z.array(z.string()), JsonStringSchema]);
+const NonEmptyStringArraySchema = z.union([z.array(z.string()).min(1), JsonStringSchema]);
+const ProposedChangeScopeObjectSchema = z.discriminatedUnion("kind", [
   z.object({
     kind: z.literal("project"),
     project: z.string().min(1),
@@ -23,7 +34,41 @@ const ProposedChangeScopeSchema = z.discriminatedUnion("kind", [
     kind: z.literal("agent-rules"),
   }),
 ]);
-const ProposedChangeOperationSchema = z.discriminatedUnion("type", [
+const ProposedChangeScopeSchema = z.union([ProposedChangeScopeObjectSchema, JsonStringSchema]);
+const ProposedChangeOperationObjectSchema = z.discriminatedUnion("type", [
+  z.object({
+    type: z.literal("frontmatter.merge"),
+    updates: JsonRecordSchema,
+  }),
+  z.object({
+    type: z.literal("section.replace"),
+    heading: z.string().min(1),
+    content: z.string(),
+    lastValidated: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  }),
+  z.object({
+    type: z.literal("section.append"),
+    heading: z.string().min(1),
+    content: z.string(),
+    lastValidated: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  }),
+  z.object({
+    type: z.literal("section.delete"),
+    heading: z.string().min(1),
+    lastValidated: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  }),
+  z.object({
+    type: z.literal("anchor.create"),
+    content: z.string().min(1),
+  }),
+  z.object({
+    type: z.literal("document.replace"),
+    content: z.string().min(1),
+  }),
+]);
+const ProposedChangeOperationSchema = z.union([ProposedChangeOperationObjectSchema, JsonStringSchema]);
+const ProposedChangeOperationsSchema = z.union([z.array(ProposedChangeOperationSchema).min(1), JsonStringSchema]);
+const ProposedChangeOperationNormalizedSchema = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("frontmatter.merge"),
     updates: z.record(z.string(), z.unknown()),
@@ -54,12 +99,39 @@ const ProposedChangeOperationSchema = z.discriminatedUnion("type", [
     content: z.string().min(1),
   }),
 ]);
+const ProposeChangeInputSchema = z.object({
+  scope: ProposedChangeScopeSchema,
+  target: z.string().min(1),
+  summary: z.string().min(1).max(240),
+  operations: ProposedChangeOperationsSchema,
+  rationale: z.string().optional(),
+  createdBy: z.string().optional(),
+  message: z.string().optional(),
+});
+const ProjectUpdateStatusesSchema = z.union([z.array(ProjectUpdateStatusSchema), JsonStringSchema]);
+const LoadContextInputSchema = z.object({
+  project: z.string().optional(),
+  category: CategorySchema.optional(),
+  tag: z.string().optional(),
+  runtime: z.string().optional(),
+  includeArchive: z.boolean().default(false),
+  names: StringArraySchema.optional(),
+  limit: z.number().int().positive().max(500).optional(),
+  maxBytes: z.number().int().positive().optional(),
+  includeContent: AnchorContentModeSchema.optional(),
+  excerptChars: z.number().int().positive().optional(),
+  cursor: z.string().optional(),
+  format: ContextRootFormatSchema.optional(),
+});
 const ProjectUpdateSnapshotInputSchema = z.object({
   project: z.string().min(1),
   milestone: z.string().optional(),
-  statuses: z.array(ProjectUpdateStatusSchema).optional(),
+  statuses: ProjectUpdateStatusesSchema.optional(),
   includeBacklog: z.boolean().default(false),
   asOf: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+});
+const RenderProjectUpdateInputSchema = ProjectUpdateSnapshotInputSchema.extend({
+  format: ProjectUpdateFormatSchema,
 });
 
 const SharedWriteOptsSchema = z.object({
@@ -214,11 +286,11 @@ the index when your workflow checks in that file.`,
       title: "Read Anchor Batch",
       description: "Read multiple latest context anchors in one call.",
       inputSchema: z.object({
-        names: z.array(z.string()).min(1),
+        names: NonEmptyStringArraySchema,
       }),
       annotations: { readOnlyHint: true },
     },
-    async ({ names }) => jsonResult({ anchors: await service.readAnchorBatch(names) }),
+    async ({ names }) => jsonResult({ anchors: await service.readAnchorBatch(normalizeStringArray(names, "names", 1)) }),
   );
 
   server.registerTool(
@@ -228,23 +300,10 @@ the index when your workflow checks in that file.`,
       description:
         "One-call context load: context-root style index (entries + optional markdown) plus multiple anchor bodies. " +
         "Supports filters, explicit names, excerpt/full/none content modes, byte and count limits, and nextCursor continuation.",
-      inputSchema: z.object({
-        project: z.string().optional(),
-        category: CategorySchema.optional(),
-        tag: z.string().optional(),
-        runtime: z.string().optional(),
-        includeArchive: z.boolean().default(false),
-        names: z.array(z.string()).optional(),
-        limit: z.number().int().positive().max(500).optional(),
-        maxBytes: z.number().int().positive().optional(),
-        includeContent: AnchorContentModeSchema.optional(),
-        excerptChars: z.number().int().positive().optional(),
-        cursor: z.string().optional(),
-        format: ContextRootFormatSchema.optional(),
-      }),
+      inputSchema: LoadContextInputSchema,
       annotations: { readOnlyHint: true },
     },
-    async (input) => jsonResult(await service.loadContext(input)),
+    async (input) => jsonResult(await service.loadContext(normalizeLoadContextInput(input))),
   );
 
   server.registerTool(
@@ -306,7 +365,7 @@ the index when your workflow checks in that file.`,
       inputSchema: ProjectUpdateSnapshotInputSchema,
       annotations: { readOnlyHint: true },
     },
-    async (input) => jsonResult(await service.projectUpdateSnapshot(input)),
+    async (input) => jsonResult(await service.projectUpdateSnapshot(normalizeProjectUpdateSnapshotInput(input))),
   );
 
   server.registerTool(
@@ -315,12 +374,10 @@ the index when your workflow checks in that file.`,
       title: "Render Project Update",
       description:
         "Render a deterministic project update document in markdown, Slack, or email format from the project update snapshot. The output is generated text only and does not write anchors.",
-      inputSchema: ProjectUpdateSnapshotInputSchema.extend({
-        format: ProjectUpdateFormatSchema,
-      }),
+      inputSchema: RenderProjectUpdateInputSchema,
       annotations: { readOnlyHint: true },
     },
-    async (input) => jsonResult(await service.renderProjectUpdate(input)),
+    async (input) => jsonResult(await service.renderProjectUpdate(normalizeRenderProjectUpdateInput(input))),
   );
 
   server.registerTool(
@@ -344,19 +401,11 @@ the index when your workflow checks in that file.`,
       title: "Propose Change",
       description:
         "Create a reviewable proposed change in the project or agent-rule proposal ledger without mutating the target anchor.",
-      inputSchema: z.object({
-        scope: ProposedChangeScopeSchema,
-        target: z.string().min(1),
-        summary: z.string().min(1).max(240),
-        operations: z.array(ProposedChangeOperationSchema).min(1),
-        rationale: z.string().optional(),
-        createdBy: z.string().optional(),
-        message: z.string().optional(),
-      }),
+      inputSchema: ProposeChangeInputSchema,
       annotations: { destructiveHint: false, idempotentHint: false },
     },
     async (input) => {
-      const result = await service.proposeChange(input);
+      const result = await service.proposeChange(normalizeProposeChangeInput(input));
       return jsonResult(result, result.version ? false : hasBlockingWarnings(result.warnings));
     },
   );
@@ -556,7 +605,7 @@ the index when your workflow checks in that file.`,
       inputSchema: z
         .object({
           name: z.string(),
-          updates: z.record(z.string(), z.unknown()),
+          updates: JsonRecordSchema,
         })
         .extend(SharedWriteOptsSchema.shape),
       annotations: { destructiveHint: false, idempotentHint: false },
@@ -564,7 +613,7 @@ the index when your workflow checks in that file.`,
     async ({ name, updates, message, approved, coAuthor, expectedFileCommit }) => {
       const result = await service.updateAnchorFrontmatter({
         name,
-        updates,
+        updates: normalizeJsonRecord(updates, "updates"),
         message,
         approved,
         coAuthor,
@@ -787,6 +836,93 @@ function hasBlockingWarnings(value: Array<{ severity?: string }> | { warnings?: 
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function normalizeLoadContextInput(input: z.infer<typeof LoadContextInputSchema>): LoadContextInput {
+  return {
+    project: input.project,
+    category: input.category,
+    tag: input.tag,
+    runtime: input.runtime,
+    includeArchive: input.includeArchive,
+    names: input.names === undefined ? undefined : normalizeStringArray(input.names, "names"),
+    limit: input.limit,
+    maxBytes: input.maxBytes,
+    includeContent: input.includeContent,
+    excerptChars: input.excerptChars,
+    cursor: input.cursor,
+    format: input.format,
+  };
+}
+
+function normalizeProjectUpdateSnapshotInput(
+  input: z.infer<typeof ProjectUpdateSnapshotInputSchema>,
+): ProjectUpdateSnapshotInput {
+  return {
+    project: input.project,
+    milestone: input.milestone,
+    statuses: input.statuses === undefined ? undefined : normalizeProjectUpdateStatuses(input.statuses),
+    includeBacklog: input.includeBacklog,
+    asOf: input.asOf,
+  };
+}
+
+function normalizeRenderProjectUpdateInput(input: z.infer<typeof RenderProjectUpdateInputSchema>): RenderProjectUpdateInput {
+  return {
+    ...normalizeProjectUpdateSnapshotInput(input),
+    format: input.format,
+  };
+}
+
+function normalizeProposeChangeInput(input: z.infer<typeof ProposeChangeInputSchema>): ProposeChangeInput {
+  const scope = ProposedChangeScopeObjectSchema.parse(parseJsonStringValue(input.scope, "scope"));
+  const rawOperations = parseJsonStringValue(input.operations, "operations");
+  if (!Array.isArray(rawOperations)) {
+    throw new Error("operations must be an array or a JSON string containing an array.");
+  }
+  const operations = rawOperations.map((operation, index) => normalizeProposedChangeOperation(operation, index));
+  return {
+    scope,
+    target: input.target,
+    summary: input.summary,
+    operations,
+    ...(input.rationale ? { rationale: input.rationale } : {}),
+    ...(input.createdBy ? { createdBy: input.createdBy } : {}),
+    ...(input.message ? { message: input.message } : {}),
+  };
+}
+
+function normalizeProposedChangeOperation(value: unknown, index: number): ProposedChangeOperation {
+  const raw = parseJsonStringValue(value, `operations[${index}]`);
+  const normalized =
+    isRecord(raw) && raw.type === "frontmatter.merge"
+      ? { ...raw, updates: normalizeJsonRecord(raw.updates, `operations[${index}].updates`) }
+      : raw;
+  return ProposedChangeOperationNormalizedSchema.parse(normalized);
+}
+
+function normalizeJsonRecord(value: unknown, label: string): Record<string, unknown> {
+  return z.record(z.string(), z.unknown()).parse(parseJsonStringValue(value, label));
+}
+
+function normalizeStringArray(value: unknown, label: string, minLength = 0): string[] {
+  return z.array(z.string()).min(minLength).parse(parseJsonStringValue(value, label));
+}
+
+function normalizeProjectUpdateStatuses(value: unknown): ProjectUpdateSnapshotInput["statuses"] {
+  return z.array(ProjectUpdateStatusSchema).parse(parseJsonStringValue(value, "statuses"));
+}
+
+function parseJsonStringValue(value: unknown, label: string): unknown {
+  if (typeof value !== "string") {
+    return value;
+  }
+  try {
+    return JSON.parse(value) as unknown;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`${label} must be valid JSON when provided as a string: ${message}`);
+  }
 }
 
 function attachRequestLogging(server: McpServer, requestLogger: RequestLogger): void {

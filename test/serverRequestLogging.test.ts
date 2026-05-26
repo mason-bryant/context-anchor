@@ -6,6 +6,9 @@ import type { RequestLogEvent, RequestLogger } from "../src/logger.js";
 import { createAnchorMcpServer } from "../src/server.js";
 
 type RegisteredToolForTest = {
+  inputSchema?: {
+    parse(input: unknown): unknown;
+  };
   handler(input: unknown, context: unknown): Promise<CallToolResult>;
 };
 
@@ -25,7 +28,141 @@ function toolForTest(server: unknown, name: string): RegisteredToolForTest {
   return (server as { _registeredTools: Record<string, RegisteredToolForTest> })._registeredTools[name]!;
 }
 
+function parseToolInput(tool: RegisteredToolForTest, input: unknown): unknown {
+  return tool.inputSchema?.parse(input) ?? input;
+}
+
 describe("MCP request logging", () => {
+  it("normalizes JSON-stringified proposeChange nested parameters", async () => {
+    const service = {
+      proposeChange: vi.fn(async () => ({
+        proposal: {
+          id: "PC-20260525-test",
+          scope: { kind: "project", project: "demo" },
+          status: "pending",
+          summary: "Test",
+          target: "projects/demo/demo.md",
+          createdAt: "2026-05-25T00:00:00.000Z",
+          updatedAt: "2026-05-25T00:00:00.000Z",
+          operations: [],
+          ledgerName: "projects/demo/demo-proposed-changes.md",
+          ledgerPath: "projects/demo/demo-proposed-changes.md",
+        },
+        warnings: [],
+        version: "a".repeat(40),
+      })),
+    } as unknown as AnchorService;
+    const server = createAnchorMcpServer(service);
+    const tool = toolForTest(server, "proposeChange");
+
+    const result = await tool.handler(
+      parseToolInput(tool, {
+        scope: JSON.stringify({ kind: "project", project: "demo" }),
+        target: "projects/demo/demo.md",
+        summary: "Test",
+        operations: JSON.stringify([
+          {
+            type: "frontmatter.merge",
+            updates: JSON.stringify({ summary: "Updated summary." }),
+          },
+        ]),
+      }),
+      {},
+    );
+
+    expect((service as unknown as { proposeChange: ReturnType<typeof vi.fn> }).proposeChange).toHaveBeenCalledWith({
+      scope: { kind: "project", project: "demo" },
+      target: "projects/demo/demo.md",
+      summary: "Test",
+      operations: [
+        {
+          type: "frontmatter.merge",
+          updates: { summary: "Updated summary." },
+        },
+      ],
+    });
+    expect(result.isError).toBe(false);
+  });
+
+  it("normalizes JSON-stringified array parameters for context tools", async () => {
+    const service = {
+      readAnchorBatch: vi.fn(async () => []),
+      loadContext: vi.fn(async () => ({ anchors: [] })),
+    } as unknown as AnchorService;
+    const server = createAnchorMcpServer(service);
+    const batchTool = toolForTest(server, "readAnchorBatch");
+    const loadTool = toolForTest(server, "loadContext");
+
+    await batchTool.handler(parseToolInput(batchTool, { names: JSON.stringify(["shared/a.md", "shared/b.md"]) }), {});
+    await loadTool.handler(parseToolInput(loadTool, { names: JSON.stringify(["shared/a.md"]) }), {});
+
+    expect((service as unknown as { readAnchorBatch: ReturnType<typeof vi.fn> }).readAnchorBatch).toHaveBeenCalledWith([
+      "shared/a.md",
+      "shared/b.md",
+    ]);
+    expect((service as unknown as { loadContext: ReturnType<typeof vi.fn> }).loadContext).toHaveBeenCalledWith(
+      expect.objectContaining({ names: ["shared/a.md"] }),
+    );
+  });
+
+  it("normalizes JSON-stringified front matter updates", async () => {
+    const service = {
+      updateAnchorFrontmatter: vi.fn(async () => ({
+        version: "a".repeat(40),
+        warnings: [],
+      })),
+    } as unknown as AnchorService;
+    const server = createAnchorMcpServer(service);
+    const tool = toolForTest(server, "updateAnchorFrontmatter");
+
+    await tool.handler(
+      parseToolInput(tool, {
+        name: "projects/demo/demo.md",
+        updates: JSON.stringify({
+          summary: "Updated summary.",
+          relations: { goal_ids: ["G-001"] },
+        }),
+      }),
+      {},
+    );
+
+    expect(
+      (service as unknown as { updateAnchorFrontmatter: ReturnType<typeof vi.fn> }).updateAnchorFrontmatter,
+    ).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: "projects/demo/demo.md",
+        updates: {
+          summary: "Updated summary.",
+          relations: { goal_ids: ["G-001"] },
+        },
+      }),
+    );
+  });
+
+  it("normalizes JSON-stringified project update status arrays", async () => {
+    const service = {
+      projectUpdateSnapshot: vi.fn(async () => ({ milestones: [] })),
+      renderProjectUpdate: vi.fn(async () => ({ body: "" })),
+    } as unknown as AnchorService;
+    const server = createAnchorMcpServer(service);
+    const snapshotTool = toolForTest(server, "projectUpdateSnapshot");
+    const renderTool = toolForTest(server, "renderProjectUpdate");
+
+    await snapshotTool.handler(
+      parseToolInput(snapshotTool, { project: "demo", statuses: JSON.stringify(["active", "proposed"]) }),
+      {},
+    );
+    await renderTool.handler(
+      parseToolInput(renderTool, { project: "demo", format: "markdown", statuses: JSON.stringify(["shipped"]) }),
+      {},
+    );
+
+    expect((service as unknown as { projectUpdateSnapshot: ReturnType<typeof vi.fn> }).projectUpdateSnapshot)
+      .toHaveBeenCalledWith(expect.objectContaining({ statuses: ["active", "proposed"] }));
+    expect((service as unknown as { renderProjectUpdate: ReturnType<typeof vi.fn> }).renderProjectUpdate)
+      .toHaveBeenCalledWith(expect.objectContaining({ statuses: ["shipped"] }));
+  });
+
   it("logs tool name, arguments, duration, and outcome for successful tool calls", async () => {
     const service = {
       readAnchor: vi.fn(async () => ({
