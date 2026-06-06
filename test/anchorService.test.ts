@@ -487,7 +487,12 @@ None.
     });
     await service.writeAnchor({
       name: "projects/other/other",
-      content: projectAnchorContent({ project: "other", summary: "Other billing context." }),
+      content: projectAnchorContent({
+        project: "other",
+        summary: "Other billing context.",
+        currentState: "- Other project billing context exists.",
+        decisions: "- Keep billing records accurate.",
+      }),
       message: "test: add other project",
     });
     await service.writeAnchor({
@@ -505,13 +510,9 @@ None.
     expect(planned.included[0]?.name).toBe("projects/demo/demo.md");
     expect(planned.included.map((anchor) => anchor.name)).toContain("shared/storage.md");
     expect(planned.excluded.map((anchor) => anchor.name)).toContain("projects/other/other.md");
-    expect(planned.loadContext.names[0]).toBe("server-rules/acceptance-criteria.md");
-    expect(planned.loadContext.names).toEqual([
-      "server-rules/acceptance-criteria.md",
-      "server-rules/milestone-usage.md",
-      "server-rules/project-updates.md",
-      ...planned.included.map((anchor) => anchor.name),
-    ]);
+    const serverRuleNames = ["server-rules/acceptance-criteria.md", "server-rules/milestone-usage.md", "server-rules/project-updates.md"];
+    expect(planned.loadContext.names).toContain("projects/demo/demo.md");
+    expect(planned.loadContext.names.some((n) => serverRuleNames.includes(n))).toBe(false);
     expect(planned.loadContext.includeContent).toBe("excerpt");
     expect(planned.loadContext.maxBytes).toBe(4800);
     expect(planned.estimatedTokens).toBeLessThanOrEqual(planned.budgetTokens);
@@ -538,7 +539,6 @@ None.
 
     expect(planned.included).toHaveLength(1);
     expect(planned.excluded.some((anchor) => anchor.reason.includes("max anchor count reached"))).toBe(true);
-    expect(planned.loadContext.names[0]).toBe("server-rules/acceptance-criteria.md");
     expect(planned.missingContext).toEqual([]);
   });
 
@@ -601,6 +601,52 @@ None.
         "server-rules/project-updates.md",
       ]),
     );
+  });
+
+  it("planContextBundle does not force server-rules into unrelated tasks", async () => {
+    await service.writeAnchor({
+      name: "projects/demo/demo",
+      content: projectAnchorContent({ summary: "Demo storage decisions." }),
+    });
+
+    const planned = await service.planContextBundle({
+      task: "review demo storage architecture",
+      project: "demo",
+      budgetTokens: 4000,
+    });
+
+    const serverRuleNames = ["server-rules/acceptance-criteria.md", "server-rules/milestone-usage.md", "server-rules/project-updates.md"];
+    expect(planned.loadContext.names.some((n) => serverRuleNames.includes(n))).toBe(false);
+  });
+
+  it("excerptFromContent strips front matter", async () => {
+    const { excerptFromContent } = await import("../src/loadContext.js");
+    const content = "---\ntype: test\nsummary: foo\n---\n\n## Current State\n\nBody text here.";
+    const result = excerptFromContent(content, 500);
+    expect(result.startsWith("---")).toBe(false);
+    expect(result).toContain("## Current State");
+  });
+
+  it("planContextBundle boosts anchors whose body contains the query term", async () => {
+    await service.writeAnchor({
+      name: "projects/demo/cbpr-diagnostic",
+      content: projectAnchorContent({
+        summary: "Generic benefits reporting diagnostics.",
+        currentState:
+          "- The company_benefit_plans_report (CBPR) model needs restructuring to support new plan types.",
+      }),
+      message: "test: add CBPR diagnostic anchor",
+    });
+
+    const planned = await service.planContextBundle({
+      task: "fix CBPR models",
+      project: "demo",
+      budgetTokens: 4000,
+    });
+
+    expect(planned.included.map((anchor) => anchor.name)).toContain("projects/demo/cbpr-diagnostic.md");
+    const cbprAnchor = planned.included.find((anchor) => anchor.name === "projects/demo/cbpr-diagnostic.md");
+    expect(cbprAnchor?.reason).toContain("bm25 body match");
   });
 
   it("readAnchor returns fileCommit for latest reads", async () => {

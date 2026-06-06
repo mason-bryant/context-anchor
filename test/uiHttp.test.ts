@@ -118,12 +118,9 @@ describe("UI HTTP routes", () => {
 
     expect(plan.included[0]?.name).toBe("projects/demo/demo.md");
     expect(plan.included[0]?.reason).toContain('project matches "demo"');
-    expect(plan.loadContext.names).toEqual([
-      "server-rules/acceptance-criteria.md",
-      "server-rules/milestone-usage.md",
-      "server-rules/project-updates.md",
-      "projects/demo/demo.md",
-    ]);
+    expect(plan.loadContext.names).toContain("projects/demo/demo.md");
+    const serverRuleNames = ["server-rules/acceptance-criteria.md", "server-rules/milestone-usage.md", "server-rules/project-updates.md"];
+    expect(plan.loadContext.names.some((n: string) => serverRuleNames.includes(n))).toBe(false);
     expect(plan.loadContext.includeContent).toBe("excerpt");
     expect(plan.loadContext.maxBytes).toBe(4800);
     expect(plan.missingContext).toEqual([]);

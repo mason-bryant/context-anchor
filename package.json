@@ -29,7 +29,8 @@
     "test": "vitest run",
     "dev:stdio": "tsx src/bin/anchor-mcp.ts --repo ./fixtures/demo-context",
     "dev:http": "tsx src/bin/anchor-mcp.ts --repo ./fixtures/demo-context --transport http --port 3333",
-    "dev:http:watch": "tsx watch src/bin/anchor-mcp.ts --repo ./fixtures/demo-context --transport http --port 3333"
+    "dev:http:watch": "tsx watch src/bin/anchor-mcp.ts --repo ./fixtures/demo-context --transport http --port 3333",
+    "dev:managed-context-test": "scripts/start-managed-context-test.sh"
   },
   "engines": {
     "node": ">=20.10"

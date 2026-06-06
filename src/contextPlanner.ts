@@ -5,7 +5,8 @@ import type {
   PlanContextBundleResult,
   ProjectFilterResolution,
 } from "./types.js";
-import { discoveryCategoryIndex } from "./taxonomy.js";
+import type { BM25Index } from "./bm25.js";
+import { discoveryCategoryIndex, SERVER_RULES_DISCOVERY_CATEGORY } from "./taxonomy.js";
 import { anchorMatchesProject } from "./projectAliases.js";
 
 const DEFAULT_BUDGET_TOKENS = 4000;
@@ -43,6 +44,35 @@ const STOPWORDS = new Set([
   "we",
   "with",
   "you",
+  "pr",
+  "plan",
+  "fix",
+  "help",
+  "create",
+  "update",
+  "make",
+  "look",
+  "rules",
+  "change",
+  "up",
+  "me",
+  "come",
+  "out",
+  "want",
+  "get",
+  "my",
+  "do",
+  "what",
+  "when",
+  "where",
+  "which",
+  "will",
+  "would",
+  "should",
+  "could",
+  "let",
+  "using",
+  "use",
 ]);
 
 type ScoredAnchor = PlanContextBundleItem & {
@@ -53,6 +83,7 @@ type ScoredAnchor = PlanContextBundleItem & {
 export function buildContextBundlePlan(
   anchors: AnchorMeta[],
   input: PlanContextBundleInput,
+  bm25Index?: BM25Index,
   generatedAt = new Date().toISOString(),
   projectFilter?: ProjectFilterResolution,
 ): PlanContextBundleResult {
@@ -61,9 +92,12 @@ export function buildContextBundlePlan(
   const maxExcluded = Math.max(0, Math.floor(input.maxExcluded ?? DEFAULT_MAX_EXCLUDED));
   const taskTerms = tokenize(input.task);
   const activeGoalIdsBySlug = buildActiveMilestoneGoalSetBySlug(anchors);
+  const bm25HitsById = bm25Index
+    ? new Map(bm25Index.search(input.task, 100).map((hit) => [hit.id, hit.score]))
+    : undefined;
 
   const scored = anchors
-    .map((anchor) => scoreAnchor(anchor, input, taskTerms, activeGoalIdsBySlug))
+    .map((anchor) => scoreAnchor(anchor, input, taskTerms, activeGoalIdsBySlug, bm25HitsById))
     .sort((left, right) => compareScoredAnchors(left, right, taskTerms, activeGoalIdsBySlug));
 
   const included: ScoredAnchor[] = [];
@@ -141,6 +175,7 @@ function scoreAnchor(
   input: PlanContextBundleInput,
   taskTerms: string[],
   activeGoalIdsBySlug: Map<string, Set<string>>,
+  bm25HitsById?: Map<string, number>,
 ): ScoredAnchor {
   let score = 0;
   const matchedTerms = new Set<string>();
@@ -235,6 +270,18 @@ function scoreAnchor(
     if (gset && taskTerms.some((t) => gset.has(t))) {
       score += 12;
       reasons.push("task matched goal id linked from an active milestone");
+    }
+  }
+
+  if (
+    bm25HitsById &&
+    (anchor.category !== SERVER_RULES_DISCOVERY_CATEGORY || input.category === SERVER_RULES_DISCOVERY_CATEGORY)
+  ) {
+    const hitScore = bm25HitsById.get(anchor.name);
+    if (hitScore !== undefined) {
+      const contribution = Math.min(Math.round(hitScore * 3), 18);
+      score += contribution;
+      reasons.push(`bm25 body match (score ${contribution})`);
     }
   }
 

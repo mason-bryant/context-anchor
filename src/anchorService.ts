@@ -14,6 +14,7 @@ import {
   listBuiltInAnchorMetas,
   readBuiltInAnchor,
 } from "./builtin/serverPolicy.js";
+import { BM25Index } from "./bm25.js";
 import {
   buildLoadContextAnchor,
   decodeLoadContextCursor,
@@ -23,6 +24,8 @@ import {
   LOAD_CONTEXT_DEFAULT_LIMIT,
   LOAD_CONTEXT_DEFAULT_MAX_BYTES,
   shrinkLoadContextAnchorToFit,
+  stripFrontMatterForExcerpt,
+  anchorBodyForSearchIndex,
   toNextCursorPayload,
 } from "./loadContext.js";
 import {
@@ -1250,12 +1253,12 @@ export class AnchorService {
     const anchorsRaw =
       input.category === SERVER_RULES_DISCOVERY_CATEGORY
         ? listBuiltInAnchorMetas()
-        : await this.repo.listAnchors({
+        : [...(await this.repo.listAnchors({
             category: input.category ? (input.category as AnchorCategory) : undefined,
             tag: input.tag,
             runtime: input.runtime,
             includeArchive: input.includeArchive,
-          });
+          })), ...listBuiltInAnchorMetas()];
     const anchors = anchorsRaw.filter((anchor) => !isProposedChangesType(anchor.type));
 
     const index = buildProjectAliasIndex(anchors);
@@ -1265,9 +1268,23 @@ export class AnchorService {
         ? { ...input, project: projectFilter.resolved }
         : input;
 
-    const plan = buildContextBundlePlan(anchors, effectiveInput, undefined, projectFilter);
-    const builtNames = listBuiltInAnchorMetas().map((meta) => meta.name);
-    const names = [...builtNames.filter((name) => !plan.loadContext.names.includes(name)), ...plan.loadContext.names];
+    const bm25Index = new BM25Index();
+    await Promise.all(
+      anchors.map(async (anchor) => {
+        try {
+          const read = await this.readAnchor(anchor.name);
+          bm25Index.add({
+            id: anchor.name,
+            text: anchorBodyForSearchIndex(read.content),
+          });
+        } catch {
+          // Skip unreadable anchors during BM25 indexing.
+        }
+      }),
+    );
+
+    const plan = buildContextBundlePlan(anchors, effectiveInput, bm25Index, undefined, projectFilter);
+    const names = plan.loadContext.names;
     const roadmapSignals = collectRoadmapAcceptanceMissingSignals(anchors);
     const milestoneSignals = collectMilestoneAcceptanceMissingSignals(anchors);
 
