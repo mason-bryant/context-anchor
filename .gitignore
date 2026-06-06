@@ -1,3 +1,6 @@
+docs/managed-context-test-agent-prompt.md
+scripts/start-managed-context-test.sh
+
 cursor-output
 node_modules/
 dist/

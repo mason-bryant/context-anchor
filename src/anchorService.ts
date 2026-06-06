@@ -14,6 +14,7 @@ import {
   listBuiltInAnchorMetas,
   readBuiltInAnchor,
 } from "./builtin/serverPolicy.js";
+import { BM25Index } from "./bm25.js";
 import {
   buildLoadContextAnchor,
   decodeLoadContextCursor,
@@ -23,6 +24,7 @@ import {
   LOAD_CONTEXT_DEFAULT_LIMIT,
   LOAD_CONTEXT_DEFAULT_MAX_BYTES,
   shrinkLoadContextAnchorToFit,
+  anchorBodyForSearchIndex,
   toNextCursorPayload,
 } from "./loadContext.js";
 import {
@@ -107,6 +109,8 @@ import {
 } from "./projectAliases.js";
 import { runValidators } from "./validators/pipeline.js";
 
+const BM25_INDEX_READ_CONCURRENCY = 8;
+
 type MilestoneListRow = {
   name: string;
   path: string;
@@ -129,6 +133,36 @@ export class AnchorService {
       migrationWarnOnly: boolean;
     },
   ) {}
+
+  private async buildBM25SearchIndex(anchors: AnchorMeta[]): Promise<BM25Index> {
+    const bm25Index = new BM25Index();
+    let nextAnchorIndex = 0;
+    const workerCount = Math.min(BM25_INDEX_READ_CONCURRENCY, anchors.length);
+
+    await Promise.all(
+      Array.from({ length: workerCount }, async () => {
+        for (;;) {
+          const anchor = anchors[nextAnchorIndex];
+          nextAnchorIndex += 1;
+          if (!anchor) {
+            return;
+          }
+
+          try {
+            const read = await this.readAnchor(anchor.name);
+            bm25Index.add({
+              id: anchor.name,
+              text: anchorBodyForSearchIndex(read.content),
+            });
+          } catch {
+            // Skip unreadable anchors during BM25 indexing.
+          }
+        }
+      }),
+    );
+
+    return bm25Index;
+  }
 
   private resolveDiscoveryAnchorName(name: string): string {
     if (isBuiltInAnchorName(name)) {
@@ -1250,12 +1284,12 @@ export class AnchorService {
     const anchorsRaw =
       input.category === SERVER_RULES_DISCOVERY_CATEGORY
         ? listBuiltInAnchorMetas()
-        : await this.repo.listAnchors({
+        : [...(await this.repo.listAnchors({
             category: input.category ? (input.category as AnchorCategory) : undefined,
             tag: input.tag,
             runtime: input.runtime,
             includeArchive: input.includeArchive,
-          });
+          })), ...listBuiltInAnchorMetas()];
     const anchors = anchorsRaw.filter((anchor) => !isProposedChangesType(anchor.type));
 
     const index = buildProjectAliasIndex(anchors);
@@ -1265,9 +1299,9 @@ export class AnchorService {
         ? { ...input, project: projectFilter.resolved }
         : input;
 
-    const plan = buildContextBundlePlan(anchors, effectiveInput, undefined, projectFilter);
-    const builtNames = listBuiltInAnchorMetas().map((meta) => meta.name);
-    const names = [...builtNames.filter((name) => !plan.loadContext.names.includes(name)), ...plan.loadContext.names];
+    const bm25Index = await this.buildBM25SearchIndex(anchors);
+    const plan = buildContextBundlePlan(anchors, effectiveInput, bm25Index, undefined, projectFilter);
+    const names = plan.loadContext.names;
     const roadmapSignals = collectRoadmapAcceptanceMissingSignals(anchors);
     const milestoneSignals = collectMilestoneAcceptanceMissingSignals(anchors);
 

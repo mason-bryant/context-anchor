@@ -160,11 +160,23 @@ export function jsonByteLength(value: unknown): number {
 }
 
 export function excerptFromContent(content: string, maxChars: number): string {
-  if (content.length <= maxChars) {
-    return content;
-  }
+  const body = stripFrontMatterForExcerpt(content);
+  if (body.length <= maxChars) return body;
+  return `${body.slice(0, maxChars).trimEnd()}\n\n…`;
+}
 
-  return `${content.slice(0, maxChars).trimEnd()}\n\n…`;
+export function stripFrontMatterForExcerpt(content: string): string {
+  const lines = content.split(/\r?\n/);
+  if (lines[0]?.trim() !== '---') return content;
+  const closeIdx = lines.findIndex((l, i) => i > 0 && l.trim() === '---');
+  if (closeIdx === -1) return content;
+  return lines.slice(closeIdx + 1).join('\n').trimStart();
+}
+
+/** Body text for lexical search indexing: no front matter or markdown headings. */
+export function anchorBodyForSearchIndex(content: string): string {
+  const body = stripFrontMatterForExcerpt(content);
+  return body.replace(/^#{1,6}\s+.*$/gm, "").trim();
 }
 
 function extractTitleFromBody(markdown: string): string | undefined {
