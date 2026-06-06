@@ -24,9 +24,9 @@ describe("BM25Index", () => {
     index.add({ id: "doc2", text: "status check pending" });
     index.add({ id: "doc3", text: "status report done" });
     index.add({ id: "doc4", text: "status overview summary" });
-    index.add({ id: "doc5", text: "zuviews deployment pipeline" });
+    index.add({ id: "doc5", text: "zviews deployment pipeline" });
 
-    const hits = index.search("zuviews");
+    const hits = index.search("zviews");
     expect(hits.length).toBeGreaterThan(0);
     expect(hits[0].id).toBe("doc5");
   });

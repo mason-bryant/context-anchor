@@ -649,6 +649,41 @@ None.
     expect(cbprAnchor?.reason).toContain("bm25 body match");
   });
 
+  it("planContextBundle bounds concurrent BM25 anchor reads", async () => {
+    for (let i = 0; i < 9; i += 1) {
+      await service.writeAnchor({
+        name: `shared/bm25-concurrency-${i}`,
+        content: sharedAnchorContent({
+          title: `BM25 Concurrency ${i}`,
+          summary: `BM25 concurrency fixture ${i}.`,
+          currentState: `- Fixture ${i} contains bounded indexing body text.`,
+        }),
+        message: `test: add bm25 concurrency fixture ${i}`,
+      });
+    }
+
+    const originalReadAnchor = service.readAnchor.bind(service);
+    let inFlight = 0;
+    let maxInFlight = 0;
+    service.readAnchor = async (name: string, version?: string) => {
+      inFlight += 1;
+      maxInFlight = Math.max(maxInFlight, inFlight);
+      try {
+        await new Promise<void>((resolve) => setTimeout(resolve, 5));
+        return await originalReadAnchor(name, version);
+      } finally {
+        inFlight -= 1;
+      }
+    };
+
+    await service.planContextBundle({
+      task: "find bounded indexing body text",
+      budgetTokens: 4000,
+    });
+
+    expect(maxInFlight).toBeLessThanOrEqual(8);
+  });
+
   it("readAnchor returns fileCommit for latest reads", async () => {
     await service.writeAnchor({
       name: "shared/commit-meta",

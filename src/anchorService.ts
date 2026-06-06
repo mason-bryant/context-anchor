@@ -24,7 +24,6 @@ import {
   LOAD_CONTEXT_DEFAULT_LIMIT,
   LOAD_CONTEXT_DEFAULT_MAX_BYTES,
   shrinkLoadContextAnchorToFit,
-  stripFrontMatterForExcerpt,
   anchorBodyForSearchIndex,
   toNextCursorPayload,
 } from "./loadContext.js";
@@ -110,6 +109,8 @@ import {
 } from "./projectAliases.js";
 import { runValidators } from "./validators/pipeline.js";
 
+const BM25_INDEX_READ_CONCURRENCY = 8;
+
 type MilestoneListRow = {
   name: string;
   path: string;
@@ -132,6 +133,36 @@ export class AnchorService {
       migrationWarnOnly: boolean;
     },
   ) {}
+
+  private async buildBM25SearchIndex(anchors: AnchorMeta[]): Promise<BM25Index> {
+    const bm25Index = new BM25Index();
+    let nextAnchorIndex = 0;
+    const workerCount = Math.min(BM25_INDEX_READ_CONCURRENCY, anchors.length);
+
+    await Promise.all(
+      Array.from({ length: workerCount }, async () => {
+        for (;;) {
+          const anchor = anchors[nextAnchorIndex];
+          nextAnchorIndex += 1;
+          if (!anchor) {
+            return;
+          }
+
+          try {
+            const read = await this.readAnchor(anchor.name);
+            bm25Index.add({
+              id: anchor.name,
+              text: anchorBodyForSearchIndex(read.content),
+            });
+          } catch {
+            // Skip unreadable anchors during BM25 indexing.
+          }
+        }
+      }),
+    );
+
+    return bm25Index;
+  }
 
   private resolveDiscoveryAnchorName(name: string): string {
     if (isBuiltInAnchorName(name)) {
@@ -1268,21 +1299,7 @@ export class AnchorService {
         ? { ...input, project: projectFilter.resolved }
         : input;
 
-    const bm25Index = new BM25Index();
-    await Promise.all(
-      anchors.map(async (anchor) => {
-        try {
-          const read = await this.readAnchor(anchor.name);
-          bm25Index.add({
-            id: anchor.name,
-            text: anchorBodyForSearchIndex(read.content),
-          });
-        } catch {
-          // Skip unreadable anchors during BM25 indexing.
-        }
-      }),
-    );
-
+    const bm25Index = await this.buildBM25SearchIndex(anchors);
     const plan = buildContextBundlePlan(anchors, effectiveInput, bm25Index, undefined, projectFilter);
     const names = plan.loadContext.names;
     const roadmapSignals = collectRoadmapAcceptanceMissingSignals(anchors);
