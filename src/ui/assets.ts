@@ -43,7 +43,7 @@ export const UI_HTML = `<!doctype html>
       <header class="topbar">
         <div>
           <h1>anchor-mcp</h1>
-          <p>Read-only context explorer</p>
+          <p>Context explorer and guarded editor</p>
         </div>
         <form id="token-form" class="token-form">
           <label for="token-input">API token</label>
@@ -103,6 +103,7 @@ export const UI_HTML = `<!doctype html>
           <nav class="tabs" aria-label="Primary views">
             <button class="tab active" data-tab="root" type="button"><span class="icon-label"><svg class="icon" aria-hidden="true"><use href="#icon-home"></use></svg><span>Context Root</span></span></button>
             <button class="tab" data-tab="planner" type="button"><span class="icon-label"><svg class="icon" aria-hidden="true"><use href="#icon-plan"></use></svg><span>Planner</span></span></button>
+            <button class="tab" data-tab="review" type="button"><span class="icon-label"><svg class="icon" aria-hidden="true"><use href="#icon-save"></use></svg><span>Review</span></span></button>
             <button class="tab" data-tab="detail" type="button" disabled><span class="icon-label"><svg class="icon" aria-hidden="true"><use href="#icon-anchor"></use></svg><span>Selected Anchor</span></span></button>
           </nav>
 
@@ -210,6 +211,48 @@ export const UI_HTML = `<!doctype html>
             </div>
           </section>
 
+          <section id="review-view" class="view">
+            <div class="view-header">
+              <div>
+                <h2>Proposed Changes</h2>
+                <p id="proposal-status">No proposals loaded yet</p>
+              </div>
+              <button id="load-proposals" type="button">Refresh</button>
+            </div>
+            <section class="planner-grid">
+              <div class="metadata-box">
+                <h3>Inbox</h3>
+                <div class="proposal-filters">
+                  <label>
+                    Project
+                    <input id="proposal-project" type="text" placeholder="optional">
+                  </label>
+                  <label>
+                    Status
+                    <select id="proposal-status-filter">
+                      <option value="pending">Pending</option>
+                      <option value="">All statuses</option>
+                      <option value="changes_requested">Changes requested</option>
+                      <option value="rejected">Rejected</option>
+                      <option value="superseded">Superseded</option>
+                      <option value="applied">Applied</option>
+                    </select>
+                  </label>
+                </div>
+                <div id="proposal-list" class="planner-list"></div>
+              </div>
+              <div class="metadata-box">
+                <h3>Review Result</h3>
+                <div id="proposal-actions" class="action-row" hidden>
+                  <button id="apply-proposal" type="button">Apply</button>
+                  <button id="request-proposal-changes" type="button">Request changes</button>
+                  <button id="reject-proposal" type="button">Reject</button>
+                </div>
+                <pre id="proposal-preview" class="compact-raw">Select a proposal to preview validation and diff output.</pre>
+              </div>
+            </section>
+          </section>
+
           <section id="detail-view" class="view">
             <div class="empty-state" id="detail-empty">
               Select an anchor to inspect its metadata, required sections, and source.
@@ -235,6 +278,79 @@ export const UI_HTML = `<!doctype html>
                 <div class="metadata-box">
                   <h3>Validation</h3>
                   <div id="validation-status"></div>
+                </div>
+              </section>
+              <section class="editor-grid">
+                <div class="metadata-box">
+                  <h3>Edit Composer</h3>
+                  <form id="edit-form" class="stack-form">
+                    <label>
+                      Operation
+                      <select id="edit-operation">
+                        <option value="section.replace">Replace section</option>
+                        <option value="section.append">Append to section</option>
+                        <option value="frontmatter.merge">Merge front matter</option>
+                      </select>
+                    </label>
+                    <label>
+                      Heading
+                      <select id="edit-heading">
+                        <option value="Current State">Current State</option>
+                        <option value="Decisions">Decisions</option>
+                        <option value="Constraints">Constraints</option>
+                        <option value="PRs">PRs</option>
+                      </select>
+                    </label>
+                    <label>
+                      Summary
+                      <input id="edit-summary" type="text" placeholder="Short review summary">
+                    </label>
+                    <label>
+                      Content or front matter JSON
+                      <textarea id="edit-content" rows="7" placeholder="- New anchor fact, or { &quot;summary&quot;: &quot;...&quot; }"></textarea>
+                    </label>
+                    <div class="form-grid">
+                      <label>
+                        Commit message
+                        <input id="edit-message" type="text" placeholder="optional">
+                      </label>
+                      <label>
+                        last_validated
+                        <input id="edit-last-validated" type="date">
+                      </label>
+                    </div>
+                    <label class="checkbox-row">
+                      <input id="edit-approved" type="checkbox">
+                      Explicit approval for gated changes
+                    </label>
+                    <div class="action-row">
+                      <button id="stage-proposal" type="button">Stage Proposal</button>
+                      <button id="commit-direct" type="submit">Commit Directly</button>
+                    </div>
+                  </form>
+                  <pre id="edit-result" class="compact-raw">Compose an edit to preview proposal or commit results.</pre>
+                </div>
+                <div class="metadata-box">
+                  <h3>History and Actions</h3>
+                  <div class="action-row">
+                    <button id="load-history" type="button">Load History</button>
+                    <button id="delete-anchor" type="button">Delete</button>
+                  </div>
+                  <div class="form-grid">
+                    <label>
+                      New path
+                      <input id="rename-target" type="text" placeholder="projects/demo/new-name.md">
+                    </label>
+                    <label>
+                      Action message
+                      <input id="action-message" type="text" placeholder="optional">
+                    </label>
+                  </div>
+                  <div class="action-row">
+                    <button id="rename-anchor" type="button">Rename</button>
+                  </div>
+                  <div id="history-list" class="planner-list"></div>
+                  <pre id="history-diff" class="compact-raw">Load history to inspect diffs or revert.</pre>
                 </div>
               </section>
               <article id="detail-rendered" class="markdown"></article>
@@ -465,6 +581,14 @@ textarea {
   align-items: center;
   gap: 6px;
   flex-wrap: wrap;
+}
+
+.action-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
 }
 
 .anchor-list-actions {
@@ -768,6 +892,13 @@ textarea {
   margin-bottom: 14px;
 }
 
+.editor-grid {
+  display: grid;
+  grid-template-columns: minmax(360px, 1.1fr) minmax(320px, 0.9fr);
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
 .metadata-box {
   padding: 14px;
 }
@@ -790,6 +921,25 @@ textarea {
   display: block;
   color: var(--muted);
   font-size: 12px;
+}
+
+.stack-form {
+  display: grid;
+  gap: 10px;
+}
+
+.stack-form label,
+.proposal-filters label {
+  display: block;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.form-grid,
+.proposal-filters {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
 }
 
 .planner-task {
@@ -854,6 +1004,17 @@ textarea {
   border-radius: 7px;
   padding: 10px;
   background: #fbfcfd;
+}
+
+.proposal-card {
+  width: 100%;
+  display: block;
+  text-align: left;
+}
+
+.proposal-card.active {
+  border-color: var(--accent);
+  background: var(--accent-soft);
 }
 
 .planner-card-title {
@@ -973,9 +1134,12 @@ textarea {
 
   .view-header,
   .detail-grid,
+  .editor-grid,
   .planner-controls,
   .planner-summary,
-  .planner-grid {
+  .planner-grid,
+  .form-grid,
+  .proposal-filters {
     grid-template-columns: 1fr;
     flex-direction: column;
   }
@@ -994,6 +1158,10 @@ export const UI_JS = `(function () {
     plannerPlans: [],
     plannerLastLoadContext: null,
     plannerLastPlan: null,
+    selectedAnchor: null,
+    proposals: [],
+    activeProposal: null,
+    anchorVersions: [],
     expandedAnchorGroups: new Set(),
     anchorGroupSort: "name"
   };
@@ -1116,6 +1284,19 @@ export const UI_JS = `(function () {
       headers.Authorization = "Bearer " + token();
     }
     var response = await fetch(path, { headers: headers });
+    if (!response.ok) {
+      var text = await response.text();
+      throw new Error(response.status + " " + response.statusText + ": " + text);
+    }
+    return response.json();
+  }
+
+  async function apiPost(path, body) {
+    var headers = { "content-type": "application/json" };
+    if (token()) {
+      headers.Authorization = "Bearer " + token();
+    }
+    var response = await fetch(path, { method: "POST", headers: headers, body: JSON.stringify(body || {}) });
     if (!response.ok) {
       var text = await response.text();
       throw new Error(response.status + " " + response.statusText + ": " + text);
@@ -1751,6 +1932,337 @@ export const UI_JS = `(function () {
     console.log(prompt);
   }
 
+  function showReview(options) {
+    var opts = options || {};
+    if (!opts.skipLocationUpdate) {
+      clearAnchorLocation();
+    }
+    state.pendingAnchor = null;
+    showTab("review");
+    if (!state.proposals.length) {
+      loadProposals().catch(function (error) { setBanner(error.message, "error"); });
+    }
+  }
+
+  function queryFromProposalFilters() {
+    var params = new URLSearchParams();
+    var project = el("proposal-project").value.trim();
+    var status = el("proposal-status-filter").value;
+    if (project) {
+      params.set("project", project);
+    }
+    if (status) {
+      params.set("status", status);
+    }
+    return params.toString();
+  }
+
+  async function loadProposals() {
+    setBanner("Loading proposed changes...", "info");
+    var query = queryFromProposalFilters();
+    var suffix = query ? "?" + query : "";
+    var response = await api("/api/ui/proposed-changes" + suffix);
+    state.proposals = response.proposals || [];
+    el("proposal-status").textContent = state.proposals.length + " proposal" + (state.proposals.length === 1 ? "" : "s") + " loaded";
+    renderProposalList();
+    setBanner("", "info");
+  }
+
+  function renderProposalList() {
+    var list = el("proposal-list");
+    if (!state.proposals.length) {
+      list.innerHTML = "<div class=\\"empty-state\\">No proposals match the current filters.</div>";
+      return;
+    }
+    list.innerHTML = state.proposals.map(renderProposalItem).join("");
+  }
+
+  function renderProposalItem(proposal) {
+    var active = state.activeProposal && state.activeProposal.id === proposal.id ? " active" : "";
+    return "<button class=\\"planner-card proposal-card" + active + "\\" type=\\"button\\" data-proposal-id=\\"" + escapeHtml(proposal.id) + "\\">"
+      + "<div class=\\"planner-card-title\\"><span>" + escapeHtml(proposal.summary || proposal.id) + "</span><span class=\\"badge\\">" + escapeHtml(proposal.status) + "</span></div>"
+      + "<p>" + escapeHtml(proposal.target || "No target") + "</p>"
+      + "<p>" + escapeHtml(proposal.id) + "</p>"
+      + "</button>";
+  }
+
+  async function selectProposal(id) {
+    var proposal = state.proposals.find(function (item) { return item.id === id; });
+    if (!proposal) {
+      var read = await api("/api/ui/proposed-change?id=" + encodeURIComponent(id));
+      proposal = read.proposal;
+    }
+    state.activeProposal = proposal;
+    renderProposalList();
+    await previewProposal(id);
+    showTab("review");
+  }
+
+  async function previewProposal(id) {
+    setBanner("Previewing proposed change...", "info");
+    var preview = await api("/api/ui/proposed-change-preview?id=" + encodeURIComponent(id));
+    state.activeProposal = preview.proposal;
+    el("proposal-actions").hidden = preview.proposal.status !== "pending";
+    el("proposal-preview").textContent = formatPreview(preview);
+    setBanner("", "info");
+  }
+
+  function formatPreview(preview) {
+    return JSON.stringify({
+      id: preview.proposal && preview.proposal.id,
+      status: preview.proposal && preview.proposal.status,
+      target: preview.proposal && preview.proposal.target,
+      stale: preview.stale,
+      requiresApproval: preview.requiresApproval,
+      warnings: preview.warnings || [],
+      diff: preview.diff || ""
+    }, null, 2);
+  }
+
+  async function applyActiveProposal() {
+    if (!state.activeProposal) {
+      return;
+    }
+    if (!window.confirm("Apply this proposal as a committed anchor change?")) {
+      return;
+    }
+    var result = await apiPost("/api/ui/proposed-change-apply", {
+      id: state.activeProposal.id,
+      approved: true,
+      expectedLedgerFileCommit: state.activeProposal.ledgerFileCommit
+    });
+    el("proposal-preview").textContent = formatWriteResult(result);
+    await loadProposals();
+    if (state.selectedName) {
+      await selectAnchor(state.selectedName, { skipLocationUpdate: true });
+    }
+  }
+
+  async function reviewActiveProposal(status) {
+    if (!state.activeProposal) {
+      return;
+    }
+    var note = window.prompt("Review note", "") || "";
+    var result = await apiPost("/api/ui/proposed-change-review", {
+      id: state.activeProposal.id,
+      status: status,
+      note: note,
+      expectedLedgerFileCommit: state.activeProposal.ledgerFileCommit
+    });
+    el("proposal-preview").textContent = formatWriteResult(result);
+    await loadProposals();
+  }
+
+  function scopeForAnchor(anchor) {
+    if (!anchor) {
+      throw new Error("Select an anchor before staging a proposal.");
+    }
+    if (anchor.name.indexOf("agent-rules/") === 0) {
+      return { kind: "agent-rules" };
+    }
+    var project = projectOf(anchor);
+    if (project) {
+      return { kind: "project", project: project };
+    }
+    throw new Error("Proposals are currently supported for project and agent-rule anchors.");
+  }
+
+  function parseFrontmatterUpdates() {
+    try {
+      var parsed = JSON.parse(el("edit-content").value || "{}");
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+        throw new Error("Front matter updates must be a JSON object.");
+      }
+      return parsed;
+    } catch (error) {
+      throw new Error("Front matter updates must be valid JSON. " + error.message);
+    }
+  }
+
+  function editOperation() {
+    var type = el("edit-operation").value;
+    if (type === "frontmatter.merge") {
+      return { type: type, updates: parseFrontmatterUpdates() };
+    }
+    var operation = {
+      type: type,
+      heading: el("edit-heading").value,
+      content: el("edit-content").value
+    };
+    var lastValidated = el("edit-last-validated").value;
+    if (lastValidated) {
+      operation.lastValidated = lastValidated;
+    }
+    return operation;
+  }
+
+  async function stageProposalFromComposer() {
+    var anchor = state.selectedAnchor;
+    if (!anchor) {
+      throw new Error("Select an anchor before staging a proposal.");
+    }
+    var operation = editOperation();
+    var summary = el("edit-summary").value.trim() || (operation.type + " " + anchor.name);
+    var result = await apiPost("/api/ui/propose-change", {
+      scope: scopeForAnchor(anchor),
+      target: anchor.name,
+      summary: summary,
+      operations: [operation],
+      message: el("edit-message").value.trim() || undefined
+    });
+    el("edit-result").textContent = formatWriteResult(result);
+    await loadProposals();
+    if (result.proposal && result.proposal.id) {
+      await selectProposal(result.proposal.id);
+    }
+  }
+
+  async function commitDirectFromComposer() {
+    var anchor = state.selectedAnchor;
+    if (!anchor) {
+      throw new Error("Select an anchor before committing.");
+    }
+    var operation = editOperation();
+    var common = {
+      name: anchor.name,
+      message: el("edit-message").value.trim() || undefined,
+      approved: el("edit-approved").checked,
+      expectedFileCommit: anchor.fileCommit
+    };
+    var result;
+    if (operation.type === "frontmatter.merge") {
+      result = await apiPost("/api/ui/anchor-frontmatter", Object.assign({}, common, { updates: operation.updates }));
+    } else if (operation.type === "section.append") {
+      result = await apiPost("/api/ui/anchor-append", Object.assign({}, common, {
+        heading: operation.heading,
+        content: operation.content,
+        lastValidated: operation.lastValidated
+      }));
+    } else {
+      result = await apiPost("/api/ui/anchor-section", Object.assign({}, common, {
+        heading: operation.heading,
+        content: operation.content,
+        lastValidated: operation.lastValidated
+      }));
+    }
+    el("edit-result").textContent = formatWriteResult(result);
+    if (result.version) {
+      await load();
+      await selectAnchor(anchor.name, { skipLocationUpdate: true });
+    }
+  }
+
+  function formatWriteResult(result) {
+    return JSON.stringify(result, null, 2);
+  }
+
+  async function loadAnchorHistory() {
+    var anchor = state.selectedAnchor;
+    if (!anchor) {
+      throw new Error("Select an anchor before loading history.");
+    }
+    var response = await api("/api/ui/anchor-versions?name=" + encodeURIComponent(anchor.name) + "&limit=20");
+    state.anchorVersions = response.versions || [];
+    renderAnchorHistory();
+  }
+
+  function renderAnchorHistory() {
+    var list = el("history-list");
+    if (!state.anchorVersions.length) {
+      list.innerHTML = "<div class=\\"empty-state\\">No versions returned.</div>";
+      return;
+    }
+    list.innerHTML = state.anchorVersions.map(function (version, index) {
+      var previous = state.anchorVersions[index + 1];
+      var diffButton = previous
+        ? "<button type=\\"button\\" data-diff-index=\\"" + index + "\\">Diff previous</button>"
+        : "";
+      return "<div class=\\"planner-card\\">"
+        + "<div class=\\"planner-card-title\\"><span>" + escapeHtml(version.message || version.version) + "</span><span class=\\"badge\\">" + escapeHtml(version.date || "") + "</span></div>"
+        + "<p>" + escapeHtml(version.version) + "</p>"
+        + "<p>" + escapeHtml(version.author || "") + "</p>"
+        + "<div class=\\"action-row\\">" + diffButton + "<button type=\\"button\\" data-revert-version=\\"" + escapeHtml(version.version) + "\\">Revert</button></div>"
+        + "</div>";
+    }).join("");
+  }
+
+  async function diffHistoryIndex(index) {
+    var anchor = state.selectedAnchor;
+    var current = state.anchorVersions[index];
+    var previous = state.anchorVersions[index + 1];
+    if (!anchor || !current || !previous) {
+      return;
+    }
+    var response = await api("/api/ui/anchor-diff?name=" + encodeURIComponent(anchor.name)
+      + "&fromVersion=" + encodeURIComponent(previous.version)
+      + "&toVersion=" + encodeURIComponent(current.version));
+    el("history-diff").textContent = response.patch || "(empty diff)";
+  }
+
+  async function revertAnchorVersion(version) {
+    var anchor = state.selectedAnchor;
+    if (!anchor || !window.confirm("Revert " + anchor.name + " to " + version + " as a new commit?")) {
+      return;
+    }
+    var result = await apiPost("/api/ui/anchor-revert", {
+      name: anchor.name,
+      toVersion: version,
+      message: el("action-message").value.trim() || undefined
+    });
+    el("history-diff").textContent = formatWriteResult(result);
+    await load();
+    await selectAnchor(anchor.name, { skipLocationUpdate: true });
+  }
+
+  async function renameSelectedAnchor() {
+    var anchor = state.selectedAnchor;
+    var to = el("rename-target").value.trim();
+    if (!anchor || !to) {
+      throw new Error("Rename requires a selected anchor and a target path.");
+    }
+    if (!window.confirm("Rename " + anchor.name + " to " + to + "?")) {
+      return;
+    }
+    var result = await apiPost("/api/ui/anchor-rename", {
+      from: anchor.name,
+      to: to,
+      approved: true,
+      message: el("action-message").value.trim() || undefined,
+      expectedFileCommit: anchor.fileCommit
+    });
+    el("history-diff").textContent = formatWriteResult(result);
+    if (result.version) {
+      state.selectedName = to;
+      await load();
+      await selectAnchor(to, { skipLocationUpdate: true });
+    }
+  }
+
+  async function deleteSelectedAnchor() {
+    var anchor = state.selectedAnchor;
+    if (!anchor) {
+      throw new Error("Select an anchor before deleting.");
+    }
+    var typed = window.prompt("Type the full anchor name to delete it.", "");
+    if (typed !== anchor.name) {
+      setBanner("Delete cancelled; anchor name did not match.", "warn");
+      return;
+    }
+    var result = await apiPost("/api/ui/anchor-delete", {
+      name: anchor.name,
+      approved: true,
+      message: el("action-message").value.trim() || undefined,
+      expectedFileCommit: anchor.fileCommit
+    });
+    el("history-diff").textContent = formatWriteResult(result);
+    if (result.version) {
+      state.selectedName = null;
+      state.selectedAnchor = null;
+      await load();
+      showRoot();
+    }
+  }
+
   function showRootMode(mode) {
     state.rootMode = mode;
     document.querySelectorAll("[data-root-mode]").forEach(function (button) {
@@ -1843,6 +2355,8 @@ export const UI_JS = `(function () {
   }
 
   function renderDetail(anchor) {
+    state.selectedAnchor = anchor;
+    state.anchorVersions = [];
     el("detail-empty").hidden = true;
     el("detail-content").hidden = false;
     el("detail-title").textContent = anchor.ui.label;
@@ -1858,6 +2372,15 @@ export const UI_JS = `(function () {
     decorateAnchorLinks(el("detail-rendered"));
     el("detail-raw").textContent = anchor.content || "";
     el("detail-frontmatter").textContent = JSON.stringify(anchor.frontmatter || {}, null, 2);
+    el("edit-summary").value = "";
+    el("edit-content").value = "";
+    el("edit-message").value = "";
+    el("edit-approved").checked = false;
+    el("rename-target").value = anchor.name;
+    el("action-message").value = "";
+    el("edit-result").textContent = "Compose an edit to preview proposal or commit results.";
+    el("history-list").innerHTML = "";
+    el("history-diff").textContent = "Load history to inspect diffs or revert.";
     showDetailMode(state.detailMode);
   }
 
@@ -2089,6 +2612,57 @@ export const UI_JS = `(function () {
     el("copy-judge-prompt").addEventListener("click", function () {
       copyJudgePrompt().catch(function (error) { setBanner(error.message, "error"); });
     });
+    el("load-proposals").addEventListener("click", function () {
+      loadProposals().catch(function (error) { setBanner(error.message, "error"); });
+    });
+    ["proposal-project", "proposal-status-filter"].forEach(function (id) {
+      el(id).addEventListener("change", function () {
+        loadProposals().catch(function (error) { setBanner(error.message, "error"); });
+      });
+    });
+    el("proposal-list").addEventListener("click", function (event) {
+      var card = event.target.closest("[data-proposal-id]");
+      if (!card) {
+        return;
+      }
+      selectProposal(card.dataset.proposalId).catch(function (error) { setBanner(error.message, "error"); });
+    });
+    el("apply-proposal").addEventListener("click", function () {
+      applyActiveProposal().catch(function (error) { setBanner(error.message, "error"); });
+    });
+    el("request-proposal-changes").addEventListener("click", function () {
+      reviewActiveProposal("changes_requested").catch(function (error) { setBanner(error.message, "error"); });
+    });
+    el("reject-proposal").addEventListener("click", function () {
+      reviewActiveProposal("rejected").catch(function (error) { setBanner(error.message, "error"); });
+    });
+    el("stage-proposal").addEventListener("click", function () {
+      stageProposalFromComposer().catch(function (error) { setBanner(error.message, "error"); });
+    });
+    el("edit-form").addEventListener("submit", function (event) {
+      event.preventDefault();
+      commitDirectFromComposer().catch(function (error) { setBanner(error.message, "error"); });
+    });
+    el("load-history").addEventListener("click", function () {
+      loadAnchorHistory().catch(function (error) { setBanner(error.message, "error"); });
+    });
+    el("history-list").addEventListener("click", function (event) {
+      var diff = event.target.closest("[data-diff-index]");
+      if (diff) {
+        diffHistoryIndex(Number(diff.dataset.diffIndex)).catch(function (error) { setBanner(error.message, "error"); });
+        return;
+      }
+      var revert = event.target.closest("[data-revert-version]");
+      if (revert) {
+        revertAnchorVersion(revert.dataset.revertVersion).catch(function (error) { setBanner(error.message, "error"); });
+      }
+    });
+    el("rename-anchor").addEventListener("click", function () {
+      renameSelectedAnchor().catch(function (error) { setBanner(error.message, "error"); });
+    });
+    el("delete-anchor").addEventListener("click", function () {
+      deleteSelectedAnchor().catch(function (error) { setBanner(error.message, "error"); });
+    });
     el("search-input").addEventListener("input", debounce(renderAnchorList, 120));
     el("anchor-list").addEventListener("click", function (event) {
       var row = event.target.closest("[data-name]");
@@ -2117,6 +2691,10 @@ export const UI_JS = `(function () {
         }
         if (button.dataset.tab === "planner") {
           showPlanner();
+          return;
+        }
+        if (button.dataset.tab === "review") {
+          showReview();
           return;
         }
         showTab(button.dataset.tab);

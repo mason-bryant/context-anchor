@@ -133,6 +133,23 @@ describe("UI browser assets", () => {
     expect(UI_HTML).toContain('id="planner-raw"');
   });
 
+  it("includes guarded editing and proposal review surfaces", () => {
+    expect(UI_HTML).toContain('data-tab="review"');
+    expect(UI_HTML).toContain('id="proposal-list"');
+    expect(UI_HTML).toContain('id="proposal-preview"');
+    expect(UI_HTML).toContain('id="edit-form"');
+    expect(UI_HTML).toContain('id="stage-proposal"');
+    expect(UI_HTML).toContain('id="commit-direct"');
+    expect(UI_HTML).toContain('id="load-history"');
+    expect(UI_HTML).toContain('id="rename-anchor"');
+    expect(UI_HTML).toContain('id="delete-anchor"');
+    expect(UI_JS).toContain("/api/ui/propose-change");
+    expect(UI_JS).toContain("/api/ui/proposed-change-apply");
+    expect(UI_JS).toContain("/api/ui/anchor-frontmatter");
+    expect(UI_JS).toContain("/api/ui/anchor-versions");
+    expect(UI_JS).toContain("/api/ui/anchor-delete");
+  });
+
   it("persists bearer tokens in localStorage for same-origin tabs", () => {
     const sharedLocalStorage = createStorage();
     const firstTab = loadHooks({ localStorage: sharedLocalStorage });
