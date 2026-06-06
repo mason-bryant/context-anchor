@@ -462,7 +462,13 @@ function booleanBody(body: Record<string, unknown>, key: string): boolean | unde
     return value;
   }
   if (typeof value === "string") {
-    return value === "1" || value.toLowerCase() === "true";
+    const normalized = value.trim().toLowerCase();
+    if (normalized === "1" || normalized === "true") {
+      return true;
+    }
+    if (normalized === "0" || normalized === "false") {
+      return false;
+    }
   }
   throw new UiHttpError(400, `Invalid ${key}: expected a boolean`);
 }

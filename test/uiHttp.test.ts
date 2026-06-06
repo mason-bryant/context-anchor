@@ -363,6 +363,24 @@ describe("UI HTTP routes", () => {
     }
   });
 
+  it("rejects invalid boolean strings in UI mutation bodies", async () => {
+    const response = await fetch(`${baseUrl}/api/ui/anchor-delete`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${TOKEN}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        name: "projects/demo/demo.md",
+        approved: "yes",
+      }),
+    });
+    const body = (await response.json()) as { error: { message: string } };
+
+    expect(response.status).toBe(400);
+    expect(body.error.message).toContain("Invalid approved: expected a boolean");
+  });
+
   it("routes anchor history and destructive action requests", async () => {
     const restoreVersions = stubAnchorServiceMethod("listVersions", vi.fn(async () => [{ version: "a", author: "A", date: "2026-06-06", message: "one" }]));
     const restoreDiff = stubAnchorServiceMethod("diffAnchor", vi.fn(async () => "diff --git a b"));
