@@ -34,6 +34,7 @@ type UiAssetHooks = {
   shouldHandleClientNavigation(event: Record<string, unknown>, link: { getAttribute(name: string): string | null }): boolean;
   parsePlannerLogPaste(text: unknown): Record<string, unknown> | null;
   buildJudgePrompt(plan: Record<string, unknown>, anchorBodies: Record<string, string>): string;
+  formatPreview(preview: Record<string, unknown>): string;
 };
 
 type TestStorage = {
@@ -148,6 +149,40 @@ describe("UI browser assets", () => {
     expect(UI_JS).toContain("/api/ui/anchor-frontmatter");
     expect(UI_JS).toContain("/api/ui/anchor-versions");
     expect(UI_JS).toContain("/api/ui/anchor-delete");
+  });
+
+  it("formats proposed-change previews with operation contents", () => {
+    const hooks = loadHooks();
+    const preview = hooks.formatPreview({
+      proposal: {
+        id: "PC-20260608-demo",
+        status: "pending",
+        target: "projects/demo/demo.md",
+        ledgerName: "projects/demo/demo-proposed-changes.md",
+        summary: "Add deployment fact",
+        rationale: "The anchor is missing current deployment state.",
+        operations: [
+          {
+            type: "section.append",
+            heading: "Current State",
+            content: "- Deployment is currently manual.",
+            lastValidated: "2026-06-08",
+          },
+        ],
+      },
+      targetExists: true,
+      stale: false,
+      requiresApproval: false,
+      warnings: [{ severity: "WARN", code: "example_warning", message: "Example warning." }],
+      diff: "@@ -1 +1\\n+ - Deployment is currently manual.",
+    });
+
+    expect(preview).toContain("Summary\nAdd deployment fact");
+    expect(preview).toContain("Rationale\nThe anchor is missing current deployment state.");
+    expect(preview).toContain("Append to section \"Current State\"");
+    expect(preview).toContain("Content:\n     - Deployment is currently manual.");
+    expect(preview).toContain("[WARN] example_warning");
+    expect(preview).toContain("Diff\n@@ -1 +1");
   });
 
   it("persists bearer tokens in localStorage for same-origin tabs", () => {

@@ -1979,9 +1979,11 @@ export const UI_JS = `(function () {
 
   function renderProposalItem(proposal) {
     var active = state.activeProposal && state.activeProposal.id === proposal.id ? " active" : "";
+    var operationSummary = proposalListOperationSummary(proposal.operations);
     return "<button class=\\"planner-card proposal-card" + active + "\\" type=\\"button\\" data-proposal-id=\\"" + escapeHtml(proposal.id) + "\\">"
       + "<div class=\\"planner-card-title\\"><span>" + escapeHtml(proposal.summary || proposal.id) + "</span><span class=\\"badge\\">" + escapeHtml(proposal.status) + "</span></div>"
       + "<p>" + escapeHtml(proposal.target || "No target") + "</p>"
+      + "<p>" + escapeHtml(operationSummary) + "</p>"
       + "<p>" + escapeHtml(proposal.id) + "</p>"
       + "</button>";
   }
@@ -2008,15 +2010,120 @@ export const UI_JS = `(function () {
   }
 
   function formatPreview(preview) {
-    return JSON.stringify({
-      id: preview.proposal && preview.proposal.id,
-      status: preview.proposal && preview.proposal.status,
-      target: preview.proposal && preview.proposal.target,
-      stale: preview.stale,
-      requiresApproval: preview.requiresApproval,
-      warnings: preview.warnings || [],
-      diff: preview.diff || ""
-    }, null, 2);
+    var proposal = preview.proposal || {};
+    var operations = Array.isArray(proposal.operations) ? proposal.operations : [];
+    var metadata = [
+      ["ID", proposal.id],
+      ["Status", proposal.status],
+      ["Target", proposal.target],
+      ["Ledger", proposal.ledgerName],
+      ["Created", proposal.createdAt],
+      ["Updated", proposal.updatedAt],
+      ["Base commit", preview.baseFileCommit || proposal.baseFileCommit],
+      ["Target commit", preview.targetFileCommit],
+      ["Target exists", preview.targetExists],
+      ["Stale target", preview.stale],
+      ["Requires approval", preview.requiresApproval]
+    ].filter(function (pair) {
+      return pair[1] !== undefined && pair[1] !== null && pair[1] !== "";
+    }).map(function (pair) {
+      return pair[0] + ": " + String(pair[1]);
+    }).join("\\n");
+
+    var sections = [
+      "Summary\\n" + (proposal.summary || "(no summary returned)"),
+      "Metadata\\n" + (metadata || "(no metadata returned)"),
+      "Operations (" + operations.length + ")\\n" + formatProposalOperations(operations),
+      "Warnings\\n" + formatWarnings(preview.warnings || []),
+      "Diff\\n" + (preview.diff && String(preview.diff).trim() ? String(preview.diff) : "(no diff returned)")
+    ];
+    if (proposal.rationale) {
+      sections.splice(1, 0, "Rationale\\n" + proposal.rationale);
+    }
+    if (proposal.reviews && proposal.reviews.length) {
+      sections.splice(sections.length - 1, 0, "Reviews\\n" + JSON.stringify(proposal.reviews, null, 2));
+    }
+    return sections.join("\\n\\n");
+  }
+
+  function proposalListOperationSummary(operations) {
+    if (!Array.isArray(operations) || !operations.length) {
+      return "No operation payload returned";
+    }
+    var labels = operations.slice(0, 2).map(proposalOperationLabel);
+    if (operations.length > labels.length) {
+      labels.push("+" + (operations.length - labels.length) + " more");
+    }
+    return labels.join("; ");
+  }
+
+  function proposalOperationLabel(operation) {
+    if (!operation || !operation.type) {
+      return "Unknown operation";
+    }
+    if (operation.type === "frontmatter.merge") {
+      return "Merge front matter";
+    }
+    if (operation.type === "section.replace") {
+      return "Replace section \\"" + (operation.heading || "unknown") + "\\"";
+    }
+    if (operation.type === "section.append") {
+      return "Append to section \\"" + (operation.heading || "unknown") + "\\"";
+    }
+    if (operation.type === "section.delete") {
+      return "Delete section \\"" + (operation.heading || "unknown") + "\\"";
+    }
+    if (operation.type === "anchor.create") {
+      return "Create anchor";
+    }
+    if (operation.type === "document.replace") {
+      return "Replace full document";
+    }
+    return String(operation.type);
+  }
+
+  function formatProposalOperations(operations) {
+    if (!operations.length) {
+      return "No operation payload returned.";
+    }
+    return operations.map(function (operation, index) {
+      var lines = [
+        String(index + 1) + ". " + proposalOperationLabel(operation),
+        "   Type: " + String(operation && operation.type ? operation.type : "unknown")
+      ];
+      if (operation && operation.heading) {
+        lines.push("   Heading: " + operation.heading);
+      }
+      if (operation && operation.lastValidated) {
+        lines.push("   last_validated: " + operation.lastValidated);
+      }
+      if (operation && operation.updates !== undefined) {
+        lines.push("   Updates:");
+        lines.push(indentBlock(JSON.stringify(operation.updates, null, 2), "     "));
+      }
+      if (operation && operation.content !== undefined) {
+        lines.push("   Content:");
+        lines.push(indentBlock(operation.content || "(empty)", "     "));
+      }
+      return lines.join("\\n");
+    }).join("\\n\\n");
+  }
+
+  function formatWarnings(warnings) {
+    if (!Array.isArray(warnings) || !warnings.length) {
+      return "None.";
+    }
+    return warnings.map(function (warning, index) {
+      var label = "[" + (warning.severity || "WARN") + "] " + (warning.code || "warning");
+      var path = warning.path ? " (" + warning.path + ")" : "";
+      return String(index + 1) + ". " + label + path + "\\n   " + (warning.message || "");
+    }).join("\\n");
+  }
+
+  function indentBlock(value, prefix) {
+    return String(value == null ? "" : value).split("\\n").map(function (line) {
+      return prefix + line;
+    }).join("\\n");
   }
 
   async function applyActiveProposal() {
@@ -2731,6 +2838,7 @@ export const UI_JS = `(function () {
     window.__ANCHOR_MCP_UI_TEST_HOOKS__.shouldHandleClientNavigation = shouldHandleClientNavigation;
     window.__ANCHOR_MCP_UI_TEST_HOOKS__.parsePlannerLogPaste = parsePlannerLogPaste;
     window.__ANCHOR_MCP_UI_TEST_HOOKS__.buildJudgePrompt = buildJudgePrompt;
+    window.__ANCHOR_MCP_UI_TEST_HOOKS__.formatPreview = formatPreview;
     return;
   }
 
