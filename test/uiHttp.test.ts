@@ -72,7 +72,7 @@ describe("UI HTTP routes", () => {
 
     expect(response.status).toBe(200);
     expect(response.headers.get("content-type")).toContain("text/html");
-    expect(html).toContain("Read-only context explorer");
+    expect(html).toContain("Context explorer and guarded editor");
     expect(html).toContain("/ui/app.js");
   });
 
@@ -223,6 +223,229 @@ describe("UI HTTP routes", () => {
     }
   });
 
+  it("routes proposed-change mutation requests", async () => {
+    const restorePropose = stubAnchorServiceMethod("proposeChange", vi.fn(async () => ({ proposal: { id: "pc-1" }, warnings: [] })));
+    const restoreReview = stubAnchorServiceMethod("reviewProposedChange", vi.fn(async () => ({ proposal: { id: "pc-1" }, warnings: [] })));
+    const restoreApply = stubAnchorServiceMethod("applyProposedChange", vi.fn(async () => ({ proposal: { id: "pc-1" }, warnings: [] })));
+
+    try {
+      await postJson("/api/ui/propose-change", {
+        scope: { kind: "project", project: "demo" },
+        target: "projects/demo/demo.md",
+        summary: "Update demo state",
+        operations: [{ type: "section.append", heading: "Current State", content: "- New fact." }],
+        rationale: "Keep context fresh.",
+      });
+      await postJson("/api/ui/proposed-change-review", {
+        id: "pc-1",
+        status: "changes_requested",
+        note: "Tighten wording.",
+        expectedLedgerFileCommit: "abc123",
+      });
+      await postJson("/api/ui/proposed-change-apply", {
+        id: "pc-1",
+        approved: true,
+        message: "test: apply proposal",
+        expectedLedgerFileCommit: "abc123",
+      });
+
+      expect((AnchorService.prototype as unknown as { proposeChange: ReturnType<typeof vi.fn> }).proposeChange)
+        .toHaveBeenCalledWith({
+          scope: { kind: "project", project: "demo" },
+          target: "projects/demo/demo.md",
+          summary: "Update demo state",
+          operations: [{ type: "section.append", heading: "Current State", content: "- New fact." }],
+          rationale: "Keep context fresh.",
+          createdBy: undefined,
+          message: undefined,
+        });
+      expect((AnchorService.prototype as unknown as { reviewProposedChange: ReturnType<typeof vi.fn> }).reviewProposedChange)
+        .toHaveBeenCalledWith({
+          id: "pc-1",
+          status: "changes_requested",
+          note: "Tighten wording.",
+          reviewedBy: undefined,
+          message: undefined,
+          expectedLedgerFileCommit: "abc123",
+        });
+      expect((AnchorService.prototype as unknown as { applyProposedChange: ReturnType<typeof vi.fn> }).applyProposedChange)
+        .toHaveBeenCalledWith({
+          id: "pc-1",
+          approved: true,
+          appliedBy: undefined,
+          message: "test: apply proposal",
+          coAuthor: undefined,
+          expectedLedgerFileCommit: "abc123",
+        });
+    } finally {
+      restorePropose();
+      restoreReview();
+      restoreApply();
+    }
+  });
+
+  it("routes direct anchor edit requests", async () => {
+    const restoreFrontmatter = stubAnchorServiceMethod("updateAnchorFrontmatter", vi.fn(async () => ({ version: "v1", warnings: [] })));
+    const restoreSection = stubAnchorServiceMethod("updateAnchorSection", vi.fn(async () => ({ version: "v2", warnings: [] })));
+    const restoreAppend = stubAnchorServiceMethod("appendToAnchorSection", vi.fn(async () => ({ version: "v3", warnings: [] })));
+    const restoreDeleteSection = stubAnchorServiceMethod("deleteAnchorSection", vi.fn(async () => ({ version: "v4", warnings: [] })));
+
+    try {
+      await postJson("/api/ui/anchor-frontmatter", {
+        name: "projects/demo/demo.md",
+        updates: { summary: "Updated summary." },
+        expectedFileCommit: "abc123",
+      });
+      await postJson("/api/ui/anchor-section", {
+        name: "projects/demo/demo.md",
+        heading: "Current State",
+        content: "- Updated.",
+        lastValidated: "2026-06-06",
+        approved: true,
+      });
+      await postJson("/api/ui/anchor-append", {
+        name: "projects/demo/demo.md",
+        heading: "PRs",
+        content: "- [PR Demo - #1](https://github.com/example/repo/pull/1)",
+      });
+      await postJson("/api/ui/anchor-section-delete", {
+        name: "projects/demo/demo.md",
+        heading: "Old Section",
+        approved: true,
+      });
+
+      expect((AnchorService.prototype as unknown as { updateAnchorFrontmatter: ReturnType<typeof vi.fn> }).updateAnchorFrontmatter)
+        .toHaveBeenCalledWith({
+          name: "projects/demo/demo.md",
+          updates: { summary: "Updated summary." },
+          message: undefined,
+          approved: undefined,
+          coAuthor: undefined,
+          expectedFileCommit: "abc123",
+        });
+      expect((AnchorService.prototype as unknown as { updateAnchorSection: ReturnType<typeof vi.fn> }).updateAnchorSection)
+        .toHaveBeenCalledWith({
+          name: "projects/demo/demo.md",
+          heading: "Current State",
+          content: "- Updated.",
+          lastValidated: "2026-06-06",
+          message: undefined,
+          approved: true,
+          coAuthor: undefined,
+          expectedFileCommit: undefined,
+        });
+      expect((AnchorService.prototype as unknown as { appendToAnchorSection: ReturnType<typeof vi.fn> }).appendToAnchorSection)
+        .toHaveBeenCalledWith({
+          name: "projects/demo/demo.md",
+          heading: "PRs",
+          content: "- [PR Demo - #1](https://github.com/example/repo/pull/1)",
+          lastValidated: undefined,
+          message: undefined,
+          approved: undefined,
+          coAuthor: undefined,
+          expectedFileCommit: undefined,
+        });
+      expect((AnchorService.prototype as unknown as { deleteAnchorSection: ReturnType<typeof vi.fn> }).deleteAnchorSection)
+        .toHaveBeenCalledWith({
+          name: "projects/demo/demo.md",
+          heading: "Old Section",
+          lastValidated: undefined,
+          message: undefined,
+          approved: true,
+          coAuthor: undefined,
+          expectedFileCommit: undefined,
+        });
+    } finally {
+      restoreFrontmatter();
+      restoreSection();
+      restoreAppend();
+      restoreDeleteSection();
+    }
+  });
+
+  it("rejects invalid boolean strings in UI mutation bodies", async () => {
+    const response = await fetch(`${baseUrl}/api/ui/anchor-delete`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${TOKEN}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        name: "projects/demo/demo.md",
+        approved: "yes",
+      }),
+    });
+    const body = (await response.json()) as { error: { message: string } };
+
+    expect(response.status).toBe(400);
+    expect(body.error.message).toContain("Invalid approved: expected a boolean");
+  });
+
+  it("routes anchor history and destructive action requests", async () => {
+    const restoreVersions = stubAnchorServiceMethod("listVersions", vi.fn(async () => [{ version: "a", author: "A", date: "2026-06-06", message: "one" }]));
+    const restoreDiff = stubAnchorServiceMethod("diffAnchor", vi.fn(async () => "diff --git a b"));
+    const restoreRevert = stubAnchorServiceMethod("revertAnchor", vi.fn(async () => ({ newVersion: "b" })));
+    const restoreRename = stubAnchorServiceMethod("renameAnchor", vi.fn(async () => ({ version: "c", warnings: [] })));
+    const restoreDelete = stubAnchorServiceMethod("deleteAnchor", vi.fn(async () => ({ version: "d", warnings: [] })));
+
+    try {
+      const versions = await fetchJson<{ versions: Array<{ version: string }> }>(
+        "/api/ui/anchor-versions?name=projects%2Fdemo%2Fdemo.md&limit=5",
+      );
+      const diff = await fetchJson<{ patch: string }>(
+        "/api/ui/anchor-diff?name=projects%2Fdemo%2Fdemo.md&fromVersion=a&toVersion=b",
+      );
+      await postJson("/api/ui/anchor-revert", {
+        name: "projects/demo/demo.md",
+        toVersion: "a",
+        message: "test: revert",
+      });
+      await postJson("/api/ui/anchor-rename", {
+        from: "projects/demo/demo.md",
+        to: "projects/demo/demo-renamed.md",
+        approved: true,
+        expectedFileCommit: "abc123",
+      });
+      await postJson("/api/ui/anchor-delete", {
+        name: "projects/demo/demo.md",
+        approved: true,
+        expectedFileCommit: "abc123",
+      });
+
+      expect(versions.versions[0]?.version).toBe("a");
+      expect(diff.patch).toContain("diff --git");
+      expect((AnchorService.prototype as unknown as { listVersions: ReturnType<typeof vi.fn> }).listVersions)
+        .toHaveBeenCalledWith("projects/demo/demo.md", 5);
+      expect((AnchorService.prototype as unknown as { diffAnchor: ReturnType<typeof vi.fn> }).diffAnchor)
+        .toHaveBeenCalledWith("projects/demo/demo.md", "a", "b");
+      expect((AnchorService.prototype as unknown as { revertAnchor: ReturnType<typeof vi.fn> }).revertAnchor)
+        .toHaveBeenCalledWith("projects/demo/demo.md", "a", "test: revert");
+      expect((AnchorService.prototype as unknown as { renameAnchor: ReturnType<typeof vi.fn> }).renameAnchor)
+        .toHaveBeenCalledWith({
+          from: "projects/demo/demo.md",
+          to: "projects/demo/demo-renamed.md",
+          message: undefined,
+          approved: true,
+          coAuthor: undefined,
+          expectedFileCommit: "abc123",
+        });
+      expect((AnchorService.prototype as unknown as { deleteAnchor: ReturnType<typeof vi.fn> }).deleteAnchor)
+        .toHaveBeenCalledWith({
+          name: "projects/demo/demo.md",
+          message: undefined,
+          approved: true,
+          coAuthor: undefined,
+          expectedFileCommit: "abc123",
+        });
+    } finally {
+      restoreVersions();
+      restoreDiff();
+      restoreRevert();
+      restoreRename();
+      restoreDelete();
+    }
+  });
+
   it("returns 400 for invalid proposed-change list scope", async () => {
     const response = await fetch(`${baseUrl}/api/ui/proposed-changes?scope=projects`, {
       headers: { Authorization: `Bearer ${TOKEN}` },
@@ -237,6 +460,21 @@ describe("UI HTTP routes", () => {
 async function fetchJson<T>(pathSuffix: string): Promise<T> {
   const response = await fetch(`${baseUrl}${pathSuffix}`, {
     headers: { Authorization: `Bearer ${TOKEN}` },
+  });
+  if (!response.ok) {
+    throw new Error(`${response.status}: ${await response.text()}`);
+  }
+  return (await response.json()) as T;
+}
+
+async function postJson<T = unknown>(pathSuffix: string, body: unknown): Promise<T> {
+  const response = await fetch(`${baseUrl}${pathSuffix}`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${TOKEN}`,
+      "content-type": "application/json",
+    },
+    body: JSON.stringify(body),
   });
   if (!response.ok) {
     throw new Error(`${response.status}: ${await response.text()}`);
