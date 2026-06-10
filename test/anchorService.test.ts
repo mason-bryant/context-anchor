@@ -784,6 +784,31 @@ None.
     expect(planned.missingContext.some((signal) => signal.includes("may be stale"))).toBe(true);
   });
 
+  it("startTask plans and loads anchor excerpts in one call", async () => {
+    await service.writeAnchor({
+      name: "projects/demo/demo",
+      content: projectAnchorContent({ summary: "Demo storage decisions and constraints." }),
+      message: "test: add demo project",
+    });
+    await service.writeAnchor({
+      name: "shared/storage",
+      content: sharedAnchorContent({ title: "Storage Workflow", summary: "Shared storage workflow for demo decisions." }),
+      message: "test: add storage guide",
+    });
+
+    const started = await service.startTask({
+      task: "Update demo storage decisions",
+      project: "demo",
+      budgetTokens: 1200,
+    });
+
+    expect(started.plan.included.map((anchor) => anchor.name)).toContain("projects/demo/demo.md");
+    expect(started.anchors.length).toBeGreaterThan(0);
+    expect(started.anchors[0]?.excerpt ?? started.anchors[0]?.content).toBeDefined();
+    expect(started.suggestedFollowUp.readAnchor).toContain("projects/demo/demo.md");
+    expect(started.staleness.staleAfterDays).toBe(45);
+  });
+
   it("readAnchor returns fileCommit for latest reads", async () => {
     await service.writeAnchor({
       name: "shared/commit-meta",

@@ -420,6 +420,46 @@ export type PlanContextBundleResult = {
   };
 };
 
+/** Input for the combined session-start orchestration tool (`startTask`). */
+export type StartTaskInput = {
+  task: string;
+  project?: string;
+  budgetTokens?: number;
+  maxAnchors?: number;
+  includeArchive?: boolean;
+};
+
+export type StartTaskActiveMilestone = {
+  name: string;
+  theme: string;
+  goalIds: string[];
+  displayId?: string;
+};
+
+export type StartTaskResult = {
+  task: string;
+  plan: {
+    budgetTokens: number;
+    estimatedTokens: number;
+    included: PlanContextBundleItem[];
+    excluded: PlanContextBundleItem[];
+    missingContext: string[];
+    projectFilter?: ProjectFilterResolution;
+  };
+  anchors: LoadContextAnchor[];
+  truncated: boolean;
+  nextCursor?: string;
+  staleness: {
+    staleAfterDays: number;
+    staleIncluded: Array<{ name: string; lastValidatedAgeDays?: number }>;
+  };
+  activeMilestones: StartTaskActiveMilestone[];
+  suggestedFollowUp: {
+    readAnchor: string[];
+    note: string;
+  };
+};
+
 export type ProjectUpdateFormat = "markdown" | "slack" | "email";
 
 export type ProjectUpdateMilestoneStatus = MilestonePlannerMeta["status"];

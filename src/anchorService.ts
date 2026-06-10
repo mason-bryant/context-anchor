@@ -78,6 +78,8 @@ import type {
   LoadContextSelectionReason,
   PlanContextBundleInput,
   PlanContextBundleResult,
+  StartTaskInput,
+  StartTaskResult,
   ApplyProposedChangeInput,
   ApplyProposedChangeResult,
   ProjectFilterResolution,
@@ -1327,6 +1329,68 @@ export class AnchorService {
       missingContext: [...plan.missingContext, ...roadmapSignals, ...milestoneSignals],
       loadContext: { ...plan.loadContext, names },
       ...(projectFilter ? { projectFilter } : {}),
+    };
+  }
+
+  /** Session-start orchestration: plan a task-aware bundle and load suggested anchor excerpts in one call. */
+  async startTask(input: StartTaskInput): Promise<StartTaskResult> {
+    const plan = await this.planContextBundle({
+      task: input.task,
+      project: input.project,
+      budgetTokens: input.budgetTokens,
+      maxAnchors: input.maxAnchors,
+      includeArchive: input.includeArchive,
+    });
+
+    const loaded = await this.loadContext({
+      names: plan.loadContext.names,
+      includeContent: plan.loadContext.includeContent,
+      maxBytes: plan.loadContext.maxBytes,
+      task: input.task,
+      ...(plan.loadContext.project ? { project: plan.loadContext.project } : {}),
+    });
+
+    const activeMilestones =
+      input.project !== undefined
+        ? (await this.listMilestones(input.project))
+            .filter((milestone) => milestone.status === "active")
+            .map((milestone) => ({
+              name: milestone.name,
+              theme: milestone.theme,
+              goalIds: milestone.goalIds,
+              ...(milestone.displayId ? { displayId: milestone.displayId } : {}),
+            }))
+        : [];
+
+    const staleIncluded = plan.included
+      .filter((anchor) => anchor.stale)
+      .map((anchor) => ({
+        name: anchor.name,
+        ...(anchor.lastValidatedAgeDays !== undefined ? { lastValidatedAgeDays: anchor.lastValidatedAgeDays } : {}),
+      }));
+
+    return {
+      task: input.task,
+      plan: {
+        budgetTokens: plan.budgetTokens,
+        estimatedTokens: plan.estimatedTokens,
+        included: plan.included,
+        excluded: plan.excluded,
+        missingContext: plan.missingContext,
+        ...(plan.projectFilter ? { projectFilter: plan.projectFilter } : {}),
+      },
+      anchors: loaded.anchors,
+      truncated: loaded.truncated,
+      ...(loaded.nextCursor ? { nextCursor: loaded.nextCursor } : {}),
+      staleness: {
+        staleAfterDays: this.options.staleAfterDays,
+        staleIncluded,
+      },
+      activeMilestones,
+      suggestedFollowUp: {
+        readAnchor: plan.included.map((anchor) => anchor.name),
+        note: "Use readAnchor for full anchor bodies when excerpts are insufficient or truncated is true.",
+      },
     };
   }
 
