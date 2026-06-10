@@ -9,7 +9,7 @@ summary: "Roadmap and acceptance criteria for the anchor-mcp / context-conductor
 read_this_if:
   - "Planning or prioritizing anchor-mcp work."
   - "Checking definition of done for context-conductor milestones."
-last_validated: 2026-05-22
+last_validated: 2026-06-10
 ---
 
 # Context conductor roadmap
@@ -43,18 +43,18 @@ last_validated: 2026-05-22
 #### Requirements
 
 - Extend `projects/<slug>/` taxonomy with reserved `milestones/` subdirectory and ship `type: project-milestone` anchors.
-- Add typed front-matter overlay validation (`schema_version`, milestone fields) and `relations` shape validation with milestone `goal_ids` resolution against `<slug>-roadmap.md`.
+- Add typed front-matter overlay validation (`schema_version`, `theme`, `status`, `relations` shape validation with milestone `goal_ids` resolution against `<slug>-roadmap.md`.
 - Ship `listMilestones`, `readMilestone`, and `getRelated` MCP tools; enrich `planContextBundle` with milestone-aware scoring and missing-context signals; keep `CONTEXT-ROOT.md` focused on project anchors and roadmaps.
 
 #### Acceptance Criteria
 
 #### Approved
 
-- [ ] AC-005: `classifyAnchorPath` accepts `projects/<slug>/milestones/<file>.md` and rejects unknown nested project directories. Evidence: `test/taxonomy.test.ts`.
+- [x] AC-005: `classifyAnchorPath` accepts `projects/<slug>/milestones/<file>.md` and rejects unknown nested project directories. Evidence: `test/taxonomy.test.ts`.
 
-- [ ] AC-006: `project-milestone` writes validate typed overlay (`schema_version`, `theme`, `status`, `relations.goal_ids`) and `goal_ids` resolve to `### Goal G-<digits> --` headings in the sibling roadmap. Evidence: `npm test` milestone integration coverage.
+- [x] AC-006: `project-milestone` writes validate typed overlay (`schema_version`, `theme`, `status`, `relations.goal_ids`) and `goal_ids` resolve to `### Goal G-<digits> --` headings in the sibling roadmap. Evidence: `npm test` milestone integration coverage.
 
-- [ ] AC-007: `planContextBundle` boosts canonical roadmaps and milestone anchors when the task matches active milestone goal ids or milestone theme tokens; emits milestone missing-AC signals. Evidence: `test/milestoneSteelThread.test.ts` or equivalent.
+- [x] AC-007: `planContextBundle` boosts canonical roadmaps and milestone anchors when the task matches active milestone goal ids or milestone theme tokens; emits milestone missing-AC signals. Evidence: `test/milestoneSteelThread.test.ts` or equivalent.
 
 - [x] AC-008: `CONTEXT-ROOT.md` omits project milestone anchors and groups project context/roadmap links with summary, tags, and read-this-if text. Evidence: `test/milestoneSteelThread.test.ts` context root assertions.
 
@@ -68,9 +68,28 @@ last_validated: 2026-05-22
 
 - None yet.
 
+### Goal G-004 -- Session-start and retrieval quality
+
+#### Acceptance Criteria
+
+#### Approved
+
+- [x] AC-009: `startTask` MCP tool plans a task-aware bundle and loads suggested anchor excerpts in one call, with an MCP `start-task` prompt for session bootstrap. Evidence: `test/anchorService.test.ts` startTask integration test and `src/server.ts` tool registration.
+
+- [x] AC-010: `planContextBundle` token estimates use measured anchor body sizes captured during BM25 indexing. Evidence: `test/contextPlanner.test.ts` and `test/anchorService.test.ts` budget packing tests.
+
+- [x] AC-011: `loadContext` accepts optional `task` and returns task-aware section excerpts instead of prefix-only excerpts when sections match. Evidence: `test/loadContext.test.ts` and `test/anchorService.test.ts`.
+
+- [x] AC-012: `planContextBundle` flags stale included anchors and emits missing-context guidance; threshold configurable via `--stale-after-days`. Evidence: `test/contextPlanner.test.ts`, `test/cliArgs.test.ts`, and `test/anchorService.test.ts`.
+
+- [x] AC-013: `npm run eval` runs deterministic planner eval fixtures and exits non-zero below the configured recall floor. Evidence: `scripts/planner-eval.ts` and `test/fixtures/planner-eval/cases.json`.
+
+#### Proposed
+
 ## Current State
 
 - Roadmap is maintained alongside shipped behavior in `context-conductor.md`.
+- Goal G-003 steel-thread milestone tooling is shipped; Goal G-004 session-start and retrieval quality v1 is shipped on branch `feat/session-start-v1`.
 
 ## Decisions
 

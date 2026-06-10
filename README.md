@@ -5,7 +5,7 @@
 ## What Is Implemented
 
 - Phase 0 storage support: point the server at a private git repo, or run `scripts/anchor-context-sync.sh` for basic add/commit/pull/push sync without MCP.
-- Phase 1 read-only MCP tools: `listAnchors`, `readAnchor`, `readAnchorBatch`, `loadContext`, `planContextBundle`, `listMilestones`, `readMilestone`, `getRelated`, `searchAnchors`, and `listVersions`.
+- Phase 1 read-only MCP tools: `startTask`, `listAnchors`, `readAnchor`, `readAnchorBatch`, `loadContext`, `planContextBundle`, `listMilestones`, `readMilestone`, `getRelated`, `searchAnchors`, and `listVersions`.
 - Phase 2 write tools and validators: `writeAnchor`, `deleteAnchor`, `renameAnchor`, `updateAnchorFrontmatter`, `updateAnchorSection`, `appendToAnchorSection`, `deleteAnchorSection`, `proposeChange`, `listProposedChanges`, `readProposedChange`, `previewProposedChange`, `reviewProposedChange`, `applyProposedChange`, `migrateRoadmapGoalIds`, `diffAnchor`, `revertAnchor`, `compactionReport`, `contextRoot`, `writeContextRoot`, and `conflictStatus`.
 - Phase 3 transport support: stdio for local tools and Streamable HTTP/SSE for remote or containerized agents.
 
@@ -221,8 +221,8 @@ one-off runs as `--allowed-hosts` or `ANCHOR_MCP_ALLOWED_HOSTS`.
 Add a short rule under `.cursor/rules/` (or your global Cursor rules) so agents call anchors **before** other tools, even if MCP `instructions` are buried in context:
 
 ```md
-- Before any non-trivial tool use (read/search/edit/shell), call anchor-mcp `loadContext` first.
-- If you only need the index, `contextRoot` is enough; otherwise prefer `loadContext` with `includeContent: "excerpt"` (default behavior).
+- Before any non-trivial tool use (read/search/edit/shell), call anchor-mcp `startTask` when you know the project and task; otherwise call `loadContext` first.
+- If you only need the index, `contextRoot` is enough; otherwise prefer `startTask` or `loadContext` with `includeContent: "excerpt"` (default behavior).
 - If the response is too large or `truncated` is true: pass `nextCursor`, or lower `limit` / `maxBytes`, or set `includeContent` to `excerpt` or `none`.
 - Never locate anchors by filesystem search; use MCP tools only.
 ```
@@ -489,9 +489,33 @@ Archive entries are excluded unless `includeArchive: true` or `category: "archiv
 }
 ```
 
+## Start task (session bootstrap)
+
+`startTask` is the preferred first call when you know the **project** and **task**. It runs `planContextBundle`, then immediately loads the suggested anchors with task-aware excerpts. One response includes:
+
+- `plan`: included/excluded anchors, reasons, budget use, and `missingContext` signals (including staleness warnings)
+- `anchors`: loaded excerpt bodies
+- `staleness`: configured threshold and any stale included anchors
+- `activeMilestones`: active milestone summary for the project
+- `suggestedFollowUp.readAnchor`: paths to read when excerpts are not enough
+
+Example:
+
+```json
+{
+  "task": "Update demo storage decisions",
+  "project": "demo",
+  "budgetTokens": 4000
+}
+```
+
+An MCP prompt named `start-task` is also registered for Cursor session bootstrap with `project` and `task` arguments.
+
 ## Load context (one call)
 
 `loadContext` combines **discovery** (same `entries` as `contextRoot`, plus optional `markdown`) with **multiple anchor bodies** in a single tool call. Defaults: `limit` 12, `maxBytes` 250000, `includeContent` `excerpt`, `excerptChars` 1200.
+
+Pass optional `task` with `includeContent: "excerpt"` to prefer markdown sections that match the task instead of prefix-only excerpts.
 
 Filter the index and load matching anchors:
 
@@ -544,6 +568,26 @@ Example:
   "budgetTokens": 4000
 }
 ```
+
+## Staleness signals
+
+`planContextBundle` and `startTask` flag included anchors whose `last_validated` date is older than a configurable threshold (default **45 days**) and add a `missingContext` warning. Configure the threshold when starting the server:
+
+```sh
+anchor-mcp --repo ~/agent-context --stale-after-days 30
+```
+
+Or set `ANCHOR_MCP_STALE_AFTER_DAYS=14`.
+
+## Planner eval
+
+Run deterministic planner regression checks against fixture cases:
+
+```sh
+npm run eval
+```
+
+Optional flags: `--cases path/to/cases.json`, `--min-recall 0.8`. The script exits non-zero when average recall falls below the floor. See `docs/planner-judge-prompt.md` for the separate manual LLM-judge workflow.
 
 ## Git Sync
 
