@@ -1,5 +1,6 @@
 import { isDiscoveryCategory } from "./taxonomy.js";
 import type { DiscoveryCategory } from "./taxonomy.js";
+import { tokenize } from "./contextPlanner.js";
 import type { AnchorContentMode, AnchorRead, ContextRootFormat, LoadContextAnchor, LoadContextSelectionReason } from "./types.js";
 
 /** Defaults aligned with the orchestration tool contract. */
@@ -23,6 +24,7 @@ export type LoadContextCursorV1 = {
   maxBytes: number;
   includeContent: AnchorContentMode;
   excerptChars: number;
+  task?: string;
   format?: ContextRootFormat;
 };
 
@@ -67,6 +69,7 @@ export function decodeLoadContextCursor(cursor: string): LoadContextCursorV1 {
 
   const format =
     parsed.format === "json" || parsed.format === "markdown" || parsed.format === "both" ? parsed.format : undefined;
+  const task = typeof parsed.task === "string" && parsed.task.trim().length > 0 ? parsed.task : undefined;
 
   return {
     v: 1,
@@ -84,6 +87,7 @@ export function decodeLoadContextCursor(cursor: string): LoadContextCursorV1 {
     maxBytes,
     includeContent,
     excerptChars,
+    task,
     format,
   };
 }
@@ -94,19 +98,20 @@ export function shrinkLoadContextAnchorToFit(
   includeContent: AnchorContentMode,
   excerptChars: number,
   maxBytes: number,
+  task?: string,
 ): LoadContextAnchor {
   let mode: AnchorContentMode = includeContent === "full" ? "excerpt" : includeContent;
   let chars = excerptChars;
 
   while (chars >= 100) {
-    const row = buildLoadContextAnchor(read, mode, chars);
+    const row = buildLoadContextAnchor(read, mode, chars, task);
     if (jsonByteLength(row) <= maxBytes) {
       return row;
     }
     chars = Math.max(100, Math.floor(chars * 0.7));
   }
 
-  let minimal = buildLoadContextAnchor(read, "none", excerptChars);
+  let minimal = buildLoadContextAnchor(read, "none", excerptChars, task);
   if (jsonByteLength(minimal) <= maxBytes) {
     return minimal;
   }
@@ -129,6 +134,7 @@ export function buildLoadContextAnchor(
   read: AnchorRead,
   includeContent: AnchorContentMode,
   excerptChars: number,
+  task?: string,
 ): LoadContextAnchor {
   const summary = stringFromFrontmatter(read.frontmatter.summary);
   const readThisIf = stringArrayFromFrontmatter(read.frontmatter.read_this_if);
@@ -152,17 +158,123 @@ export function buildLoadContextAnchor(
     return { ...base, content: read.content };
   }
 
-  return { ...base, excerpt: excerptFromContent(read.content, excerptChars) };
+  return { ...base, excerpt: excerptFromContent(read.content, excerptChars, task) };
 }
 
 export function jsonByteLength(value: unknown): number {
   return Buffer.byteLength(JSON.stringify(value), "utf8");
 }
 
-export function excerptFromContent(content: string, maxChars: number): string {
+export function excerptFromContent(content: string, maxChars: number, task?: string): string {
   const body = stripFrontMatterForExcerpt(content);
+  if (task && task.trim().length > 0) {
+    const taskAware = taskAwareExcerpt(body, task, maxChars);
+    if (taskAware) {
+      return taskAware;
+    }
+  }
   if (body.length <= maxChars) return body;
   return `${body.slice(0, maxChars).trimEnd()}\n\n…`;
+}
+
+type MarkdownSection = {
+  heading: string;
+  level: number;
+  content: string;
+};
+
+function splitMarkdownSections(body: string): MarkdownSection[] {
+  const sections: MarkdownSection[] = [];
+  let current: MarkdownSection | null = null;
+
+  for (const line of body.split(/\r?\n/)) {
+    const match = line.match(/^(#{1,6})\s+(.+?)\s*#*\s*$/);
+    if (match?.[1] && match[2]) {
+      if (current) {
+        sections.push(current);
+      }
+      current = {
+        heading: match[2].trim(),
+        level: match[1].length,
+        content: "",
+      };
+      continue;
+    }
+
+    if (current) {
+      current.content = current.content ? `${current.content}\n${line}` : line;
+    }
+  }
+
+  if (current) {
+    sections.push(current);
+  }
+
+  return sections;
+}
+
+function scoreMarkdownSection(section: MarkdownSection, taskTerms: string[]): number {
+  const haystack = `${section.heading} ${section.content}`.toLowerCase();
+  let score = 0;
+  for (const term of taskTerms) {
+    const occurrences = haystack.split(term).length - 1;
+    if (occurrences > 0) {
+      score += occurrences * (section.level <= 3 ? 4 : 2);
+    }
+    if (section.heading.toLowerCase().includes(term)) {
+      score += 6;
+    }
+  }
+  return score;
+}
+
+export function taskAwareExcerpt(body: string, task: string, maxChars: number): string | undefined {
+  const taskTerms = tokenize(task);
+  if (taskTerms.length === 0) {
+    return undefined;
+  }
+
+  const sections = splitMarkdownSections(body);
+  if (sections.length === 0) {
+    return undefined;
+  }
+
+  const scored = sections
+    .map((section) => ({ section, score: scoreMarkdownSection(section, taskTerms) }))
+    .filter((entry) => entry.score > 0)
+    .sort((left, right) => right.score - left.score || left.section.level - right.section.level);
+
+  if (scored.length === 0) {
+    return undefined;
+  }
+
+  const chunks: string[] = [];
+  let used = 0;
+  for (const { section } of scored) {
+    const headingPrefix = `${"#".repeat(Math.min(section.level, 6))} ${section.heading}`;
+    const block = section.content.trim().length > 0 ? `${headingPrefix}\n\n${section.content.trim()}` : headingPrefix;
+    const separator = chunks.length > 0 ? "\n\n" : "";
+    const nextLength = used + separator.length + block.length;
+    if (nextLength > maxChars && chunks.length > 0) {
+      break;
+    }
+    chunks.push(block);
+    used = nextLength;
+    if (used >= maxChars) {
+      break;
+    }
+  }
+
+  if (chunks.length === 0) {
+    return undefined;
+  }
+
+  const excerpt = chunks.join("\n\n");
+  if (excerpt.length <= maxChars) {
+    return excerpt;
+  }
+
+  return `${excerpt.slice(0, maxChars).trimEnd()}\n\n…`;
 }
 
 export function stripFrontMatterForExcerpt(content: string): string {
@@ -220,6 +332,7 @@ export function toNextCursorPayload(params: {
   maxBytes: number;
   includeContent: AnchorContentMode;
   excerptChars: number;
+  task?: string;
   format?: ContextRootFormat;
 }): LoadContextCursorV1 {
   return {
@@ -232,6 +345,7 @@ export function toNextCursorPayload(params: {
     maxBytes: params.maxBytes,
     includeContent: params.includeContent,
     excerptChars: params.excerptChars,
+    task: params.task,
     format: params.format,
   };
 }

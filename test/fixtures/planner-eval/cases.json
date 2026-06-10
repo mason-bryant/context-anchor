@@ -1,0 +1,26 @@
+{
+  "minRecall": 1,
+  "cases": [
+    {
+      "id": "demo-project-match",
+      "task": "Update demo storage decisions",
+      "project": "demo",
+      "expectedIncluded": ["projects/demo/demo.md"],
+      "forbiddenIncluded": ["projects/other/other.md"],
+      "anchors": [
+        {
+          "name": "projects/demo/demo",
+          "content": "---\nproject:\n  - demo\ntype: design\ntags:\n  - context\nsummary: \"Demo storage decisions and constraints.\"\nread_this_if:\n  - \"You are modifying demo project behavior.\"\nlast_validated: 2026-05-10\n---\n\n# Demo Anchor\n\n## Current State\n\n- Demo storage decisions live here.\n\n## Decisions\n\n- Keep storage git-backed.\n\n## Constraints\n\n- Do not edit generated CONTEXT-ROOT.md manually.\n\n## PRs\n\nNone.\n"
+        },
+        {
+          "name": "projects/other/other",
+          "content": "---\nproject:\n  - other\ntype: design\ntags:\n  - context\nsummary: \"Other project context.\"\nread_this_if:\n  - \"You are working on the other project.\"\nlast_validated: 2026-05-10\n---\n\n# Other Anchor\n\n## Current State\n\n- Other project only.\n\n## Decisions\n\n- Separate project.\n\n## Constraints\n\n- None.\n\n## PRs\n\nNone.\n"
+        },
+        {
+          "name": "shared/storage",
+          "content": "---\ntype: design\ntags:\n  - context\nsummary: \"Shared storage workflow for demo decisions.\"\nread_this_if:\n  - \"You need shared storage workflow guidance.\"\nlast_validated: 2026-05-10\n---\n\n# Storage Workflow\n\n## Current State\n\n- Shared storage workflow for demo decisions.\n\n## Decisions\n\n- Use git-backed anchors.\n\n## Constraints\n\n- None.\n\n## PRs\n\nNone.\n"
+        }
+      ]
+    }
+  ]
+}

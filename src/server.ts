@@ -121,6 +121,7 @@ const LoadContextInputSchema = z.object({
   includeContent: AnchorContentModeSchema.optional(),
   excerptChars: z.number().int().positive().optional(),
   cursor: z.string().optional(),
+  task: z.string().optional(),
   format: ContextRootFormatSchema.optional(),
 });
 const ProjectUpdateSnapshotInputSchema = z.object({
@@ -851,6 +852,7 @@ function normalizeLoadContextInput(input: z.infer<typeof LoadContextInputSchema>
     includeContent: input.includeContent,
     excerptChars: input.excerptChars,
     cursor: input.cursor,
+    task: input.task,
     format: input.format,
   };
 }

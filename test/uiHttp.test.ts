@@ -20,7 +20,7 @@ beforeEach(async () => {
   tmpDir = await mkdtemp(path.join(os.tmpdir(), "anchor-ui-"));
   const repo = new AnchorRepository({ repoPath: tmpDir });
   await repo.ensureReady();
-  service = new AnchorService(repo, { pushOnWrite: false, migrationWarnOnly: false });
+  service = new AnchorService(repo, { pushOnWrite: false, migrationWarnOnly: false, staleAfterDays: 45 });
 
   const result = await service.writeAnchor({
     name: "projects/demo/demo.md",
@@ -38,6 +38,7 @@ beforeEach(async () => {
       pushOnWrite: false,
       syncIntervalMs: 0,
       migrationWarnOnly: false,
+      staleAfterDays: 45,
     },
     {
       host: "127.0.0.1",

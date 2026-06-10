@@ -18,7 +18,7 @@ beforeEach(async () => {
   tmpDir = await mkdtemp(path.join(os.tmpdir(), "anchor-milestone-"));
   repo = new AnchorRepository({ repoPath: tmpDir });
   await repo.ensureReady();
-  service = new AnchorService(repo, { pushOnWrite: false, migrationWarnOnly: false });
+  service = new AnchorService(repo, { pushOnWrite: false, migrationWarnOnly: false, staleAfterDays: 45 });
 });
 
 afterEach(async () => {
@@ -320,8 +320,8 @@ None.
   });
 
   it("enforces roadmap stable ids when a milestone exists by path even if project front matter mismatches", async () => {
-    const warnOnlyService = new AnchorService(repo, { pushOnWrite: false, migrationWarnOnly: true });
-    const strictService = new AnchorService(repo, { pushOnWrite: false, migrationWarnOnly: false });
+    const warnOnlyService = new AnchorService(repo, { pushOnWrite: false, migrationWarnOnly: true, staleAfterDays: 45 });
+    const strictService = new AnchorService(repo, { pushOnWrite: false, migrationWarnOnly: false, staleAfterDays: 45 });
 
     const stableRoadmap = `---
 project:

@@ -68,6 +68,7 @@ export function parseCliArgs(argv: string[], env: NodeJS.ProcessEnv = process.en
       syncIntervalMs:
         numberFlag(flags, "sync-interval-ms") ?? numberEnv(env.ANCHOR_MCP_SYNC_INTERVAL_MS) ?? 45_000,
       migrationWarnOnly: booleanFlag(flags, "migration-warn-only"),
+      staleAfterDays: numberFlag(flags, "stale-after-days") ?? numberEnv(env.ANCHOR_MCP_STALE_AFTER_DAYS) ?? 45,
       logging: loggingConfigValue(fileConfig.logging, "logging"),
     },
   };

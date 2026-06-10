@@ -15,7 +15,7 @@ beforeEach(async () => {
   tmpDir = await mkdtemp(path.join(os.tmpdir(), "anchor-mcp-"));
   repo = new AnchorRepository({ repoPath: tmpDir });
   await repo.ensureReady();
-  service = new AnchorService(repo, { pushOnWrite: false, migrationWarnOnly: false });
+  service = new AnchorService(repo, { pushOnWrite: false, migrationWarnOnly: false, staleAfterDays: 45 });
 });
 
 afterEach(async () => {
@@ -710,6 +710,78 @@ None.
     expect(planned.excluded.some((anchor) => anchor.name === "shared/storage.md" && anchor.reason.includes("outside token budget"))).toBe(
       true,
     );
+  });
+
+  it("loadContext uses task-aware excerpts when task is provided", async () => {
+    const padding = "x".repeat(1500);
+    await service.writeAnchor({
+      name: "projects/demo/roadmap",
+      content: `---
+project:
+  - demo
+type: project-roadmap
+tags:
+  - roadmap
+summary: "Demo roadmap for storage and milestone goals."
+read_this_if:
+  - "You are planning demo work."
+last_validated: 2026-05-10
+---
+
+# Demo Roadmap
+
+## Current State
+
+- ${padding}
+
+### Goal G-004 -- Session start
+
+Ship startTask and retrieval quality improvements.
+
+## Decisions
+
+- Keep planner deterministic.
+
+## Constraints
+
+- None.
+
+## PRs
+
+None.
+`,
+      message: "test: add roadmap with late goal section",
+    });
+
+    const loaded = await service.loadContext({
+      names: ["projects/demo/roadmap.md"],
+      includeContent: "excerpt",
+      excerptChars: 1200,
+      task: "session start G-004",
+    });
+
+    expect(loaded.anchors[0]?.excerpt).toContain("Goal G-004");
+    expect(loaded.anchors[0]?.excerpt).toContain("startTask");
+  });
+
+  it("planContextBundle flags stale included anchors", async () => {
+    await service.writeAnchor({
+      name: "projects/demo/demo",
+      content: projectAnchorContent({
+        summary: "Demo storage decisions and constraints.",
+        lastValidated: "2025-01-01",
+      }),
+      message: "test: add stale demo project",
+    });
+
+    const planned = await service.planContextBundle({
+      task: "Update demo storage decisions",
+      project: "demo",
+      budgetTokens: 4000,
+    });
+
+    expect(planned.included[0]?.stale).toBe(true);
+    expect(planned.missingContext.some((signal) => signal.includes("may be stale"))).toBe(true);
   });
 
   it("readAnchor returns fileCommit for latest reads", async () => {

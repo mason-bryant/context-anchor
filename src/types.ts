@@ -333,6 +333,8 @@ export type LoadContextInput = {
   excerptChars?: number;
   /** Continuation token from a previous `loadContext` response. */
   cursor?: string;
+  /** When set with `includeContent: excerpt`, prefer sections that match this task. */
+  task?: string;
   /** Same as `contextRoot`: include markdown snapshot in the result. */
   format?: ContextRootFormat;
 };
@@ -396,6 +398,8 @@ export type PlanContextBundleItem = {
   estimatedTokens: number;
   matchedTerms: string[];
   reason: string;
+  stale?: boolean;
+  lastValidatedAgeDays?: number;
 };
 
 export type PlanContextBundleResult = {
@@ -501,6 +505,8 @@ export type ServerConfig = {
   pushOnWrite: boolean;
   syncIntervalMs: number;
   migrationWarnOnly: boolean;
+  /** Flag included planner anchors when last_validated is older than this many days. */
+  staleAfterDays: number;
   logging?: LoggingConfig;
 };
 

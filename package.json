@@ -27,6 +27,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "install-git-hooks": "git config core.hooksPath githooks",
     "test": "vitest run",
+    "eval": "tsx scripts/planner-eval.ts",
     "dev:stdio": "tsx src/bin/anchor-mcp.ts --repo ./fixtures/demo-context",
     "dev:http": "tsx src/bin/anchor-mcp.ts --repo ./fixtures/demo-context --transport http --port 3333",
     "dev:http:watch": "tsx watch src/bin/anchor-mcp.ts --repo ./fixtures/demo-context --transport http --port 3333"

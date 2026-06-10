@@ -132,6 +132,7 @@ export class AnchorService {
     private readonly options: {
       pushOnWrite: boolean;
       migrationWarnOnly: boolean;
+      staleAfterDays: number;
     },
   ) {}
 
@@ -1172,6 +1173,7 @@ export class AnchorService {
     const maxBytes = Math.max(1024, decoded?.maxBytes ?? input.maxBytes ?? LOAD_CONTEXT_DEFAULT_MAX_BYTES);
     const includeContent: AnchorContentMode = decoded?.includeContent ?? input.includeContent ?? "excerpt";
     const excerptChars = Math.max(100, decoded?.excerptChars ?? input.excerptChars ?? LOAD_CONTEXT_DEFAULT_EXCERPT_CHARS);
+    const task = decoded?.task ?? input.task;
     const format = decoded?.format ?? input.format ?? "both";
 
     const filter = {
@@ -1235,7 +1237,7 @@ export class AnchorService {
       }
 
       const read = await this.readAnchor(orderedNames[index]);
-      let row = buildLoadContextAnchor(read, includeContent, excerptChars);
+      let row = buildLoadContextAnchor(read, includeContent, excerptChars, task);
       const trial = [...anchors, row];
       const bytes = jsonByteLength(trial);
 
@@ -1245,7 +1247,7 @@ export class AnchorService {
       }
 
       if (bytes > maxBytes && anchors.length === 0) {
-        row = shrinkLoadContextAnchorToFit(read, includeContent, excerptChars, maxBytes);
+        row = shrinkLoadContextAnchorToFit(read, includeContent, excerptChars, maxBytes, task);
       }
 
       anchors.push(row);
@@ -1267,6 +1269,7 @@ export class AnchorService {
             maxBytes,
             includeContent,
             excerptChars,
+            task,
             format,
           }),
         )
@@ -1306,7 +1309,15 @@ export class AnchorService {
         : input;
 
     const { index: bm25Index, bodyCharCounts } = await this.buildBM25SearchIndex(anchors);
-    const plan = buildContextBundlePlan(anchors, effectiveInput, bm25Index, undefined, projectFilter, bodyCharCounts);
+    const plan = buildContextBundlePlan(
+      anchors,
+      effectiveInput,
+      bm25Index,
+      undefined,
+      projectFilter,
+      bodyCharCounts,
+      this.options.staleAfterDays,
+    );
     const names = plan.loadContext.names;
     const roadmapSignals = collectRoadmapAcceptanceMissingSignals(anchors);
     const milestoneSignals = collectMilestoneAcceptanceMissingSignals(anchors);

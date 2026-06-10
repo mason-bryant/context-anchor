@@ -15,7 +15,7 @@ beforeEach(async () => {
   tmpDir = await mkdtemp(path.join(os.tmpdir(), "anchor-milestone-update-fields-"));
   repo = new AnchorRepository({ repoPath: tmpDir });
   await repo.ensureReady();
-  service = new AnchorService(repo, { pushOnWrite: false, migrationWarnOnly: false });
+  service = new AnchorService(repo, { pushOnWrite: false, migrationWarnOnly: false, staleAfterDays: 45 });
 });
 
 afterEach(async () => {
