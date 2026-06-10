@@ -25,6 +25,7 @@ import {
   LOAD_CONTEXT_DEFAULT_MAX_BYTES,
   shrinkLoadContextAnchorToFit,
   anchorBodyForSearchIndex,
+  stripFrontMatterForExcerpt,
   toNextCursorPayload,
 } from "./loadContext.js";
 import {
@@ -134,8 +135,12 @@ export class AnchorService {
     },
   ) {}
 
-  private async buildBM25SearchIndex(anchors: AnchorMeta[]): Promise<BM25Index> {
+  private async buildBM25SearchIndex(anchors: AnchorMeta[]): Promise<{
+    index: BM25Index;
+    bodyCharCounts: Map<string, number>;
+  }> {
     const bm25Index = new BM25Index();
+    const bodyCharCounts = new Map<string, number>();
     let nextAnchorIndex = 0;
     const workerCount = Math.min(BM25_INDEX_READ_CONCURRENCY, anchors.length);
 
@@ -150,6 +155,7 @@ export class AnchorService {
 
           try {
             const read = await this.readAnchor(anchor.name);
+            bodyCharCounts.set(anchor.name, stripFrontMatterForExcerpt(read.content).length);
             bm25Index.add({
               id: anchor.name,
               text: anchorBodyForSearchIndex(read.content),
@@ -161,7 +167,7 @@ export class AnchorService {
       }),
     );
 
-    return bm25Index;
+    return { index: bm25Index, bodyCharCounts };
   }
 
   private resolveDiscoveryAnchorName(name: string): string {
@@ -1299,8 +1305,8 @@ export class AnchorService {
         ? { ...input, project: projectFilter.resolved }
         : input;
 
-    const bm25Index = await this.buildBM25SearchIndex(anchors);
-    const plan = buildContextBundlePlan(anchors, effectiveInput, bm25Index, undefined, projectFilter);
+    const { index: bm25Index, bodyCharCounts } = await this.buildBM25SearchIndex(anchors);
+    const plan = buildContextBundlePlan(anchors, effectiveInput, bm25Index, undefined, projectFilter, bodyCharCounts);
     const names = plan.loadContext.names;
     const roadmapSignals = collectRoadmapAcceptanceMissingSignals(anchors);
     const milestoneSignals = collectMilestoneAcceptanceMissingSignals(anchors);

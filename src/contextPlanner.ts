@@ -86,6 +86,7 @@ export function buildContextBundlePlan(
   bm25Index?: BM25Index,
   generatedAt = new Date().toISOString(),
   projectFilter?: ProjectFilterResolution,
+  bodyCharCounts?: Map<string, number>,
 ): PlanContextBundleResult {
   const budgetTokens = Math.max(1, Math.floor(input.budgetTokens ?? DEFAULT_BUDGET_TOKENS));
   const maxAnchors = Math.max(1, Math.floor(input.maxAnchors ?? DEFAULT_MAX_ANCHORS));
@@ -97,7 +98,7 @@ export function buildContextBundlePlan(
     : undefined;
 
   const scored = anchors
-    .map((anchor) => scoreAnchor(anchor, input, taskTerms, activeGoalIdsBySlug, bm25HitsById))
+    .map((anchor) => scoreAnchor(anchor, input, taskTerms, activeGoalIdsBySlug, bm25HitsById, bodyCharCounts))
     .sort((left, right) => compareScoredAnchors(left, right, taskTerms, activeGoalIdsBySlug));
 
   const included: ScoredAnchor[] = [];
@@ -176,6 +177,7 @@ function scoreAnchor(
   taskTerms: string[],
   activeGoalIdsBySlug: Map<string, Set<string>>,
   bm25HitsById?: Map<string, number>,
+  bodyCharCounts?: Map<string, number>,
 ): ScoredAnchor {
   let score = 0;
   const matchedTerms = new Set<string>();
@@ -293,7 +295,7 @@ function scoreAnchor(
     projectSlug: anchor.projectSlug,
     summary: anchor.summary,
     score,
-    estimatedTokens: estimateAnchorTokens(anchor),
+    estimatedTokens: estimateAnchorTokens(anchor, bodyCharCounts),
     matchedTerms: [...matchedTerms].sort(),
     reason: reasons.length > 0 ? reasons.join("; ") : "no strong metadata match",
     projectMatches,
@@ -375,7 +377,7 @@ export function collectMilestoneAcceptanceMissingSignals(anchors: AnchorMeta[]):
   return out;
 }
 
-function estimateAnchorTokens(anchor: AnchorMeta): number {
+export function estimateAnchorTokens(anchor: AnchorMeta, bodyCharCounts?: Map<string, number>): number {
   const metadataText = [
     anchor.name,
     anchor.title,
@@ -385,8 +387,14 @@ function estimateAnchorTokens(anchor: AnchorMeta): number {
     stringifyValue(anchor.project),
     stringifyValue(anchor.type),
   ].join(" ");
+  const metadataTokens = Math.ceil(metadataText.length / 4) + 80;
 
-  return Math.max(120, Math.ceil(metadataText.length / 4) + 220);
+  const bodyChars = bodyCharCounts?.get(anchor.name);
+  if (bodyChars !== undefined) {
+    return Math.max(120, Math.ceil(bodyChars / 4) + metadataTokens);
+  }
+
+  return Math.max(120, metadataTokens + 140);
 }
 
 function activeCanonicalRoadmapBoost(

@@ -684,6 +684,34 @@ None.
     expect(maxInFlight).toBeLessThanOrEqual(8);
   });
 
+  it("planContextBundle excludes large-body anchors under a tight token budget", async () => {
+    await service.writeAnchor({
+      name: "projects/demo/demo",
+      content: projectAnchorContent({ summary: "Demo storage decisions and constraints." }),
+      message: "test: add demo project",
+    });
+    await service.writeAnchor({
+      name: "shared/storage",
+      content: sharedAnchorContent({
+        title: "Storage Workflow",
+        summary: "Shared storage workflow for demo decisions.",
+        currentState: `- ${"x".repeat(12000)}`,
+      }),
+      message: "test: add large storage guide",
+    });
+
+    const planned = await service.planContextBundle({
+      task: "Update demo storage decisions",
+      project: "demo",
+      budgetTokens: 1200,
+    });
+
+    expect(planned.included.map((anchor) => anchor.name)).toContain("projects/demo/demo.md");
+    expect(planned.excluded.some((anchor) => anchor.name === "shared/storage.md" && anchor.reason.includes("outside token budget"))).toBe(
+      true,
+    );
+  });
+
   it("readAnchor returns fileCommit for latest reads", async () => {
     await service.writeAnchor({
       name: "shared/commit-meta",
