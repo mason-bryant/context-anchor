@@ -5,11 +5,13 @@ type: project-roadmap
 tags:
   - anchor-mcp
   - roadmap
-summary: "Roadmap and acceptance criteria for the anchor-mcp / context-conductor project."
+summary: >-
+  Roadmap and acceptance criteria for the anchor-mcp / context-conductor
+  project.
 read_this_if:
-  - "Planning or prioritizing anchor-mcp work."
-  - "Checking definition of done for context-conductor milestones."
-last_validated: 2026-06-10
+  - Planning or prioritizing anchor-mcp work.
+  - Checking definition of done for context-conductor milestones.
+last_validated: 2026-06-10T00:00:00.000Z
 ---
 
 # Context conductor roadmap
@@ -87,10 +89,9 @@ last_validated: 2026-06-10
 #### Proposed
 
 ## Current State
-
 - Roadmap is maintained alongside shipped behavior in `context-conductor.md`.
-- Goal G-003 steel-thread milestone tooling is shipped; Goal G-004 session-start and retrieval quality v1 is shipped on branch `feat/session-start-v1`.
-
+- Goal G-003 steel-thread milestone tooling is shipped.
+- Goal G-004 session-start and retrieval quality v1 is implemented on `feat/session-start-v1` and under review in PR #30 (CI passing; `npm run typecheck`, 199 tests, and `npm run eval` recall 1.00 all green as of 2026-06-10).
 ## Decisions
 
 - Acceptance criteria for planned work stay in this roadmap until shipped facts move to the context anchor.
