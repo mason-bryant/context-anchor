@@ -13,11 +13,12 @@ type EvalCase = {
   project?: string;
   expectedIncluded?: string[];
   forbiddenIncluded?: string[];
-  anchors?: Array<{ name: string; content: string }>;
 };
 
 type EvalFixture = {
   minRecall?: number;
+  /** Shared corpus seeded once; every case runs against the same anchor set. */
+  anchors: Array<{ name: string; content: string }>;
   cases: EvalCase[];
 };
 
@@ -91,14 +92,12 @@ async function main(): Promise<void> {
   });
 
   try {
-    for (const evalCase of fixture.cases) {
-      for (const anchor of evalCase.anchors ?? []) {
-        await service.writeAnchor({
-          name: anchor.name,
-          content: anchor.content,
-          message: `eval: seed ${anchor.name}`,
-        });
-      }
+    for (const anchor of fixture.anchors ?? []) {
+      await service.writeAnchor({
+        name: anchor.name,
+        content: anchor.content,
+        message: `eval: seed ${anchor.name}`,
+      });
     }
 
     const results: EvalResult[] = [];
