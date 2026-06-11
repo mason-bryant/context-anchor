@@ -80,12 +80,49 @@ type ScoredAnchor = PlanContextBundleItem & {
   exclusionReason?: string;
 };
 
+export function computeLastValidatedAgeDays(lastValidated: unknown, now = new Date()): number | undefined {
+  const isoDate = normalizeLastValidatedDate(lastValidated);
+  if (!isoDate) {
+    return undefined;
+  }
+
+  const validatedAt = new Date(`${isoDate}T00:00:00.000Z`);
+  if (Number.isNaN(validatedAt.getTime())) {
+    return undefined;
+  }
+
+  const today = new Date(`${now.toISOString().slice(0, 10)}T00:00:00.000Z`);
+  return Math.max(0, Math.floor((today.getTime() - validatedAt.getTime()) / 86_400_000));
+}
+
+function normalizeLastValidatedDate(lastValidated: unknown): string | undefined {
+  if (typeof lastValidated === "string") {
+    return lastValidated.match(/^(\d{4}-\d{2}-\d{2})/)?.[1];
+  }
+
+  if (lastValidated instanceof Date && !Number.isNaN(lastValidated.getTime())) {
+    return lastValidated.toISOString().slice(0, 10);
+  }
+
+  return undefined;
+}
+
+export function isAnchorStale(lastValidated: unknown, staleAfterDays: number, now = new Date()): boolean {
+  const ageDays = computeLastValidatedAgeDays(lastValidated, now);
+  return ageDays !== undefined && ageDays > staleAfterDays;
+}
+
+export const DEFAULT_STALE_AFTER_DAYS = 45;
+
 export function buildContextBundlePlan(
   anchors: AnchorMeta[],
   input: PlanContextBundleInput,
   bm25Index?: BM25Index,
   generatedAt = new Date().toISOString(),
   projectFilter?: ProjectFilterResolution,
+  bodyCharCounts?: Map<string, number>,
+  staleAfterDays = DEFAULT_STALE_AFTER_DAYS,
+  now = new Date(),
 ): PlanContextBundleResult {
   const budgetTokens = Math.max(1, Math.floor(input.budgetTokens ?? DEFAULT_BUDGET_TOKENS));
   const maxAnchors = Math.max(1, Math.floor(input.maxAnchors ?? DEFAULT_MAX_ANCHORS));
@@ -97,7 +134,7 @@ export function buildContextBundlePlan(
     : undefined;
 
   const scored = anchors
-    .map((anchor) => scoreAnchor(anchor, input, taskTerms, activeGoalIdsBySlug, bm25HitsById))
+    .map((anchor) => scoreAnchor(anchor, input, taskTerms, activeGoalIdsBySlug, bm25HitsById, bodyCharCounts, staleAfterDays, now))
     .sort((left, right) => compareScoredAnchors(left, right, taskTerms, activeGoalIdsBySlug));
 
   const included: ScoredAnchor[] = [];
@@ -144,6 +181,7 @@ export function buildContextBundlePlan(
       excluded,
       taskTerms,
       projectFilter,
+      staleAfterDays,
     }),
     loadContext: {
       names: included.map((anchor) => anchor.name),
@@ -176,6 +214,9 @@ function scoreAnchor(
   taskTerms: string[],
   activeGoalIdsBySlug: Map<string, Set<string>>,
   bm25HitsById?: Map<string, number>,
+  bodyCharCounts?: Map<string, number>,
+  staleAfterDays = DEFAULT_STALE_AFTER_DAYS,
+  now = new Date(),
 ): ScoredAnchor {
   let score = 0;
   const matchedTerms = new Set<string>();
@@ -293,10 +334,13 @@ function scoreAnchor(
     projectSlug: anchor.projectSlug,
     summary: anchor.summary,
     score,
-    estimatedTokens: estimateAnchorTokens(anchor),
+    estimatedTokens: estimateAnchorTokens(anchor, bodyCharCounts),
     matchedTerms: [...matchedTerms].sort(),
     reason: reasons.length > 0 ? reasons.join("; ") : "no strong metadata match",
     projectMatches,
+    ...(isAnchorStale(anchor.last_validated, staleAfterDays, now)
+      ? { stale: true, lastValidatedAgeDays: computeLastValidatedAgeDays(anchor.last_validated, now) }
+      : {}),
   };
 }
 
@@ -307,6 +351,7 @@ function buildMissingContextSignals(params: {
   excluded: ScoredAnchor[];
   taskTerms: string[];
   projectFilter?: ProjectFilterResolution;
+  staleAfterDays: number;
 }): string[] {
   const signals: string[] = [];
   const { input, anchors, included, excluded, taskTerms, projectFilter } = params;
@@ -331,6 +376,14 @@ function buildMissingContextSignals(params: {
 
   if (taskTerms.some((term) => ["conflict", "contradiction", "disagree"].includes(term)) && !included.some((anchor) => anchor.category === "conflicts")) {
     signals.push("The task mentions conflict or contradiction, but no conflict anchor was included.");
+  }
+
+  const staleIncluded = included.filter((anchor) => anchor.stale);
+  if (staleIncluded.length > 0) {
+    const names = staleIncluded.map((anchor) => anchor.name).slice(0, 5).join(", ");
+    signals.push(
+      `Included anchor(s) may be stale (last_validated older than ${params.staleAfterDays} days): ${names}. Verify facts before relying on them.`,
+    );
   }
 
   return signals;
@@ -375,7 +428,7 @@ export function collectMilestoneAcceptanceMissingSignals(anchors: AnchorMeta[]):
   return out;
 }
 
-function estimateAnchorTokens(anchor: AnchorMeta): number {
+export function estimateAnchorTokens(anchor: AnchorMeta, bodyCharCounts?: Map<string, number>): number {
   const metadataText = [
     anchor.name,
     anchor.title,
@@ -385,8 +438,14 @@ function estimateAnchorTokens(anchor: AnchorMeta): number {
     stringifyValue(anchor.project),
     stringifyValue(anchor.type),
   ].join(" ");
+  const metadataTokens = Math.ceil(metadataText.length / 4) + 80;
 
-  return Math.max(120, Math.ceil(metadataText.length / 4) + 220);
+  const bodyChars = bodyCharCounts?.get(anchor.name);
+  if (bodyChars !== undefined) {
+    return Math.max(120, Math.ceil(bodyChars / 4) + metadataTokens);
+  }
+
+  return Math.max(120, metadataTokens + 140);
 }
 
 function activeCanonicalRoadmapBoost(
@@ -447,6 +506,7 @@ function stripPlannerFields(anchor: ScoredAnchor): PlanContextBundleItem {
     estimatedTokens: anchor.estimatedTokens,
     matchedTerms: anchor.matchedTerms,
     reason: anchor.reason,
+    ...(anchor.stale ? { stale: true, lastValidatedAgeDays: anchor.lastValidatedAgeDays } : {}),
   };
 }
 
@@ -470,7 +530,7 @@ function containsTerm(text: string, term: string): boolean {
   return tokenize(text).includes(term);
 }
 
-function tokenize(text: string): string[] {
+export function tokenize(text: string): string[] {
   const goalIds = text.match(/\bG-\d{1,6}\b/gi)?.map((id) => id.toLowerCase()) ?? [];
   return dedupe(
     [

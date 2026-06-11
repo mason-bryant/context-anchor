@@ -250,4 +250,14 @@ describe("CLI args — file logging", () => {
       /Expected config field logging\.requests\.includeArguments to be a boolean/,
     );
   });
+
+  it("parses stale-after-days from CLI flags", () => {
+    const options = parseCliArgs(["--stale-after-days", "30"], {});
+    expect(options.config.staleAfterDays).toBe(30);
+  });
+
+  it("reads stale-after-days from the environment", () => {
+    const options = parseCliArgs([], { ANCHOR_MCP_STALE_AFTER_DAYS: "14" });
+    expect(options.config.staleAfterDays).toBe(14);
+  });
 });

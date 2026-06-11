@@ -121,6 +121,7 @@ const LoadContextInputSchema = z.object({
   includeContent: AnchorContentModeSchema.optional(),
   excerptChars: z.number().int().positive().optional(),
   cursor: z.string().optional(),
+  task: z.string().optional(),
   format: ContextRootFormatSchema.optional(),
 });
 const ProjectUpdateSnapshotInputSchema = z.object({
@@ -153,37 +154,40 @@ export function createAnchorMcpServer(
     {
       instructions: `\
 ## Before any work in a chat
-Before your first non-trivial tool call (code read, search, edit, or shell), call planContextBundle() when you need a \
-task-aware, budgeted anchor selection; otherwise call loadContext() — or contextRoot() if you only need the index without \
-anchor bodies. Skip only for purely conversational replies.
+Before your first non-trivial tool call (code read, search, edit, or shell), call startTask({ task, project }) when you \
+know the project and task — it plans a budgeted anchor bundle and loads task-aware excerpts in one response. Otherwise call \
+planContextBundle() when you need a task-aware, budgeted anchor selection; loadContext() for broader discovery; or \
+contextRoot() if you only need the index without anchor bodies. Skip only for purely conversational replies.
+
+startTask combines planContextBundle + loadContext: included/excluded rationale, missingContext signals, staleness flags, \
+active milestones, anchor excerpts, and suggested readAnchor follow-ups.
 
 loadContext returns the same discovery metadata as contextRoot (entries plus optional markdown) and loads multiple \
-anchors in one response (excerpts by default). Filter by project/category/tag/runtime, pass explicit names, and paginate \
-with nextCursor when truncated is true. If responses are too large, lower limit or maxBytes, set includeContent to \
-excerpt or none, or continue with nextCursor.
+anchors in one response (excerpts by default). Pass task with includeContent excerpt for task-aware section excerpts. \
+Filter by project/category/tag/runtime, pass explicit names, and paginate with nextCursor when truncated is true. If \
+responses are too large, lower limit or maxBytes, set includeContent to excerpt or none, or continue with nextCursor.
 
 planContextBundle scores anchors against a task and token budget, explains included and excluded anchors, and returns a \
 suggested loadContext call using the selected names.
 
 Do not browse the filesystem for anchors; always use these MCP tools.
 
-Use readAnchor(...) after loadContext when you need the full body of a specific anchor.
+Use readAnchor(...) after startTask or loadContext when you need the full body of a specific anchor.
 
 Why this matters: project decisions, conflicts, and PR-history context intentionally live in anchors rather than code. \
 Working without this context is the most common cause of contradictory output.
 
 In your first assistant message for tool-using chats, state which anchors you loaded (or "no anchors matched"). If \
-you skipped planContextBundle/loadContext/contextRoot, say so.
+you skipped startTask/planContextBundle/loadContext/contextRoot, say so.
 
-If you realize mid-task that you skipped loadContext or planContextBundle, stop and call one before producing the next assistant message, \
+If you realize mid-task that you skipped startTask, loadContext, or planContextBundle, stop and call one before producing the next assistant message, \
 then re-evaluate in-flight work against the loaded anchors.
 
-This rule is not overridden by skill workflows. Skills assume planContextBundle, loadContext, or contextRoot has already been called.
+This rule is not overridden by skill workflows. Skills assume startTask, planContextBundle, loadContext, or contextRoot has already been called.
 
 ### Example
-User: "Review the current branch."
-Assistant: planContextBundle({ task: "Review the current branch" }) -> loadContext(...) with the suggested names -> \
-readAnchor(...) only for deeper detail -> only then git diff and start review.
+User: "Review the current branch for context-conductor."
+Assistant: startTask({ task: "Review the current branch", project: "context-conductor" }) -> readAnchor(...) only for deeper detail -> only then git diff and start review.
 
 ## When writing anchors
 Do not edit anchor markdown in the server's \`--repo\` tree directly on disk (editor, patch tools, or shell). That \
@@ -291,6 +295,25 @@ the index when your workflow checks in that file.`,
       annotations: { readOnlyHint: true },
     },
     async ({ names }) => jsonResult({ anchors: await service.readAnchorBatch(normalizeStringArray(names, "names", 1)) }),
+  );
+
+  server.registerTool(
+    "startTask",
+    {
+      title: "Start Task",
+      description:
+        "Session-start orchestration: plan a task-aware context bundle and load suggested anchor excerpts in one call. " +
+        "Returns plan rationale, anchor excerpts, staleness flags, active milestones, and suggested readAnchor follow-ups.",
+      inputSchema: z.object({
+        task: z.string().min(1),
+        project: z.string().optional(),
+        budgetTokens: z.number().int().positive().optional(),
+        maxAnchors: z.number().int().positive().optional(),
+        includeArchive: z.boolean().default(false),
+      }),
+      annotations: { readOnlyHint: true },
+    },
+    async (input) => jsonResult(await service.startTask(input)),
   );
 
   server.registerTool(
@@ -818,6 +841,32 @@ the index when your workflow checks in that file.`,
     async () => jsonResult(await service.conflictStatus()),
   );
 
+  server.registerPrompt(
+    "start-task",
+    {
+      title: "Start Task",
+      description: "Begin a tool-using session by loading task-aware project context via startTask.",
+      argsSchema: z.object({
+        project: z.string().optional(),
+        task: z.string().min(1),
+      }),
+    },
+    ({ project, task }) => ({
+      messages: [
+        {
+          role: "user" as const,
+          content: {
+            type: "text" as const,
+            text:
+              `Start this session by calling startTask with task ${JSON.stringify(task)}` +
+              (project ? ` and project ${JSON.stringify(project)}` : "") +
+              ". In your first assistant message, state which anchors were loaded and any stale or missing-context signals before other tool use.",
+          },
+        },
+      ],
+    }),
+  );
+
   return server;
 }
 
@@ -851,6 +900,7 @@ function normalizeLoadContextInput(input: z.infer<typeof LoadContextInputSchema>
     includeContent: input.includeContent,
     excerptChars: input.excerptChars,
     cursor: input.cursor,
+    task: input.task,
     format: input.format,
   };
 }

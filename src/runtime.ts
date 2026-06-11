@@ -33,11 +33,13 @@ export async function createAnchorRuntime(
     autoSync: config.autoSync,
     pushOnWrite: config.pushOnWrite,
     migrationWarnOnly: config.migrationWarnOnly,
+    staleAfterDays: config.staleAfterDays,
   });
 
   const service = new AnchorService(repo, {
     pushOnWrite: config.pushOnWrite,
     migrationWarnOnly: config.migrationWarnOnly,
+    staleAfterDays: config.staleAfterDays,
   });
   const mcpServer = createAnchorMcpServer(service, { requestLogger });
   const autoSync = new AutoSync(repo, config.syncIntervalMs, logger);

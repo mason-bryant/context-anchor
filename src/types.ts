@@ -333,6 +333,8 @@ export type LoadContextInput = {
   excerptChars?: number;
   /** Continuation token from a previous `loadContext` response. */
   cursor?: string;
+  /** When set with `includeContent: excerpt`, prefer sections that match this task. */
+  task?: string;
   /** Same as `contextRoot`: include markdown snapshot in the result. */
   format?: ContextRootFormat;
 };
@@ -396,6 +398,8 @@ export type PlanContextBundleItem = {
   estimatedTokens: number;
   matchedTerms: string[];
   reason: string;
+  stale?: boolean;
+  lastValidatedAgeDays?: number;
 };
 
 export type PlanContextBundleResult = {
@@ -413,6 +417,46 @@ export type PlanContextBundleResult = {
     includeContent: "excerpt";
     maxBytes: number;
     project?: string;
+  };
+};
+
+/** Input for the combined session-start orchestration tool (`startTask`). */
+export type StartTaskInput = {
+  task: string;
+  project?: string;
+  budgetTokens?: number;
+  maxAnchors?: number;
+  includeArchive?: boolean;
+};
+
+export type StartTaskActiveMilestone = {
+  name: string;
+  theme: string;
+  goalIds: string[];
+  displayId?: string;
+};
+
+export type StartTaskResult = {
+  task: string;
+  plan: {
+    budgetTokens: number;
+    estimatedTokens: number;
+    included: PlanContextBundleItem[];
+    excluded: PlanContextBundleItem[];
+    missingContext: string[];
+    projectFilter?: ProjectFilterResolution;
+  };
+  anchors: LoadContextAnchor[];
+  truncated: boolean;
+  nextCursor?: string;
+  staleness: {
+    staleAfterDays: number;
+    staleIncluded: Array<{ name: string; lastValidatedAgeDays?: number }>;
+  };
+  activeMilestones: StartTaskActiveMilestone[];
+  suggestedFollowUp: {
+    readAnchor: string[];
+    note: string;
   };
 };
 
@@ -501,6 +545,8 @@ export type ServerConfig = {
   pushOnWrite: boolean;
   syncIntervalMs: number;
   migrationWarnOnly: boolean;
+  /** Flag included planner anchors when last_validated is older than this many days. */
+  staleAfterDays: number;
   logging?: LoggingConfig;
 };
 

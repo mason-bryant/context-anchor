@@ -15,7 +15,7 @@ beforeEach(async () => {
   tmpDir = await mkdtemp(path.join(os.tmpdir(), "anchor-mcp-"));
   repo = new AnchorRepository({ repoPath: tmpDir });
   await repo.ensureReady();
-  service = new AnchorService(repo, { pushOnWrite: false, migrationWarnOnly: false });
+  service = new AnchorService(repo, { pushOnWrite: false, migrationWarnOnly: false, staleAfterDays: 45 });
 });
 
 afterEach(async () => {
@@ -682,6 +682,131 @@ None.
     });
 
     expect(maxInFlight).toBeLessThanOrEqual(8);
+  });
+
+  it("planContextBundle excludes large-body anchors under a tight token budget", async () => {
+    await service.writeAnchor({
+      name: "projects/demo/demo",
+      content: projectAnchorContent({ summary: "Demo storage decisions and constraints." }),
+      message: "test: add demo project",
+    });
+    await service.writeAnchor({
+      name: "shared/storage",
+      content: sharedAnchorContent({
+        title: "Storage Workflow",
+        summary: "Shared storage workflow for demo decisions.",
+        currentState: `- ${"x".repeat(12000)}`,
+      }),
+      message: "test: add large storage guide",
+    });
+
+    const planned = await service.planContextBundle({
+      task: "Update demo storage decisions",
+      project: "demo",
+      budgetTokens: 1200,
+    });
+
+    expect(planned.included.map((anchor) => anchor.name)).toContain("projects/demo/demo.md");
+    expect(planned.excluded.some((anchor) => anchor.name === "shared/storage.md" && anchor.reason.includes("outside token budget"))).toBe(
+      true,
+    );
+  });
+
+  it("loadContext uses task-aware excerpts when task is provided", async () => {
+    const padding = "x".repeat(1500);
+    await service.writeAnchor({
+      name: "projects/demo/roadmap",
+      content: `---
+project:
+  - demo
+type: project-roadmap
+tags:
+  - roadmap
+summary: "Demo roadmap for storage and milestone goals."
+read_this_if:
+  - "You are planning demo work."
+last_validated: 2026-05-10
+---
+
+# Demo Roadmap
+
+## Current State
+
+- ${padding}
+
+### Goal G-004 -- Session start
+
+Ship startTask and retrieval quality improvements.
+
+## Decisions
+
+- Keep planner deterministic.
+
+## Constraints
+
+- None.
+
+## PRs
+
+None.
+`,
+      message: "test: add roadmap with late goal section",
+    });
+
+    const loaded = await service.loadContext({
+      names: ["projects/demo/roadmap.md"],
+      includeContent: "excerpt",
+      excerptChars: 1200,
+      task: "session start G-004",
+    });
+
+    expect(loaded.anchors[0]?.excerpt).toContain("Goal G-004");
+    expect(loaded.anchors[0]?.excerpt).toContain("startTask");
+  });
+
+  it("planContextBundle flags stale included anchors", async () => {
+    await service.writeAnchor({
+      name: "projects/demo/demo",
+      content: projectAnchorContent({
+        summary: "Demo storage decisions and constraints.",
+        lastValidated: "2025-01-01",
+      }),
+      message: "test: add stale demo project",
+    });
+
+    const planned = await service.planContextBundle({
+      task: "Update demo storage decisions",
+      project: "demo",
+      budgetTokens: 4000,
+    });
+
+    expect(planned.included[0]?.stale).toBe(true);
+    expect(planned.missingContext.some((signal) => signal.includes("may be stale"))).toBe(true);
+  });
+
+  it("startTask plans and loads anchor excerpts in one call", async () => {
+    await service.writeAnchor({
+      name: "projects/demo/demo",
+      content: projectAnchorContent({ summary: "Demo storage decisions and constraints." }),
+      message: "test: add demo project",
+    });
+    await service.writeAnchor({
+      name: "shared/storage",
+      content: sharedAnchorContent({ title: "Storage Workflow", summary: "Shared storage workflow for demo decisions." }),
+      message: "test: add storage guide",
+    });
+
+    const started = await service.startTask({
+      task: "Update demo storage decisions",
+      project: "demo",
+      budgetTokens: 1200,
+    });
+
+    expect(started.plan.included.map((anchor) => anchor.name)).toContain("projects/demo/demo.md");
+    expect(started.anchors.length).toBeGreaterThan(0);
+    expect(started.anchors[0]?.excerpt ?? started.anchors[0]?.content).toBeDefined();
+    expect(started.suggestedFollowUp.readAnchor).toContain("projects/demo/demo.md");
+    expect(started.staleness.staleAfterDays).toBe(45);
   });
 
   it("readAnchor returns fileCommit for latest reads", async () => {

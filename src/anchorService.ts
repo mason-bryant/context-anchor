@@ -25,6 +25,7 @@ import {
   LOAD_CONTEXT_DEFAULT_MAX_BYTES,
   shrinkLoadContextAnchorToFit,
   anchorBodyForSearchIndex,
+  stripFrontMatterForExcerpt,
   toNextCursorPayload,
 } from "./loadContext.js";
 import {
@@ -77,6 +78,8 @@ import type {
   LoadContextSelectionReason,
   PlanContextBundleInput,
   PlanContextBundleResult,
+  StartTaskInput,
+  StartTaskResult,
   ApplyProposedChangeInput,
   ApplyProposedChangeResult,
   ProjectFilterResolution,
@@ -131,11 +134,16 @@ export class AnchorService {
     private readonly options: {
       pushOnWrite: boolean;
       migrationWarnOnly: boolean;
+      staleAfterDays: number;
     },
   ) {}
 
-  private async buildBM25SearchIndex(anchors: AnchorMeta[]): Promise<BM25Index> {
+  private async buildBM25SearchIndex(anchors: AnchorMeta[]): Promise<{
+    index: BM25Index;
+    bodyCharCounts: Map<string, number>;
+  }> {
     const bm25Index = new BM25Index();
+    const bodyCharCounts = new Map<string, number>();
     let nextAnchorIndex = 0;
     const workerCount = Math.min(BM25_INDEX_READ_CONCURRENCY, anchors.length);
 
@@ -150,6 +158,7 @@ export class AnchorService {
 
           try {
             const read = await this.readAnchor(anchor.name);
+            bodyCharCounts.set(anchor.name, stripFrontMatterForExcerpt(read.content).length);
             bm25Index.add({
               id: anchor.name,
               text: anchorBodyForSearchIndex(read.content),
@@ -161,7 +170,7 @@ export class AnchorService {
       }),
     );
 
-    return bm25Index;
+    return { index: bm25Index, bodyCharCounts };
   }
 
   private resolveDiscoveryAnchorName(name: string): string {
@@ -1166,6 +1175,7 @@ export class AnchorService {
     const maxBytes = Math.max(1024, decoded?.maxBytes ?? input.maxBytes ?? LOAD_CONTEXT_DEFAULT_MAX_BYTES);
     const includeContent: AnchorContentMode = decoded?.includeContent ?? input.includeContent ?? "excerpt";
     const excerptChars = Math.max(100, decoded?.excerptChars ?? input.excerptChars ?? LOAD_CONTEXT_DEFAULT_EXCERPT_CHARS);
+    const task = decoded?.task ?? input.task;
     const format = decoded?.format ?? input.format ?? "both";
 
     const filter = {
@@ -1229,7 +1239,7 @@ export class AnchorService {
       }
 
       const read = await this.readAnchor(orderedNames[index]);
-      let row = buildLoadContextAnchor(read, includeContent, excerptChars);
+      let row = buildLoadContextAnchor(read, includeContent, excerptChars, task);
       const trial = [...anchors, row];
       const bytes = jsonByteLength(trial);
 
@@ -1239,7 +1249,7 @@ export class AnchorService {
       }
 
       if (bytes > maxBytes && anchors.length === 0) {
-        row = shrinkLoadContextAnchorToFit(read, includeContent, excerptChars, maxBytes);
+        row = shrinkLoadContextAnchorToFit(read, includeContent, excerptChars, maxBytes, task);
       }
 
       anchors.push(row);
@@ -1261,6 +1271,7 @@ export class AnchorService {
             maxBytes,
             includeContent,
             excerptChars,
+            task,
             format,
           }),
         )
@@ -1299,8 +1310,16 @@ export class AnchorService {
         ? { ...input, project: projectFilter.resolved }
         : input;
 
-    const bm25Index = await this.buildBM25SearchIndex(anchors);
-    const plan = buildContextBundlePlan(anchors, effectiveInput, bm25Index, undefined, projectFilter);
+    const { index: bm25Index, bodyCharCounts } = await this.buildBM25SearchIndex(anchors);
+    const plan = buildContextBundlePlan(
+      anchors,
+      effectiveInput,
+      bm25Index,
+      undefined,
+      projectFilter,
+      bodyCharCounts,
+      this.options.staleAfterDays,
+    );
     const names = plan.loadContext.names;
     const roadmapSignals = collectRoadmapAcceptanceMissingSignals(anchors);
     const milestoneSignals = collectMilestoneAcceptanceMissingSignals(anchors);
@@ -1310,6 +1329,68 @@ export class AnchorService {
       missingContext: [...plan.missingContext, ...roadmapSignals, ...milestoneSignals],
       loadContext: { ...plan.loadContext, names },
       ...(projectFilter ? { projectFilter } : {}),
+    };
+  }
+
+  /** Session-start orchestration: plan a task-aware bundle and load suggested anchor excerpts in one call. */
+  async startTask(input: StartTaskInput): Promise<StartTaskResult> {
+    const plan = await this.planContextBundle({
+      task: input.task,
+      project: input.project,
+      budgetTokens: input.budgetTokens,
+      maxAnchors: input.maxAnchors,
+      includeArchive: input.includeArchive,
+    });
+
+    const loaded = await this.loadContext({
+      names: plan.loadContext.names,
+      includeContent: plan.loadContext.includeContent,
+      maxBytes: plan.loadContext.maxBytes,
+      task: input.task,
+      ...(plan.loadContext.project ? { project: plan.loadContext.project } : {}),
+    });
+
+    const activeMilestones =
+      input.project !== undefined
+        ? (await this.listMilestones(input.project))
+            .filter((milestone) => milestone.status === "active")
+            .map((milestone) => ({
+              name: milestone.name,
+              theme: milestone.theme,
+              goalIds: milestone.goalIds,
+              ...(milestone.displayId ? { displayId: milestone.displayId } : {}),
+            }))
+        : [];
+
+    const staleIncluded = plan.included
+      .filter((anchor) => anchor.stale)
+      .map((anchor) => ({
+        name: anchor.name,
+        ...(anchor.lastValidatedAgeDays !== undefined ? { lastValidatedAgeDays: anchor.lastValidatedAgeDays } : {}),
+      }));
+
+    return {
+      task: input.task,
+      plan: {
+        budgetTokens: plan.budgetTokens,
+        estimatedTokens: plan.estimatedTokens,
+        included: plan.included,
+        excluded: plan.excluded,
+        missingContext: plan.missingContext,
+        ...(plan.projectFilter ? { projectFilter: plan.projectFilter } : {}),
+      },
+      anchors: loaded.anchors,
+      truncated: loaded.truncated,
+      ...(loaded.nextCursor ? { nextCursor: loaded.nextCursor } : {}),
+      staleness: {
+        staleAfterDays: this.options.staleAfterDays,
+        staleIncluded,
+      },
+      activeMilestones,
+      suggestedFollowUp: {
+        readAnchor: plan.included.map((anchor) => anchor.name),
+        note: "Use readAnchor for full anchor bodies when excerpts are insufficient or truncated is true.",
+      },
     };
   }
 
