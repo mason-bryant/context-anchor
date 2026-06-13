@@ -1,600 +1,97 @@
 # anchor-mcp
 
-`anchor-mcp` is a git-backed MCP server for context anchors. It wraps a private markdown repository, exposes a small stable tool surface to agent runtimes, commits successful writes, and blocks or warns on mechanically checkable context-discipline rules.
+Persistent project memory for AI coding agents.
 
-## What Is Implemented
+`anchor-mcp` helps Cursor, Codex, Claude, and other MCP clients start work with the
+right project context already in view. It serves curated Markdown anchors from a
+private git repo, plans task-specific context bundles, and validates every write so
+decisions, constraints, roadmaps, PR history, and agent rules stay durable instead of
+disappearing into chat.
 
-- Phase 0 storage support: point the server at a private git repo, or run `scripts/anchor-context-sync.sh` for basic add/commit/pull/push sync without MCP.
-- Phase 1 read-only MCP tools: `startTask`, `listAnchors`, `readAnchor`, `readAnchorBatch`, `loadContext`, `planContextBundle`, `listMilestones`, `readMilestone`, `getRelated`, `searchAnchors`, and `listVersions`.
-- Phase 2 write tools and validators: `writeAnchor`, `deleteAnchor`, `renameAnchor`, `updateAnchorFrontmatter`, `updateAnchorSection`, `appendToAnchorSection`, `deleteAnchorSection`, `proposeChange`, `listProposedChanges`, `readProposedChange`, `previewProposedChange`, `reviewProposedChange`, `applyProposedChange`, `migrateRoadmapGoalIds`, `diffAnchor`, `revertAnchor`, `compactionReport`, `contextRoot`, `writeContextRoot`, and `conflictStatus`.
-- Phase 3 transport support: stdio for local tools and Streamable HTTP/SSE for remote or containerized agents.
+Use it when you want agents to:
 
-## Install
+- load current decisions and constraints before touching code
+- pull only relevant context instead of dumping an entire docs tree
+- write durable discoveries back through validated, committed MCP tools
+- keep roadmaps, milestones, proposed changes, and stale-context warnings auditable
+- share the same context across multiple agent runtimes without copying files around
 
-From the registry (pin a version for reproducible installs; `@latest` follows the newest publish):
+## Quick Start
 
-```sh
-npx -y @mason/anchor-mcp@0.2.0 --repo ~/agent-context
-```
+Run the server against a separate git repository that contains your anchor Markdown:
 
 ```sh
 npx -y @mason/anchor-mcp@latest --repo ~/agent-context
 ```
 
-Release notes and assets: [GitHub Releases](https://github.com/mason-bryant/context-conductor/releases).
-
-### Releases (maintainers)
-
-From the repo root, on a **clean** `main` checkout:
+For reproducible installs, pin the current release:
 
 ```sh
-./scripts/release.sh tag              # tag vX.Y.Z from package.json version and push (default)
-./scripts/release.sh patch            # or: minor | major — bump, commit, tag via npm, push branch + tag
-./scripts/release.sh --dry-run tag    # print steps only
+npx -y @mason/anchor-mcp@2.1.0 --repo ~/agent-context
 ```
 
-The **Release** workflow (on tag `v*.*.*`) publishes to npm and creates a GitHub Release. Configure a repository Actions secret **`NPM_TOKEN`** with an npm automation token that can publish `@mason/anchor-mcp`. The tag must match `package.json` (including the leading `v`).
+For setup walkthroughs, see [QUICKSTART.md](QUICKSTART.md).
 
-### Local development (this repo)
+## Core Model
+
+An anchor repo is a small Markdown knowledge base with a strict taxonomy:
+
+```txt
+~/agent-context/
+  CONTEXT-ROOT.md
+  agent-rules/
+  projects/
+  invariants/
+  conflicts/
+  shared/
+  archive/
+```
+
+`CONTEXT-ROOT.md` is generated from anchor front matter. The source of truth is the
+anchor files under the taxonomy directories.
+
+At session start, agents call `startTask` when they know the project and task. That
+one call plans a budgeted context bundle, loads task-aware excerpts, flags stale
+anchors, and suggests follow-up full reads when excerpts are not enough. Broader
+discovery is available through `loadContext` and `contextRoot`.
+
+When facts change, agents write through MCP tools such as `updateAnchorSection`,
+`updateAnchorFrontmatter`, or `writeAnchor`. Successful writes are validated,
+committed to git, and optionally pushed, which keeps context changes reviewable and
+recoverable.
+
+## What It Keeps Organized
+
+- Project state: current facts, decisions, constraints, PR history, and roadmaps.
+- Agent rules: behavior, coding standards, review habits, and workflow conventions.
+- Invariants and conflicts: hard constraints and resolved contradictions.
+- Milestones: roadmap goal groupings with stable goal IDs and task-aware retrieval.
+- Proposed changes: reviewable draft edits before they become durable context.
+
+The HTTP server also serves a read-only explorer UI at `/ui` for browsing the
+generated root, anchors, roadmap metadata, validation health, and planner output.
+
+## Documentation
+
+- [Quick Start](QUICKSTART.md) - migrate context, start the server, and connect clients.
+- [Migration Guide](AGENTS.md) - convert existing Markdown context into anchor-mcp shape.
+- [Operator Reference](docs/operator-reference.md) - auth, HTTP, validation, context-loading, and sync details.
+- [Milestones](docs/milestones.md) - project milestone anchors and roadmap goal IDs.
+- [Project Updates](docs/project-updates.md) - status update and backlog task conventions.
+- [Proposed Changes](docs/proposed-changes.md) - reviewable draft write-intent workflow.
+- [Planner Judge Prompt](docs/planner-judge-prompt.md) - manually evaluate planner output.
+- [Maintainers](docs/maintainers.md) - release and local development notes.
+
+## Local Development
 
 ```sh
 npm install
 npm run build
+npm test
 ```
 
-Optional: run **`npm run install-git-hooks`** once per clone to point Git at [`githooks/`](githooks/) so **`git push`** runs **`npm run typecheck`** first (see [`githooks/README.md`](githooks/README.md)).
-
-In this checkout, run the built binary:
-
-```sh
-node dist/bin/anchor-mcp.js --repo ~/agent-context
-```
-
-## Storage Layout
-
-> **Important:** Create the anchor context repository in a **separate git repository** from the one where you do your everyday work. Agents often get confused when the same anchors are reachable both as normal workspace files and through this MCP server, which can lead to duplicated or conflicting edits across the two paths.
-
-By default, `--repo` points at the root of the anchor markdown tree:
-
-```txt
-~/agent-context/
-  CONTEXT-ROOT.md        # generated, do not edit manually
-  projects/
-    demo/
-      current.md
-  agent-rules/
-    codex.md
-  invariants/
-    auth.md
-  conflicts/
-    token-model.md
-  shared/
-    glossary.md
-  archive/
-    2026/
-      retired.md
-```
-
-If the private repo contains the full `.agents/context` tree under a subdirectory, pass `--anchor-root`:
-
-```sh
-anchor-mcp --repo ~/agent-context --anchor-root .agents/context
-```
-
-For a checkout that should keep `.agents/context` in this private repo, symlink it:
-
-```sh
-mkdir -p ~/agent-context
-ln -sfn ~/agent-context /path/to/your-project/.agents/context
-```
-
-## Connecting to Cursor (HTTP)
-
-HTTP transport always requires an auth token — even on localhost — because a localhost-bound
-server can be exposed externally at any time (for example via ngrok) without changing the
-bind address. Generate one first:
-
-```sh
-node -e "console.log(require('crypto').randomBytes(32).toString('base64url'))"
-```
-
-Create a config file (and lock down its permissions since it holds the token):
-
-```sh
-echo '{"authToken":"your-generated-token"}' > anchor-mcp.config.json
-chmod 600 anchor-mcp.config.json
-```
-
-Start the server (no build step required):
-
-```sh
-npx tsx src/bin/anchor-mcp.ts \
-  --repo ~/agent-context \
-  --transport http \
-  --host 127.0.0.1 \
-  --port 3333 \
-  --config ./anchor-mcp.config.json
-```
-
-To auto-restart when source files change, add the `watch` flag:
-
-```sh
-npx tsx watch src/bin/anchor-mcp.ts \
-  --repo ~/agent-context \
-  --transport http \
-  --host 127.0.0.1 \
-  --port 3333 \
-  --config ./anchor-mcp.config.json
-```
-
-> **Note:** The `node dist/bin/anchor-mcp.js` form requires `npm run build` first and is intended for production deployments. Use `tsx` for local development.
-
-The same HTTP server also serves a read-only explorer UI at
-`http://127.0.0.1:3333/ui`. The UI previews the generated context root, lists
-anchors and roadmaps with search/facet controls, and shows rendered anchor detail,
-front matter, required-section status, and validation badges. Enter the same bearer
-token in the UI that you use for MCP requests; all `/api/ui/*` reads are protected.
-
-Then add to your Cursor MCP settings (`~/.cursor/mcp.json`):
-
-```json
-{
-  "mcpServers": {
-    "anchor-mcp": {
-      "url": "http://127.0.0.1:3333/mcp",
-      "headers": {
-        "Authorization": "Bearer your-generated-token"
-      }
-    }
-  }
-}
-```
-
-### Accessing HTTP through ngrok
-
-When exposing the server externally, keep it bound to `127.0.0.1` and let ngrok tunnel
-to it. You will already have an `authToken` from the local setup above — add
-`allowedHosts` to the same config file:
-
-- **`allowedHosts`** — the `@modelcontextprotocol/express` layer validates the `Host`
-  header on every request. Requests arriving through ngrok carry the ngrok hostname, so
-  it must be listed here or every request will be rejected before reaching your auth
-  middleware.
-
-#### 1. Generate a secure token
-
-If you haven't already (see [Connecting to Cursor (HTTP)](#connecting-to-cursor-http)):
-
-```sh
-node -e "console.log(require('crypto').randomBytes(32).toString('base64url'))"
-```
-
-#### 2. Update your config file
-
-```json
-{
-  "authToken": "your-generated-token",
-  "allowedHosts": [
-    "your-tunnel.ngrok-free.app"
-  ]
-}
-```
-
-Save this as `anchor-mcp.config.json` and restrict its permissions so only your user
-can read it (it contains the bearer token):
-
-```sh
-chmod 600 anchor-mcp.config.json
-```
-
-#### 3. Start the server
-
-```sh
-npx tsx src/bin/anchor-mcp.ts \
-  --repo ~/agent-context \
-  --transport http \
-  --host 127.0.0.1 \
-  --port 3333 \
-  --config ./anchor-mcp.config.json
-```
-
-#### 4. Add the token to your MCP client config
-
-```json
-{
-  "mcpServers": {
-    "anchor-mcp": {
-      "url": "https://your-tunnel.ngrok-free.app/mcp",
-      "headers": {
-        "Authorization": "Bearer your-generated-token"
-      }
-    }
-  }
-}
-```
-
-`allowedHosts` accepts hostnames or full URLs. The same setting is available for
-one-off runs as `--allowed-hosts` or `ANCHOR_MCP_ALLOWED_HOSTS`.
-
-### Cursor rule snippet (session start)
-
-Add a short rule under `.cursor/rules/` (or your global Cursor rules) so agents call anchors **before** other tools, even if MCP `instructions` are buried in context:
-
-```md
-- Before any non-trivial tool use (read/search/edit/shell), call anchor-mcp `startTask` when you know the project and task; otherwise call `loadContext` first.
-- If you only need the index, `contextRoot` is enough; otherwise prefer `startTask` or `loadContext` with `includeContent: "excerpt"` (default behavior).
-- If the response is too large or `truncated` is true: pass `nextCursor`, or lower `limit` / `maxBytes`, or set `includeContent` to `excerpt` or `none`.
-- Never locate anchors by filesystem search; use MCP tools only.
-```
-
-### Updating anchors when facts change
-
-The MCP server also ships session instructions (`src/server.ts`) telling agents to **write back** durable discoveries, not only answer in-thread, and to **avoid editing anchor files under `--repo` directly on disk** (use MCP write tools so validation and server-side commits stay aligned):
-
-- **Facts** → map to `## Current State`, `## Decisions`, or `## Constraints`, keep `last_validated` fresh when those sections change materially, and add PR rows under `## PRs` with link text `PR <title> - #<number>`.
-- **Approval** → changes to Decisions/Constraints (or removing bullets) require the same write tool (`writeAnchor` or a chunked write) with `approved: true` after explicit user confirmation. **`deleteAnchor` and `renameAnchor` always require `approved: true`** before the server will remove or move an anchor file.
-- **Roadmaps** → keep forward-looking specs and completed history in the project’s roadmap anchor when you use that pattern; heed write warnings for oversized roadmaps or `## Completed` tables and use `compactionReport` to plan cleanup.
-
-### Proposed changes
-
-Use the proposed-change tools when you need reviewable draft write-intent instead of a durable edit. Proposed changes are stored in dedicated ledger anchors:
-
-- project scope: `projects/<slug>/<slug>-proposed-changes.md`
-- agent-rule scope: `agent-rules/agent-rules-proposed-changes.md`
-
-Those ledger anchors use `type: project-proposed-changes` or `type: agent-rule-proposed-changes`, `schema_version: 1`, `proposal_scope`, and a `## Proposed Changes` section. Normal context loading should not treat proposals as settled truth; use the proposed-change tools to create, list, inspect, preview, review, and apply them. Human approval still gates sensitive target writes at apply time.
-
-See [docs/proposed-changes.md](docs/proposed-changes.md) for the workflow and supported operations.
-
-### Authentication
-
-A bearer token is **required** for HTTP transport regardless of bind address. The server
-refuses to start without one. A localhost-bound server can be exposed externally at any
-time (for example via ngrok) without changing the bind address, so there is no safe
-"localhost-only" exception.
-
-#### Generating a token
-
-Use Node's built-in `crypto` module to produce a cryptographically random token:
-
-```sh
-node -e "console.log(require('crypto').randomBytes(32).toString('base64url'))"
-```
-
-This produces a 43-character URL-safe base64 string. Do not use a short or guessable
-value — the token is the only secret protecting the MCP endpoint.
-
-#### Setting the token
-
-Preferred — store it in the config file alongside `allowedHosts` (see ngrok section):
-
-```json
-{
-  "authToken": "your-generated-token"
-}
-```
-
-Pass the config file at startup:
-
-```sh
-anchor-mcp --transport http --config ~/anchor-mcp.config.json
-```
-
-Alternatively, pass it as a CLI flag or environment variable:
-
-```sh
-# CLI flag
-anchor-mcp --transport http --auth-token your-generated-token
-
-# Environment variable (keeps token out of shell history)
-ANCHOR_MCP_AUTH_TOKEN=your-generated-token anchor-mcp --transport http
-```
-
-Precedence order when multiple sources are set: CLI flag → environment variable → config file.
-
-#### Optional file logging
-
-Add `logging.file` to the same JSON config to write server lifecycle and background
-sync events to a rotated log file. File logging is disabled unless this section is
-present and enabled. Use `true` for the defaults, or an object to override them:
-
-```json
-{
-  "authToken": "your-generated-token",
-  "logging": {
-    "file": {
-      "enabled": true,
-      "dirname": "~/.anchor-mcp/logs",
-      "filename": "anchor-mcp-%DATE%.log",
-      "level": "info",
-      "datePattern": "YYYY-MM-DD",
-      "maxSize": "10m",
-      "maxFiles": "14d",
-      "zippedArchive": true
-    }
-  }
-}
-```
-
-The defaults keep individual log files small (`10m`) and retain only the last
-14 days of compressed archives.
-
-#### Optional MCP request logging
-
-Add `logging.requests` to write one JSON record per MCP tool call to a separate
-rotated request log. Request logging is disabled unless this section is present
-and enabled. By default it records the tool name, duration, success/error state,
-and arguments with large/sensitive values redacted:
-
-```json
-{
-  "authToken": "your-generated-token",
-  "logging": {
-    "requests": {
-      "enabled": true,
-      "dirname": "~/.anchor-mcp/logs",
-      "filename": "anchor-mcp-requests-%DATE%.log",
-      "level": "info",
-      "datePattern": "YYYY-MM-DD",
-      "maxSize": "10m",
-      "maxFiles": "14d",
-      "zippedArchive": true,
-      "includeArguments": true,
-      "redactArguments": true
-    }
-  }
-}
-```
-
-Set `includeArguments` to `false` to log only tool names and outcomes. Set
-`redactArguments` to `false` only for local debugging when you are comfortable
-writing raw anchor content and request values to disk.
-
-#### Client requests
-
-Clients must include the token on every request using either header:
-
-```txt
-Authorization: Bearer your-generated-token
-```
-
-```txt
-x-anchor-mcp-token: your-generated-token
-```
-
-In a JSON MCP client config:
-
-```json
-{
-  "mcpServers": {
-    "anchor-mcp": {
-      "url": "http://127.0.0.1:3333/mcp",
-      "headers": {
-        "Authorization": "Bearer your-generated-token"
-      }
-    }
-  }
-}
-```
-
-### Stdio (debugging only)
-
-stdio transport is available for local debugging but is not recommended for general use.
-
-```json
-{
-  "mcpServers": {
-    "anchor-mcp": {
-      "command": "node",
-      "args": [
-        "/path/to/context-conductor/dist/bin/anchor-mcp.js",
-        "--repo", "~/agent-context"
-      ]
-    }
-  }
-}
-```
-
-## Write Validation
-
-`writeAnchor` and the chunked write tools (`updateAnchorFrontmatter`, `updateAnchorSection`, `appendToAnchorSection`, `deleteAnchorSection`) all synthesize full markdown and run the same validator pipeline before committing. Prefer chunked tools when you only need a front-matter tweak or a single-section edit so the model does not resend large bodies. Optional `expectedFileCommit` (from `readAnchor(...).fileCommit` on latest reads) rejects stale concurrent updates with `stale_base`.
-
-Blocks:
-
-- unknown top-level directories and root-level markdown anchors
-- direct writes to generated `CONTEXT-ROOT.md`
-- required front matter: `type`, `tags`, `summary`, `read_this_if`, `last_validated: YYYY-MM-DD`
-- `projects/<project-slug>/<anchor>.md` anchors require `project` front matter containing `<project-slug>`
-- required sections: `## Current State`, `## Decisions`, `## Constraints`, `## PRs`
-- PR link text format: `PR <title> - #<number>`
-- `last_validated` must change when Current State, Decisions, or Constraints change, unless it already matches today's date
-- `CLAUDE.md` requires sibling `AGENTS.md` containing `@CLAUDE.md`
-- edits changing Decisions/Constraints or removing bullets require `approved: true`
-- built-in `server-rules/*` policy anchors cannot be edited via write tools
-- any change to `###` / `#### Acceptance Criteria` subtrees (including `#### Proposed`) requires `approved: true`
-- `type: project-roadmap` anchors with a `## Goals` section must give each `###` goal a `#### Acceptance Criteria` block; checklist lines under `#### Approved` / `#### Proposed` must include stable ids (`AC-###` / `AC-P###`) and an `Evidence:` hint unless `anchor_mcp_policy.weaken` includes `require_evidence` (weakening requires `approved: true` when first introduced)
-
-Warnings:
-
-- removed bullets should be moved to `## History` or marked superseded
-- roadmaps over 400 lines should be compacted
-- `## Completed` tables over 10 rows should be compacted
-- when `anchor_mcp_policy.weaken` is active on a roadmap, the server emits a reminder that default enforcement is relaxed
-
-During migration, run with `--migration-warn-only` to downgrade schema and shape blocks into warnings while existing anchors are cleaned up.
-
-Example anchor:
-
-```md
----
-project:
-  - demo
-type: design
-tags:
-  - context
-summary: "Current operating context for the demo project."
-read_this_if:
-  - "You are modifying demo project behavior."
-  - "You need current decisions and constraints for demo work."
-last_validated: 2026-05-10
----
-
-# Demo Project
-
-## Current State
-
-- The demo project uses git-backed context anchors.
-
-## Decisions
-
-- Keep generated root content derived from front matter.
-
-## Constraints
-
-- Do not edit generated CONTEXT-ROOT.md manually.
-
-## PRs
-
-- [PR Add dynamic root - #123](https://github.com/example/repo/pull/123)
-```
-
-## Dynamic Context Root
-
-`contextRoot` builds a live root index from anchor metadata. It prepends **built-in server policy** rows (`category: "server-rules"`, `origin: "built-in"`) that are not files in your repo, then groups repo anchors in this order:
-
-```txt
-server-rules (built-in policy — not in git)
-agent-rules
-projects
-invariants
-conflicts
-shared
-archive
-```
-
-Archive entries are excluded unless `includeArchive: true` or `category: "archive"` is passed. Project milestone anchors are intentionally excluded from the context-root index so startup discovery stays focused on project anchors and roadmaps; use `listMilestones` or `readMilestone` for milestone detail. Use `category: "server-rules"` to list only built-in policy entries.
-
-`writeContextRoot` writes and commits a generated `CONTEXT-ROOT.md` at the anchor root. The generated file is excluded from `listAnchors`, validation, and future context-root entries. The markdown snapshot includes a **Built-in server policy — not in git** section when applicable.
-
-`contextRoot` accepts:
-
-```json
-{
-  "project": "demo",
-  "category": "projects",
-  "tag": "context",
-  "runtime": "codex",
-  "includeArchive": false,
-  "format": "both"
-}
-```
-
-## Start task (session bootstrap)
-
-`startTask` is the preferred first call when you know the **project** and **task**. It runs `planContextBundle`, then immediately loads the suggested anchors with task-aware excerpts. One response includes:
-
-- `plan`: included/excluded anchors, reasons, budget use, and `missingContext` signals (including staleness warnings)
-- `anchors`: loaded excerpt bodies
-- `staleness`: configured threshold and any stale included anchors
-- `activeMilestones`: active milestone summary for the project
-- `suggestedFollowUp.readAnchor`: paths to read when excerpts are not enough
-
-Example:
-
-```json
-{
-  "task": "Update demo storage decisions",
-  "project": "demo",
-  "budgetTokens": 4000
-}
-```
-
-An MCP prompt named `start-task` is also registered for Cursor session bootstrap with `project` and `task` arguments.
-
-## Load context (one call)
-
-`loadContext` combines **discovery** (same `entries` as `contextRoot`, plus optional `markdown`) with **multiple anchor bodies** in a single tool call. Defaults: `limit` 12, `maxBytes` 250000, `includeContent` `excerpt`, `excerptChars` 1200.
-
-Pass optional `task` with `includeContent: "excerpt"` to prefer markdown sections that match the task instead of prefix-only excerpts.
-
-Filter the index and load matching anchors:
-
-```json
-{
-  "project": "demo",
-  "category": "projects",
-  "includeArchive": false,
-  "includeContent": "excerpt",
-  "format": "both"
-}
-```
-
-Load explicit paths (order preserved):
-
-```json
-{
-  "names": ["agent-rules/codex.md", "projects/demo/demo.md"],
-  "includeContent": "full"
-}
-```
-
-When `truncated` is true, call again with `nextCursor` from the previous response (same filters or explicit names are encoded in the cursor). If the payload is still too large for your client, reduce `limit` or `maxBytes`, or set `includeContent` to `excerpt` or `none`.
-
-## Milestones
-
-Milestones group roadmap goals under a theme and integrate with `planContextBundle` for task-aware context boosts. See **[docs/milestones.md](docs/milestones.md)** for the full guide, including how to upgrade existing roadmaps to stable `G-<digits>` goal IDs.
-
-## Project updates and backlog
-
-Project updates summarize roadmap, milestone, and structured task state for humans. See **[docs/project-updates.md](docs/project-updates.md)** for the rendering and backlog rules. Built-in `server-rules/project-updates.md` says rendered updates end with backlog items when present because backlog grooming is always in progress.
-
-When a user asks to put a task on a project backlog, resolve or create the reserved `milestone_id: backlog` milestone, add the task to its structured `tasks`, do not assign `sequence`, and do not invent dates, owners, or goal ids.
-
-## Plan context bundle
-
-`planContextBundle` is a read-only planning step for task-aware context assembly. It accepts a natural-language `task`, optional filters, and an approximate `budgetTokens`, then returns:
-
-- `included`: anchors selected for the task, with scores, reasons, matched terms, and estimated token costs
-- `excluded`: relevant or nearby anchors left out, with explanations such as low relevance, budget pressure, or max-anchor limits
-- `missingContext`: signals that the selected bundle may be incomplete
-- `loadContext`: a suggested follow-up call using the selected anchor names
-
-Example:
-
-```json
-{
-  "task": "Update demo storage decisions",
-  "project": "demo",
-  "budgetTokens": 4000
-}
-```
-
-## Staleness signals
-
-`planContextBundle` and `startTask` flag included anchors whose `last_validated` date is older than a configurable threshold (default **45 days**) and add a `missingContext` warning. Configure the threshold when starting the server:
-
-```sh
-anchor-mcp --repo ~/agent-context --stale-after-days 30
-```
-
-Or set `ANCHOR_MCP_STALE_AFTER_DAYS=14`.
-
-## Planner eval
-
-Run deterministic planner regression checks against fixture cases:
-
-```sh
-npm run eval
-```
-
-Optional flags: `--cases path/to/cases.json`, `--min-recall 0.8`. The script exits non-zero when average recall falls below the floor. See `docs/planner-judge-prompt.md` for the separate manual LLM-judge workflow.
-
-## Git Sync
-
-Successful writes commit with structured metadata and then attempt `git push` unless `--no-push-on-write` is set. A background sync loop runs `git pull --rebase` every 45 seconds unless `--no-auto-sync` is set. Real conflicts are not auto-resolved; call `conflictStatus` to surface them to the agent.
-
-For Phase 0 without MCP:
-
-```sh
-scripts/anchor-context-sync.sh ~/agent-context 45
-```
+Optional: run `npm run install-git-hooks` once per clone so `git push` runs
+`npm run typecheck` first. See [githooks/README.md](githooks/README.md).
+
+Release notes and assets are published on
+[GitHub Releases](https://github.com/mason-bryant/context-conductor/releases).

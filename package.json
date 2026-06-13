@@ -20,7 +20,20 @@
   },
   "files": [
     "dist",
-    "README.md"
+    "README.md",
+    "QUICKSTART.md",
+    "AGENTS.md",
+    "docs/maintainers.md",
+    "docs/milestones.md",
+    "docs/operator-reference.md",
+    "docs/planner-judge-prompt.md",
+    "docs/project-updates.md",
+    "docs/proposed-changes.md",
+    "githooks/README.md",
+    "githooks/pre-push",
+    "scripts/anchor-context-sync.sh",
+    "scripts/planner-eval.ts",
+    "scripts/release.sh"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",

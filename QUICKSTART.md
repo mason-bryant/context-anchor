@@ -24,21 +24,35 @@ git commit -m "initial: import existing context documents"
 
 ## 3) Start the server
 
-From this project (`context-conductor`):
+Generate an HTTP bearer token and store it in a config file:
 
 ```bash
-npm install
-npm run build
 node -e "console.log(require('crypto').randomBytes(32).toString('base64url'))"
 echo '{"authToken":"paste-generated-token-here"}' > anchor-mcp.config.json
 chmod 600 anchor-mcp.config.json
-node dist/bin/anchor-mcp.js --repo /path/to/your-context-repo --transport http --host 127.0.0.1 --port 3333 --config ./anchor-mcp.config.json
+```
+
+Start from the published package:
+
+```bash
+npx -y @mason/anchor-mcp@latest \
+  --repo /path/to/your-context-repo \
+  --transport http \
+  --host 127.0.0.1 \
+  --port 3333 \
+  --config ./anchor-mcp.config.json
 ```
 
 Optional (local dev with auto-reload):
 
 ```bash
-npx tsx watch src/bin/anchor-mcp.ts --repo /path/to/your-context-repo --transport http --host 127.0.0.1 --port 3333 --config ./anchor-mcp.config.json
+npm install
+npx tsx watch src/bin/anchor-mcp.ts \
+  --repo /path/to/your-context-repo \
+  --transport http \
+  --host 127.0.0.1 \
+  --port 3333 \
+  --config ./anchor-mcp.config.json
 ```
 
 Open `http://127.0.0.1:3333/ui` for the read-only explorer. Enter the same
@@ -50,6 +64,7 @@ put the tunnel hostname in `anchor-mcp.config.json`:
 
 ```json
 {
+  "authToken": "paste-generated-token-here",
   "allowedHosts": [
     "your-tunnel.ngrok-free.dev"
   ]
@@ -59,7 +74,7 @@ put the tunnel hostname in `anchor-mcp.config.json`:
 Then start with:
 
 ```bash
-npx tsx watch src/bin/anchor-mcp.ts \
+npx -y @mason/anchor-mcp@latest \
   --repo /path/to/your-context-repo \
   --transport http \
   --host 127.0.0.1 \
@@ -100,9 +115,10 @@ Add to Claude Desktop MCP config:
 {
   "mcpServers": {
     "anchor-mcp": {
-      "command": "node",
+      "command": "npx",
       "args": [
-        "/absolute/path/to/context-conductor/dist/bin/anchor-mcp.js",
+        "-y",
+        "@mason/anchor-mcp@latest",
         "--repo",
         "/path/to/your-context-repo"
       ]
@@ -115,9 +131,10 @@ Add to Claude Desktop MCP config:
 
 Add an MCP server entry in your Codex MCP settings using:
 
-- command: `node`
+- command: `npx`
 - args:
-  - `/absolute/path/to/context-conductor/dist/bin/anchor-mcp.js`
+  - `-y`
+  - `@mason/anchor-mcp@latest`
   - `--repo`
   - `/path/to/your-context-repo`
 
@@ -125,9 +142,12 @@ Use the same values as the Claude stdio example above.
 
 ---
 
-## Session start: load anchors first
+## Session start: start with context
 
-Before your first non-trivial tool call (read/search/edit/shell), call **`loadContext`** so discovery (`entries` / optional `markdown`) and multiple anchor bodies arrive in **one** MCP request. If you only need the index, call **`contextRoot`** instead.
+Before your first non-trivial tool call (read/search/edit/shell), call **`startTask`**
+when you know the project and task. It plans a task-aware bundle and loads relevant
+anchor excerpts in one response. If you do not know the task yet, call **`loadContext`**
+for broader discovery. If you only need the index, call **`contextRoot`** instead.
 
 If `truncated` is true or the response is too large: pass **`nextCursor`** from the prior response, or lower **`limit`** / **`maxBytes`**, or set **`includeContent`** to `excerpt` or `none`.
 
@@ -136,7 +156,7 @@ If `truncated` is true or the response is too large: pass **`nextCursor`** from 
 Put this in `.cursor/rules/` (or global Cursor rules) so it survives buried MCP `instructions`:
 
 ```md
-- Before any non-trivial tool use, call anchor-mcp `loadContext` first (or `contextRoot` if only the index is needed).
+- Before any non-trivial tool use, call anchor-mcp `startTask` when you know the project and task; otherwise call `loadContext` first (or `contextRoot` if only the index is needed).
 - If overloaded or `truncated`: use `nextCursor`, or reduce `limit` / `maxBytes`, or set `includeContent` to `excerpt` or `none`.
 - Do not locate anchors via filesystem search; use MCP tools only.
 - For project updates or backlog requests, load built-in `server-rules/project-updates.md`; backlog tasks go on the reserved `milestone_id: backlog` milestone without `sequence`, invented dates, owners, or goal ids.
