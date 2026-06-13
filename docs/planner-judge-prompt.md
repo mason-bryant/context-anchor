@@ -74,7 +74,7 @@ Run this to verify the feature works end-to-end without involving an LLM:
 
    ```bash
    npm run build && node dist/bin/anchor-mcp.js \
-     --repo <some-anchor-repo> --http --auth-token <token>
+     --repo <some-anchor-repo> --transport http --auth-token <token>
    ```
 
 2. Open `/ui`, paste the auth token, switch to **Planner**, and run a planner

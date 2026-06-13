@@ -48,7 +48,8 @@ are invisible to reads and blocked on writes.
 
 **Depth rules:**
 
-- Non-`projects` anchors: exactly one level deep — `<category>/<file>.md`. No subdirectories.
+- Non-`projects` anchors except `archive/`: exactly one level deep — `<category>/<file>.md`. No subdirectories.
+- `archive/` anchors may be nested under `archive/` for retired material.
 - Project anchors: either `projects/<project-slug>/<file>.md` **or** `projects/<project-slug>/milestones/<file>.md` for milestone anchors (`type: project-milestone`). No other nested directories under `projects/<slug>/` are allowed.
 - `CONTEXT-ROOT.md` at the repo root is reserved and generated automatically. Do not move it.
 
@@ -76,8 +77,8 @@ missing required front matter. Those files must be fixed directly in the repo.
 - Conflict-resolution notes → `conflicts/`
 - Inactive / superseded → `archive/`
 
-Also check for files nested more than one level deep inside a non-`projects` category.
-Flatten them to `<category>/<file>.md`.
+Also check for files nested more than one level deep inside a non-`projects`,
+non-`archive` category. Flatten them to `<category>/<file>.md`.
 
 **Move files with `git mv` to preserve history:**
 
