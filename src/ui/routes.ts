@@ -3,6 +3,7 @@ import type { NextFunction, Request, Response, Express } from "express";
 import type { AnchorService } from "../anchorService.js";
 import { isDiscoveryCategory, type DiscoveryCategory } from "../taxonomy.js";
 import type {
+  AnchorMeta,
   ContextRootFormat,
   PlanContextBundleInput,
   ProposedChangeListInput,
@@ -15,6 +16,7 @@ import { UI_CSS, UI_HTML, UI_JS } from "./assets.js";
 import { toAnchorUiDetail, toAnchorUiMeta } from "./viewModel.js";
 
 type UiAuthMiddleware = (req: Request, res: Response, next: NextFunction) => void;
+type UiAnchorSort = "name" | "updated" | "created";
 
 export function registerUiRoutes(
   app: Express,
@@ -56,8 +58,20 @@ export function registerUiRoutes(
     ...protect,
     jsonRoute(async (req) => {
       const { anchors, projectFilter } = await service.listAnchorsDiscovery(readDiscoveryFilters(req));
+      const sort = readUiAnchorSort(req);
+      const offset = nonNegativeIntQuery(req, "offset", 200000) ?? 0;
+      const limit = positiveIntQuery(req, "limit", 500);
+      const sortedAnchors = sortAnchorMetas(anchors, sort);
+      const pageAnchors = limit === undefined ? sortedAnchors : sortedAnchors.slice(offset, offset + limit);
+      const nextOffset = limit === undefined || offset + limit >= sortedAnchors.length ? undefined : offset + limit;
+
       return {
-        anchors: anchors.map(toAnchorUiMeta),
+        anchors: pageAnchors.map(toAnchorUiMeta),
+        total: sortedAnchors.length,
+        offset,
+        ...(limit !== undefined ? { limit } : {}),
+        ...(nextOffset !== undefined ? { nextOffset } : {}),
+        sort,
         ...(projectFilter ? { projectFilter } : {}),
       };
     }),
@@ -329,6 +343,43 @@ function readContextRootFormat(req: Request): ContextRootFormat {
   return format;
 }
 
+function readUiAnchorSort(req: Request): UiAnchorSort {
+  const sort = optionalQueryString(req, "sort");
+  if (!sort) {
+    return "updated";
+  }
+  if (sort !== "name" && sort !== "updated" && sort !== "created") {
+    throw new UiHttpError(400, `Invalid anchor sort: ${sort}`);
+  }
+  return sort;
+}
+
+function sortAnchorMetas(anchors: AnchorMeta[], sort: UiAnchorSort): AnchorMeta[] {
+  return anchors.slice().sort((left, right) => compareAnchorMetas(left, right, sort));
+}
+
+function compareAnchorMetas(left: AnchorMeta, right: AnchorMeta, sort: UiAnchorSort): number {
+  if (sort === "updated") {
+    return compareAnchorTimestamp(right, left, "updatedAt", true) || left.name.localeCompare(right.name);
+  }
+  if (sort === "created") {
+    return compareAnchorTimestamp(right, left, "createdAt", false) || left.name.localeCompare(right.name);
+  }
+  return left.name.localeCompare(right.name);
+}
+
+function compareAnchorTimestamp(left: AnchorMeta, right: AnchorMeta, field: "updatedAt" | "createdAt", allowValidatedFallback: boolean): number {
+  const leftTime = anchorTimestamp(left, field, allowValidatedFallback);
+  const rightTime = anchorTimestamp(right, field, allowValidatedFallback);
+  return leftTime === rightTime ? 0 : leftTime < rightTime ? -1 : 1;
+}
+
+function anchorTimestamp(anchor: AnchorMeta, field: "updatedAt" | "createdAt", allowValidatedFallback: boolean): number {
+  const raw = anchor[field] ?? (allowValidatedFallback ? anchor.last_validated : undefined);
+  const parsed = Date.parse(String(raw ?? ""));
+  return Number.isNaN(parsed) ? 0 : parsed;
+}
+
 function readPlannerInput(req: Request): PlanContextBundleInput {
   const filters = readDiscoveryFilters(req);
   return {
@@ -496,6 +547,19 @@ function positiveIntQuery(
   const min = options.allowZero ? 0 : 1;
   if (!Number.isInteger(parsed) || parsed < min || parsed > max) {
     throw new UiHttpError(400, `Invalid ${key}: expected an integer from ${min} to ${max}`);
+  }
+  return parsed;
+}
+
+function nonNegativeIntQuery(req: Request, key: string, max: number): number | undefined {
+  const value = optionalQueryString(req, key);
+  if (value === undefined) {
+    return undefined;
+  }
+
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed < 0 || parsed > max) {
+    throw new UiHttpError(400, `Invalid ${key}: expected an integer from 0 to ${max}`);
   }
   return parsed;
 }

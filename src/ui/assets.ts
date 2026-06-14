@@ -85,8 +85,8 @@ export const UI_HTML = `<!doctype html>
                 <label class="sort-control" for="anchor-group-sort">
                   <span>Sort</span>
                   <select id="anchor-group-sort">
-                    <option value="name">Project name</option>
                     <option value="updated">Last update</option>
+                    <option value="name">Project name</option>
                     <option value="created">Created date</option>
                   </select>
                 </label>
@@ -1147,9 +1147,40 @@ textarea {
 `;
 
 export const UI_JS = `(function () {
+  var DEFAULT_ANCHOR_SORT = "updated";
+  var ANCHOR_BATCH_SIZE = 50;
+  var KNOWN_URL_PARAMS = [
+    "anchor",
+    "view",
+    "search",
+    "project",
+    "category",
+    "tag",
+    "includeArchive",
+    "sort",
+    "rootMode",
+    "detailMode",
+    "plannerTask",
+    "plannerProject",
+    "plannerCategory",
+    "plannerTag",
+    "plannerRuntime",
+    "plannerBudget",
+    "plannerMaxAnchors",
+    "plannerMaxExcluded",
+    "plannerArchive",
+    "proposalProject",
+    "proposalStatus",
+    "proposal"
+  ];
+
   var state = {
     anchors: [],
+    anchorTotal: null,
+    anchorLoading: false,
+    anchorLoadId: 0,
     root: null,
+    rootLoading: false,
     pendingAnchor: readAnchorFromLocation(),
     selectedName: null,
     rootMode: "rendered",
@@ -1163,7 +1194,7 @@ export const UI_JS = `(function () {
     activeProposal: null,
     anchorVersions: [],
     expandedAnchorGroups: new Set(),
-    anchorGroupSort: "name"
+    anchorGroupSort: DEFAULT_ANCHOR_SORT
   };
 
   var categories = ["", "server-rules", "agent-rules", "projects", "invariants", "conflicts", "shared", "archive"];
@@ -1186,27 +1217,200 @@ export const UI_JS = `(function () {
   }
 
   function anchorHref(anchorName) {
-    return "?anchor=" + encodeURIComponent(anchorName);
+    var params = paramsForState({ anchor: anchorName, view: "detail" });
+    var query = params.toString();
+    return query ? "?" + query : window.location.pathname;
   }
 
   function updateAnchorLocation(anchorName) {
-    if (!window.history || !window.history.pushState) {
-      return;
-    }
-    var next = new URL(window.location.href);
-    next.searchParams.set("anchor", anchorName);
-    next.hash = "";
-    window.history.pushState(null, "", next.pathname + next.search);
+    updateLocationFromState({ anchor: anchorName, view: "detail", history: "push" });
   }
 
   function clearAnchorLocation() {
-    if (!window.history || !window.history.pushState) {
+    updateLocationFromState({ anchor: null, view: "root", history: "push" });
+  }
+
+  function safeEl(id) {
+    return document && typeof document.getElementById === "function" ? document.getElementById(id) : null;
+  }
+
+  function controlValue(id, fallback) {
+    var node = safeEl(id);
+    if (!node) {
+      return fallback || "";
+    }
+    return typeof node.value === "string" ? node.value : fallback || "";
+  }
+
+  function controlChecked(id, fallback) {
+    var node = safeEl(id);
+    return node ? Boolean(node.checked) : Boolean(fallback);
+  }
+
+  function setControlValue(id, value) {
+    var node = safeEl(id);
+    if (node) {
+      node.value = value || "";
+    }
+  }
+
+  function setControlChecked(id, value) {
+    var node = safeEl(id);
+    if (node) {
+      node.checked = Boolean(value);
+    }
+  }
+
+  function readBooleanParam(params, key) {
+    var value = params.get(key);
+    return value === "1" || String(value || "").toLowerCase() === "true";
+  }
+
+  function validTab(value) {
+    return value === "root" || value === "planner" || value === "review" || value === "detail" ? value : null;
+  }
+
+  function validRootMode(value) {
+    return value === "raw" || value === "rendered" ? value : "rendered";
+  }
+
+  function validDetailMode(value) {
+    return value === "raw" || value === "frontmatter" || value === "rendered" ? value : "rendered";
+  }
+
+  function applyUrlStateToControls() {
+    var params = new URLSearchParams(window.location.search);
+    state.pendingAnchor = readAnchorFromLocation();
+    state.anchorGroupSort = validAnchorGroupSort(params.get("sort") || DEFAULT_ANCHOR_SORT);
+    state.rootMode = validRootMode(params.get("rootMode"));
+    state.detailMode = validDetailMode(params.get("detailMode"));
+    state.activeTab = validTab(params.get("view")) || (state.pendingAnchor ? "detail" : "root");
+
+    setControlValue("search-input", params.get("search") || "");
+    setSelectValueAllowingNew("project-filter", params.get("project") || "");
+    setSelectValueAllowingNew("category-filter", params.get("category") || "");
+    setSelectValueAllowingNew("tag-filter", params.get("tag") || "");
+    setControlChecked("archive-filter", readBooleanParam(params, "includeArchive"));
+    setControlValue("anchor-group-sort", state.anchorGroupSort);
+
+    setControlValue("planner-task", params.get("plannerTask") || "");
+    setSelectValueAllowingNew("planner-project", params.get("plannerProject") || "");
+    setSelectValueAllowingNew("planner-category", params.get("plannerCategory") || "");
+    setSelectValueAllowingNew("planner-tag", params.get("plannerTag") || "");
+    setControlValue("planner-runtime", params.get("plannerRuntime") || "");
+    setControlValue("planner-budget", params.get("plannerBudget") || controlValue("planner-budget", "4000"));
+    setControlValue("planner-max-anchors", params.get("plannerMaxAnchors") || controlValue("planner-max-anchors", "12"));
+    setControlValue("planner-max-excluded", params.get("plannerMaxExcluded") || controlValue("planner-max-excluded", "20"));
+    setControlChecked("planner-archive", readBooleanParam(params, "plannerArchive"));
+
+    setControlValue("proposal-project", params.get("proposalProject") || "");
+    if (params.get("proposalStatus") === "all") {
+      setControlValue("proposal-status-filter", "");
+    } else {
+      setControlValue("proposal-status-filter", params.get("proposalStatus") || controlValue("proposal-status-filter", "pending"));
+    }
+  }
+
+  function urlForState(overrides) {
+    var params = paramsForState(overrides || {});
+    var query = params.toString();
+    return window.location.pathname + (query ? "?" + query : "");
+  }
+
+  function paramsForState(overrides) {
+    var sourceParams = new URLSearchParams(window.location.search);
+    var params = new URLSearchParams(window.location.search);
+    KNOWN_URL_PARAMS.forEach(function (key) {
+      params.delete(key);
+    });
+
+    var anchor = Object.prototype.hasOwnProperty.call(overrides, "anchor")
+      ? overrides.anchor
+      : state.activeTab === "detail" ? state.selectedName : null;
+    var view = overrides.view || state.activeTab || "root";
+
+    if (anchor) {
+      params.set("anchor", anchor);
+      view = view || "detail";
+    }
+    if (view && !(view === "root" && !anchor) && !(view === "detail" && anchor)) {
+      params.set("view", view);
+    }
+
+    setParam(params, "search", controlValue("search-input", new URLSearchParams(window.location.search).get("search") || ""));
+    setParam(params, "project", controlValue("project-filter", new URLSearchParams(window.location.search).get("project") || ""));
+    setParam(params, "category", controlValue("category-filter", new URLSearchParams(window.location.search).get("category") || ""));
+    setParam(params, "tag", controlValue("tag-filter", new URLSearchParams(window.location.search).get("tag") || ""));
+    if (controlChecked("archive-filter", readBooleanParam(new URLSearchParams(window.location.search), "includeArchive"))) {
+      params.set("includeArchive", "true");
+    }
+    var sortControl = safeEl("anchor-group-sort");
+    var effectiveSort = sortControl
+      ? validAnchorGroupSort(sortControl.value)
+      : state.anchorGroupSort === DEFAULT_ANCHOR_SORT && sourceParams.get("sort")
+        ? validAnchorGroupSort(sourceParams.get("sort"))
+        : state.anchorGroupSort;
+    if (effectiveSort !== DEFAULT_ANCHOR_SORT) {
+      params.set("sort", effectiveSort);
+    }
+    if (state.rootMode !== "rendered") {
+      params.set("rootMode", state.rootMode);
+    }
+    if (state.detailMode !== "rendered") {
+      params.set("detailMode", state.detailMode);
+    }
+
+    setParam(params, "plannerTask", controlValue("planner-task", new URLSearchParams(window.location.search).get("plannerTask") || ""));
+    setParam(params, "plannerProject", controlValue("planner-project", new URLSearchParams(window.location.search).get("plannerProject") || ""));
+    setParam(params, "plannerCategory", controlValue("planner-category", new URLSearchParams(window.location.search).get("plannerCategory") || ""));
+    setParam(params, "plannerTag", controlValue("planner-tag", new URLSearchParams(window.location.search).get("plannerTag") || ""));
+    setParam(params, "plannerRuntime", controlValue("planner-runtime", new URLSearchParams(window.location.search).get("plannerRuntime") || ""));
+    setNonDefaultParam(params, "plannerBudget", controlValue("planner-budget", new URLSearchParams(window.location.search).get("plannerBudget") || ""), "4000");
+    setNonDefaultParam(params, "plannerMaxAnchors", controlValue("planner-max-anchors", new URLSearchParams(window.location.search).get("plannerMaxAnchors") || ""), "12");
+    setNonDefaultParam(params, "plannerMaxExcluded", controlValue("planner-max-excluded", new URLSearchParams(window.location.search).get("plannerMaxExcluded") || ""), "20");
+    if (controlChecked("planner-archive", readBooleanParam(new URLSearchParams(window.location.search), "plannerArchive"))) {
+      params.set("plannerArchive", "true");
+    }
+
+    setParam(params, "proposalProject", controlValue("proposal-project", new URLSearchParams(window.location.search).get("proposalProject") || ""));
+    var proposalStatus = controlValue("proposal-status-filter", new URLSearchParams(window.location.search).get("proposalStatus") || "pending");
+    if (proposalStatus && proposalStatus !== "pending") {
+      params.set("proposalStatus", proposalStatus);
+    } else if (!proposalStatus) {
+      params.set("proposalStatus", "all");
+    }
+    if ((overrides.view || state.activeTab) === "review" && state.activeProposal && state.activeProposal.id) {
+      params.set("proposal", state.activeProposal.id);
+    }
+
+    return params;
+  }
+
+  function setParam(params, key, value) {
+    if (value) {
+      params.set(key, value);
+    }
+  }
+
+  function setNonDefaultParam(params, key, value, defaultValue) {
+    if (value && value !== defaultValue) {
+      params.set(key, value);
+    }
+  }
+
+  function updateLocationFromState(options) {
+    if (!window.history || (!window.history.pushState && !window.history.replaceState)) {
       return;
     }
-    var next = new URL(window.location.href);
-    next.searchParams.delete("anchor");
-    next.hash = "";
-    window.history.pushState(null, "", next.pathname + next.search);
+    var opts = options || {};
+    var next = urlForState(opts);
+    var current = window.location.pathname + window.location.search;
+    if (next === current) {
+      return;
+    }
+    var useReplace = opts.history === "replace" && window.history.replaceState;
+    var method = useReplace ? "replaceState" : "pushState";
+    window.history[method](null, "", next);
   }
 
   function el(id) {
@@ -1353,7 +1557,7 @@ export const UI_JS = `(function () {
   }
 
   function validAnchorGroupSort(value) {
-    return value === "updated" || value === "created" || value === "name" ? value : "name";
+    return value === "updated" || value === "created" || value === "name" ? value : DEFAULT_ANCHOR_SORT;
   }
 
   function currentFilters() {
@@ -1511,6 +1715,7 @@ export const UI_JS = `(function () {
     }
     event.preventDefault();
     applyPlannerLogPaste(parsed);
+    updateLocationFromState({ view: "planner", history: "replace" });
     setBanner("Loaded planner inputs from pasted log line.", "info");
   }
 
@@ -1532,16 +1737,136 @@ export const UI_JS = `(function () {
     var filters = currentFilters();
     var query = queryFromFilters(filters);
     var suffix = query ? "?" + query : "";
-    setBanner("Loading context index...", "info");
-    var anchorsResponse = await api("/api/ui/anchors" + suffix);
-    var rootResponse = await api("/api/ui/context-root" + suffix);
-    state.anchors = anchorsResponse.anchors || [];
-    state.root = rootResponse;
+    var loadId = beginAnchorLoad();
+    state.root = null;
+    state.rootLoading = true;
+    renderRoot();
+    setBanner("Loading anchors...", "info");
+    if (state.pendingAnchor && state.activeTab === "detail") {
+      var requestedAnchor = state.pendingAnchor;
+      state.pendingAnchor = null;
+      selectAnchor(requestedAnchor, { skipLocationUpdate: true }).catch(function (error) {
+        setBanner(error.message, "error");
+      });
+    }
+
+    var rootPromise = api("/api/ui/context-root" + suffix).then(function (rootResponse) {
+      if (loadId !== state.anchorLoadId) {
+        return;
+      }
+      state.root = rootResponse;
+      state.rootLoading = false;
+      renderRoot();
+    }, function (error) {
+      if (loadId !== state.anchorLoadId) {
+        return;
+      }
+      state.rootLoading = false;
+      renderRoot();
+      setBanner(error.message, "error");
+    });
+
+    try {
+      await loadAnchorPages(query, loadId);
+    } catch (error) {
+      if (loadId === state.anchorLoadId) {
+        state.anchorLoading = false;
+        renderAnchorList();
+      }
+      throw error;
+    }
+    await rootPromise;
+    if (state.activeTab === "review") {
+      await loadProposals();
+    }
+    var proposalId = new URLSearchParams(window.location.search).get("proposal");
+    if (state.activeTab === "review" && proposalId) {
+      await selectProposal(proposalId);
+    }
+  }
+
+  function beginAnchorLoad() {
+    state.anchorLoadId += 1;
+    state.anchors = [];
+    state.anchorTotal = null;
+    state.anchorLoading = true;
     populateFilterOptions();
     renderAnchorList();
-    renderRoot();
-    openPendingAnchor();
+    return state.anchorLoadId;
+  }
+
+  async function reloadAnchorsOnly() {
+    var query = queryFromFilters(currentFilters());
+    var loadId = beginAnchorLoad();
+    setBanner("Loading anchors...", "info");
+    try {
+      await loadAnchorPages(query, loadId);
+    } catch (error) {
+      if (loadId === state.anchorLoadId) {
+        state.anchorLoading = false;
+        renderAnchorList();
+      }
+      throw error;
+    }
+  }
+
+  async function loadAnchorPages(query, loadId) {
+    var params = new URLSearchParams(query || "");
+    params.set("sort", state.anchorGroupSort);
+    var response = await api("/api/ui/anchors?" + params.toString());
+    if (loadId !== state.anchorLoadId) {
+      return;
+    }
+
+    var anchors = response.anchors || [];
+    state.anchorTotal = typeof response.total === "number" ? response.total : anchors.length;
+
+    if (response.projectFilter && response.projectFilter.via === "alias") {
+      setSelectValueAllowingNew("project-filter", response.projectFilter.resolved);
+    }
+
+    for (var offset = 0; offset < anchors.length; offset += ANCHOR_BATCH_SIZE) {
+      if (loadId !== state.anchorLoadId) {
+        return;
+      }
+
+      mergeAnchorPage(anchors.slice(offset, offset + ANCHOR_BATCH_SIZE));
+      populateFilterOptions();
+      renderAnchorList();
+      openPendingAnchor();
+
+      if (state.anchors.length < state.anchorTotal) {
+        setBanner("Loaded " + state.anchors.length + " of " + state.anchorTotal + " anchors...", "info");
+        await nextFrame();
+      }
+    }
+
+    state.anchorLoading = false;
+    renderAnchorList();
     setBanner("", "info");
+    if (state.pendingAnchor && state.activeTab === "detail") {
+      openPendingAnchor();
+    }
+  }
+
+  function mergeAnchorPage(anchors) {
+    var byName = new Map(state.anchors.map(function (anchor) {
+      return [anchor.name, anchor];
+    }));
+    anchors.forEach(function (anchor) {
+      byName.set(anchor.name, anchor);
+    });
+    state.anchors = sortAnchors(Array.from(byName.values()));
+  }
+
+  function nextFrame() {
+    return new Promise(function (resolve) {
+      if (typeof window.requestAnimationFrame === "function") {
+        window.requestAnimationFrame(function () { resolve(); });
+        return;
+      }
+      setTimeout(resolve, 0);
+    });
   }
 
   function populateFilterOptions() {
@@ -1559,23 +1884,25 @@ export const UI_JS = `(function () {
     var currentPlannerProject = plannerProjectSelect.value;
     var currentPlannerTag = plannerTagSelect.value;
     var currentPlannerCategory = plannerCategorySelect.value;
+    projects = uniqueSorted(projects.concat([currentProject, currentPlannerProject]));
+    tags = uniqueSorted(tags.concat([currentTag, currentPlannerTag]));
     projectSelect.innerHTML = optionList(projects, "All projects");
     tagSelect.innerHTML = optionList(tags, "All tags");
     categorySelect.innerHTML = optionList(categories.slice(1), "All categories");
     plannerProjectSelect.innerHTML = optionList(projects, "All projects");
     plannerTagSelect.innerHTML = optionList(tags, "All tags");
     plannerCategorySelect.innerHTML = optionList(categories.slice(1), "All categories");
-    projectSelect.value = projects.includes(currentProject) ? currentProject : "";
-    tagSelect.value = tags.includes(currentTag) ? currentTag : "";
+    projectSelect.value = currentProject && projects.includes(currentProject) ? currentProject : "";
+    tagSelect.value = currentTag && tags.includes(currentTag) ? currentTag : "";
     categorySelect.value = categories.includes(currentCategory) ? currentCategory : "";
-    plannerProjectSelect.value = projects.includes(currentPlannerProject) ? currentPlannerProject : "";
-    plannerTagSelect.value = tags.includes(currentPlannerTag) ? currentPlannerTag : "";
+    plannerProjectSelect.value = currentPlannerProject && projects.includes(currentPlannerProject) ? currentPlannerProject : "";
+    plannerTagSelect.value = currentPlannerTag && tags.includes(currentPlannerTag) ? currentPlannerTag : "";
     plannerCategorySelect.value = categories.includes(currentPlannerCategory) ? currentPlannerCategory : "";
   }
 
   function filteredAnchors() {
     var filters = currentFilters();
-    return state.anchors.filter(function (anchor) {
+    return sortAnchors(state.anchors.filter(function (anchor) {
       if (!filters.search) {
         return true;
       }
@@ -1589,7 +1916,30 @@ export const UI_JS = `(function () {
         Array.isArray(anchor.read_this_if) ? anchor.read_this_if.join(" ") : ""
       ].join(" ").toLowerCase();
       return haystack.indexOf(filters.search) >= 0;
-    });
+    }));
+  }
+
+  function sortAnchors(anchors) {
+    return anchors.slice().sort(compareAnchors);
+  }
+
+  function compareAnchors(left, right) {
+    var sort = validAnchorGroupSort(state.anchorGroupSort);
+    if (sort === "updated") {
+      return compareTimestamps(anchorTimestamp(right, "updatedAt"), anchorTimestamp(left, "updatedAt"))
+        || compareAnchorLabels(left, right);
+    }
+    if (sort === "created") {
+      return compareTimestamps(anchorTimestamp(right, "createdAt"), anchorTimestamp(left, "createdAt"))
+        || compareAnchorLabels(left, right);
+    }
+    return compareAnchorLabels(left, right);
+  }
+
+  function compareAnchorLabels(left, right) {
+    var leftLabel = left && left.ui && left.ui.label ? left.ui.label : left.name || "";
+    var rightLabel = right && right.ui && right.ui.label ? right.ui.label : right.name || "";
+    return String(leftLabel).localeCompare(String(rightLabel)) || String(left.name || "").localeCompare(String(right.name || ""));
   }
 
   function healthBadge(health) {
@@ -1601,9 +1951,11 @@ export const UI_JS = `(function () {
   function renderAnchorList() {
     var list = el("anchor-list");
     var anchors = filteredAnchors();
-    el("anchor-count").textContent = String(anchors.length);
+    el("anchor-count").textContent = state.anchorLoading && state.anchorTotal !== null
+      ? anchors.length + "/" + state.anchorTotal
+      : String(anchors.length);
     if (!anchors.length) {
-      list.innerHTML = "<div class=\\"empty-state\\">No anchors match the current filters.</div>";
+      list.innerHTML = "<div class=\\"empty-state\\">" + (state.anchorLoading ? "Loading anchors..." : "No anchors match the current filters.") + "</div>";
       return;
     }
     var groups = new Map();
@@ -1614,7 +1966,13 @@ export const UI_JS = `(function () {
       }
       groups.get(group.key).anchors.push(anchor);
     });
-    list.innerHTML = sortAnchorGroups(Array.from(groups.values())).map(renderAnchorGroup).join("");
+    groups.forEach(function (group) {
+      group.anchors = sortAnchors(group.anchors);
+    });
+    var loading = state.anchorLoading
+      ? "<div class=\\"empty-state\\">Loading more anchors...</div>"
+      : "";
+    list.innerHTML = sortAnchorGroups(Array.from(groups.values())).map(renderAnchorGroup).join("") + loading;
     bindAnchorGroupToggles(list);
   }
 
@@ -1702,6 +2060,13 @@ export const UI_JS = `(function () {
 
   function renderRoot() {
     var markdown = state.root && state.root.markdown ? state.root.markdown : "";
+    if (state.rootLoading) {
+      el("root-generated").textContent = "Generating context root...";
+      el("root-rendered").innerHTML = "<div class=\\"empty-state\\">Context root is loading.</div>";
+      el("root-raw").textContent = "";
+      showRootMode(state.rootMode);
+      return;
+    }
     el("root-generated").textContent = state.root ? "Generated " + state.root.generatedAt + " from " + state.root.entries.length + " entries" : "Generated root output";
     el("root-rendered").innerHTML = renderMarkdown(markdown);
     decorateAnchorLinks(el("root-rendered"));
@@ -1716,6 +2081,7 @@ export const UI_JS = `(function () {
       return;
     }
 
+    updateLocationFromState({ view: "planner", history: "push" });
     setBanner("Planning context bundle...", "info");
     var plan = await api("/api/ui/context-plan?" + queryFromPlannerInput(input));
     state.plannerPlans.unshift(plan);
@@ -1935,7 +2301,7 @@ export const UI_JS = `(function () {
   function showReview(options) {
     var opts = options || {};
     if (!opts.skipLocationUpdate) {
-      clearAnchorLocation();
+      updateLocationFromState({ anchor: null, view: "review", history: "push" });
     }
     state.pendingAnchor = null;
     showTab("review");
@@ -1995,6 +2361,7 @@ export const UI_JS = `(function () {
       proposal = read.proposal;
     }
     state.activeProposal = proposal;
+    updateLocationFromState({ anchor: null, view: "review", history: "replace" });
     renderProposalList();
     await previewProposal(id);
     showTab("review");
@@ -2377,6 +2744,7 @@ export const UI_JS = `(function () {
     });
     el("root-rendered").hidden = mode !== "rendered";
     el("root-raw").hidden = mode !== "raw";
+    updateLocationFromState({ view: state.activeTab, history: "replace" });
   }
 
   function showDetailMode(mode) {
@@ -2387,6 +2755,7 @@ export const UI_JS = `(function () {
     el("detail-rendered").hidden = mode !== "rendered";
     el("detail-raw").hidden = mode !== "raw";
     el("detail-frontmatter").hidden = mode !== "frontmatter";
+    updateLocationFromState({ view: state.activeTab, history: "replace" });
   }
 
   function showTab(tab) {
@@ -2413,7 +2782,7 @@ export const UI_JS = `(function () {
   function showRoot(options) {
     var opts = options || {};
     if (!opts.skipLocationUpdate) {
-      clearAnchorLocation();
+      updateLocationFromState({ anchor: null, view: "root", history: "push" });
     }
     state.pendingAnchor = null;
     showTab("root");
@@ -2422,7 +2791,7 @@ export const UI_JS = `(function () {
   function showPlanner(options) {
     var opts = options || {};
     if (!opts.skipLocationUpdate) {
-      clearAnchorLocation();
+      updateLocationFromState({ anchor: null, view: "planner", history: "push" });
     }
     state.pendingAnchor = null;
     showTab("planner");
@@ -2431,6 +2800,7 @@ export const UI_JS = `(function () {
   async function selectAnchor(name, options) {
     var opts = options || {};
     state.selectedName = name;
+    state.pendingAnchor = null;
     if (!opts.skipLocationUpdate) {
       updateAnchorLocation(name);
     }
@@ -2683,12 +3053,21 @@ export const UI_JS = `(function () {
   }
 
   function handleLocationAnchorChange() {
-    state.pendingAnchor = readAnchorFromLocation();
-    if (state.pendingAnchor) {
-      openPendingAnchor();
+    applyUrlStateToControls();
+    if (state.activeTab === "planner") {
+      showPlanner({ skipLocationUpdate: true });
+    } else if (state.activeTab === "review") {
+      showReview({ skipLocationUpdate: true });
+    } else if (state.activeTab === "detail" && state.pendingAnchor) {
+      var requestedAnchor = state.pendingAnchor;
+      state.pendingAnchor = null;
+      selectAnchor(requestedAnchor, { skipLocationUpdate: true }).catch(function (error) {
+        setBanner(error.message, "error");
+      });
     } else {
       showRoot({ skipLocationUpdate: true });
     }
+    load().catch(function (error) { setBanner(error.message, "error"); });
   }
 
   function bind() {
@@ -2700,13 +3079,15 @@ export const UI_JS = `(function () {
     });
     ["project-filter", "category-filter", "tag-filter", "archive-filter"].forEach(function (id) {
       el(id).addEventListener("change", function () {
+        updateLocationFromState({ history: "push" });
         load().catch(function (error) { setBanner(error.message, "error"); });
       });
     });
     el("anchor-group-sort").addEventListener("change", function () {
       state.anchorGroupSort = validAnchorGroupSort(el("anchor-group-sort").value);
       el("anchor-group-sort").value = state.anchorGroupSort;
-      renderAnchorList();
+      updateLocationFromState({ history: "push" });
+      reloadAnchorsOnly().catch(function (error) { setBanner(error.message, "error"); });
     });
     el("planner-form").addEventListener("submit", function (event) {
       event.preventDefault();
@@ -2724,6 +3105,7 @@ export const UI_JS = `(function () {
     });
     ["proposal-project", "proposal-status-filter"].forEach(function (id) {
       el(id).addEventListener("change", function () {
+        updateLocationFromState({ anchor: null, view: "review", history: "push" });
         loadProposals().catch(function (error) { setBanner(error.message, "error"); });
       });
     });
@@ -2770,7 +3152,10 @@ export const UI_JS = `(function () {
     el("delete-anchor").addEventListener("click", function () {
       deleteSelectedAnchor().catch(function (error) { setBanner(error.message, "error"); });
     });
-    el("search-input").addEventListener("input", debounce(renderAnchorList, 120));
+    el("search-input").addEventListener("input", debounce(function () {
+      updateLocationFromState({ history: "replace" });
+      renderAnchorList();
+    }, 120));
     el("anchor-list").addEventListener("click", function (event) {
       var row = event.target.closest("[data-name]");
       if (row && shouldHandleClientNavigation(event, row)) {
@@ -2813,6 +3198,16 @@ export const UI_JS = `(function () {
     document.querySelectorAll("[data-detail-mode]").forEach(function (button) {
       button.addEventListener("click", function () { showDetailMode(button.dataset.detailMode); });
     });
+    ["planner-task", "planner-runtime", "planner-budget", "planner-max-anchors", "planner-max-excluded"].forEach(function (id) {
+      el(id).addEventListener("input", debounce(function () {
+        updateLocationFromState({ view: "planner", history: "replace" });
+      }, 160));
+    });
+    ["planner-project", "planner-category", "planner-tag", "planner-archive"].forEach(function (id) {
+      el(id).addEventListener("change", function () {
+        updateLocationFromState({ view: "planner", history: "replace" });
+      });
+    });
     window.addEventListener("popstate", handleLocationAnchorChange);
     window.addEventListener("hashchange", handleLocationAnchorChange);
   }
@@ -2842,7 +3237,11 @@ export const UI_JS = `(function () {
     return;
   }
 
+  applyUrlStateToControls();
   bind();
+  showRootMode(state.rootMode);
+  showDetailMode(state.detailMode);
+  showTab(state.activeTab === "detail" ? "root" : state.activeTab);
   load().catch(function (error) {
     setBanner("Enter the HTTP auth token to load anchors. " + error.message, "warn");
   });

@@ -109,6 +109,39 @@ describe("UI HTTP routes", () => {
     expect(root.entries.map((entry) => entry.name)).toContain("projects/demo/demo.md");
   });
 
+  it("returns sorted and paged anchor batches for progressive UI loading", async () => {
+    const restore = stubAnchorServiceMethod("listAnchorsDiscovery", vi.fn(async () => ({
+      anchors: [
+        uiAnchorMeta("projects/demo/old.md", "2026-05-01T00:00:00.000Z"),
+        uiAnchorMeta("projects/demo/new.md", "2026-05-03T00:00:00.000Z"),
+        uiAnchorMeta("projects/demo/middle.md", "2026-05-02T00:00:00.000Z"),
+      ],
+    })));
+
+    try {
+      const response = await fetchJson<{
+        anchors: Array<{ name: string }>;
+        total: number;
+        offset: number;
+        limit: number;
+        nextOffset?: number;
+        sort: string;
+      }>("/api/ui/anchors?sort=updated&limit=2&offset=1");
+
+      expect(response.anchors.map((anchor) => anchor.name)).toEqual([
+        "projects/demo/middle.md",
+        "projects/demo/old.md",
+      ]);
+      expect(response.total).toBe(3);
+      expect(response.offset).toBe(1);
+      expect(response.limit).toBe(2);
+      expect(response.nextOffset).toBeUndefined();
+      expect(response.sort).toBe("updated");
+    } finally {
+      restore();
+    }
+  });
+
   it("returns context planner output for the UI", async () => {
     const plan = await fetchJson<{
       included: Array<{ name: string; reason: string }>;
@@ -167,6 +200,11 @@ describe("UI HTTP routes", () => {
 
     expect(response.status).toBe(400);
     expect(body.error.message).toContain("Invalid category");
+
+    const badSort = await fetch(`${baseUrl}/api/ui/anchors?sort=bad`, {
+      headers: { Authorization: `Bearer ${TOKEN}` },
+    });
+    expect(badSort.status).toBe(400);
   });
 
   it("returns 400 for invalid planner query parameters", async () => {
@@ -514,6 +552,24 @@ last_validated: 2026-05-20
 
 None.
 `;
+}
+
+function uiAnchorMeta(name: string, updatedAt: string) {
+  return {
+    name,
+    path: name,
+    category: "projects",
+    project: ["demo"],
+    projectSlug: "demo",
+    type: "context-anchor",
+    tags: ["context-anchor"],
+    summary: "Demo anchor summary.",
+    read_this_if: ["You need demo context."],
+    last_validated: "2026-05-20",
+    updatedAt,
+    createdAt: updatedAt,
+    origin: "repo",
+  };
 }
 
 function stubAnchorServiceMethod(name: string, implementation: (...args: any[]) => unknown): () => void {

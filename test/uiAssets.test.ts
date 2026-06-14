@@ -242,6 +242,14 @@ describe("UI browser assets", () => {
     expect(hooks.readAnchorFromLocation()).toBe("server-rules/acceptance-criteria.md");
   });
 
+  it("preserves current filter and sort params in durable anchor links", () => {
+    const hooks = loadHooks({ search: "?project=demo&sort=name&view=planner" });
+
+    expect(hooks.anchorHref("projects/demo/demo.md")).toBe(
+      "?anchor=projects%2Fdemo%2Fdemo.md&project=demo&sort=name",
+    );
+  });
+
   it("clears the anchor query when returning to context root", () => {
     const historyUpdates: string[] = [];
     const hooks = loadHooks({
@@ -356,6 +364,24 @@ describe("UI browser assets", () => {
 
     hooks.setAnchorGroupSortForTest("created");
     expect(hooks.sortAnchorGroups(groups).map((group) => group.label)).toEqual(["middle", "alpha", "zeta"]);
+  });
+
+  it("defaults sidebar project groups to last update sort", () => {
+    const hooks = loadHooks();
+    const groups = [
+      {
+        key: "project:zeta",
+        label: "zeta",
+        anchors: [{ updatedAt: "2026-05-20T10:00:00.000Z" }],
+      },
+      {
+        key: "project:alpha",
+        label: "alpha",
+        anchors: [{ updatedAt: "2026-05-24T10:00:00.000Z" }],
+      },
+    ];
+
+    expect(hooks.sortAnchorGroups(groups).map((group) => group.label)).toEqual(["alpha", "zeta"]);
   });
 
   it("does not use last_validated as a created date fallback when sorting groups", () => {
