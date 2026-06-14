@@ -62,7 +62,7 @@ export function registerUiRoutes(
       const offset = nonNegativeIntQuery(req, "offset", 200000) ?? 0;
       const limit = positiveIntQuery(req, "limit", 500);
       const sortedAnchors = sortAnchorMetas(anchors, sort);
-      const pageAnchors = limit === undefined ? sortedAnchors : sortedAnchors.slice(offset, offset + limit);
+      const pageAnchors = sortedAnchors.slice(offset, limit === undefined ? undefined : offset + limit);
       const nextOffset = limit === undefined || offset + limit >= sortedAnchors.length ? undefined : offset + limit;
 
       return {

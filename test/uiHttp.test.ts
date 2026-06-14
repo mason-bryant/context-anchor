@@ -142,6 +142,37 @@ describe("UI HTTP routes", () => {
     }
   });
 
+  it("applies anchor offsets even without a limit", async () => {
+    const restore = stubAnchorServiceMethod("listAnchorsDiscovery", vi.fn(async () => ({
+      anchors: [
+        uiAnchorMeta("projects/demo/old.md", "2026-05-01T00:00:00.000Z"),
+        uiAnchorMeta("projects/demo/new.md", "2026-05-03T00:00:00.000Z"),
+        uiAnchorMeta("projects/demo/middle.md", "2026-05-02T00:00:00.000Z"),
+      ],
+    })));
+
+    try {
+      const response = await fetchJson<{
+        anchors: Array<{ name: string }>;
+        total: number;
+        offset: number;
+        limit?: number;
+        nextOffset?: number;
+      }>("/api/ui/anchors?sort=updated&offset=1");
+
+      expect(response.anchors.map((anchor) => anchor.name)).toEqual([
+        "projects/demo/middle.md",
+        "projects/demo/old.md",
+      ]);
+      expect(response.total).toBe(3);
+      expect(response.offset).toBe(1);
+      expect(response.limit).toBeUndefined();
+      expect(response.nextOffset).toBeUndefined();
+    } finally {
+      restore();
+    }
+  });
+
   it("returns context planner output for the UI", async () => {
     const plan = await fetchJson<{
       included: Array<{ name: string; reason: string }>;

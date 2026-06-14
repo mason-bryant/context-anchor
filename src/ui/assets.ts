@@ -1337,11 +1337,11 @@ export const UI_JS = `(function () {
       params.set("view", view);
     }
 
-    setParam(params, "search", controlValue("search-input", new URLSearchParams(window.location.search).get("search") || ""));
-    setParam(params, "project", controlValue("project-filter", new URLSearchParams(window.location.search).get("project") || ""));
-    setParam(params, "category", controlValue("category-filter", new URLSearchParams(window.location.search).get("category") || ""));
-    setParam(params, "tag", controlValue("tag-filter", new URLSearchParams(window.location.search).get("tag") || ""));
-    if (controlChecked("archive-filter", readBooleanParam(new URLSearchParams(window.location.search), "includeArchive"))) {
+    setParam(params, "search", controlValue("search-input", sourceParams.get("search") || ""));
+    setParam(params, "project", controlValue("project-filter", sourceParams.get("project") || ""));
+    setParam(params, "category", controlValue("category-filter", sourceParams.get("category") || ""));
+    setParam(params, "tag", controlValue("tag-filter", sourceParams.get("tag") || ""));
+    if (controlChecked("archive-filter", readBooleanParam(sourceParams, "includeArchive"))) {
       params.set("includeArchive", "true");
     }
     var sortControl = safeEl("anchor-group-sort");
@@ -1360,20 +1360,20 @@ export const UI_JS = `(function () {
       params.set("detailMode", state.detailMode);
     }
 
-    setParam(params, "plannerTask", controlValue("planner-task", new URLSearchParams(window.location.search).get("plannerTask") || ""));
-    setParam(params, "plannerProject", controlValue("planner-project", new URLSearchParams(window.location.search).get("plannerProject") || ""));
-    setParam(params, "plannerCategory", controlValue("planner-category", new URLSearchParams(window.location.search).get("plannerCategory") || ""));
-    setParam(params, "plannerTag", controlValue("planner-tag", new URLSearchParams(window.location.search).get("plannerTag") || ""));
-    setParam(params, "plannerRuntime", controlValue("planner-runtime", new URLSearchParams(window.location.search).get("plannerRuntime") || ""));
-    setNonDefaultParam(params, "plannerBudget", controlValue("planner-budget", new URLSearchParams(window.location.search).get("plannerBudget") || ""), "4000");
-    setNonDefaultParam(params, "plannerMaxAnchors", controlValue("planner-max-anchors", new URLSearchParams(window.location.search).get("plannerMaxAnchors") || ""), "12");
-    setNonDefaultParam(params, "plannerMaxExcluded", controlValue("planner-max-excluded", new URLSearchParams(window.location.search).get("plannerMaxExcluded") || ""), "20");
-    if (controlChecked("planner-archive", readBooleanParam(new URLSearchParams(window.location.search), "plannerArchive"))) {
+    setParam(params, "plannerTask", controlValue("planner-task", sourceParams.get("plannerTask") || ""));
+    setParam(params, "plannerProject", controlValue("planner-project", sourceParams.get("plannerProject") || ""));
+    setParam(params, "plannerCategory", controlValue("planner-category", sourceParams.get("plannerCategory") || ""));
+    setParam(params, "plannerTag", controlValue("planner-tag", sourceParams.get("plannerTag") || ""));
+    setParam(params, "plannerRuntime", controlValue("planner-runtime", sourceParams.get("plannerRuntime") || ""));
+    setNonDefaultParam(params, "plannerBudget", controlValue("planner-budget", sourceParams.get("plannerBudget") || ""), "4000");
+    setNonDefaultParam(params, "plannerMaxAnchors", controlValue("planner-max-anchors", sourceParams.get("plannerMaxAnchors") || ""), "12");
+    setNonDefaultParam(params, "plannerMaxExcluded", controlValue("planner-max-excluded", sourceParams.get("plannerMaxExcluded") || ""), "20");
+    if (controlChecked("planner-archive", readBooleanParam(sourceParams, "plannerArchive"))) {
       params.set("plannerArchive", "true");
     }
 
-    setParam(params, "proposalProject", controlValue("proposal-project", new URLSearchParams(window.location.search).get("proposalProject") || ""));
-    var proposalStatus = controlValue("proposal-status-filter", new URLSearchParams(window.location.search).get("proposalStatus") || "pending");
+    setParam(params, "proposalProject", controlValue("proposal-project", sourceParams.get("proposalProject") || ""));
+    var proposalStatus = controlValue("proposal-status-filter", sourceParams.get("proposalStatus") || "pending");
     if (proposalStatus && proposalStatus !== "pending") {
       params.set("proposalStatus", proposalStatus);
     } else if (!proposalStatus) {
@@ -1902,7 +1902,7 @@ export const UI_JS = `(function () {
 
   function filteredAnchors() {
     var filters = currentFilters();
-    return sortAnchors(state.anchors.filter(function (anchor) {
+    return state.anchors.filter(function (anchor) {
       if (!filters.search) {
         return true;
       }
@@ -1916,7 +1916,7 @@ export const UI_JS = `(function () {
         Array.isArray(anchor.read_this_if) ? anchor.read_this_if.join(" ") : ""
       ].join(" ").toLowerCase();
       return haystack.indexOf(filters.search) >= 0;
-    }));
+    });
   }
 
   function sortAnchors(anchors) {
@@ -1966,9 +1966,6 @@ export const UI_JS = `(function () {
       }
       groups.get(group.key).anchors.push(anchor);
     });
-    groups.forEach(function (group) {
-      group.anchors = sortAnchors(group.anchors);
-    });
     var loading = state.anchorLoading
       ? "<div class=\\"empty-state\\">Loading more anchors...</div>"
       : "";
@@ -1998,7 +1995,9 @@ export const UI_JS = `(function () {
   }
 
   function compareTimestamps(left, right) {
-    return left === right ? 0 : left < right ? -1 : 1;
+    var leftTime = Number.isFinite(left) ? left : 0;
+    var rightTime = Number.isFinite(right) ? right : 0;
+    return leftTime === rightTime ? 0 : leftTime < rightTime ? -1 : 1;
   }
 
   function groupTimestamp(group, field, mode) {
@@ -3241,7 +3240,7 @@ export const UI_JS = `(function () {
   bind();
   showRootMode(state.rootMode);
   showDetailMode(state.detailMode);
-  showTab(state.activeTab === "detail" ? "root" : state.activeTab);
+  showTab(state.activeTab);
   load().catch(function (error) {
     setBanner("Enter the HTTP auth token to load anchors. " + error.message, "warn");
   });
