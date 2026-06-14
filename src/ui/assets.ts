@@ -1811,34 +1811,45 @@ export const UI_JS = `(function () {
   }
 
   async function loadAnchorPages(query, loadId) {
-    var params = new URLSearchParams(query || "");
-    params.set("sort", state.anchorGroupSort);
-    var response = await api("/api/ui/anchors?" + params.toString());
-    if (loadId !== state.anchorLoadId) {
-      return;
-    }
-
-    var anchors = response.anchors || [];
-    state.anchorTotal = typeof response.total === "number" ? response.total : anchors.length;
-
-    if (response.projectFilter && response.projectFilter.via === "alias") {
-      setSelectValueAllowingNew("project-filter", response.projectFilter.resolved);
-    }
-
-    for (var offset = 0; offset < anchors.length; offset += ANCHOR_BATCH_SIZE) {
+    var offset = 0;
+    for (;;) {
       if (loadId !== state.anchorLoadId) {
         return;
       }
 
-      mergeAnchorPage(anchors.slice(offset, offset + ANCHOR_BATCH_SIZE));
+      var params = new URLSearchParams(query || "");
+      params.set("sort", state.anchorGroupSort);
+      params.set("limit", String(ANCHOR_BATCH_SIZE));
+      params.set("offset", String(offset));
+
+      var response = await api("/api/ui/anchors?" + params.toString());
+      if (loadId !== state.anchorLoadId) {
+        return;
+      }
+
+      var anchors = response.anchors || [];
+      if (typeof response.total === "number") {
+        state.anchorTotal = response.total;
+      } else if (!response.nextOffset) {
+        state.anchorTotal = state.anchors.length + anchors.length;
+      }
+
+      if (response.projectFilter && response.projectFilter.via === "alias") {
+        setSelectValueAllowingNew("project-filter", response.projectFilter.resolved);
+      }
+
+      mergeAnchorPage(anchors);
       populateFilterOptions();
       renderAnchorList();
       openPendingAnchor();
 
-      if (state.anchors.length < state.anchorTotal) {
-        setBanner("Loaded " + state.anchors.length + " of " + state.anchorTotal + " anchors...", "info");
-        await nextFrame();
+      if (!response.nextOffset) {
+        break;
       }
+
+      offset = response.nextOffset;
+      setBanner(anchorLoadingMessage(), "info");
+      await nextFrame();
     }
 
     state.anchorLoading = false;
@@ -1847,6 +1858,13 @@ export const UI_JS = `(function () {
     if (state.pendingAnchor && state.activeTab === "detail") {
       openPendingAnchor();
     }
+  }
+
+  function anchorLoadingMessage() {
+    if (state.anchorTotal !== null) {
+      return "Loaded " + state.anchors.length + " of " + state.anchorTotal + " anchors...";
+    }
+    return "Loaded " + state.anchors.length + " anchors...";
   }
 
   function mergeAnchorPage(anchors) {

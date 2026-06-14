@@ -1,3 +1,4 @@
+import type { Stats } from "node:fs";
 import { mkdir, readFile, readdir, rename, stat, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 
@@ -32,6 +33,30 @@ type ResolvedAnchorPath = {
   absolutePath: string;
   repoRelativePath: string;
   anchorRelativePath: string;
+};
+
+export type AnchorListSort = "name" | "updated" | "created";
+
+export type AnchorListPage = {
+  anchors: AnchorMeta[];
+  offset: number;
+  limit?: number;
+  total?: number;
+  nextOffset?: number;
+};
+
+type AnchorFileCandidate = {
+  absolutePath: string;
+  anchorRelativePath: string;
+  repoRelativePath: string;
+  category: AnchorCategory;
+  projectSlug?: string;
+  stats: Stats;
+};
+
+type AnchorMetaWithFrontmatter = {
+  meta: AnchorMeta;
+  frontmatter: Record<string, unknown>;
 };
 
 export type CommitAnchorInput = {
@@ -98,119 +123,87 @@ export class AnchorRepository {
     includeArchive?: boolean;
     runtime?: string;
   }): Promise<AnchorMeta[]> {
-    const files = await this.listMarkdownFiles(this.anchorRootPath);
+    const candidates = await this.listAnchorFileCandidates(filter, "name");
     const metas: AnchorMeta[] = [];
 
-    for (const absolutePath of files) {
-      const content = await readFile(absolutePath, "utf8");
-      const parsed = await this.cache.parse(absolutePath, content);
-      const stats = await stat(absolutePath);
-      const anchorRelativePath = toPosix(path.relative(this.anchorRootPath, absolutePath));
-      const classification = classifyAnchorPath(anchorRelativePath);
-      if (classification.kind !== "anchor") {
+    for (const candidate of candidates) {
+      const row = await this.anchorMetaFromCandidate(candidate);
+      if (!anchorMatchesFrontmatterFilters(row, filter)) {
         continue;
       }
 
-      if (classification.category === "archive" && !filter?.includeArchive && filter?.category !== "archive") {
-        continue;
-      }
-
-      if (filter?.category && classification.category !== filter.category) {
-        continue;
-      }
-
-      const repoRelativePath = toPosix(path.relative(this.repoPath, absolutePath));
-      const createdAt = (await this.firstCommitDateForFile(repoRelativePath)) ?? stats.birthtime.toISOString();
-      const meta: AnchorMeta = {
-        name: anchorRelativePath,
-        path: repoRelativePath,
-        category: classification.category,
-        title: parsed.title,
-        project: parsed.frontmatter.project,
-        projectSlug: classification.projectSlug,
-        type: parsed.frontmatter.type,
-        tags: parsed.frontmatter.tags,
-        summary: stringValue(parsed.frontmatter.summary),
-        read_this_if: stringArrayValue(parsed.frontmatter.read_this_if),
-        last_validated: parsed.frontmatter.last_validated,
-        updatedAt: stats.mtime.toISOString(),
-        createdAt,
-        origin: "repo",
-      };
-
-      const aliases = parseProjectAliases(parsed.frontmatter.aliases);
-      if (aliases.length > 0) {
-        meta.aliases = aliases;
-      }
-
-      if (isProjectRoadmapType(parsed.frontmatter.type)) {
-        const analysis = analyzeRoadmapFromContent(content, { isProjectRoadmap: true });
-        meta.acceptanceCriteria = {
-          activeGoals: analysis.activeGoals,
-          goalsWithCriteria: analysis.goalsWithCriteria,
-          goalsMissingCriteria: analysis.goalsMissingCriteria,
-          goalsMissingCriteriaIds:
-            (analysis.goalsMissingCriteriaIds?.length ?? 0) > 0 ? analysis.goalsMissingCriteriaIds : undefined,
-          goalsWithoutStableIds:
-            (analysis.goalsWithoutStableIds?.length ?? 0) > 0 ? analysis.goalsWithoutStableIds : undefined,
-          goalsDuplicateStableIds:
-            (analysis.goalsDuplicateStableIds?.length ?? 0) > 0 ? analysis.goalsDuplicateStableIds : undefined,
-          hasProposedCriteria: analysis.hasProposedCriteria,
-          criteriaViolations:
-            analysis.criteriaViolations.length > 0 ? analysis.criteriaViolations : undefined,
-        };
-      }
-
-      if (isProjectMilestoneType(parsed.frontmatter.type)) {
-        const status = parsed.frontmatter.status;
-        const theme = stringValue(parsed.frontmatter.theme);
-        const steelThread = parsed.frontmatter.steel_thread;
-        const rel = parsed.frontmatter.relations as { goal_ids?: unknown } | undefined;
-        const goalIds = Array.isArray(rel?.goal_ids)
-          ? rel!.goal_ids.filter((item): item is string => typeof item === "string")
-          : [];
-        const milestoneId = normalizedMilestoneId(parsed.frontmatter.milestone_id);
-        const sequence = normalizedSequenceFromFm(parsed.frontmatter);
-        const schedule = normalizedScheduleFromFm(parsed.frontmatter);
-        const tasks = normalizedTasksFromFm(parsed.frontmatter);
-        if (
-          typeof status === "string" &&
-          ["proposed", "active", "shipped", "cancelled"].includes(status) &&
-          theme.length > 0
-        ) {
-          meta.milestone = {
-            status: status as MilestonePlannerMeta["status"],
-            theme,
-            steelThread: typeof steelThread === "string" && steelThread.length > 0 ? steelThread : undefined,
-            goalIds,
-            ...(milestoneId !== undefined ? { milestoneId } : {}),
-            ...(sequence !== undefined ? { sequence } : {}),
-            ...(schedule !== undefined ? { schedule } : {}),
-            ...(tasks !== undefined ? { tasks } : {}),
-          };
-        }
-      }
-
-      if (filter?.project && !anchorMatchesProject(meta, filter.project)) {
-        continue;
-      }
-
-      if (filter?.tag && !frontmatterValueIncludes(meta.tags, filter.tag)) {
-        continue;
-      }
-
-      if (filter?.runtime && !runtimeMatches(parsed.frontmatter, filter.runtime)) {
-        continue;
-      }
-
-      if (filter?.since && stats.mtime < new Date(filter.since)) {
-        continue;
-      }
-
-      metas.push(meta);
+      metas.push(row.meta);
     }
 
     return metas.sort((left, right) => left.name.localeCompare(right.name));
+  }
+
+  async listAnchorsPage(
+    filter: {
+      project?: string;
+      tag?: string;
+      since?: string;
+      category?: AnchorCategory;
+      includeArchive?: boolean;
+      runtime?: string;
+    } = {},
+    page: { sort: AnchorListSort; offset?: number; limit?: number },
+  ): Promise<AnchorListPage> {
+    const offset = page.offset ?? 0;
+    const candidates = await this.listAnchorFileCandidates(filter, page.sort);
+    const needsFrontmatterFiltering = Boolean(filter.project || filter.tag || filter.runtime);
+
+    if (!needsFrontmatterFiltering) {
+      const pageCandidates = candidates.slice(offset, page.limit === undefined ? undefined : offset + page.limit);
+      const anchors: AnchorMeta[] = [];
+      for (const candidate of pageCandidates) {
+        anchors.push((await this.anchorMetaFromCandidate(candidate)).meta);
+      }
+
+      const nextOffset =
+        page.limit === undefined || offset + page.limit >= candidates.length ? undefined : offset + page.limit;
+      return {
+        anchors,
+        offset,
+        ...(page.limit !== undefined ? { limit: page.limit } : {}),
+        total: candidates.length,
+        ...(nextOffset !== undefined ? { nextOffset } : {}),
+      };
+    }
+
+    const anchors: AnchorMeta[] = [];
+    let matched = 0;
+    let scannedAll = true;
+    let nextOffset: number | undefined;
+
+    for (const candidate of candidates) {
+      const row = await this.anchorMetaFromCandidate(candidate);
+      if (!anchorMatchesFrontmatterFilters(row, filter)) {
+        continue;
+      }
+
+      if (matched < offset) {
+        matched += 1;
+        continue;
+      }
+
+      if (page.limit !== undefined && anchors.length >= page.limit) {
+        nextOffset = matched;
+        scannedAll = false;
+        break;
+      }
+
+      anchors.push(row.meta);
+      matched += 1;
+    }
+
+    return {
+      anchors,
+      offset,
+      ...(page.limit !== undefined ? { limit: page.limit } : {}),
+      ...(scannedAll ? { total: matched } : {}),
+      ...(nextOffset !== undefined ? { nextOffset } : {}),
+    };
   }
 
   async readAnchor(name: string, version?: string): Promise<AnchorRead> {
@@ -569,6 +562,127 @@ export class AnchorRepository {
     return absolutePath;
   }
 
+  private async listAnchorFileCandidates(
+    filter: {
+      since?: string;
+      category?: AnchorCategory;
+      includeArchive?: boolean;
+    } = {},
+    sort: AnchorListSort,
+  ): Promise<AnchorFileCandidate[]> {
+    const files = await this.listMarkdownFiles(this.anchorRootPath);
+    const candidates: AnchorFileCandidate[] = [];
+
+    for (const absolutePath of files) {
+      const anchorRelativePath = toPosix(path.relative(this.anchorRootPath, absolutePath));
+      const classification = classifyAnchorPath(anchorRelativePath);
+      if (classification.kind !== "anchor") {
+        continue;
+      }
+
+      if (classification.category === "archive" && !filter.includeArchive && filter.category !== "archive") {
+        continue;
+      }
+
+      if (filter.category && classification.category !== filter.category) {
+        continue;
+      }
+
+      const stats = await stat(absolutePath);
+      if (filter.since && stats.mtime < new Date(filter.since)) {
+        continue;
+      }
+
+      candidates.push({
+        absolutePath,
+        anchorRelativePath,
+        repoRelativePath: toPosix(path.relative(this.repoPath, absolutePath)),
+        category: classification.category,
+        projectSlug: classification.projectSlug,
+        stats,
+      });
+    }
+
+    return candidates.sort((left, right) => compareAnchorFileCandidates(left, right, sort));
+  }
+
+  private async anchorMetaFromCandidate(candidate: AnchorFileCandidate): Promise<AnchorMetaWithFrontmatter> {
+    const content = await readFile(candidate.absolutePath, "utf8");
+    const parsed = await this.cache.parse(candidate.absolutePath, content);
+    const createdAt =
+      (await this.firstCommitDateForFile(candidate.repoRelativePath)) ?? candidate.stats.birthtime.toISOString();
+    const meta: AnchorMeta = {
+      name: candidate.anchorRelativePath,
+      path: candidate.repoRelativePath,
+      category: candidate.category,
+      title: parsed.title,
+      project: parsed.frontmatter.project,
+      projectSlug: candidate.projectSlug,
+      type: parsed.frontmatter.type,
+      tags: parsed.frontmatter.tags,
+      summary: stringValue(parsed.frontmatter.summary),
+      read_this_if: stringArrayValue(parsed.frontmatter.read_this_if),
+      last_validated: parsed.frontmatter.last_validated,
+      updatedAt: candidate.stats.mtime.toISOString(),
+      createdAt,
+      origin: "repo",
+    };
+
+    const aliases = parseProjectAliases(parsed.frontmatter.aliases);
+    if (aliases.length > 0) {
+      meta.aliases = aliases;
+    }
+
+    if (isProjectRoadmapType(parsed.frontmatter.type)) {
+      const analysis = analyzeRoadmapFromContent(content, { isProjectRoadmap: true });
+      meta.acceptanceCriteria = {
+        activeGoals: analysis.activeGoals,
+        goalsWithCriteria: analysis.goalsWithCriteria,
+        goalsMissingCriteria: analysis.goalsMissingCriteria,
+        goalsMissingCriteriaIds:
+          (analysis.goalsMissingCriteriaIds?.length ?? 0) > 0 ? analysis.goalsMissingCriteriaIds : undefined,
+        goalsWithoutStableIds:
+          (analysis.goalsWithoutStableIds?.length ?? 0) > 0 ? analysis.goalsWithoutStableIds : undefined,
+        goalsDuplicateStableIds:
+          (analysis.goalsDuplicateStableIds?.length ?? 0) > 0 ? analysis.goalsDuplicateStableIds : undefined,
+        hasProposedCriteria: analysis.hasProposedCriteria,
+        criteriaViolations: analysis.criteriaViolations.length > 0 ? analysis.criteriaViolations : undefined,
+      };
+    }
+
+    if (isProjectMilestoneType(parsed.frontmatter.type)) {
+      const status = parsed.frontmatter.status;
+      const theme = stringValue(parsed.frontmatter.theme);
+      const steelThread = parsed.frontmatter.steel_thread;
+      const rel = parsed.frontmatter.relations as { goal_ids?: unknown } | undefined;
+      const goalIds = Array.isArray(rel?.goal_ids)
+        ? rel!.goal_ids.filter((item): item is string => typeof item === "string")
+        : [];
+      const milestoneId = normalizedMilestoneId(parsed.frontmatter.milestone_id);
+      const sequence = normalizedSequenceFromFm(parsed.frontmatter);
+      const schedule = normalizedScheduleFromFm(parsed.frontmatter);
+      const tasks = normalizedTasksFromFm(parsed.frontmatter);
+      if (
+        typeof status === "string" &&
+        ["proposed", "active", "shipped", "cancelled"].includes(status) &&
+        theme.length > 0
+      ) {
+        meta.milestone = {
+          status: status as MilestonePlannerMeta["status"],
+          theme,
+          steelThread: typeof steelThread === "string" && steelThread.length > 0 ? steelThread : undefined,
+          goalIds,
+          ...(milestoneId !== undefined ? { milestoneId } : {}),
+          ...(sequence !== undefined ? { sequence } : {}),
+          ...(schedule !== undefined ? { schedule } : {}),
+          ...(tasks !== undefined ? { tasks } : {}),
+        };
+      }
+    }
+
+    return { meta, frontmatter: parsed.frontmatter };
+  }
+
   private async listMarkdownFiles(root: string): Promise<string[]> {
     const entries = await readdir(root, { withFileTypes: true });
     const files: string[] = [];
@@ -641,6 +755,52 @@ function isProjectRoadmapType(type: unknown): boolean {
     return type.some((item) => item === "project-roadmap");
   }
   return false;
+}
+
+function compareAnchorFileCandidates(
+  left: AnchorFileCandidate,
+  right: AnchorFileCandidate,
+  sort: AnchorListSort,
+): number {
+  if (sort === "updated") {
+    return compareNumbersDescending(left.stats.mtimeMs, right.stats.mtimeMs) || left.anchorRelativePath.localeCompare(right.anchorRelativePath);
+  }
+  if (sort === "created") {
+    return (
+      compareNumbersDescending(left.stats.birthtimeMs, right.stats.birthtimeMs) ||
+      left.anchorRelativePath.localeCompare(right.anchorRelativePath)
+    );
+  }
+  return left.anchorRelativePath.localeCompare(right.anchorRelativePath);
+}
+
+function compareNumbersDescending(left: number, right: number): number {
+  const leftValue = Number.isFinite(left) ? left : 0;
+  const rightValue = Number.isFinite(right) ? right : 0;
+  return rightValue - leftValue;
+}
+
+function anchorMatchesFrontmatterFilters(
+  row: AnchorMetaWithFrontmatter,
+  filter?: {
+    project?: string;
+    tag?: string;
+    runtime?: string;
+  },
+): boolean {
+  if (filter?.project && !anchorMatchesProject(row.meta, filter.project)) {
+    return false;
+  }
+
+  if (filter?.tag && !frontmatterValueIncludes(row.meta.tags, filter.tag)) {
+    return false;
+  }
+
+  if (filter?.runtime && !runtimeMatches(row.frontmatter, filter.runtime)) {
+    return false;
+  }
+
+  return true;
 }
 
 function frontmatterValueIncludes(value: unknown, needle: string): boolean {

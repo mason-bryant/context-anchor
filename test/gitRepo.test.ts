@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, utimes, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
@@ -89,4 +89,62 @@ None.
     expect(anchors).toHaveLength(1);
     expect(anchors[0]?.createdAt).toBe("2020-01-02T03:04:05.000Z");
   });
+
+  it("returns paged anchor metadata in last-updated order", async () => {
+    const repo = new AnchorRepository({ repoPath: tmpDir });
+    await repo.ensureReady();
+    await mkdir(path.join(tmpDir, "shared"), { recursive: true });
+
+    const files = [
+      { name: "old", updatedAt: "2026-05-01T00:00:00.000Z" },
+      { name: "new", updatedAt: "2026-05-03T00:00:00.000Z" },
+      { name: "middle", updatedAt: "2026-05-02T00:00:00.000Z" },
+    ];
+    for (const file of files) {
+      const absolutePath = path.join(tmpDir, "shared", `${file.name}.md`);
+      await writeFile(absolutePath, anchorContent(file.name), "utf8");
+      const updatedAt = new Date(file.updatedAt);
+      await utimes(absolutePath, updatedAt, updatedAt);
+    }
+
+    const firstPage = await repo.listAnchorsPage({}, { sort: "updated", offset: 0, limit: 2 });
+    const secondPage = await repo.listAnchorsPage({}, { sort: "updated", offset: 2, limit: 2 });
+
+    expect(firstPage.anchors.map((anchor) => anchor.name)).toEqual(["shared/new.md", "shared/middle.md"]);
+    expect(firstPage.total).toBe(3);
+    expect(firstPage.nextOffset).toBe(2);
+    expect(secondPage.anchors.map((anchor) => anchor.name)).toEqual(["shared/old.md"]);
+    expect(secondPage.total).toBe(3);
+    expect(secondPage.nextOffset).toBeUndefined();
+  });
 });
+
+function anchorContent(title: string): string {
+  return `---
+type: context-anchor
+tags: []
+summary: ${title} anchor summary.
+read_this_if:
+  - You are testing paged anchor metadata.
+last_validated: 2026-05-24
+---
+
+# ${title}
+
+## Current State
+
+Exists.
+
+## Decisions
+
+None.
+
+## Constraints
+
+None.
+
+## PRs
+
+None.
+`;
+}
