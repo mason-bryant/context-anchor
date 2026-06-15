@@ -499,7 +499,14 @@ function booleanQuery(req: Request, key: string): boolean | undefined {
   if (value === undefined) {
     return undefined;
   }
-  return value === "1" || value.toLowerCase() === "true";
+  const normalized = value.trim().toLowerCase();
+  if (normalized === "1" || normalized === "true") {
+    return true;
+  }
+  if (normalized === "0" || normalized === "false") {
+    return false;
+  }
+  throw new UiHttpError(400, `Invalid ${key}: expected a boolean`);
 }
 
 function positiveIntQuery(

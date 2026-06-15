@@ -466,6 +466,24 @@ describe("UI HTTP routes", () => {
     expect(body.error.message).toContain("Invalid approved: expected a boolean");
   });
 
+  it("rejects invalid boolean strings in UI query parameters", async () => {
+    const response = await fetch(`${baseUrl}/api/ui/anchors?includeArchive=yes`, {
+      headers: { Authorization: `Bearer ${TOKEN}` },
+    });
+    const body = (await response.json()) as { error: { message: string } };
+
+    expect(response.status).toBe(400);
+    expect(body.error.message).toContain("Invalid includeArchive: expected a boolean");
+  });
+
+  it("accepts valid boolean query parameters", async () => {
+    const response = await fetch(`${baseUrl}/api/ui/anchors?includeArchive=true`, {
+      headers: { Authorization: `Bearer ${TOKEN}` },
+    });
+
+    expect(response.status).toBe(200);
+  });
+
   it("routes anchor history and destructive action requests", async () => {
     const restoreVersions = stubAnchorServiceMethod("listVersions", vi.fn(async () => [{ version: "a", author: "A", date: "2026-06-06", message: "one" }]));
     const restoreDiff = stubAnchorServiceMethod("diffAnchor", vi.fn(async () => "diff --git a b"));
