@@ -11,7 +11,7 @@ summary: >-
 read_this_if:
   - Planning or prioritizing anchor-mcp work.
   - Checking definition of done for context-conductor milestones.
-last_validated: 2026-06-15
+last_validated: 2026-06-15T00:00:00.000Z
 ---
 
 # Context conductor roadmap
@@ -122,3 +122,5 @@ last_validated: 2026-06-15
 ## PRs
 
 - [PR Session-start and retrieval quality v1 - #30](https://github.com/mason-bryant/context-anchor/pull/30)
+
+- [PR Retrieval quality hardening and operability (G-005) - #34](https://github.com/mason-bryant/context-anchor/pull/34)
