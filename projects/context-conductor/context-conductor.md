@@ -8,7 +8,7 @@ summary: Context anchor for the context-conductor (anchor-mcp) repository.
 read_this_if:
   - 'You are changing anchor-mcp server behavior, validators, or MCP tools.'
   - You need the current shipped state of this repository as a product.
-last_validated: 2026-06-15
+last_validated: 2026-06-15T00:00:00.000Z
 ---
 
 # Context conductor
@@ -35,3 +35,5 @@ last_validated: 2026-06-15
 
 - [PR Session-start and retrieval quality v1 - #30](https://github.com/mason-bryant/context-anchor/pull/30)
 - [PR Acceptance criteria and built-in server policy - #0](https://github.com/mason-bryant/context-conductor/pull/0)
+
+- [PR Retrieval quality hardening and operability (G-005) - #34](https://github.com/mason-bryant/context-anchor/pull/34)
