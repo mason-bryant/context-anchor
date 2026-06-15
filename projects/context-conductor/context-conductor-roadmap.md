@@ -94,9 +94,9 @@ last_validated: 2026-06-15
 
 #### Approved
 
-- [ ] AC-014: CI runs `npm run eval` as a required gate so planner recall regressions fail the build. Evidence: `.github/workflows/ci.yml` eval step.
+- [x] AC-014: CI runs `npm run eval` as a required gate so planner recall regressions fail the build. Evidence: `.github/workflows/ci.yml` eval step.
 
-- [ ] AC-015: UI query boolean parsing (`booleanQuery`) rejects non-boolean strings with HTTP 400, matching `booleanBody` strictness. Evidence: `test/uiHttp.test.ts` invalid `includeArchive` case.
+- [x] AC-015: UI query boolean parsing (`booleanQuery`) rejects non-boolean strings with HTTP 400, matching `booleanBody` strictness. Evidence: `test/uiHttp.test.ts` invalid `includeArchive` case.
 
 #### Proposed
 
@@ -109,7 +109,7 @@ last_validated: 2026-06-15
 - Roadmap is maintained alongside shipped behavior in `context-conductor.md`.
 - Goal G-003 steel-thread milestone tooling is shipped.
 - Goal G-004 session-start and retrieval quality v1 is shipped and merged in PR #30 (2026-06-11).
-- Goal G-005 retrieval quality hardening (CI eval gate, strict UI boolean query parsing) is in progress on `feat/retrieval-hardening-v1`; the registry/relation-kinds items remain parked under Proposed until a concrete need arises.
+- Goal G-005 retrieval quality hardening (CI `npm run eval` gate, strict UI boolean query parsing) is implemented on `feat/retrieval-hardening-v1` (208 tests + eval green as of 2026-06-15); the registry/relation-kinds items remain parked under Proposed until a concrete need arises.
 
 ## Decisions
 
