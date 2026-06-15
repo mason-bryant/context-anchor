@@ -33,7 +33,7 @@ import {
   collectMilestoneAcceptanceMissingSignals,
   collectRoadmapAcceptanceMissingSignals,
 } from "./contextPlanner.js";
-import type { AnchorRepository } from "./git/repo.js";
+import type { AnchorListPage, AnchorListSort, AnchorRepository } from "./git/repo.js";
 import { listRoadmapGoalDetails } from "./roadmap/analyzeRoadmap.js";
 import {
   renderProjectUpdate as renderProjectUpdateFromSnapshot,
@@ -272,6 +272,69 @@ export class AnchorService {
     runtime?: string;
   }): Promise<{ anchors: AnchorMeta[]; projectFilter?: ProjectFilterResolution }> {
     return this.mergeDiscoveryAnchorsWithResolution(filter);
+  }
+
+  async listAnchorsDiscoveryPage(
+    filter: {
+      project?: string;
+      tag?: string;
+      since?: string;
+      category?: DiscoveryCategory;
+      includeArchive?: boolean;
+      runtime?: string;
+    } = {},
+    page: { sort: AnchorListSort; offset?: number; limit?: number },
+  ): Promise<AnchorListPage & { projectFilter?: ProjectFilterResolution }> {
+    const { projectFilter, effectiveProject } = await this.resolveProjectFilter(filter.project);
+    const built = listBuiltInAnchorMetas();
+
+    if (filter.category === SERVER_RULES_DISCOVERY_CATEGORY) {
+      return {
+        ...pageAnchorMetas(built, page),
+        ...(projectFilter ? { projectFilter } : {}),
+      };
+    }
+
+    const { category, project: _project, ...rest } = filter;
+    const repoFilter = {
+      ...rest,
+      ...(effectiveProject ? { project: effectiveProject } : {}),
+      category: category as AnchorCategory | undefined,
+    };
+
+    if (category) {
+      const repoPage = await this.repo.listAnchorsPage(repoFilter, page);
+      return {
+        ...repoPage,
+        ...(projectFilter ? { projectFilter } : {}),
+      };
+    }
+
+    const repoLimit = page.limit === undefined ? undefined : (page.offset ?? 0) + page.limit;
+    const repoPage = await this.repo.listAnchorsPage(repoFilter, {
+      sort: page.sort,
+      offset: 0,
+      ...(repoLimit !== undefined ? { limit: repoLimit } : {}),
+    });
+    const merged = pageAnchorMetas([...built, ...repoPage.anchors], page);
+    const total = repoPage.total === undefined ? undefined : repoPage.total + built.length;
+    const nextOffset =
+      page.limit === undefined
+        ? undefined
+        : total !== undefined
+          ? (page.offset ?? 0) + page.limit >= total
+            ? undefined
+            : (page.offset ?? 0) + page.limit
+          : repoPage.nextOffset !== undefined || merged.anchors.length >= page.limit
+            ? (page.offset ?? 0) + page.limit
+            : undefined;
+
+    return {
+      ...merged,
+      ...(total !== undefined ? { total } : {}),
+      ...(nextOffset !== undefined ? { nextOffset } : {}),
+      ...(projectFilter ? { projectFilter } : {}),
+    };
   }
 
   listAnchors(filter?: {
@@ -1861,6 +1924,56 @@ function addMilestoneUpdateWarnings(milestone: ProjectUpdateMilestone, warnings:
 
 function dedupeStrings(items: string[]): string[] {
   return [...new Set(items)];
+}
+
+function pageAnchorMetas(
+  anchors: AnchorMeta[],
+  page: { sort: AnchorListSort; offset?: number; limit?: number },
+): AnchorListPage {
+  const offset = page.offset ?? 0;
+  const sorted = sortAnchorMetas(anchors, page.sort);
+  const pageAnchors = sorted.slice(offset, page.limit === undefined ? undefined : offset + page.limit);
+  const nextOffset =
+    page.limit === undefined || offset + page.limit >= sorted.length ? undefined : offset + page.limit;
+
+  return {
+    anchors: pageAnchors,
+    offset,
+    ...(page.limit !== undefined ? { limit: page.limit } : {}),
+    total: sorted.length,
+    ...(nextOffset !== undefined ? { nextOffset } : {}),
+  };
+}
+
+function sortAnchorMetas(anchors: AnchorMeta[], sort: AnchorListSort): AnchorMeta[] {
+  return anchors.slice().sort((left, right) => compareAnchorMetas(left, right, sort));
+}
+
+function compareAnchorMetas(left: AnchorMeta, right: AnchorMeta, sort: AnchorListSort): number {
+  if (sort === "updated") {
+    return compareAnchorTimestamp(right, left, "updatedAt", true) || left.name.localeCompare(right.name);
+  }
+  if (sort === "created") {
+    return compareAnchorTimestamp(right, left, "createdAt", false) || left.name.localeCompare(right.name);
+  }
+  return left.name.localeCompare(right.name);
+}
+
+function compareAnchorTimestamp(
+  left: AnchorMeta,
+  right: AnchorMeta,
+  field: "updatedAt" | "createdAt",
+  allowValidatedFallback: boolean,
+): number {
+  const leftTime = anchorTimestamp(left, field, allowValidatedFallback);
+  const rightTime = anchorTimestamp(right, field, allowValidatedFallback);
+  return leftTime === rightTime ? 0 : leftTime < rightTime ? -1 : 1;
+}
+
+function anchorTimestamp(anchor: AnchorMeta, field: "updatedAt" | "createdAt", allowValidatedFallback: boolean): number {
+  const raw = anchor[field] ?? (allowValidatedFallback ? anchor.last_validated : undefined);
+  const parsed = Date.parse(String(raw ?? ""));
+  return Number.isNaN(parsed) ? 0 : parsed;
 }
 
 function placeholderProposalListItem(

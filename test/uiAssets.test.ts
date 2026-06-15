@@ -151,6 +151,12 @@ describe("UI browser assets", () => {
     expect(UI_JS).toContain("/api/ui/anchor-delete");
   });
 
+  it("requests anchor list batches with explicit limit and offset", () => {
+    expect(UI_JS).toContain('params.set("limit", String(ANCHOR_BATCH_SIZE));');
+    expect(UI_JS).toContain('params.set("offset", String(offset));');
+    expect(UI_JS).toContain("response.nextOffset");
+  });
+
   it("formats proposed-change previews with operation contents", () => {
     const hooks = loadHooks();
     const preview = hooks.formatPreview({

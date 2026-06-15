@@ -109,14 +109,17 @@ describe("UI HTTP routes", () => {
     expect(root.entries.map((entry) => entry.name)).toContain("projects/demo/demo.md");
   });
 
-  it("returns sorted and paged anchor batches for progressive UI loading", async () => {
-    const restore = stubAnchorServiceMethod("listAnchorsDiscovery", vi.fn(async () => ({
+  it("routes paged anchor batch requests for progressive UI loading", async () => {
+    const listPage = vi.fn(async () => ({
       anchors: [
-        uiAnchorMeta("projects/demo/old.md", "2026-05-01T00:00:00.000Z"),
-        uiAnchorMeta("projects/demo/new.md", "2026-05-03T00:00:00.000Z"),
         uiAnchorMeta("projects/demo/middle.md", "2026-05-02T00:00:00.000Z"),
+        uiAnchorMeta("projects/demo/old.md", "2026-05-01T00:00:00.000Z"),
       ],
-    })));
+      total: 3,
+      offset: 1,
+      limit: 2,
+    }));
+    const restore = stubAnchorServiceMethod("listAnchorsDiscoveryPage", listPage);
 
     try {
       const response = await fetchJson<{
@@ -137,19 +140,26 @@ describe("UI HTTP routes", () => {
       expect(response.limit).toBe(2);
       expect(response.nextOffset).toBeUndefined();
       expect(response.sort).toBe("updated");
+      expect(listPage).toHaveBeenCalledWith(expect.objectContaining({}), {
+        sort: "updated",
+        offset: 1,
+        limit: 2,
+      });
     } finally {
       restore();
     }
   });
 
   it("applies anchor offsets even without a limit", async () => {
-    const restore = stubAnchorServiceMethod("listAnchorsDiscovery", vi.fn(async () => ({
+    const listPage = vi.fn(async () => ({
       anchors: [
-        uiAnchorMeta("projects/demo/old.md", "2026-05-01T00:00:00.000Z"),
-        uiAnchorMeta("projects/demo/new.md", "2026-05-03T00:00:00.000Z"),
         uiAnchorMeta("projects/demo/middle.md", "2026-05-02T00:00:00.000Z"),
+        uiAnchorMeta("projects/demo/old.md", "2026-05-01T00:00:00.000Z"),
       ],
-    })));
+      total: 3,
+      offset: 1,
+    }));
+    const restore = stubAnchorServiceMethod("listAnchorsDiscoveryPage", listPage);
 
     try {
       const response = await fetchJson<{
@@ -168,6 +178,11 @@ describe("UI HTTP routes", () => {
       expect(response.offset).toBe(1);
       expect(response.limit).toBeUndefined();
       expect(response.nextOffset).toBeUndefined();
+      expect(listPage).toHaveBeenCalledWith(expect.objectContaining({}), {
+        sort: "updated",
+        offset: 1,
+        limit: undefined,
+      });
     } finally {
       restore();
     }

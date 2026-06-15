@@ -3,7 +3,6 @@ import type { NextFunction, Request, Response, Express } from "express";
 import type { AnchorService } from "../anchorService.js";
 import { isDiscoveryCategory, type DiscoveryCategory } from "../taxonomy.js";
 import type {
-  AnchorMeta,
   ContextRootFormat,
   PlanContextBundleInput,
   ProposedChangeListInput,
@@ -57,22 +56,19 @@ export function registerUiRoutes(
     "/api/ui/anchors",
     ...protect,
     jsonRoute(async (req) => {
-      const { anchors, projectFilter } = await service.listAnchorsDiscovery(readDiscoveryFilters(req));
       const sort = readUiAnchorSort(req);
       const offset = nonNegativeIntQuery(req, "offset", 200000) ?? 0;
       const limit = positiveIntQuery(req, "limit", 500);
-      const sortedAnchors = sortAnchorMetas(anchors, sort);
-      const pageAnchors = sortedAnchors.slice(offset, limit === undefined ? undefined : offset + limit);
-      const nextOffset = limit === undefined || offset + limit >= sortedAnchors.length ? undefined : offset + limit;
+      const page = await service.listAnchorsDiscoveryPage(readDiscoveryFilters(req), { sort, offset, limit });
 
       return {
-        anchors: pageAnchors.map(toAnchorUiMeta),
-        total: sortedAnchors.length,
-        offset,
-        ...(limit !== undefined ? { limit } : {}),
-        ...(nextOffset !== undefined ? { nextOffset } : {}),
+        anchors: page.anchors.map(toAnchorUiMeta),
+        offset: page.offset,
+        ...(page.total !== undefined ? { total: page.total } : {}),
+        ...(page.limit !== undefined ? { limit: page.limit } : {}),
+        ...(page.nextOffset !== undefined ? { nextOffset: page.nextOffset } : {}),
         sort,
-        ...(projectFilter ? { projectFilter } : {}),
+        ...(page.projectFilter ? { projectFilter: page.projectFilter } : {}),
       };
     }),
   );
@@ -352,32 +348,6 @@ function readUiAnchorSort(req: Request): UiAnchorSort {
     throw new UiHttpError(400, `Invalid anchor sort: ${sort}`);
   }
   return sort;
-}
-
-function sortAnchorMetas(anchors: AnchorMeta[], sort: UiAnchorSort): AnchorMeta[] {
-  return anchors.slice().sort((left, right) => compareAnchorMetas(left, right, sort));
-}
-
-function compareAnchorMetas(left: AnchorMeta, right: AnchorMeta, sort: UiAnchorSort): number {
-  if (sort === "updated") {
-    return compareAnchorTimestamp(right, left, "updatedAt", true) || left.name.localeCompare(right.name);
-  }
-  if (sort === "created") {
-    return compareAnchorTimestamp(right, left, "createdAt", false) || left.name.localeCompare(right.name);
-  }
-  return left.name.localeCompare(right.name);
-}
-
-function compareAnchorTimestamp(left: AnchorMeta, right: AnchorMeta, field: "updatedAt" | "createdAt", allowValidatedFallback: boolean): number {
-  const leftTime = anchorTimestamp(left, field, allowValidatedFallback);
-  const rightTime = anchorTimestamp(right, field, allowValidatedFallback);
-  return leftTime === rightTime ? 0 : leftTime < rightTime ? -1 : 1;
-}
-
-function anchorTimestamp(anchor: AnchorMeta, field: "updatedAt" | "createdAt", allowValidatedFallback: boolean): number {
-  const raw = anchor[field] ?? (allowValidatedFallback ? anchor.last_validated : undefined);
-  const parsed = Date.parse(String(raw ?? ""));
-  return Number.isNaN(parsed) ? 0 : parsed;
 }
 
 function readPlannerInput(req: Request): PlanContextBundleInput {
