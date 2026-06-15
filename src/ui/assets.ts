@@ -1830,8 +1830,6 @@ export const UI_JS = `(function () {
       var anchors = response.anchors || [];
       if (typeof response.total === "number") {
         state.anchorTotal = response.total;
-      } else if (!response.nextOffset) {
-        state.anchorTotal = state.anchors.length + anchors.length;
       }
 
       if (response.projectFilter && response.projectFilter.via === "alias") {
@@ -1839,6 +1837,9 @@ export const UI_JS = `(function () {
       }
 
       mergeAnchorPage(anchors);
+      if (typeof response.total !== "number" && !response.nextOffset) {
+        state.anchorTotal = state.anchors.length;
+      }
       populateFilterOptions();
       renderAnchorList();
       openPendingAnchor();

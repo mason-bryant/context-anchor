@@ -117,7 +117,48 @@ None.
     expect(secondPage.total).toBe(3);
     expect(secondPage.nextOffset).toBeUndefined();
   });
+
+  it("pages created sort using the same git-created timestamp returned in metadata", async () => {
+    const repo = new AnchorRepository({ repoPath: tmpDir });
+    await repo.ensureReady();
+    await mkdir(path.join(tmpDir, "shared"), { recursive: true });
+
+    await commitAnchorFile(repo, "shared/first-created.md", "First Created", "2026-05-03T00:00:00Z");
+    await commitAnchorFile(repo, "shared/second-created.md", "Second Created", "2026-05-01T00:00:00Z");
+
+    const firstPage = await repo.listAnchorsPage({}, { sort: "created", offset: 0, limit: 1 });
+    const secondPage = await repo.listAnchorsPage({}, { sort: "created", offset: 1, limit: 1 });
+
+    expect(firstPage.anchors.map((anchor) => [anchor.name, anchor.createdAt])).toEqual([
+      ["shared/first-created.md", "2026-05-03T00:00:00.000Z"],
+    ]);
+    expect(firstPage.nextOffset).toBe(1);
+    expect(secondPage.anchors.map((anchor) => [anchor.name, anchor.createdAt])).toEqual([
+      ["shared/second-created.md", "2026-05-01T00:00:00.000Z"],
+    ]);
+  });
 });
+
+async function commitAnchorFile(
+  repo: AnchorRepository,
+  name: string,
+  title: string,
+  date: string,
+): Promise<void> {
+  await writeFile(path.join(tmpDir, name), anchorContent(title), "utf8");
+  await repo.git.add(name);
+  await repo.git.raw([
+    "-c",
+    "user.name=anchor-mcp",
+    "-c",
+    "user.email=anchor-mcp@local",
+    "commit",
+    "--date",
+    date,
+    "-m",
+    `test: add ${title}`,
+  ]);
+}
 
 function anchorContent(title: string): string {
   return `---

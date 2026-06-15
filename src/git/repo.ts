@@ -52,6 +52,8 @@ type AnchorFileCandidate = {
   category: AnchorCategory;
   projectSlug?: string;
   stats: Stats;
+  createdAt?: string;
+  createdTimeMs?: number;
 };
 
 type AnchorMetaWithFrontmatter = {
@@ -572,6 +574,7 @@ export class AnchorRepository {
   ): Promise<AnchorFileCandidate[]> {
     const files = await this.listMarkdownFiles(this.anchorRootPath);
     const candidates: AnchorFileCandidate[] = [];
+    const sinceDate = filter.since ? new Date(filter.since) : undefined;
 
     for (const absolutePath of files) {
       const anchorRelativePath = toPosix(path.relative(this.anchorRootPath, absolutePath));
@@ -589,17 +592,22 @@ export class AnchorRepository {
       }
 
       const stats = await stat(absolutePath);
-      if (filter.since && stats.mtime < new Date(filter.since)) {
+      if (sinceDate && stats.mtime < sinceDate) {
         continue;
       }
 
+      const repoRelativePath = toPosix(path.relative(this.repoPath, absolutePath));
+      const createdAt = sort === "created" ? await this.firstCommitDateForFile(repoRelativePath) : undefined;
+      const createdTimeMs = Date.parse(createdAt ?? stats.birthtime.toISOString());
       candidates.push({
         absolutePath,
         anchorRelativePath,
-        repoRelativePath: toPosix(path.relative(this.repoPath, absolutePath)),
+        repoRelativePath,
         category: classification.category,
         projectSlug: classification.projectSlug,
         stats,
+        ...(createdAt ? { createdAt } : {}),
+        createdTimeMs: Number.isNaN(createdTimeMs) ? stats.birthtimeMs : createdTimeMs,
       });
     }
 
@@ -610,7 +618,9 @@ export class AnchorRepository {
     const content = await readFile(candidate.absolutePath, "utf8");
     const parsed = await this.cache.parse(candidate.absolutePath, content);
     const createdAt =
-      (await this.firstCommitDateForFile(candidate.repoRelativePath)) ?? candidate.stats.birthtime.toISOString();
+      candidate.createdAt ??
+      (await this.firstCommitDateForFile(candidate.repoRelativePath)) ??
+      candidate.stats.birthtime.toISOString();
     const meta: AnchorMeta = {
       name: candidate.anchorRelativePath,
       path: candidate.repoRelativePath,
@@ -767,7 +777,7 @@ function compareAnchorFileCandidates(
   }
   if (sort === "created") {
     return (
-      compareNumbersDescending(left.stats.birthtimeMs, right.stats.birthtimeMs) ||
+      compareNumbersDescending(left.createdTimeMs ?? left.stats.birthtimeMs, right.createdTimeMs ?? right.stats.birthtimeMs) ||
       left.anchorRelativePath.localeCompare(right.anchorRelativePath)
     );
   }
