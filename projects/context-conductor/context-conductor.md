@@ -8,20 +8,24 @@ summary: Context anchor for the context-conductor (anchor-mcp) repository.
 read_this_if:
   - 'You are changing anchor-mcp server behavior, validators, or MCP tools.'
   - You need the current shipped state of this repository as a product.
-last_validated: 2026-06-10T00:00:00.000Z
+last_validated: 2026-06-15
 ---
 
 # Context conductor
 
 ## Current State
+
 - This repository implements `anchor-mcp`: git-backed MCP tools, validators, and built-in server policy for context repos.
 - Milestone steel-thread v1 (Goal G-003) is shipped: milestones taxonomy, typed milestone overlay, relations validation, milestone MCP tools, and planner milestone boosts.
-- Session-start and retrieval quality v1 (Goal G-004) adds `startTask` (+ `start-task` MCP prompt), body-size token estimates, task-aware excerpts, staleness signals (`--stale-after-days`), and `npm run eval`; under review in PR #30 with CI passing and full automated validation.
+- Session-start and retrieval quality v1 (Goal G-004) is shipped and merged in PR #30: `startTask` (+ `start-task` MCP prompt), body-size token estimates, task-aware excerpts, staleness signals (`--stale-after-days`), and `npm run eval`.
+- Goal G-005 retrieval quality hardening (CI `npm run eval` gate, strict UI boolean query parsing) is in progress on `feat/retrieval-hardening-v1`.
 - Forward-looking acceptance criteria and goals for this codebase live in the sibling roadmap `projects/context-conductor/context-conductor-roadmap.md`.
+
 ## Decisions
 
 - Built-in policy rows (`server-rules/*`) are synthetic discovery entries, not files under the anchor root.
 - `startTask` is the preferred first MCP call when the user supplies a project and task at session start.
+- Planner retrieval quality is gated in CI via `npm run eval`; UI query boolean parsing rejects invalid values with HTTP 400 rather than silently defaulting.
 
 ## Constraints
 
