@@ -21,6 +21,7 @@ const AnchorContentModeSchema = z.enum(["full", "excerpt", "none"]);
 const ProjectUpdateStatusSchema = z.enum(["proposed", "active", "shipped", "cancelled"]);
 const ProjectUpdateFormatSchema = z.enum(["markdown", "slack", "email"]);
 const ProposedChangeStatusSchema = z.enum(["pending", "applied", "rejected", "changes_requested", "superseded"]);
+const ProjectPrioritySchema = z.union([z.number().finite(), z.null()]);
 const JsonStringSchema = z.string();
 const JsonRecordSchema = z.union([z.record(z.string(), z.unknown()), JsonStringSchema]);
 const StringArraySchema = z.union([z.array(z.string()), JsonStringSchema]);
@@ -637,6 +638,37 @@ the index when your workflow checks in that file.`,
       const result = await service.updateAnchorFrontmatter({
         name,
         updates: normalizeJsonRecord(updates, "updates"),
+        message,
+        approved,
+        coAuthor,
+        expectedFileCommit,
+      });
+      return jsonResult(result, result.version ? false : true);
+    },
+  );
+
+  server.registerTool(
+    "updateProjectPriority",
+    {
+      title: "Update Project Priority",
+      description:
+        "Set or clear a project's numeric front matter priority (for example 1, 1.1, or 2.045). Requires approved: true after an explicit human request.",
+      inputSchema: z.object({
+        project: z.string().optional(),
+        name: z.string().optional(),
+        priority: ProjectPrioritySchema,
+        message: z.string().optional(),
+        approved: z.boolean().default(false),
+        coAuthor: z.string().optional(),
+        expectedFileCommit: z.string().optional(),
+      }),
+      annotations: { destructiveHint: false, idempotentHint: false },
+    },
+    async ({ project, name, priority, message, approved, coAuthor, expectedFileCommit }) => {
+      const result = await service.updateProjectPriority({
+        project,
+        name,
+        priority,
         message,
         approved,
         coAuthor,

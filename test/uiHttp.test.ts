@@ -371,6 +371,7 @@ describe("UI HTTP routes", () => {
 
   it("routes direct anchor edit requests", async () => {
     const restoreFrontmatter = stubAnchorServiceMethod("updateAnchorFrontmatter", vi.fn(async () => ({ version: "v1", warnings: [] })));
+    const restorePriority = stubAnchorServiceMethod("updateProjectPriority", vi.fn(async () => ({ version: "vp", warnings: [] })));
     const restoreSection = stubAnchorServiceMethod("updateAnchorSection", vi.fn(async () => ({ version: "v2", warnings: [] })));
     const restoreAppend = stubAnchorServiceMethod("appendToAnchorSection", vi.fn(async () => ({ version: "v3", warnings: [] })));
     const restoreDeleteSection = stubAnchorServiceMethod("deleteAnchorSection", vi.fn(async () => ({ version: "v4", warnings: [] })));
@@ -379,6 +380,13 @@ describe("UI HTTP routes", () => {
       await postJson("/api/ui/anchor-frontmatter", {
         name: "projects/demo/demo.md",
         updates: { summary: "Updated summary." },
+        expectedFileCommit: "abc123",
+      });
+      await postJson("/api/ui/project-priority", {
+        project: "demo",
+        name: "projects/demo/demo.md",
+        priority: 2.045,
+        approved: true,
         expectedFileCommit: "abc123",
       });
       await postJson("/api/ui/anchor-section", {
@@ -405,6 +413,16 @@ describe("UI HTTP routes", () => {
           updates: { summary: "Updated summary." },
           message: undefined,
           approved: undefined,
+          coAuthor: undefined,
+          expectedFileCommit: "abc123",
+        });
+      expect((AnchorService.prototype as unknown as { updateProjectPriority: ReturnType<typeof vi.fn> }).updateProjectPriority)
+        .toHaveBeenCalledWith({
+          project: "demo",
+          name: "projects/demo/demo.md",
+          priority: 2.045,
+          message: undefined,
+          approved: true,
           coAuthor: undefined,
           expectedFileCommit: "abc123",
         });
@@ -442,6 +460,7 @@ describe("UI HTTP routes", () => {
         });
     } finally {
       restoreFrontmatter();
+      restorePriority();
       restoreSection();
       restoreAppend();
       restoreDeleteSection();
@@ -464,6 +483,25 @@ describe("UI HTTP routes", () => {
 
     expect(response.status).toBe(400);
     expect(body.error.message).toContain("Invalid approved: expected a boolean");
+  });
+
+  it("returns 400 for invalid project priority bodies", async () => {
+    const response = await fetch(`${baseUrl}/api/ui/project-priority`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${TOKEN}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        project: "demo",
+        priority: "P1",
+        approved: true,
+      }),
+    });
+    const body = (await response.json()) as { error: { message: string } };
+
+    expect(response.status).toBe(400);
+    expect(body.error.message).toContain("Invalid priority");
   });
 
   it("rejects invalid boolean strings in UI query parameters", async () => {

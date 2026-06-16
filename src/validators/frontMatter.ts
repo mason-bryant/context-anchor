@@ -18,6 +18,7 @@ const AnchorFrontmatterSchema = z
     read_this_if: z.array(LoadingInstruction).min(1).max(5),
     last_validated: LastValidated,
     project: StringOrStringArray.optional(),
+    priority: z.number().finite().optional(),
   })
   .passthrough();
 

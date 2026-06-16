@@ -35,7 +35,7 @@ type ResolvedAnchorPath = {
   anchorRelativePath: string;
 };
 
-export type AnchorListSort = "name" | "updated" | "created";
+export type AnchorListSort = "name" | "updated" | "created" | "priority";
 
 export type AnchorListPage = {
   anchors: AnchorMeta[];
@@ -154,6 +154,29 @@ export class AnchorRepository {
     const offset = page.offset ?? 0;
     const candidates = await this.listAnchorFileCandidates(filter, page.sort);
     const needsFrontmatterFiltering = Boolean(filter.project || filter.tag || filter.runtime);
+
+    if (page.sort === "priority") {
+      const anchors: AnchorMeta[] = [];
+      for (const candidate of candidates) {
+        const row = await this.anchorMetaFromCandidate(candidate);
+        if (!anchorMatchesFrontmatterFilters(row, filter)) {
+          continue;
+        }
+        anchors.push(row.meta);
+      }
+
+      anchors.sort(compareAnchorMetasByPriority);
+      const pageAnchors = anchors.slice(offset, page.limit === undefined ? undefined : offset + page.limit);
+      const nextOffset =
+        page.limit === undefined || offset + page.limit >= anchors.length ? undefined : offset + page.limit;
+      return {
+        anchors: pageAnchors,
+        offset,
+        ...(page.limit !== undefined ? { limit: page.limit } : {}),
+        total: anchors.length,
+        ...(nextOffset !== undefined ? { nextOffset } : {}),
+      };
+    }
 
     if (!needsFrontmatterFiltering) {
       const pageCandidates = candidates.slice(offset, page.limit === undefined ? undefined : offset + page.limit);
@@ -635,6 +658,9 @@ export class AnchorRepository {
       last_validated: parsed.frontmatter.last_validated,
       updatedAt: candidate.stats.mtime.toISOString(),
       createdAt,
+      ...(numberValue(parsed.frontmatter.priority) !== undefined
+        ? { priority: numberValue(parsed.frontmatter.priority) }
+        : {}),
       origin: "repo",
     };
 
@@ -781,6 +807,9 @@ function compareAnchorFileCandidates(
       left.anchorRelativePath.localeCompare(right.anchorRelativePath)
     );
   }
+  if (sort === "priority") {
+    return left.anchorRelativePath.localeCompare(right.anchorRelativePath);
+  }
   return left.anchorRelativePath.localeCompare(right.anchorRelativePath);
 }
 
@@ -788,6 +817,16 @@ function compareNumbersDescending(left: number, right: number): number {
   const leftValue = Number.isFinite(left) ? left : 0;
   const rightValue = Number.isFinite(right) ? right : 0;
   return rightValue - leftValue;
+}
+
+function compareAnchorMetasByPriority(left: AnchorMeta, right: AnchorMeta): number {
+  const leftPriority = typeof left.priority === "number" && Number.isFinite(left.priority) ? left.priority : Number.POSITIVE_INFINITY;
+  const rightPriority = typeof right.priority === "number" && Number.isFinite(right.priority) ? right.priority : Number.POSITIVE_INFINITY;
+  return leftPriority === rightPriority
+    ? left.name.localeCompare(right.name)
+    : leftPriority < rightPriority
+      ? -1
+      : 1;
 }
 
 function anchorMatchesFrontmatterFilters(
@@ -827,6 +866,10 @@ function stringValue(value: unknown): string {
 
 function stringArrayValue(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
+}
+
+function numberValue(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
 
 function runtimeMatches(frontmatter: Record<string, unknown>, runtime: string): boolean {

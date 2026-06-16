@@ -15,7 +15,7 @@ import { UI_CSS, UI_HTML, UI_JS } from "./assets.js";
 import { toAnchorUiDetail, toAnchorUiMeta } from "./viewModel.js";
 
 type UiAuthMiddleware = (req: Request, res: Response, next: NextFunction) => void;
-type UiAnchorSort = "name" | "updated" | "created";
+type UiAnchorSort = "name" | "updated" | "created" | "priority";
 
 export function registerUiRoutes(
   app: Express,
@@ -169,6 +169,23 @@ export function registerUiRoutes(
       return service.updateAnchorFrontmatter({
         name: requiredBodyString(body, "name"),
         updates: bodyObject(body, "updates"),
+        message: optionalBodyString(body, "message"),
+        approved: booleanBody(body, "approved"),
+        coAuthor: optionalBodyString(body, "coAuthor"),
+        expectedFileCommit: optionalBodyString(body, "expectedFileCommit"),
+      });
+    }),
+  );
+
+  app.post(
+    "/api/ui/project-priority",
+    ...protect,
+    jsonRoute(async (req) => {
+      const body = bodyRecord(req);
+      return service.updateProjectPriority({
+        project: optionalBodyString(body, "project"),
+        name: optionalBodyString(body, "name"),
+        priority: nullableNumberBody(body, "priority"),
         message: optionalBodyString(body, "message"),
         approved: booleanBody(body, "approved"),
         coAuthor: optionalBodyString(body, "coAuthor"),
@@ -344,7 +361,7 @@ function readUiAnchorSort(req: Request): UiAnchorSort {
   if (!sort) {
     return "updated";
   }
-  if (sort !== "name" && sort !== "updated" && sort !== "created") {
+  if (sort !== "name" && sort !== "updated" && sort !== "created" && sort !== "priority") {
     throw new UiHttpError(400, `Invalid anchor sort: ${sort}`);
   }
   return sort;
@@ -492,6 +509,23 @@ function booleanBody(body: Record<string, unknown>, key: string): boolean | unde
     }
   }
   throw new UiHttpError(400, `Invalid ${key}: expected a boolean`);
+}
+
+function nullableNumberBody(body: Record<string, unknown>, key: string): number | null {
+  const value = body[key];
+  if (value === null) {
+    return null;
+  }
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+  if (typeof value === "string" && value.trim().length > 0) {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) {
+      return parsed;
+    }
+  }
+  throw new UiHttpError(400, `Invalid ${key}: expected a finite number or null`);
 }
 
 function booleanQuery(req: Request, key: string): boolean | undefined {

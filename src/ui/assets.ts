@@ -85,6 +85,7 @@ export const UI_HTML = `<!doctype html>
                 <label class="sort-control" for="anchor-group-sort">
                   <span>Sort</span>
                   <select id="anchor-group-sort">
+                    <option value="priority">Priority</option>
                     <option value="updated">Last update</option>
                     <option value="name">Project name</option>
                     <option value="created">Created date</option>
@@ -278,6 +279,20 @@ export const UI_HTML = `<!doctype html>
                 <div class="metadata-box">
                   <h3>Validation</h3>
                   <div id="validation-status"></div>
+                </div>
+                <div class="metadata-box">
+                  <h3>Project Priority</h3>
+                  <form id="priority-form" class="stack-form">
+                    <label>
+                      Priority
+                      <input id="priority-input" type="number" step="any" placeholder="1.1">
+                    </label>
+                    <div class="action-row">
+                      <button id="update-priority" type="submit">Update</button>
+                      <button id="clear-priority" type="button">Clear</button>
+                    </div>
+                  </form>
+                  <pre id="priority-result" class="compact-raw">Set a numeric priority such as 1, 1.1, or 2.045.</pre>
                 </div>
               </section>
               <section class="editor-grid">
@@ -887,7 +902,7 @@ textarea {
 
 .detail-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 12px;
   margin-bottom: 14px;
 }
@@ -1147,7 +1162,7 @@ textarea {
 `;
 
 export const UI_JS = `(function () {
-  var DEFAULT_ANCHOR_SORT = "updated";
+  var DEFAULT_ANCHOR_SORT = "priority";
   var ANCHOR_BATCH_SIZE = 50;
   var KNOWN_URL_PARAMS = [
     "anchor",
@@ -1540,6 +1555,12 @@ export const UI_JS = `(function () {
     if (typeof anchor.project === "string") {
       return anchor.project;
     }
+    if (anchor.frontmatter && Array.isArray(anchor.frontmatter.project) && typeof anchor.frontmatter.project[0] === "string") {
+      return anchor.frontmatter.project[0];
+    }
+    if (anchor.frontmatter && typeof anchor.frontmatter.project === "string") {
+      return anchor.frontmatter.project;
+    }
     return "";
   }
 
@@ -1557,7 +1578,7 @@ export const UI_JS = `(function () {
   }
 
   function validAnchorGroupSort(value) {
-    return value === "updated" || value === "created" || value === "name" ? value : DEFAULT_ANCHOR_SORT;
+    return value === "updated" || value === "created" || value === "name" || value === "priority" ? value : DEFAULT_ANCHOR_SORT;
   }
 
   function currentFilters() {
@@ -1952,6 +1973,9 @@ export const UI_JS = `(function () {
       return compareTimestamps(anchorTimestamp(right, "createdAt"), anchorTimestamp(left, "createdAt"))
         || compareAnchorLabels(left, right);
     }
+    if (sort === "priority") {
+      return comparePriority(anchorPriority(left), anchorPriority(right)) || compareAnchorLabels(left, right);
+    }
     return compareAnchorLabels(left, right);
   }
 
@@ -2006,6 +2030,9 @@ export const UI_JS = `(function () {
       return compareTimestamps(groupTimestamp(right, "createdAt", "min"), groupTimestamp(left, "createdAt", "min"))
         || compareGroupLabels(left, right);
     }
+    if (sort === "priority") {
+      return comparePriority(groupPriority(left), groupPriority(right)) || compareGroupLabels(left, right);
+    }
     return compareGroupLabels(left, right);
   }
 
@@ -2017,6 +2044,34 @@ export const UI_JS = `(function () {
     var leftTime = Number.isFinite(left) ? left : 0;
     var rightTime = Number.isFinite(right) ? right : 0;
     return leftTime === rightTime ? 0 : leftTime < rightTime ? -1 : 1;
+  }
+
+  function comparePriority(left, right) {
+    var leftPriority = Number.isFinite(left) ? left : Infinity;
+    var rightPriority = Number.isFinite(right) ? right : Infinity;
+    return leftPriority === rightPriority ? 0 : leftPriority < rightPriority ? -1 : 1;
+  }
+
+  function anchorPriority(anchor) {
+    var direct = anchor && anchor.priority;
+    if (typeof direct === "number" && Number.isFinite(direct)) {
+      return direct;
+    }
+    var frontmatter = anchor && anchor.frontmatter;
+    var fromFrontmatter = frontmatter && frontmatter.priority;
+    return typeof fromFrontmatter === "number" && Number.isFinite(fromFrontmatter) ? fromFrontmatter : NaN;
+  }
+
+  function priorityLabel(priority) {
+    return Number.isFinite(priority) ? "P" + String(priority) : "";
+  }
+
+  function groupPriority(group) {
+    var anchors = Array.isArray(group.anchors) ? group.anchors : [];
+    var priorities = anchors.map(anchorPriority).filter(function (priority) {
+      return Number.isFinite(priority);
+    });
+    return priorities.length ? Math.min.apply(null, priorities) : NaN;
   }
 
   function groupTimestamp(group, field, mode) {
@@ -2043,10 +2098,12 @@ export const UI_JS = `(function () {
 
   function renderAnchorGroup(group) {
     var open = state.expandedAnchorGroups.has(group.key) ? " open" : "";
+    var priority = priorityLabel(groupPriority(group));
+    var count = priority ? priority + " · " + group.anchors.length : String(group.anchors.length);
     return "<details class=\\"anchor-group\\" data-group-key=\\"" + escapeHtml(group.key) + "\\"" + open + ">"
       + "<summary class=\\"anchor-group-title\\">"
       + "<span class=\\"anchor-group-label\\">" + escapeHtml(group.label) + "</span>"
-      + "<span class=\\"anchor-group-count\\">" + escapeHtml(String(group.anchors.length)) + "</span>"
+      + "<span class=\\"anchor-group-count\\">" + escapeHtml(count) + "</span>"
       + "</summary>"
       + "<div class=\\"anchor-group-items\\">" + group.anchors.map(renderAnchorRow).join("") + "</div>"
       + "</details>";
@@ -2066,7 +2123,8 @@ export const UI_JS = `(function () {
 
   function renderAnchorRow(anchor) {
       var active = anchor.name === state.selectedName ? " active" : "";
-      var meta = [anchor.category, projectOf(anchor)].filter(Boolean).map(function (item) {
+      var priority = priorityLabel(anchorPriority(anchor));
+      var meta = [priority, anchor.category, projectOf(anchor)].filter(Boolean).map(function (item) {
         return "<span class=\\"badge\\">" + escapeHtml(item) + "</span>";
       }).join("");
       return "<a class=\\"anchor-row" + active + "\\" href=\\"" + escapeHtml(anchorHref(anchor.name)) + "\\" data-name=\\"" + escapeHtml(anchor.name) + "\\">"
@@ -2648,6 +2706,44 @@ export const UI_JS = `(function () {
     return JSON.stringify(result, null, 2);
   }
 
+  async function updateProjectPriorityFromDetail(clear) {
+    var anchor = state.selectedAnchor;
+    if (!anchor) {
+      throw new Error("Select a project anchor before updating priority.");
+    }
+    var project = projectOf(anchor);
+    if (!project) {
+      throw new Error("Selected anchor is not associated with a project.");
+    }
+    var priority = null;
+    if (!clear) {
+      var raw = el("priority-input").value.trim();
+      if (!raw) {
+        throw new Error("Enter a priority number, or use Clear.");
+      }
+      priority = Number(raw);
+      if (!Number.isFinite(priority)) {
+        throw new Error("Priority must be a finite number.");
+      }
+    }
+    var label = clear ? "clear this project priority" : "set this project priority to P" + String(priority);
+    if (!window.confirm("Explicitly approve and " + label + "?")) {
+      return;
+    }
+    var result = await apiPost("/api/ui/project-priority", {
+      project: project,
+      name: anchor.name,
+      priority: priority,
+      approved: true,
+      expectedFileCommit: anchor.fileCommit
+    });
+    el("priority-result").textContent = formatWriteResult(result);
+    if (result.version) {
+      await load();
+      await selectAnchor(anchor.name, { skipLocationUpdate: true });
+    }
+  }
+
   async function loadAnchorHistory() {
     var anchor = state.selectedAnchor;
     if (!anchor) {
@@ -2857,7 +2953,8 @@ export const UI_JS = `(function () {
     el("detail-title").textContent = anchor.ui.label;
     el("detail-path").textContent = anchor.name;
     el("detail-badges").innerHTML = healthBadge(anchor.ui.health)
-      + "<span class=\\"badge\\">" + escapeHtml(anchor.frontmatter.type || "unknown type") + "</span>";
+      + "<span class=\\"badge\\">" + escapeHtml(anchor.frontmatter.type || "unknown type") + "</span>"
+      + (priorityLabel(anchorPriority(anchor)) ? "<span class=\\"badge\\">" + escapeHtml(priorityLabel(anchorPriority(anchor))) + "</span>" : "");
     el("section-status").innerHTML = Object.keys(anchor.ui.sections).map(function (section) {
       var ok = anchor.ui.sections[section];
       return "<span class=\\"badge " + (ok ? "ok" : "block") + "\\">" + escapeHtml(section) + "</span>";
@@ -2871,8 +2968,12 @@ export const UI_JS = `(function () {
     el("edit-content").value = "";
     el("edit-message").value = "";
     el("edit-approved").checked = false;
+    el("priority-input").value = priorityLabel(anchorPriority(anchor)).replace(/^P/, "");
     el("rename-target").value = anchor.name;
     el("action-message").value = "";
+    el("priority-result").textContent = projectOf(anchor)
+      ? "Set a numeric priority such as 1, 1.1, or 2.045."
+      : "Priority is only available for project anchors.";
     el("edit-result").textContent = "Compose an edit to preview proposal or commit results.";
     el("history-list").innerHTML = "";
     el("history-diff").textContent = "Load history to inspect diffs or revert.";
@@ -3150,6 +3251,13 @@ export const UI_JS = `(function () {
       event.preventDefault();
       commitDirectFromComposer().catch(function (error) { setBanner(error.message, "error"); });
     });
+    el("priority-form").addEventListener("submit", function (event) {
+      event.preventDefault();
+      updateProjectPriorityFromDetail(false).catch(function (error) { setBanner(error.message, "error"); });
+    });
+    el("clear-priority").addEventListener("click", function () {
+      updateProjectPriorityFromDetail(true).catch(function (error) { setBanner(error.message, "error"); });
+    });
     el("load-history").addEventListener("click", function () {
       loadAnchorHistory().catch(function (error) { setBanner(error.message, "error"); });
     });
@@ -3243,6 +3351,8 @@ export const UI_JS = `(function () {
     window.__ANCHOR_MCP_UI_TEST_HOOKS__.renderAnchorGroup = renderAnchorGroup;
     window.__ANCHOR_MCP_UI_TEST_HOOKS__.renderAnchorRow = renderAnchorRow;
     window.__ANCHOR_MCP_UI_TEST_HOOKS__.sortAnchorGroups = sortAnchorGroups;
+    window.__ANCHOR_MCP_UI_TEST_HOOKS__.priorityLabel = priorityLabel;
+    window.__ANCHOR_MCP_UI_TEST_HOOKS__.projectOf = projectOf;
     window.__ANCHOR_MCP_UI_TEST_HOOKS__.setAnchorGroupSortForTest = function (value) {
       state.anchorGroupSort = validAnchorGroupSort(value);
     };

@@ -35,6 +35,8 @@ type UiAssetHooks = {
   parsePlannerLogPaste(text: unknown): Record<string, unknown> | null;
   buildJudgePrompt(plan: Record<string, unknown>, anchorBodies: Record<string, string>): string;
   formatPreview(preview: Record<string, unknown>): string;
+  priorityLabel(priority: number): string;
+  projectOf(anchor: Record<string, unknown>): string;
 };
 
 type TestStorage = {
@@ -144,11 +146,52 @@ describe("UI browser assets", () => {
     expect(UI_HTML).toContain('id="load-history"');
     expect(UI_HTML).toContain('id="rename-anchor"');
     expect(UI_HTML).toContain('id="delete-anchor"');
+    expect(UI_HTML).toContain('id="priority-form"');
+    expect(UI_HTML).toContain('<option value="priority">Priority</option>');
     expect(UI_JS).toContain("/api/ui/propose-change");
     expect(UI_JS).toContain("/api/ui/proposed-change-apply");
     expect(UI_JS).toContain("/api/ui/anchor-frontmatter");
+    expect(UI_JS).toContain("/api/ui/project-priority");
     expect(UI_JS).toContain("/api/ui/anchor-versions");
     expect(UI_JS).toContain("/api/ui/anchor-delete");
+  });
+
+  it("renders numeric priorities as project badges", () => {
+    const hooks = loadHooks();
+    const row = hooks.renderAnchorRow({
+      name: "projects/demo/demo.md",
+      category: "projects",
+      project: ["demo"],
+      priority: 2.045,
+      summary: "Demo",
+      ui: { label: "Demo", health: { status: "ok" } },
+    });
+    const group = hooks.renderAnchorGroup({
+      key: "project:demo",
+      label: "demo",
+      anchors: [
+        {
+          name: "projects/demo/demo.md",
+          priority: 2.045,
+          ui: { label: "Demo", health: { status: "ok" } },
+        },
+      ],
+    });
+
+    expect(hooks.priorityLabel(2.045)).toBe("P2.045");
+    expect(row).toContain("P2.045");
+    expect(group).toContain("P2.045");
+  });
+
+  it("reads project metadata from selected anchor detail front matter", () => {
+    const hooks = loadHooks();
+
+    expect(
+      hooks.projectOf({
+        name: "projects/demo/demo.md",
+        frontmatter: { project: ["demo"] },
+      }),
+    ).toBe("demo");
   });
 
   it("requests anchor list batches with explicit limit and offset", () => {
@@ -334,6 +377,7 @@ describe("UI browser assets", () => {
 
   it("includes project group sort controls", () => {
     expect(UI_HTML).toContain('id="anchor-group-sort"');
+    expect(UI_HTML).toContain('<option value="priority">Priority</option>');
     expect(UI_HTML).toContain('<option value="name">Project name</option>');
     expect(UI_HTML).toContain('<option value="updated">Last update</option>');
     expect(UI_HTML).toContain('<option value="created">Created date</option>');
@@ -372,18 +416,18 @@ describe("UI browser assets", () => {
     expect(hooks.sortAnchorGroups(groups).map((group) => group.label)).toEqual(["middle", "alpha", "zeta"]);
   });
 
-  it("defaults sidebar project groups to last update sort", () => {
+  it("defaults sidebar project groups to priority sort", () => {
     const hooks = loadHooks();
     const groups = [
       {
         key: "project:zeta",
         label: "zeta",
-        anchors: [{ updatedAt: "2026-05-20T10:00:00.000Z" }],
+        anchors: [{ priority: 2, updatedAt: "2026-05-20T10:00:00.000Z" }],
       },
       {
         key: "project:alpha",
         label: "alpha",
-        anchors: [{ updatedAt: "2026-05-24T10:00:00.000Z" }],
+        anchors: [{ priority: 1, updatedAt: "2026-05-24T10:00:00.000Z" }],
       },
     ];
 
