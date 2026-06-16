@@ -854,6 +854,107 @@ None.
     expect(read.content).toContain("- The demo anchor exists.");
   });
 
+  it("requires approval for project priority changes and stores numeric priorities", async () => {
+    await service.writeAnchor({
+      name: "projects/demo/demo",
+      content: projectAnchorContent(),
+      message: "test: add demo anchor",
+    });
+
+    const blocked = await service.updateAnchorFrontmatter({
+      name: "projects/demo/demo",
+      updates: { priority: 1.1 },
+      message: "test: set priority",
+    });
+    expect(blocked.version).toBeUndefined();
+    expect(blocked.requiresApproval).toBe(true);
+    expect(blocked.warnings.map((warning) => warning.code)).toContain("requires_approval");
+
+    const approved = await service.updateProjectPriority({
+      project: "demo",
+      priority: 1.1,
+      approved: true,
+      message: "test: set approved priority",
+    });
+    expect(approved.version).toMatch(/[a-f0-9]{40}/);
+
+    const read = await service.readAnchor("projects/demo/demo");
+    expect(read.frontmatter.priority).toBe(1.1);
+    const listed = await service.listAnchors({ project: "demo" });
+    expect(listed.find((anchor) => anchor.name === "projects/demo/demo.md")?.priority).toBe(1.1);
+  });
+
+  it("sorts anchor pages by priority with unprioritized anchors last", async () => {
+    await service.writeAnchor({
+      name: "projects/demo/lower",
+      content: projectAnchorContent({ summary: "Lower priority demo anchor." }),
+      message: "test: add lower",
+    });
+    await service.writeAnchor({
+      name: "projects/demo/higher",
+      content: projectAnchorContent({ summary: "Higher priority demo anchor." }),
+      message: "test: add higher",
+    });
+    await service.writeAnchor({
+      name: "projects/demo/unprioritized",
+      content: projectAnchorContent({ summary: "Unprioritized demo anchor." }),
+      message: "test: add unprioritized",
+    });
+
+    await service.updateProjectPriority({ name: "projects/demo/lower", priority: 2.045, approved: true });
+    await service.updateProjectPriority({ name: "projects/demo/higher", priority: 1.1, approved: true });
+
+    const page = await service.listAnchorsDiscoveryPage({ project: "demo" }, { sort: "priority", offset: 0, limit: 3 });
+
+    expect(page.anchors.map((anchor) => anchor.name)).toEqual([
+      "projects/demo/higher.md",
+      "projects/demo/lower.md",
+      "projects/demo/unprioritized.md",
+    ]);
+  });
+
+  it("rejects non-numeric priority front matter", async () => {
+    const result = await service.writeAnchor({
+      name: "projects/demo/bad-priority",
+      content: `---
+project:
+  - demo
+type: context-anchor
+tags:
+  - context-anchor
+summary: "Demo anchor summary."
+read_this_if:
+  - "You need demo context."
+last_validated: 2026-05-20
+priority: P1
+---
+
+# Demo
+
+## Current State
+
+- Exists.
+
+## Decisions
+
+- None.
+
+## Constraints
+
+- None.
+
+## PRs
+
+None.
+`,
+    });
+
+    expect(result.version).toBeUndefined();
+    expect(result.warnings.map((warning) => warning.code)).toContain("front_matter_schema");
+    expect(result.warnings.map((warning) => warning.code)).not.toContain("requires_approval");
+    expect(result.requiresApproval).toBe(false);
+  });
+
   it("appendToAnchorSection appends a valid PR line", async () => {
     await service.writeAnchor({
       name: "projects/demo/demo",

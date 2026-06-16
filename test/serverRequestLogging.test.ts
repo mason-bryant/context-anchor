@@ -139,6 +139,39 @@ describe("MCP request logging", () => {
     );
   });
 
+  it("routes updateProjectPriority tool calls", async () => {
+    const service = {
+      updateProjectPriority: vi.fn(async () => ({
+        version: "a".repeat(40),
+        warnings: [],
+      })),
+    } as unknown as AnchorService;
+    const server = createAnchorMcpServer(service);
+    const tool = toolForTest(server, "updateProjectPriority");
+
+    await tool.handler(
+      parseToolInput(tool, {
+        project: "demo",
+        name: "projects/demo/demo.md",
+        priority: 2.045,
+        approved: true,
+        expectedFileCommit: "abc123",
+      }),
+      {},
+    );
+
+    expect((service as unknown as { updateProjectPriority: ReturnType<typeof vi.fn> }).updateProjectPriority)
+      .toHaveBeenCalledWith({
+        project: "demo",
+        name: "projects/demo/demo.md",
+        priority: 2.045,
+        message: undefined,
+        approved: true,
+        coAuthor: undefined,
+        expectedFileCommit: "abc123",
+      });
+  });
+
   it("normalizes JSON-stringified project update status arrays", async () => {
     const service = {
       projectUpdateSnapshot: vi.fn(async () => ({ milestones: [] })),
