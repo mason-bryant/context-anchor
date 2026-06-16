@@ -36,6 +36,7 @@ type UiAssetHooks = {
   buildJudgePrompt(plan: Record<string, unknown>, anchorBodies: Record<string, string>): string;
   formatPreview(preview: Record<string, unknown>): string;
   priorityLabel(priority: number): string;
+  projectOf(anchor: Record<string, unknown>): string;
 };
 
 type TestStorage = {
@@ -180,6 +181,17 @@ describe("UI browser assets", () => {
     expect(hooks.priorityLabel(2.045)).toBe("P2.045");
     expect(row).toContain("P2.045");
     expect(group).toContain("P2.045");
+  });
+
+  it("reads project metadata from selected anchor detail front matter", () => {
+    const hooks = loadHooks();
+
+    expect(
+      hooks.projectOf({
+        name: "projects/demo/demo.md",
+        frontmatter: { project: ["demo"] },
+      }),
+    ).toBe("demo");
   });
 
   it("requests anchor list batches with explicit limit and offset", () => {

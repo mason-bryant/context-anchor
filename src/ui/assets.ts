@@ -1555,6 +1555,12 @@ export const UI_JS = `(function () {
     if (typeof anchor.project === "string") {
       return anchor.project;
     }
+    if (anchor.frontmatter && Array.isArray(anchor.frontmatter.project) && typeof anchor.frontmatter.project[0] === "string") {
+      return anchor.frontmatter.project[0];
+    }
+    if (anchor.frontmatter && typeof anchor.frontmatter.project === "string") {
+      return anchor.frontmatter.project;
+    }
     return "";
   }
 
@@ -3346,6 +3352,7 @@ export const UI_JS = `(function () {
     window.__ANCHOR_MCP_UI_TEST_HOOKS__.renderAnchorRow = renderAnchorRow;
     window.__ANCHOR_MCP_UI_TEST_HOOKS__.sortAnchorGroups = sortAnchorGroups;
     window.__ANCHOR_MCP_UI_TEST_HOOKS__.priorityLabel = priorityLabel;
+    window.__ANCHOR_MCP_UI_TEST_HOOKS__.projectOf = projectOf;
     window.__ANCHOR_MCP_UI_TEST_HOOKS__.setAnchorGroupSortForTest = function (value) {
       state.anchorGroupSort = validAnchorGroupSort(value);
     };
