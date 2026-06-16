@@ -102,7 +102,10 @@ import type {
   RenderedProjectUpdate,
   RenderProjectUpdateInput,
   SearchHit,
+  TaskDueRow,
+  ListTasksDueInput,
   UpdateProjectPriorityInput,
+  UpdateTaskDueInput,
   ValidationViolation,
   WriteAnchorInput,
   WriteAnchorResult,
@@ -772,6 +775,135 @@ export class AnchorService {
         ?.name ??
       candidates.find((meta) => !meta.name.includes("/milestones/") && frontmatterTypeIncludes(meta.type, "project-roadmap"))?.name
     );
+  }
+
+  async updateTaskDue(input: UpdateTaskDueInput): Promise<WriteAnchorResult> {
+    if (input.due !== null && !input.dateConfidence) {
+      return {
+        warnings: [
+          {
+            severity: "BLOCK",
+            code: "missing_date_confidence",
+            message: "date_confidence is required when due is set. Pass one of: committed, internal_goal, estimated.",
+          },
+        ],
+      };
+    }
+
+    const rawContent = await this.repo.readRaw(input.name);
+    if (rawContent === undefined) {
+      return {
+        warnings: [
+          {
+            severity: "BLOCK",
+            code: "missing_anchor",
+            message: `Anchor not found: ${input.name}`,
+          },
+        ],
+      };
+    }
+
+    const parsed = parseAnchor(rawContent);
+    const rawTasks = parsed.frontmatter.tasks;
+    if (!Array.isArray(rawTasks)) {
+      return {
+        warnings: [
+          {
+            severity: "BLOCK",
+            code: "no_tasks",
+            message: `Anchor has no tasks array: ${input.name}`,
+          },
+        ],
+      };
+    }
+
+    const taskIdx = rawTasks.findIndex(
+      (t): t is Record<string, unknown> =>
+        !!t && typeof t === "object" && !Array.isArray(t) && (t as Record<string, unknown>).id === input.taskId,
+    );
+
+    if (taskIdx === -1) {
+      return {
+        warnings: [
+          {
+            severity: "BLOCK",
+            code: "task_not_found",
+            message: `Task "${input.taskId}" not found in ${input.name}`,
+          },
+        ],
+      };
+    }
+
+    const updatedTasks = rawTasks.map((t, i) => {
+      if (i !== taskIdx || typeof t !== "object" || !t) return t;
+      const task = { ...(t as Record<string, unknown>) };
+      if (input.due === null) {
+        delete task.due;
+        delete task.date_confidence;
+      } else {
+        task.due = input.due;
+        task.date_confidence = input.dateConfidence;
+      }
+      return task;
+    });
+
+    return this.updateAnchorFrontmatter({
+      name: input.name,
+      updates: { tasks: updatedTasks },
+      message: input.message,
+      approved: input.approved,
+      coAuthor: input.coAuthor,
+      expectedFileCommit: input.expectedFileCommit,
+    });
+  }
+
+  async listTasksDue(input: ListTasksDueInput): Promise<{ tasks: TaskDueRow[] }> {
+    const milestones = await this.listMilestones(input.project);
+    const DEFAULT_STATUSES = new Set(["active", "todo", "blocked"]);
+    const statusFilter = input.status && input.status.length > 0 ? new Set(input.status) : DEFAULT_STATUSES;
+
+    const rows: TaskDueRow[] = [];
+
+    for (const milestone of milestones) {
+      if (!milestone.tasks) continue;
+
+      const classification = classifyAnchorPath(milestone.name);
+      const projectSlug = classification.kind === "anchor" ? classification.projectSlug : undefined;
+
+      for (const task of milestone.tasks) {
+        if (!statusFilter.has(task.status)) continue;
+
+        if (input.noDue) {
+          if (task.due) continue;
+        } else {
+          if (input.dueBefore && task.due && task.due >= input.dueBefore) continue;
+          if (input.dueAfter && (!task.due || task.due < input.dueAfter)) continue;
+        }
+
+        rows.push({
+          taskId: task.id,
+          taskTitle: task.title,
+          taskStatus: task.status,
+          ...(task.owner ? { taskOwner: task.owner } : {}),
+          ...(task.due ? { due: task.due } : {}),
+          ...(task.dateConfidence ? { dateConfidence: task.dateConfidence } : {}),
+          ...(task.notes ? { notes: task.notes } : {}),
+          milestoneName: milestone.name,
+          ...(milestone.displayId ? { milestoneDisplayId: milestone.displayId } : {}),
+          milestoneStatus: milestone.status,
+          ...(projectSlug ? { project: projectSlug } : {}),
+        });
+      }
+    }
+
+    rows.sort((a, b) => {
+      if (a.due && b.due) return a.due.localeCompare(b.due);
+      if (a.due) return -1;
+      if (b.due) return 1;
+      return a.milestoneName.localeCompare(b.milestoneName);
+    });
+
+    return { tasks: rows };
   }
 
   async updateAnchorSection(input: {
