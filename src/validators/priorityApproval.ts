@@ -9,6 +9,9 @@ export const validatePriorityApproval: Validator = (context) => {
 
   const oldPriority = parseAnchor(context.oldContent).frontmatter.priority;
   const newPriority = parseAnchor(context.newContent).frontmatter.priority;
+  if (!isValidStoredPriority(newPriority)) {
+    return [];
+  }
   if (priorityKey(oldPriority) === priorityKey(newPriority)) {
     return [];
   }
@@ -25,4 +28,8 @@ export const validatePriorityApproval: Validator = (context) => {
 
 function priorityKey(value: unknown): string {
   return typeof value === "number" && Number.isFinite(value) ? String(value) : JSON.stringify(value);
+}
+
+function isValidStoredPriority(value: unknown): value is number | undefined {
+  return value === undefined || (typeof value === "number" && Number.isFinite(value));
 }

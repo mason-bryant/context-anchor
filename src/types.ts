@@ -69,7 +69,7 @@ export type AnchorMeta = {
   version?: string;
   updatedAt?: string;
   createdAt?: string;
-  /** Optional project ordering priority, lower numbers sort first (for example P1, P1.1, P2.045). */
+  /** Optional project ordering priority stored as a number; UI labels render values as P1, P1.1, or P2.045. */
   priority?: number;
   origin?: "repo" | "built-in";
   /** Package version when this built-in policy row was materialized. */

@@ -951,6 +951,8 @@ None.
 
     expect(result.version).toBeUndefined();
     expect(result.warnings.map((warning) => warning.code)).toContain("front_matter_schema");
+    expect(result.warnings.map((warning) => warning.code)).not.toContain("requires_approval");
+    expect(result.requiresApproval).toBe(false);
   });
 
   it("appendToAnchorSection appends a valid PR line", async () => {
