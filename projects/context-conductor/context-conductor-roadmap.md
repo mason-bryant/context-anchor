@@ -11,7 +11,7 @@ summary: >-
 read_this_if:
   - Planning or prioritizing anchor-mcp work.
   - Checking definition of done for context-conductor milestones.
-last_validated: 2026-06-10T00:00:00.000Z
+last_validated: 2026-06-15T00:00:00.000Z
 ---
 
 # Context conductor roadmap
@@ -88,10 +88,29 @@ last_validated: 2026-06-10T00:00:00.000Z
 
 #### Proposed
 
+### Goal G-005 -- Retrieval quality hardening and operability
+
+#### Acceptance Criteria
+
+#### Approved
+
+- [x] AC-014: CI runs `npm run eval` as a required gate so planner recall regressions fail the build. Evidence: `.github/workflows/ci.yml` eval step.
+
+- [x] AC-015: UI query boolean parsing (`booleanQuery`) rejects non-boolean strings with HTTP 400, matching `booleanBody` strictness. Evidence: `test/uiHttp.test.ts` invalid `includeArchive` case.
+
+#### Proposed
+
+- [ ] AC-P001: Extend the typed-schema registry beyond `project-milestone` once a concrete second anchor type is needed. Evidence: registry additions and `src/schema/registry.ts` coverage when scheduled.
+
+- [ ] AC-P002: Add relation kinds (`supersedes`, `valid_until`) to the relations overlay once a concrete need exists. Evidence: relations validation and `src/relations` coverage when scheduled.
+
 ## Current State
+
 - Roadmap is maintained alongside shipped behavior in `context-conductor.md`.
 - Goal G-003 steel-thread milestone tooling is shipped.
-- Goal G-004 session-start and retrieval quality v1 is implemented on `feat/session-start-v1` and under review in PR #30 (CI passing; `npm run typecheck`, 199 tests, and `npm run eval` recall 1.00 all green as of 2026-06-10).
+- Goal G-004 session-start and retrieval quality v1 is shipped and merged in PR #30 (2026-06-11).
+- Goal G-005 retrieval quality hardening (CI `npm run eval` gate, strict UI boolean query parsing) is implemented on `feat/retrieval-hardening-v1` (208 tests + eval green as of 2026-06-15); the registry/relation-kinds items remain parked under Proposed until a concrete need arises.
+
 ## Decisions
 
 - Acceptance criteria for planned work stay in this roadmap until shipped facts move to the context anchor.
@@ -103,3 +122,5 @@ last_validated: 2026-06-10T00:00:00.000Z
 ## PRs
 
 - [PR Session-start and retrieval quality v1 - #30](https://github.com/mason-bryant/context-anchor/pull/30)
+
+- [PR Retrieval quality hardening and operability (G-005) - #34](https://github.com/mason-bryant/context-anchor/pull/34)
