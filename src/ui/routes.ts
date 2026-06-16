@@ -194,6 +194,45 @@ export function registerUiRoutes(
     }),
   );
 
+  app.get(
+    "/api/ui/tasks-due",
+    ...protect,
+    jsonRoute(async (req) => {
+      const project = optionalQueryString(req, "project");
+      const dueBefore = optionalQueryString(req, "dueBefore");
+      const dueAfter = optionalQueryString(req, "dueAfter");
+      const noDue = req.query["noDue"] === "true";
+      const statusRaw = optionalQueryString(req, "status");
+      const status = statusRaw ? statusRaw.split(",") : undefined;
+      return service.listTasksDue({
+        ...(project ? { project } : {}),
+        ...(dueBefore ? { dueBefore } : {}),
+        ...(dueAfter ? { dueAfter } : {}),
+        ...(noDue ? { noDue } : {}),
+        status: status as ("todo" | "active" | "blocked" | "done" | "cancelled")[] | undefined,
+      });
+    }),
+  );
+
+  app.post(
+    "/api/ui/task-due",
+    ...protect,
+    jsonRoute(async (req) => {
+      const body = bodyRecord(req);
+      const due = body["due"] === null ? null : optionalBodyString(body, "due") ?? null;
+      return service.updateTaskDue({
+        name: requiredBodyString(body, "name"),
+        taskId: requiredBodyString(body, "taskId"),
+        due,
+        dateConfidence: optionalBodyString(body, "dateConfidence") as "committed" | "internal_goal" | "estimated" | undefined,
+        message: optionalBodyString(body, "message"),
+        approved: booleanBody(body, "approved"),
+        coAuthor: optionalBodyString(body, "coAuthor"),
+        expectedFileCommit: optionalBodyString(body, "expectedFileCommit"),
+      });
+    }),
+  );
+
   app.post(
     "/api/ui/anchor-section",
     ...protect,

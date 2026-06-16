@@ -146,6 +146,47 @@ export type UpdateProjectPriorityInput = {
   expectedFileCommit?: string;
 };
 
+export type UpdateTaskDueInput = {
+  /** Milestone anchor name containing the task. */
+  name: string;
+  /** Task id to update. */
+  taskId: string;
+  /** ISO date (YYYY-MM-DD) to set, or null to clear the due date. */
+  due: string | null;
+  /** Required when due is set. */
+  dateConfidence?: DateConfidence;
+  message?: string;
+  approved?: boolean;
+  coAuthor?: string;
+  expectedFileCommit?: string;
+};
+
+export type ListTasksDueInput = {
+  project?: string;
+  /** Include only tasks with due date before this ISO date (exclusive). */
+  dueBefore?: string;
+  /** Include only tasks with due date on or after this ISO date. */
+  dueAfter?: string;
+  /** When true, include only tasks that have no due date set. */
+  noDue?: boolean;
+  /** Filter by task status. Defaults to active, todo, and blocked. */
+  status?: MilestoneTaskStatus[];
+};
+
+export type TaskDueRow = {
+  taskId: string;
+  taskTitle: string;
+  taskStatus: MilestoneTaskStatus;
+  taskOwner?: string;
+  due?: string;
+  dateConfidence?: DateConfidence;
+  notes?: string;
+  milestoneName: string;
+  milestoneDisplayId?: string;
+  milestoneStatus: string;
+  project?: string;
+};
+
 export type ProposedChangeStatus = "pending" | "applied" | "rejected" | "changes_requested" | "superseded";
 
 export type ProposedChangeScope =

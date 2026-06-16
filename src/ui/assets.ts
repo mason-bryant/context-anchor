@@ -104,6 +104,7 @@ export const UI_HTML = `<!doctype html>
           <nav class="tabs" aria-label="Primary views">
             <button class="tab active" data-tab="root" type="button"><span class="icon-label"><svg class="icon" aria-hidden="true"><use href="#icon-home"></use></svg><span>Context Root</span></span></button>
             <button class="tab" data-tab="planner" type="button"><span class="icon-label"><svg class="icon" aria-hidden="true"><use href="#icon-plan"></use></svg><span>Planner</span></span></button>
+            <button class="tab" data-tab="tasks" type="button"><span class="icon-label"><svg class="icon" aria-hidden="true"><use href="#icon-filter"></use></svg><span>Tasks</span></span></button>
             <button class="tab" data-tab="review" type="button"><span class="icon-label"><svg class="icon" aria-hidden="true"><use href="#icon-save"></use></svg><span>Review</span></span></button>
             <button class="tab" data-tab="detail" type="button" disabled><span class="icon-label"><svg class="icon" aria-hidden="true"><use href="#icon-anchor"></use></svg><span>Selected Anchor</span></span></button>
           </nav>
@@ -252,6 +253,32 @@ export const UI_HTML = `<!doctype html>
                 <pre id="proposal-preview" class="compact-raw">Select a proposal to preview validation and diff output.</pre>
               </div>
             </section>
+          </section>
+
+          <section id="tasks-view" class="view">
+            <div class="view-header">
+              <div>
+                <h2>Tasks by Due Date</h2>
+                <p id="tasks-summary">Tasks across all milestones.</p>
+              </div>
+              <div class="tasks-filters">
+                <select id="tasks-project-filter" aria-label="Filter by project">
+                  <option value="">All projects</option>
+                </select>
+                <select id="tasks-status-filter" aria-label="Filter by status">
+                  <option value="active,todo,blocked">Active / Todo / Blocked</option>
+                  <option value="todo">Todo only</option>
+                  <option value="active">Active only</option>
+                  <option value="blocked">Blocked only</option>
+                  <option value="done,cancelled">Done / Cancelled</option>
+                  <option value="">All statuses</option>
+                </select>
+                <label class="checkbox-label"><input type="checkbox" id="tasks-no-due"> No due date only</label>
+                <button id="tasks-refresh" type="button">Refresh</button>
+              </div>
+            </div>
+            <div id="tasks-empty" class="empty-state">No tasks match the current filters.</div>
+            <div id="tasks-list" hidden></div>
           </section>
 
           <section id="detail-view" class="view">
@@ -1159,6 +1186,123 @@ textarea {
     flex-direction: column;
   }
 }
+
+.tasks-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.tasks-filters select {
+  font: inherit;
+  font-size: 13px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 4px 8px;
+  color: var(--text);
+}
+
+.checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 13px;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.task-group-header {
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  padding: 16px 0 6px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 4px;
+}
+
+.task-group-header.overdue {
+  color: var(--error, #c7352d);
+}
+
+.task-group-header.due-soon {
+  color: #b16a03;
+}
+
+.task-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px 16px;
+  align-items: start;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--panel-strong);
+}
+
+.task-row:last-child {
+  border-bottom: none;
+}
+
+.task-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  align-items: center;
+  margin-top: 3px;
+}
+
+.task-title-line {
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.task-milestone-link {
+  font-size: 12px;
+  color: var(--accent);
+  cursor: pointer;
+  background: none;
+  border: none;
+  padding: 0;
+  text-decoration: underline;
+}
+
+.task-due-form {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  align-items: flex-end;
+  min-width: 200px;
+}
+
+.task-due-form input[type="date"],
+.task-due-form select {
+  font: inherit;
+  font-size: 12px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 3px 6px;
+  color: var(--text);
+}
+
+.task-due-controls {
+  display: flex;
+  gap: 4px;
+}
+
+.task-due-result {
+  font-size: 11px;
+  color: var(--muted);
+  max-width: 200px;
+  text-align: right;
+}
+
+.compact-action {
+  font-size: 12px;
+  padding: 3px 8px;
+}
 `;
 
 export const UI_JS = `(function () {
@@ -1186,7 +1330,10 @@ export const UI_JS = `(function () {
     "plannerArchive",
     "proposalProject",
     "proposalStatus",
-    "proposal"
+    "proposal",
+    "tasksProject",
+    "tasksStatus",
+    "tasksNoDue"
   ];
 
   var state = {
@@ -1209,7 +1356,12 @@ export const UI_JS = `(function () {
     activeProposal: null,
     anchorVersions: [],
     expandedAnchorGroups: new Set(),
-    anchorGroupSort: DEFAULT_ANCHOR_SORT
+    anchorGroupSort: DEFAULT_ANCHOR_SORT,
+    tasks: [],
+    tasksLoading: false,
+    tasksProject: "",
+    tasksStatus: "active,todo,blocked",
+    tasksNoDue: false
   };
 
   var categories = ["", "server-rules", "agent-rules", "projects", "invariants", "conflicts", "shared", "archive"];
@@ -1282,7 +1434,7 @@ export const UI_JS = `(function () {
   }
 
   function validTab(value) {
-    return value === "root" || value === "planner" || value === "review" || value === "detail" ? value : null;
+    return value === "root" || value === "planner" || value === "tasks" || value === "review" || value === "detail" ? value : null;
   }
 
   function validRootMode(value) {
@@ -1324,6 +1476,13 @@ export const UI_JS = `(function () {
     } else {
       setControlValue("proposal-status-filter", params.get("proposalStatus") || controlValue("proposal-status-filter", "pending"));
     }
+
+    state.tasksProject = params.get("tasksProject") || "";
+    state.tasksStatus = params.get("tasksStatus") || "active,todo,blocked";
+    state.tasksNoDue = params.get("tasksNoDue") === "true";
+    setSelectValueAllowingNew("tasks-project-filter", state.tasksProject);
+    setControlValue("tasks-status-filter", state.tasksStatus);
+    setControlChecked("tasks-no-due", state.tasksNoDue);
   }
 
   function urlForState(overrides) {
@@ -1396,6 +1555,13 @@ export const UI_JS = `(function () {
     }
     if ((overrides.view || state.activeTab) === "review" && state.activeProposal && state.activeProposal.id) {
       params.set("proposal", state.activeProposal.id);
+    }
+
+    setParam(params, "tasksProject", controlValue("tasks-project-filter", sourceParams.get("tasksProject") || ""));
+    var tasksStatus = controlValue("tasks-status-filter", sourceParams.get("tasksStatus") || "active,todo,blocked");
+    setNonDefaultParam(params, "tasksStatus", tasksStatus, "active,todo,blocked");
+    if (controlChecked("tasks-no-due", state.tasksNoDue)) {
+      params.set("tasksNoDue", "true");
     }
 
     return params;
@@ -1800,6 +1966,9 @@ export const UI_JS = `(function () {
     if (state.activeTab === "review") {
       await loadProposals();
     }
+    if (state.activeTab === "tasks") {
+      await loadTasks();
+    }
     var proposalId = new URLSearchParams(window.location.search).get("proposal");
     if (state.activeTab === "review" && proposalId) {
       await selectProposal(proposalId);
@@ -1924,7 +2093,9 @@ export const UI_JS = `(function () {
     var currentPlannerProject = plannerProjectSelect.value;
     var currentPlannerTag = plannerTagSelect.value;
     var currentPlannerCategory = plannerCategorySelect.value;
-    projects = uniqueSorted(projects.concat([currentProject, currentPlannerProject]));
+    var tasksProjectSelect = el("tasks-project-filter");
+    var currentTasksProject = tasksProjectSelect.value;
+    projects = uniqueSorted(projects.concat([currentProject, currentPlannerProject, currentTasksProject]));
     tags = uniqueSorted(tags.concat([currentTag, currentPlannerTag]));
     projectSelect.innerHTML = optionList(projects, "All projects");
     tagSelect.innerHTML = optionList(tags, "All tags");
@@ -1932,12 +2103,14 @@ export const UI_JS = `(function () {
     plannerProjectSelect.innerHTML = optionList(projects, "All projects");
     plannerTagSelect.innerHTML = optionList(tags, "All tags");
     plannerCategorySelect.innerHTML = optionList(categories.slice(1), "All categories");
+    tasksProjectSelect.innerHTML = optionList(projects, "All projects");
     projectSelect.value = currentProject && projects.includes(currentProject) ? currentProject : "";
     tagSelect.value = currentTag && tags.includes(currentTag) ? currentTag : "";
     categorySelect.value = categories.includes(currentCategory) ? currentCategory : "";
     plannerProjectSelect.value = currentPlannerProject && projects.includes(currentPlannerProject) ? currentPlannerProject : "";
     plannerTagSelect.value = currentPlannerTag && tags.includes(currentPlannerTag) ? currentPlannerTag : "";
     plannerCategorySelect.value = categories.includes(currentPlannerCategory) ? currentPlannerCategory : "";
+    tasksProjectSelect.value = currentTasksProject && projects.includes(currentTasksProject) ? currentTasksProject : "";
   }
 
   function filteredAnchors() {
@@ -2911,6 +3084,194 @@ export const UI_JS = `(function () {
     showTab("planner");
   }
 
+  function showTasksView(options) {
+    var opts = options || {};
+    if (!opts.skipLocationUpdate) {
+      updateLocationFromState({ anchor: null, view: "tasks", history: "push" });
+    }
+    state.pendingAnchor = null;
+    showTab("tasks");
+    if (state.tasks.length === 0 && !state.tasksLoading) {
+      loadTasks();
+    }
+  }
+
+  async function loadTasks() {
+    state.tasksLoading = true;
+    var project = controlValue("tasks-project-filter", state.tasksProject);
+    var statusVal = controlValue("tasks-status-filter", state.tasksStatus);
+    var noDue = controlChecked("tasks-no-due", state.tasksNoDue);
+    var qs = [];
+    if (project) qs.push("project=" + encodeURIComponent(project));
+    if (statusVal) qs.push("status=" + encodeURIComponent(statusVal));
+    if (noDue) qs.push("noDue=true");
+    var url = "/api/ui/tasks-due" + (qs.length ? "?" + qs.join("&") : "");
+    try {
+      var result = await api(url);
+      state.tasks = result.tasks || [];
+      renderTasks();
+    } catch (error) {
+      setBanner(error.message, "error");
+    } finally {
+      state.tasksLoading = false;
+    }
+  }
+
+  function renderTasks() {
+    var list = el("tasks-list");
+    var emptyEl = el("tasks-empty");
+    var summary = el("tasks-summary");
+
+    if (!state.tasks || state.tasks.length === 0) {
+      list.hidden = true;
+      emptyEl.hidden = false;
+      summary.textContent = "No tasks match the current filters.";
+      return;
+    }
+
+    emptyEl.hidden = true;
+    list.hidden = false;
+
+    var today = new Date().toISOString().slice(0, 10);
+    var soon = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+
+    var overdue = [];
+    var dueSoon = [];
+    var upcoming = [];
+    var noDue = [];
+
+    state.tasks.forEach(function (task) {
+      if (!task.due) {
+        noDue.push(task);
+      } else if (task.due < today) {
+        overdue.push(task);
+      } else if (task.due <= soon) {
+        dueSoon.push(task);
+      } else {
+        upcoming.push(task);
+      }
+    });
+
+    var html = "";
+
+    function renderGroup(label, tasks, cls) {
+      if (tasks.length === 0) return "";
+      var out = "<div class=\\"task-group-header " + (cls || "") + "\\">" + escapeHtml(label) + " (" + tasks.length + ")</div>";
+      tasks.forEach(function (task) {
+        out += renderTaskRow(task);
+      });
+      return out;
+    }
+
+    html += renderGroup("Overdue", overdue, "overdue");
+    html += renderGroup("Due within 14 days", dueSoon, "due-soon");
+    html += renderGroup("Upcoming", upcoming, "");
+    html += renderGroup("No due date", noDue, "");
+
+    list.innerHTML = html;
+
+    var total = state.tasks.length;
+    summary.textContent = total + " task" + (total === 1 ? "" : "s") + " · " + overdue.length + " overdue · " + noDue.length + " without due date";
+
+    list.querySelectorAll(".task-milestone-link").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        selectAnchor(btn.dataset.anchor);
+      });
+    });
+
+    list.querySelectorAll(".task-due-form").forEach(function (form) {
+      form.addEventListener("submit", async function (e) {
+        e.preventDefault();
+        var taskId = form.dataset.taskId;
+        var milestoneName = form.dataset.milestoneName;
+        var dateInput = form.querySelector(".task-due-date");
+        var confidenceInput = form.querySelector(".task-due-confidence");
+        var resultEl = form.querySelector(".task-due-result");
+        var due = dateInput ? dateInput.value.trim() : "";
+        var confidence = confidenceInput ? confidenceInput.value : "";
+        if (due && !confidence) {
+          resultEl.textContent = "Select a date confidence.";
+          return;
+        }
+        resultEl.textContent = "Saving...";
+        try {
+          var payload = {
+            name: milestoneName,
+            taskId: taskId,
+            due: due || null,
+            approved: true
+          };
+          if (due && confidence) {
+            payload.dateConfidence = confidence;
+          }
+          var res = await apiPost("/api/ui/task-due", payload);
+          if (res.warnings && res.warnings.some(function(w) { return w.severity === "BLOCK"; })) {
+            resultEl.textContent = res.warnings.map(function(w) { return w.message; }).join("; ");
+          } else {
+            resultEl.textContent = due ? "Updated." : "Cleared.";
+            state.tasks = [];
+            loadTasks();
+          }
+        } catch (err) {
+          resultEl.textContent = err.message;
+        }
+      });
+      var clearBtn = form.querySelector(".task-due-clear");
+      if (clearBtn) {
+        clearBtn.addEventListener("click", async function () {
+          var taskId = form.dataset.taskId;
+          var milestoneName = form.dataset.milestoneName;
+          var resultEl = form.querySelector(".task-due-result");
+          resultEl.textContent = "Clearing...";
+          try {
+            var res = await apiPost("/api/ui/task-due", { name: milestoneName, taskId: taskId, due: null, approved: true });
+            if (res.warnings && res.warnings.some(function(w) { return w.severity === "BLOCK"; })) {
+              resultEl.textContent = res.warnings.map(function(w) { return w.message; }).join("; ");
+            } else {
+              resultEl.textContent = "Cleared.";
+              state.tasks = [];
+              loadTasks();
+            }
+          } catch (err) {
+            resultEl.textContent = err.message;
+          }
+        });
+      }
+    });
+  }
+
+  function renderTaskRow(task) {
+    var statusBadge = "<span class=\\"badge\\">" + escapeHtml(task.taskStatus) + "</span>";
+    var ownerBadge = task.taskOwner ? "<span class=\\"badge\\">" + escapeHtml(task.taskOwner) + "</span>" : "";
+    var projectBadge = task.project ? "<span class=\\"badge\\">" + escapeHtml(task.project) + "</span>" : "";
+    var milestoneLabel = task.milestoneDisplayId || task.milestoneName.split("/").pop().replace(/\\.md$/, "");
+    var milestoneBtn = "<button class=\\"task-milestone-link\\" data-anchor=\\"" + escapeHtml(task.milestoneName) + "\\" type=\\"button\\">" + escapeHtml(milestoneLabel) + "</button>";
+    var confidenceOptions = ["committed", "internal_goal", "estimated"].map(function (c) {
+      return "<option value=\\"" + c + "\\">" + c + "</option>";
+    }).join("");
+    var currentDue = task.due || "";
+    var currentConf = task.dateConfidence || "estimated";
+    var confSelected = ["committed", "internal_goal", "estimated"].map(function(c) {
+      return "<option value=\\"" + c + "\\"" + (c === currentConf ? " selected" : "") + ">" + c + "</option>";
+    }).join("");
+    var form = "<form class=\\"task-due-form\\" data-task-id=\\"" + escapeHtml(task.taskId) + "\\" data-milestone-name=\\"" + escapeHtml(task.milestoneName) + "\\">"
+      + "<input class=\\"task-due-date\\" type=\\"date\\" value=\\"" + escapeHtml(currentDue) + "\\" aria-label=\\"Due date\\">"
+      + "<select class=\\"task-due-confidence\\" aria-label=\\"Date confidence\\">" + confSelected + "</select>"
+      + "<div class=\\"task-due-controls\\">"
+      + "<button type=\\"submit\\" class=\\"compact-action\\">Set</button>"
+      + (currentDue ? "<button type=\\"button\\" class=\\"compact-action task-due-clear\\">Clear</button>" : "")
+      + "</div>"
+      + "<div class=\\"task-due-result\\"></div>"
+      + "</form>";
+    return "<div class=\\"task-row\\">"
+      + "<div>"
+      + "<div class=\\"task-title-line\\">" + escapeHtml(task.taskId) + " — " + escapeHtml(task.taskTitle) + "</div>"
+      + "<div class=\\"task-meta\\">" + statusBadge + ownerBadge + projectBadge + milestoneBtn + (task.due ? "<span class=\\"badge\\">" + escapeHtml(task.due) + "</span>" : "") + "</div>"
+      + "</div>"
+      + form
+      + "</div>";
+  }
+
   async function selectAnchor(name, options) {
     var opts = options || {};
     state.selectedName = name;
@@ -3175,6 +3536,8 @@ export const UI_JS = `(function () {
     applyUrlStateToControls();
     if (state.activeTab === "planner") {
       showPlanner({ skipLocationUpdate: true });
+    } else if (state.activeTab === "tasks") {
+      showTasksView({ skipLocationUpdate: true });
     } else if (state.activeTab === "review") {
       showReview({ skipLocationUpdate: true });
     } else if (state.activeTab === "detail" && state.pendingAnchor) {
@@ -3227,6 +3590,22 @@ export const UI_JS = `(function () {
         updateLocationFromState({ anchor: null, view: "review", history: "push" });
         loadProposals().catch(function (error) { setBanner(error.message, "error"); });
       });
+    });
+    el("tasks-refresh").addEventListener("click", function () {
+      state.tasks = [];
+      loadTasks().catch(function (error) { setBanner(error.message, "error"); });
+    });
+    ["tasks-project-filter", "tasks-status-filter"].forEach(function (id) {
+      el(id).addEventListener("change", function () {
+        updateLocationFromState({ anchor: null, view: "tasks", history: "push" });
+        state.tasks = [];
+        loadTasks().catch(function (error) { setBanner(error.message, "error"); });
+      });
+    });
+    el("tasks-no-due").addEventListener("change", function () {
+      updateLocationFromState({ anchor: null, view: "tasks", history: "push" });
+      state.tasks = [];
+      loadTasks().catch(function (error) { setBanner(error.message, "error"); });
     });
     el("proposal-list").addEventListener("click", function (event) {
       var card = event.target.closest("[data-proposal-id]");
@@ -3309,6 +3688,10 @@ export const UI_JS = `(function () {
         }
         if (button.dataset.tab === "planner") {
           showPlanner();
+          return;
+        }
+        if (button.dataset.tab === "tasks") {
+          showTasksView();
           return;
         }
         if (button.dataset.tab === "review") {

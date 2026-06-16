@@ -678,6 +678,70 @@ the index when your workflow checks in that file.`,
     },
   );
 
+  const DateConfidenceSchema = z.enum(["committed", "internal_goal", "estimated"]);
+  const TaskStatusSchema = z.enum(["todo", "active", "blocked", "done", "cancelled"]);
+
+  server.registerTool(
+    "updateTaskDue",
+    {
+      title: "Update Task Due Date",
+      description:
+        "Set or clear the due date for a specific task in a milestone anchor. Pass due as a YYYY-MM-DD date with dateConfidence (committed, internal_goal, or estimated), or pass due as null to clear the due date.",
+      inputSchema: z.object({
+        name: z.string().describe("Milestone anchor name containing the task."),
+        taskId: z.string().describe("Task id to update."),
+        due: z.union([z.string().regex(/^\d{4}-\d{2}-\d{2}$/), z.null()]).describe("ISO date (YYYY-MM-DD) or null to clear."),
+        dateConfidence: DateConfidenceSchema.optional().describe("Required when due is set: committed, internal_goal, or estimated."),
+        message: z.string().optional(),
+        approved: z.boolean().default(false),
+        coAuthor: z.string().optional(),
+        expectedFileCommit: z.string().optional(),
+      }),
+      annotations: { destructiveHint: false, idempotentHint: false },
+    },
+    async ({ name, taskId, due, dateConfidence, message, approved, coAuthor, expectedFileCommit }) => {
+      const result = await service.updateTaskDue({
+        name,
+        taskId,
+        due,
+        dateConfidence,
+        message,
+        approved,
+        coAuthor,
+        expectedFileCommit,
+      });
+      return jsonResult(result, result.version ? false : true);
+    },
+  );
+
+  server.registerTool(
+    "listTasksDue",
+    {
+      title: "List Tasks by Due Date",
+      description:
+        "List tasks across all milestones (or one project) sorted by due date. Defaults to active, todo, and blocked tasks. Use dueBefore/dueAfter to filter by date range, or noDue:true to find tasks without a due date.",
+      inputSchema: z.object({
+        project: z.string().optional().describe("Filter by project slug."),
+        dueBefore: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().describe("Include only tasks with due date before this date (exclusive)."),
+        dueAfter: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().describe("Include only tasks with due date on or after this date."),
+        noDue: z.boolean().optional().describe("When true, return only tasks with no due date."),
+        status: z.union([z.array(TaskStatusSchema), JsonStringSchema]).optional().describe("Filter by task status. Defaults to active, todo, blocked."),
+      }),
+      annotations: { destructiveHint: false, idempotentHint: true },
+    },
+    async ({ project, dueBefore, dueAfter, noDue, status }) => {
+      const parsedStatus = typeof status === "string" ? (JSON.parse(status) as string[]) : status;
+      const result = await service.listTasksDue({
+        project,
+        dueBefore,
+        dueAfter,
+        noDue,
+        status: parsedStatus as ("todo" | "active" | "blocked" | "done" | "cancelled")[] | undefined,
+      });
+      return jsonResult(result, false);
+    },
+  );
+
   server.registerTool(
     "updateAnchorSection",
     {
