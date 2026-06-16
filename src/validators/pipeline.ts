@@ -7,6 +7,7 @@ import { validateFrontMatter } from "./frontMatter.js";
 import { validateLastValidatedBump } from "./lastValidatedBump.js";
 import { validateNonDestructive } from "./nonDestructive.js";
 import { validatePolicyWeakeningDeclaration } from "./policyWeakening.js";
+import { validatePriorityApproval } from "./priorityApproval.js";
 import { validateProjectAliases } from "./projectAliases.js";
 import { validateProposedChanges } from "./proposedChanges.js";
 import { validatePrFormat } from "./prFormat.js";
@@ -31,6 +32,7 @@ const VALIDATORS: Validator[] = [
   validatePrFormat,
   validateTrackedLinkLeak,
   validateLastValidatedBump,
+  validatePriorityApproval,
   validateApprovalGate,
   validateAcceptanceCriteriaWriteGate,
   validateRoadmapAcceptanceShape,

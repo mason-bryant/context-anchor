@@ -102,6 +102,7 @@ import type {
   RenderedProjectUpdate,
   RenderProjectUpdateInput,
   SearchHit,
+  UpdateProjectPriorityInput,
   ValidationViolation,
   WriteAnchorInput,
   WriteAnchorResult,
@@ -690,6 +691,87 @@ export class AnchorService {
       coAuthor: input.coAuthor,
       expectedFileCommit: input.expectedFileCommit,
     });
+  }
+
+  async updateProjectPriority(input: UpdateProjectPriorityInput): Promise<WriteAnchorResult> {
+    if (!input.approved) {
+      return {
+        warnings: [
+          {
+            severity: "BLOCK",
+            code: "requires_approval",
+            message:
+              "Project priority changes require an explicit approved human request. Retry with approved: true after user approval.",
+          },
+        ],
+        requiresApproval: true,
+      };
+    }
+
+    const priorityViolation = validatePriorityValue(input.priority);
+    if (priorityViolation) {
+      return { warnings: [priorityViolation], requiresApproval: false };
+    }
+
+    const name = await this.resolveProjectPriorityAnchorName(input);
+    if (!name) {
+      return {
+        warnings: [
+          {
+            severity: "BLOCK",
+            code: "project_priority_anchor_not_found",
+            message:
+              "No project anchor was found for priority storage. Pass name for the project anchor to update, or create a project anchor first.",
+          },
+        ],
+        requiresApproval: false,
+      };
+    }
+
+    return this.updateAnchorFrontmatter({
+      name,
+      updates: { priority: input.priority },
+      message: input.message,
+      approved: true,
+      coAuthor: input.coAuthor,
+      expectedFileCommit: input.expectedFileCommit,
+    });
+  }
+
+  private async resolveProjectPriorityAnchorName(input: UpdateProjectPriorityInput): Promise<string | undefined> {
+    if (input.name?.trim()) {
+      const resolved = this.repo.resolveAnchor(input.name).name;
+      const classification = classifyAnchorPath(resolved);
+      if (classification.kind !== "anchor" || classification.category !== "projects" || resolved.includes("/milestones/")) {
+        return undefined;
+      }
+      if (input.project?.trim()) {
+        const { effectiveProject } = await this.resolveProjectFilter(input.project);
+        const project = effectiveProject ?? input.project.trim();
+        const meta = (await this.repo.listAnchors({ project, includeArchive: true })).find((anchor) => anchor.name === resolved);
+        return meta ? resolved : undefined;
+      }
+      return resolved;
+    }
+
+    if (!input.project?.trim()) {
+      return undefined;
+    }
+
+    const { effectiveProject } = await this.resolveProjectFilter(input.project);
+    const project = effectiveProject ?? input.project.trim();
+    const metas = await this.repo.listAnchors({ project, includeArchive: true });
+    const candidates = metas.filter((meta) => {
+      const classification = classifyAnchorPath(meta.name);
+      return classification.kind === "anchor" && classification.category === "projects" && classification.projectSlug === project;
+    });
+
+    return (
+      candidates.find((meta) => meta.name === `projects/${project}/${project}.md`)?.name ??
+      candidates.find((meta) => !meta.name.includes("/milestones/") && !frontmatterTypeIncludes(meta.type, "project-roadmap") && !isProposedChangesType(meta.type))
+        ?.name ??
+      candidates.find((meta) => !meta.name.includes("/milestones/") && frontmatterTypeIncludes(meta.type, "project-roadmap"))?.name
+    );
   }
 
   async updateAnchorSection(input: {
@@ -1956,7 +2038,16 @@ function compareAnchorMetas(left: AnchorMeta, right: AnchorMeta, sort: AnchorLis
   if (sort === "created") {
     return compareAnchorTimestamp(right, left, "createdAt", false) || left.name.localeCompare(right.name);
   }
+  if (sort === "priority") {
+    return compareAnchorPriority(left, right) || left.name.localeCompare(right.name);
+  }
   return left.name.localeCompare(right.name);
+}
+
+function compareAnchorPriority(left: AnchorMeta, right: AnchorMeta): number {
+  const leftPriority = typeof left.priority === "number" && Number.isFinite(left.priority) ? left.priority : Number.POSITIVE_INFINITY;
+  const rightPriority = typeof right.priority === "number" && Number.isFinite(right.priority) ? right.priority : Number.POSITIVE_INFINITY;
+  return leftPriority === rightPriority ? 0 : leftPriority < rightPriority ? -1 : 1;
 }
 
 function compareAnchorTimestamp(
@@ -1974,6 +2065,20 @@ function anchorTimestamp(anchor: AnchorMeta, field: "updatedAt" | "createdAt", a
   const raw = anchor[field] ?? (allowValidatedFallback ? anchor.last_validated : undefined);
   const parsed = Date.parse(String(raw ?? ""));
   return Number.isNaN(parsed) ? 0 : parsed;
+}
+
+function validatePriorityValue(value: number | null): ValidationViolation | undefined {
+  if (value === null) {
+    return undefined;
+  }
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return undefined;
+  }
+  return {
+    severity: "BLOCK",
+    code: "project_priority_invalid",
+    message: "Project priority must be a finite number or null to clear it.",
+  };
 }
 
 function placeholderProposalListItem(

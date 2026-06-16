@@ -69,6 +69,8 @@ export type AnchorMeta = {
   version?: string;
   updatedAt?: string;
   createdAt?: string;
+  /** Optional project ordering priority, lower numbers sort first (for example P1, P1.1, P2.045). */
+  priority?: number;
   origin?: "repo" | "built-in";
   /** Package version when this built-in policy row was materialized. */
   policyVersion?: string;
@@ -131,6 +133,16 @@ export type WriteAnchorInput = {
   approved?: boolean;
   coAuthor?: string;
   /** When set, must match `readAnchor(...).fileCommit` or the write is rejected with `stale_base`. */
+  expectedFileCommit?: string;
+};
+
+export type UpdateProjectPriorityInput = {
+  project?: string;
+  name?: string;
+  priority: number | null;
+  message?: string;
+  approved?: boolean;
+  coAuthor?: string;
   expectedFileCommit?: string;
 };
 
