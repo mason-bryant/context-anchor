@@ -85,9 +85,9 @@ export const UI_HTML = `<!doctype html>
                 <label class="sort-control" for="anchor-group-sort">
                   <span>Sort</span>
                   <select id="anchor-group-sort">
+                    <option value="priority">Priority</option>
                     <option value="updated">Last update</option>
                     <option value="name">Project name</option>
-                    <option value="priority">Priority</option>
                     <option value="created">Created date</option>
                   </select>
                 </label>
@@ -1162,7 +1162,7 @@ textarea {
 `;
 
 export const UI_JS = `(function () {
-  var DEFAULT_ANCHOR_SORT = "updated";
+  var DEFAULT_ANCHOR_SORT = "priority";
   var ANCHOR_BATCH_SIZE = 50;
   var KNOWN_URL_PARAMS = [
     "anchor",

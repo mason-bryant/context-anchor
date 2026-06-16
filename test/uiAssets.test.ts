@@ -377,6 +377,7 @@ describe("UI browser assets", () => {
 
   it("includes project group sort controls", () => {
     expect(UI_HTML).toContain('id="anchor-group-sort"');
+    expect(UI_HTML).toContain('<option value="priority">Priority</option>');
     expect(UI_HTML).toContain('<option value="name">Project name</option>');
     expect(UI_HTML).toContain('<option value="updated">Last update</option>');
     expect(UI_HTML).toContain('<option value="created">Created date</option>');
@@ -415,18 +416,18 @@ describe("UI browser assets", () => {
     expect(hooks.sortAnchorGroups(groups).map((group) => group.label)).toEqual(["middle", "alpha", "zeta"]);
   });
 
-  it("defaults sidebar project groups to last update sort", () => {
+  it("defaults sidebar project groups to priority sort", () => {
     const hooks = loadHooks();
     const groups = [
       {
         key: "project:zeta",
         label: "zeta",
-        anchors: [{ updatedAt: "2026-05-20T10:00:00.000Z" }],
+        anchors: [{ priority: 2, updatedAt: "2026-05-20T10:00:00.000Z" }],
       },
       {
         key: "project:alpha",
         label: "alpha",
-        anchors: [{ updatedAt: "2026-05-24T10:00:00.000Z" }],
+        anchors: [{ priority: 1, updatedAt: "2026-05-24T10:00:00.000Z" }],
       },
     ];
 
