@@ -1,4 +1,4 @@
-import type { AnchorRepository } from "../git/repo.js";
+import type { AnchorStore } from "../storage/store.js";
 import { isProjectMilestoneType } from "../schema/milestoneTypes.js";
 import { classifyAnchorPath } from "../taxonomy.js";
 import type { AnchorMeta, AnchorRead } from "../types.js";
@@ -7,7 +7,7 @@ function roadmapNameForProjectSlug(slug: string): string {
   return `projects/${slug}/${slug}-roadmap.md`;
 }
 
-export async function getRelatedAnchors(repo: AnchorRepository, name: string, kind?: string): Promise<AnchorRead[]> {
+export async function getRelatedAnchors(repo: AnchorStore, name: string, kind?: string): Promise<AnchorRead[]> {
   const resolvedName = repo.resolveAnchor(name).name;
   const read = await repo.readAnchor(resolvedName);
   const relRaw = read.frontmatter.relations;
@@ -65,7 +65,7 @@ export async function getRelatedAnchors(repo: AnchorRepository, name: string, ki
 }
 
 export async function findReferencingAnchorMetas(
-  repo: AnchorRepository,
+  repo: AnchorStore,
   targetName: string,
   kind?: string,
 ): Promise<AnchorMeta[]> {

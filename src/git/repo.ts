@@ -5,6 +5,18 @@ import path from "node:path";
 import { simpleGit, type SimpleGit } from "simple-git";
 
 import { AnchorParseCache } from "../storage/cache.js";
+import type {
+  AnchorListFilter,
+  AnchorListPage,
+  AnchorListSort,
+  AnchorStore,
+  CommitAnchorInput,
+  DeleteAnchorFileInput,
+  RenameAnchorFileInput,
+  ResolvedAnchorPath,
+  SyncableAnchorStore,
+  WritePeopleRegistryOptions,
+} from "../storage/store.js";
 import { analyzeRoadmapFromContent } from "../roadmap/analyzeRoadmap.js";
 import { parseProjectAliases, anchorMatchesProject } from "../projectAliases.js";
 import { parseAnchor } from "../storage/markdown.js";
@@ -28,23 +40,6 @@ import { assertInside, normalizeRelative, toPosix } from "../utils/path.js";
 import { buildAnchorCommitMessage } from "./commit.js";
 import { AsyncLock } from "./lock.js";
 
-type ResolvedAnchorPath = {
-  name: string;
-  absolutePath: string;
-  repoRelativePath: string;
-  anchorRelativePath: string;
-};
-
-export type AnchorListSort = "name" | "updated" | "created" | "priority";
-
-export type AnchorListPage = {
-  anchors: AnchorMeta[];
-  offset: number;
-  limit?: number;
-  total?: number;
-  nextOffset?: number;
-};
-
 type AnchorFileCandidate = {
   absolutePath: string;
   anchorRelativePath: string;
@@ -61,15 +56,16 @@ type AnchorMetaWithFrontmatter = {
   frontmatter: Record<string, unknown>;
 };
 
-export type CommitAnchorInput = {
-  name: string;
+type CachedFileContent = {
+  mtimeMs: number;
+  size: number;
   content: string;
-  message?: string;
-  action?: "write" | "revert";
-  sectionsChanged?: string[];
-  lastValidatedChanged?: boolean;
-  coAuthor?: string;
-  push?: boolean;
+};
+
+type CachedAnchorMeta = {
+  mtimeMs: number;
+  size: number;
+  row: AnchorMetaWithFrontmatter;
 };
 
 export class PeopleRegistryConflictError extends Error {
@@ -87,13 +83,16 @@ export class PeopleRegistryConflictError extends Error {
   }
 }
 
-export class AnchorRepository {
+export class AnchorRepository implements AnchorStore, SyncableAnchorStore {
   readonly repoPath: string;
   readonly anchorRoot: string;
   readonly anchorRootPath: string;
   readonly git: SimpleGit;
 
   private readonly cache = new AnchorParseCache();
+  private readonly fileContentCache = new Map<string, CachedFileContent>();
+  private readonly metaCache = new Map<string, CachedAnchorMeta>();
+  private readonly createdAtCache = new Map<string, string | undefined>();
   private readonly lock = new AsyncLock();
 
   constructor(options: { repoPath: string; anchorRoot?: string }) {
@@ -132,14 +131,7 @@ export class AnchorRepository {
     };
   }
 
-  async listAnchors(filter?: {
-    project?: string;
-    tag?: string;
-    since?: string;
-    category?: AnchorCategory;
-    includeArchive?: boolean;
-    runtime?: string;
-  }): Promise<AnchorMeta[]> {
+  async listAnchors(filter?: AnchorListFilter): Promise<AnchorMeta[]> {
     const candidates = await this.listAnchorFileCandidates(filter, "name");
     const metas: AnchorMeta[] = [];
 
@@ -156,14 +148,7 @@ export class AnchorRepository {
   }
 
   async listAnchorsPage(
-    filter: {
-      project?: string;
-      tag?: string;
-      since?: string;
-      category?: AnchorCategory;
-      includeArchive?: boolean;
-      runtime?: string;
-    } = {},
+    filter: AnchorListFilter = {},
     page: { sort: AnchorListSort; offset?: number; limit?: number },
   ): Promise<AnchorListPage> {
     const offset = page.offset ?? 0;
@@ -249,14 +234,15 @@ export class AnchorRepository {
   async readAnchor(name: string, version?: string): Promise<AnchorRead> {
     const resolved = this.resolveAnchor(name);
     const isLatest = !version || version === "latest";
+    const stats = isLatest ? await stat(resolved.absolutePath) : undefined;
     const content = isLatest
-      ? await readFile(resolved.absolutePath, "utf8")
+      ? await this.readFileCached(resolved.absolutePath, stats)
       : await this.git.show([`${version}:${resolved.repoRelativePath}`]);
     const parsed = isLatest
-      ? await this.cache.parse(resolved.absolutePath, content)
+      ? await this.cache.parse(resolved.absolutePath, content, stats)
       : parseAnchor(content);
 
-    const fileCommit = isLatest ? await this.lastCommitForFile(resolved.repoRelativePath) : undefined;
+    const fileCommit = isLatest ? await this.lastRevisionForPath(resolved.repoRelativePath) : undefined;
 
     return {
       name: resolved.name,
@@ -270,6 +256,11 @@ export class AnchorRepository {
 
   /** Latest commit hash that touched this repo-relative path (undefined if no commits yet). */
   async lastCommitForFile(repoRelativePath: string): Promise<string | undefined> {
+    return this.lastRevisionForPath(repoRelativePath);
+  }
+
+  /** Latest backend revision that touched this repo-relative path (git commit hash for this store). */
+  async lastRevisionForPath(repoRelativePath: string): Promise<string | undefined> {
     try {
       const log = await this.git.log({ file: repoRelativePath, maxCount: 1 });
       return log.latest?.hash;
@@ -288,7 +279,8 @@ export class AnchorRepository {
     const hits: SearchHit[] = [];
 
     for (const absolutePath of files) {
-      const content = await readFile(absolutePath, "utf8");
+      const stats = await stat(absolutePath);
+      const content = await this.readFileCached(absolutePath, stats);
       const lines = content.split(/\r?\n/);
       const anchorRelativePath = toPosix(path.relative(this.anchorRootPath, absolutePath));
       const repoRelativePath = toPosix(path.relative(this.repoPath, absolutePath));
@@ -316,7 +308,7 @@ export class AnchorRepository {
       const tmpPath = `${resolved.absolutePath}.${process.pid}.${Date.now()}.tmp`;
       await writeFile(tmpPath, input.content, "utf8");
       await rename(tmpPath, resolved.absolutePath);
-      this.cache.invalidate(resolved.absolutePath);
+      this.invalidateReadIndex(resolved.absolutePath, resolved.repoRelativePath);
 
       await this.git.add(resolved.repoRelativePath);
 
@@ -358,7 +350,7 @@ export class AnchorRepository {
       const tmpPath = `${absolutePath}.${process.pid}.${Date.now()}.tmp`;
       await writeFile(tmpPath, content, "utf8");
       await rename(tmpPath, absolutePath);
-      this.cache.invalidate(absolutePath);
+      this.invalidateReadIndex(absolutePath);
 
       const repoRelativePath = toPosix(path.relative(this.repoPath, absolutePath));
       await this.git.add(repoRelativePath);
@@ -463,7 +455,7 @@ export class AnchorRepository {
       }
 
       await unlink(resolved.absolutePath);
-      this.cache.invalidate(resolved.absolutePath);
+      this.invalidateReadIndex(resolved.absolutePath, resolved.repoRelativePath);
 
       await this.git.add(resolved.repoRelativePath);
 
@@ -536,8 +528,8 @@ export class AnchorRepository {
 
       await this.git.raw(["mv", "--", fromResolved.repoRelativePath, toResolved.repoRelativePath]);
 
-      this.cache.invalidate(fromResolved.absolutePath);
-      this.cache.invalidate(toResolved.absolutePath);
+      this.invalidateReadIndex(fromResolved.absolutePath, fromResolved.repoRelativePath);
+      this.invalidateReadIndex(toResolved.absolutePath, toResolved.repoRelativePath);
 
       const args = [
         "-c",
@@ -565,7 +557,7 @@ export class AnchorRepository {
 
   async pullRebase(): Promise<void> {
     await this.git.pull(["--rebase"]);
-    this.cache.invalidate();
+    this.invalidateReadIndex();
   }
 
   async push(): Promise<void> {
@@ -589,7 +581,8 @@ export class AnchorRepository {
   async readRaw(anchorName: string): Promise<string | undefined> {
     const resolved = this.resolveAnchor(anchorName);
     try {
-      return await readFile(resolved.absolutePath, "utf8");
+      const stats = await stat(resolved.absolutePath);
+      return await this.readFileCached(resolved.absolutePath, stats);
     } catch {
       return undefined;
     }
@@ -635,7 +628,7 @@ export class AnchorRepository {
       }
 
       const repoRelativePath = toPosix(path.relative(this.repoPath, absolutePath));
-      const createdAt = sort === "created" ? await this.firstCommitDateForFile(repoRelativePath) : undefined;
+      const createdAt = sort === "created" ? await this.firstCommitDateForFileCached(repoRelativePath) : undefined;
       const createdTimeMs = Date.parse(createdAt ?? stats.birthtime.toISOString());
       candidates.push({
         absolutePath,
@@ -653,11 +646,16 @@ export class AnchorRepository {
   }
 
   private async anchorMetaFromCandidate(candidate: AnchorFileCandidate): Promise<AnchorMetaWithFrontmatter> {
-    const content = await readFile(candidate.absolutePath, "utf8");
-    const parsed = await this.cache.parse(candidate.absolutePath, content);
+    const cached = this.metaCache.get(candidate.absolutePath);
+    if (cached && cached.mtimeMs === candidate.stats.mtimeMs && cached.size === candidate.stats.size) {
+      return cached.row;
+    }
+
+    const content = await this.readFileCached(candidate.absolutePath, candidate.stats);
+    const parsed = await this.cache.parse(candidate.absolutePath, content, candidate.stats);
     const createdAt =
       candidate.createdAt ??
-      (await this.firstCommitDateForFile(candidate.repoRelativePath)) ??
+      (await this.firstCommitDateForFileCached(candidate.repoRelativePath)) ??
       candidate.stats.birthtime.toISOString();
     const meta: AnchorMeta = {
       name: candidate.anchorRelativePath,
@@ -731,7 +729,46 @@ export class AnchorRepository {
       }
     }
 
-    return { meta, frontmatter: parsed.frontmatter };
+    const row = { meta, frontmatter: parsed.frontmatter };
+    this.metaCache.set(candidate.absolutePath, {
+      mtimeMs: candidate.stats.mtimeMs,
+      size: candidate.stats.size,
+      row,
+    });
+    return row;
+  }
+
+  private async readFileCached(absolutePath: string, knownStats?: Pick<Stats, "mtimeMs" | "size">): Promise<string> {
+    const stats = knownStats ?? (await stat(absolutePath));
+    const cached = this.fileContentCache.get(absolutePath);
+    if (cached && cached.mtimeMs === stats.mtimeMs && cached.size === stats.size) {
+      return cached.content;
+    }
+
+    const content = await readFile(absolutePath, "utf8");
+    this.fileContentCache.set(absolutePath, {
+      mtimeMs: stats.mtimeMs,
+      size: stats.size,
+      content,
+    });
+    return content;
+  }
+
+  private invalidateReadIndex(absolutePath?: string, repoRelativePath?: string): void {
+    if (absolutePath) {
+      this.cache.invalidate(absolutePath);
+      this.fileContentCache.delete(absolutePath);
+      this.metaCache.delete(absolutePath);
+      if (repoRelativePath) {
+        this.createdAtCache.delete(repoRelativePath);
+      }
+      return;
+    }
+
+    this.cache.invalidate();
+    this.fileContentCache.clear();
+    this.metaCache.clear();
+    this.createdAtCache.clear();
   }
 
   private async listMarkdownFiles(root: string): Promise<string[]> {
@@ -752,6 +789,15 @@ export class AnchorRepository {
     }
 
     return files;
+  }
+
+  private async firstCommitDateForFileCached(repoRelativePath: string): Promise<string | undefined> {
+    if (this.createdAtCache.has(repoRelativePath)) {
+      return this.createdAtCache.get(repoRelativePath);
+    }
+    const createdAt = await this.firstCommitDateForFile(repoRelativePath);
+    this.createdAtCache.set(repoRelativePath, createdAt);
+    return createdAt;
   }
 
   private async firstCommitDateForFile(repoRelativePath: string): Promise<string | undefined> {
@@ -795,7 +841,7 @@ export class AnchorRepository {
 
   async writePeopleRegistryRaw(
     registry: unknown,
-    options: { message?: string; coAuthor?: string; push?: boolean; expectedFileCommit?: string } = {},
+    options: WritePeopleRegistryOptions = {},
   ): Promise<void> {
     const filePath = path.join(this.anchorRootPath, AnchorRepository.PEOPLE_REGISTRY_FILE);
     assertInside(this.anchorRootPath, filePath);

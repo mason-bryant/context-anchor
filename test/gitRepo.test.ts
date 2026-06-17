@@ -90,6 +90,30 @@ None.
     expect(anchors[0]?.createdAt).toBe("2020-01-02T03:04:05.000Z");
   });
 
+  it("reuses indexed anchor metadata across repeated listings and invalidates after writes", async () => {
+    const repo = new AnchorRepository({ repoPath: tmpDir });
+    await repo.ensureReady();
+    await mkdir(path.join(tmpDir, "shared"), { recursive: true });
+    await commitAnchorFile(repo, "shared/cache-test.md", "Cache Test", "2026-05-03T00:00:00Z");
+
+    const rawSpy = vi.spyOn(repo.git, "raw");
+
+    await repo.listAnchors();
+    await repo.listAnchors();
+
+    expect(gitLogFollowCalls(rawSpy)).toHaveLength(1);
+
+    rawSpy.mockClear();
+    await repo.commitAnchor({
+      name: "shared/cache-test",
+      content: anchorContent("Cache Test Updated"),
+      message: "test: update cache test",
+    });
+    await repo.listAnchors();
+
+    expect(gitLogFollowCalls(rawSpy)).toHaveLength(1);
+  });
+
   it("returns paged anchor metadata in last-updated order", async () => {
     const repo = new AnchorRepository({ repoPath: tmpDir });
     await repo.ensureReady();
@@ -188,4 +212,11 @@ None.
 
 None.
 `;
+}
+
+function gitLogFollowCalls(spy: { mock: { calls: unknown[][] } }): unknown[][] {
+  return spy.mock.calls.filter((call) => {
+    const args = call[0];
+    return Array.isArray(args) && args[0] === "log" && args.includes("--follow");
+  });
 }

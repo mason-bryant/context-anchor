@@ -1,5 +1,5 @@
 import { isBuiltInAnchorName } from "../builtin/serverPolicy.js";
-import type { AnchorRepository } from "../git/repo.js";
+import type { AnchorStore } from "../storage/store.js";
 import { analyzeRoadmapFromContent } from "../roadmap/analyzeRoadmap.js";
 import { isProjectMilestoneType } from "../schema/milestoneTypes.js";
 import { parseAnchor } from "../storage/markdown.js";
@@ -21,7 +21,7 @@ function expectedRoadmapName(projectSlug: string): string {
   return `projects/${projectSlug}/${projectSlug}-roadmap.md`;
 }
 
-async function projectHasMilestoneWithGoalIds(repo: AnchorRepository, slug: string): Promise<boolean> {
+async function projectHasMilestoneWithGoalIds(repo: AnchorStore, slug: string): Promise<boolean> {
   const metas = await repo.listAnchors();
   for (const meta of metas) {
     if (!meta.name.startsWith(`projects/${slug}/milestones/`)) {

@@ -2,7 +2,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { AnchorService } from "../src/anchorService.js";
 import { AnchorRepository } from "../src/git/repo.js";
@@ -41,6 +41,25 @@ describe("AnchorService", () => {
     const versions = await service.listVersions("projects/demo/demo");
     expect(versions).toHaveLength(1);
     expect(versions[0]?.message).toBe("test: add demo anchor");
+  });
+
+  it("builds planner search input without reading per-anchor file commits", async () => {
+    await service.writeAnchor({
+      name: "projects/demo/demo",
+      content: projectAnchorContent({
+        currentState: "- Demo architecture uses a storage boundary and a read index.",
+      }),
+      message: "test: add demo anchor",
+    });
+
+    const logSpy = vi.spyOn(repo.git, "log");
+
+    await service.planContextBundle({
+      task: "storage boundary read index",
+      project: "demo",
+    });
+
+    expect(logSpy).not.toHaveBeenCalled();
   });
 
   it("blocks anchors missing required sections", async () => {

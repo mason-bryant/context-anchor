@@ -33,7 +33,7 @@ import {
   collectMilestoneAcceptanceMissingSignals,
   collectRoadmapAcceptanceMissingSignals,
 } from "./contextPlanner.js";
-import type { AnchorListPage, AnchorListSort, AnchorRepository } from "./git/repo.js";
+import type { AnchorListPage, AnchorListSort, AnchorStore } from "./storage/store.js";
 import { listRoadmapGoalDetails } from "./roadmap/analyzeRoadmap.js";
 import {
   renderProjectUpdate as renderProjectUpdateFromSnapshot,
@@ -149,7 +149,7 @@ export class AnchorService {
   private _peopleRegistryCommit: string | undefined;
 
   constructor(
-    private readonly repo: AnchorRepository,
+    private readonly repo: AnchorStore,
     private readonly options: {
       pushOnWrite: boolean;
       migrationWarnOnly: boolean;
@@ -248,11 +248,16 @@ export class AnchorService {
           }
 
           try {
-            const read = await this.readAnchor(anchor.name);
-            bodyCharCounts.set(anchor.name, stripFrontMatterForExcerpt(read.content).length);
+            const content = isBuiltInAnchorName(anchor.name)
+              ? readBuiltInAnchor(anchor.name)?.content
+              : await this.repo.readRaw(anchor.name);
+            if (content === undefined) {
+              continue;
+            }
+            bodyCharCounts.set(anchor.name, stripFrontMatterForExcerpt(content).length);
             bm25Index.add({
               id: anchor.name,
-              text: anchorBodyForSearchIndex(read.content),
+              text: anchorBodyForSearchIndex(content),
             });
           } catch {
             // Skip unreadable anchors during BM25 indexing.
@@ -487,7 +492,7 @@ export class AnchorService {
     }
     const resolved = this.repo.resolveAnchor(input.name);
     if (input.expectedFileCommit) {
-      const current = await this.repo.lastCommitForFile(resolved.repoRelativePath);
+      const current = await this.repo.lastRevisionForPath(resolved.repoRelativePath);
       if (current !== input.expectedFileCommit) {
         return {
           warnings: [
@@ -576,7 +581,7 @@ export class AnchorService {
 
     const resolved = this.repo.resolveAnchor(input.name);
     if (input.expectedFileCommit) {
-      const current = await this.repo.lastCommitForFile(resolved.repoRelativePath);
+      const current = await this.repo.lastRevisionForPath(resolved.repoRelativePath);
       if (current !== input.expectedFileCommit) {
         return {
           warnings: [
@@ -688,7 +693,7 @@ export class AnchorService {
     }
 
     if (input.expectedFileCommit) {
-      const current = await this.repo.lastCommitForFile(fromResolved.repoRelativePath);
+      const current = await this.repo.lastRevisionForPath(fromResolved.repoRelativePath);
       if (current !== input.expectedFileCommit) {
         return {
           warnings: [
@@ -1355,7 +1360,8 @@ None.
 
     const resolvedTarget = this.repo.resolveAnchor(target);
     const oldContent = await this.repo.readRaw(target);
-    const baseFileCommit = oldContent === undefined ? undefined : await this.repo.lastCommitForFile(resolvedTarget.repoRelativePath);
+    const baseFileCommit =
+      oldContent === undefined ? undefined : await this.repo.lastRevisionForPath(resolvedTarget.repoRelativePath);
     const now = new Date().toISOString();
     const record: ProposedChangeRecord = {
       id: makeProposalId(input.summary, now),
@@ -1714,7 +1720,7 @@ None.
     const targetResolved = this.repo.resolveAnchor(proposal.target);
     const oldContent = await this.repo.readRaw(proposal.target);
     const targetFileCommit =
-      oldContent === undefined ? undefined : await this.repo.lastCommitForFile(targetResolved.repoRelativePath);
+      oldContent === undefined ? undefined : await this.repo.lastRevisionForPath(targetResolved.repoRelativePath);
     const stale = (proposal.baseFileCommit ?? undefined) !== (targetFileCommit ?? undefined);
     const warnings: ValidationViolation[] = [];
     if (stale) {
