@@ -171,6 +171,8 @@ export type ListTasksDueInput = {
   noDue?: boolean;
   /** Filter by task status. Defaults to active, todo, and blocked. */
   status?: MilestoneTaskStatus[];
+  /** Filter by owner: person id, display name, email, slack id, team id, or team synonym. */
+  owner?: string;
 };
 
 export type TaskDueRow = {
@@ -185,7 +187,70 @@ export type TaskDueRow = {
   milestoneDisplayId?: string;
   milestoneStatus: string;
   project?: string;
+  /** Resolved person from the people registry, when the task owner matches a known person. */
+  resolvedPerson?: { id: string; displayName: string };
+  /** Resolved team from the people registry, when the task owner matches a known team. */
+  resolvedTeam?: { id: string; displayName: string };
 };
+
+export type PersonIdentities = {
+  slack?: string;
+  confluence?: string;
+  emails?: string[];
+  names?: string[];
+};
+
+export type AssociationRole =
+  | "responsible"
+  | "accountable"
+  | "informed"
+  | "consulted"
+  | "executive_sponsor"
+  | "stakeholder"
+  | "lead";
+
+export type ProjectAssociation = {
+  project: string;
+  role: AssociationRole;
+};
+
+export type Person = {
+  id: string;
+  displayName: string;
+  identities?: PersonIdentities;
+  teams?: string[];
+  projects?: ProjectAssociation[];
+};
+
+export type Team = {
+  id: string;
+  displayName: string;
+  synonyms?: string[];
+  slackHandles?: string[];
+  projects?: ProjectAssociation[];
+};
+
+export type TeamWithMembers = Team & {
+  members: Person[];
+};
+
+export type PeopleRegistry = {
+  people: Person[];
+  teams: Team[];
+};
+
+export type WritePeopleRegistryInput = {
+  // Accepts a raw registry shape; the service normalizes and validates it
+  // through parsePeopleRegistry before persisting.
+  registry: unknown;
+  message?: string;
+  coAuthor?: string;
+  // Optional optimistic-concurrency guard: the git commit the caller last read.
+  // The write is rejected if the on-disk registry has advanced past it.
+  expectedFileCommit?: string;
+};
+
+export type PeopleRegistryWithCommit = PeopleRegistry & { fileCommit?: string };
 
 export type ProposedChangeStatus = "pending" | "applied" | "rejected" | "changes_requested" | "superseded";
 

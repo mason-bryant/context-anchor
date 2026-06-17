@@ -109,11 +109,18 @@ import type {
   ValidationViolation,
   WriteAnchorInput,
   WriteAnchorResult,
+  Person,
+  Team,
+  TeamWithMembers,
+  PeopleRegistry,
+  PeopleRegistryWithCommit,
+  WritePeopleRegistryInput,
 } from "./types.js";
 import {
   buildProjectAliasIndex,
   resolveProjectFilter,
 } from "./projectAliases.js";
+import { buildPeopleIndex, parsePeopleRegistry } from "./peopleRegistry.js";
 import { runValidators } from "./validators/pipeline.js";
 
 const BM25_INDEX_READ_CONCURRENCY = 8;
@@ -133,6 +140,8 @@ type MilestoneListRow = {
 };
 
 export class AnchorService {
+  private _peopleRegistry: PeopleRegistry | undefined;
+
   constructor(
     private readonly repo: AnchorRepository,
     private readonly options: {
@@ -141,6 +150,73 @@ export class AnchorService {
       staleAfterDays: number;
     },
   ) {}
+
+  private async loadPeopleRegistry(): Promise<PeopleRegistry> {
+    if (this._peopleRegistry !== undefined) {
+      return this._peopleRegistry;
+    }
+    const raw = await this.repo.readPeopleRegistryRaw();
+    this._peopleRegistry = parsePeopleRegistry(raw);
+    return this._peopleRegistry;
+  }
+
+  private invalidatePeopleRegistry(): void {
+    this._peopleRegistry = undefined;
+  }
+
+  async listPeople(team?: string): Promise<{ people: Person[] }> {
+    const registry = await this.loadPeopleRegistry();
+    if (!team) {
+      return { people: registry.people };
+    }
+    const needle = team.toLowerCase();
+    const index = buildPeopleIndex(registry);
+    const resolvedTeam = index.getTeam(needle);
+    const teamId = resolvedTeam?.id ?? team;
+    const members = index.getTeamMembers(teamId);
+    return { people: members };
+  }
+
+  async readPerson(id: string): Promise<{ person: Person | null }> {
+    const registry = await this.loadPeopleRegistry();
+    const index = buildPeopleIndex(registry);
+    // Prefer an exact id match so a colliding alias/email never shadows the
+    // person whose canonical id was requested; fall back to fuzzy resolution.
+    const person = index.getPersonById(id) ?? index.getPerson(id) ?? null;
+    return { person };
+  }
+
+  async listTeams(): Promise<{ teams: Team[] }> {
+    const registry = await this.loadPeopleRegistry();
+    return { teams: registry.teams };
+  }
+
+  async readTeam(id: string): Promise<{ team: TeamWithMembers | null }> {
+    const registry = await this.loadPeopleRegistry();
+    const index = buildPeopleIndex(registry);
+    // Exact id wins over synonym/handle matches for a requested id.
+    const team = index.getTeamById(id) ?? index.getTeam(id);
+    if (!team) return { team: null };
+    const members = index.getTeamMembers(team.id);
+    return { team: { ...team, members } };
+  }
+
+  async writePeopleRegistry(input: WritePeopleRegistryInput): Promise<void> {
+    const normalized = parsePeopleRegistry(input.registry);
+    await this.repo.writePeopleRegistryRaw(normalized, {
+      message: input.message,
+      coAuthor: input.coAuthor,
+      push: this.options.pushOnWrite,
+      expectedFileCommit: input.expectedFileCommit,
+    });
+    this.invalidatePeopleRegistry();
+  }
+
+  async getPeopleRegistry(): Promise<PeopleRegistryWithCommit> {
+    const registry = await this.loadPeopleRegistry();
+    const fileCommit = await this.repo.peopleRegistryCommit();
+    return { ...registry, ...(fileCommit ? { fileCommit } : {}) };
+  }
 
   private async buildBM25SearchIndex(anchors: AnchorMeta[]): Promise<{
     index: BM25Index;
@@ -862,6 +938,12 @@ export class AnchorService {
     const DEFAULT_STATUSES = new Set(["active", "todo", "blocked"]);
     const statusFilter = input.status && input.status.length > 0 ? new Set(input.status) : DEFAULT_STATUSES;
 
+    const registry = await this.loadPeopleRegistry();
+    const peopleIndex = buildPeopleIndex(registry);
+
+    const ownerFilter = input.owner ? peopleIndex.resolveOwner(input.owner) : undefined;
+    const ownerFilterRaw = input.owner?.toLowerCase().trim();
+
     const rows: TaskDueRow[] = [];
 
     for (const milestone of milestones) {
@@ -880,6 +962,23 @@ export class AnchorService {
           if (input.dueAfter && (!task.due || task.due < input.dueAfter)) continue;
         }
 
+        const taskOwnerResolved = task.owner ? peopleIndex.resolveOwner(task.owner) : undefined;
+
+        if (ownerFilterRaw !== undefined) {
+          if (ownerFilter) {
+            if (!taskOwnerResolved) continue;
+            if (ownerFilter.kind === "person" && taskOwnerResolved.kind === "person") {
+              if (ownerFilter.person.id !== taskOwnerResolved.person.id) continue;
+            } else if (ownerFilter.kind === "team" && taskOwnerResolved.kind === "team") {
+              if (ownerFilter.team.id !== taskOwnerResolved.team.id) continue;
+            } else {
+              continue;
+            }
+          } else {
+            if (!task.owner || task.owner.toLowerCase().trim() !== ownerFilterRaw) continue;
+          }
+        }
+
         rows.push({
           taskId: task.id,
           taskTitle: task.title,
@@ -892,6 +991,12 @@ export class AnchorService {
           ...(milestone.displayId ? { milestoneDisplayId: milestone.displayId } : {}),
           milestoneStatus: milestone.status,
           ...(projectSlug ? { project: projectSlug } : {}),
+          ...(taskOwnerResolved?.kind === "person"
+            ? { resolvedPerson: { id: taskOwnerResolved.person.id, displayName: taskOwnerResolved.person.displayName } }
+            : {}),
+          ...(taskOwnerResolved?.kind === "team"
+            ? { resolvedTeam: { id: taskOwnerResolved.team.id, displayName: taskOwnerResolved.team.displayName } }
+            : {}),
         });
       }
     }

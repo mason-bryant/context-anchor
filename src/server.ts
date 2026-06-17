@@ -3,6 +3,7 @@ import { McpServer } from "@modelcontextprotocol/server";
 import * as z from "zod/v4";
 
 import type { AnchorService } from "./anchorService.js";
+import { PeopleRegistryConflictError } from "./git/repo.js";
 import { errorMetadata, noopRequestLogger, type RequestLogger } from "./logger.js";
 import { isDiscoveryCategory, type DiscoveryCategory } from "./taxonomy.js";
 import type {
@@ -719,17 +720,18 @@ the index when your workflow checks in that file.`,
     {
       title: "List Tasks by Due Date",
       description:
-        "List tasks across all milestones (or one project) sorted by due date. Defaults to active, todo, and blocked tasks. Use dueBefore/dueAfter to filter by date range, or noDue:true to find tasks without a due date.",
+        "List tasks across all milestones (or one project) sorted by due date. Defaults to active, todo, and blocked tasks. Use dueBefore/dueAfter to filter by date range, or noDue:true to find tasks without a due date. Use owner to filter by person or team (id, display name, email, slack id, or team synonym).",
       inputSchema: z.object({
         project: z.string().optional().describe("Filter by project slug."),
         dueBefore: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().describe("Include only tasks with due date before this date (exclusive)."),
         dueAfter: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().describe("Include only tasks with due date on or after this date."),
         noDue: z.boolean().optional().describe("When true, return only tasks with no due date."),
         status: z.union([z.array(TaskStatusSchema), JsonStringSchema]).optional().describe("Filter by task status. Defaults to active, todo, blocked."),
+        owner: z.string().optional().describe("Filter by person or team: id, display name, email, slack id, or team synonym."),
       }),
       annotations: { destructiveHint: false, idempotentHint: true },
     },
-    async ({ project, dueBefore, dueAfter, noDue, status }) => {
+    async ({ project, dueBefore, dueAfter, noDue, status, owner }) => {
       const parsedStatus = typeof status === "string" ? (JSON.parse(status) as string[]) : status;
       const result = await service.listTasksDue({
         project,
@@ -737,6 +739,7 @@ the index when your workflow checks in that file.`,
         dueAfter,
         noDue,
         status: parsedStatus as ("todo" | "active" | "blocked" | "done" | "cancelled")[] | undefined,
+        owner,
       });
       return jsonResult(result, false);
     },
@@ -935,6 +938,123 @@ the index when your workflow checks in that file.`,
       annotations: { readOnlyHint: true },
     },
     async () => jsonResult(await service.conflictStatus()),
+  );
+
+  server.registerTool(
+    "listPeople",
+    {
+      title: "List People",
+      description: "List all people in the people registry. Optionally filter by team id or synonym.",
+      inputSchema: z.object({
+        team: z.string().optional().describe("Filter by team id, display name, or synonym."),
+      }),
+      annotations: { readOnlyHint: true },
+    },
+    async ({ team }) => jsonResult(await service.listPeople(team)),
+  );
+
+  server.registerTool(
+    "readPerson",
+    {
+      title: "Read Person",
+      description: "Get a person by id, display name, email, slack id, confluence id, or any registered name.",
+      inputSchema: z.object({
+        id: z.string().min(1).describe("Person id, display name, email, slack id, or any registered identity."),
+      }),
+      annotations: { readOnlyHint: true },
+    },
+    async ({ id }) => jsonResult(await service.readPerson(id)),
+  );
+
+  server.registerTool(
+    "listTeams",
+    {
+      title: "List Teams",
+      description: "List all teams in the people registry.",
+      inputSchema: z.object({}),
+      annotations: { readOnlyHint: true },
+    },
+    async () => jsonResult(await service.listTeams()),
+  );
+
+  server.registerTool(
+    "readTeam",
+    {
+      title: "Read Team",
+      description: "Get a team by id, display name, or synonym. Returns team details and current members.",
+      inputSchema: z.object({
+        id: z.string().min(1).describe("Team id, display name, or synonym."),
+      }),
+      annotations: { readOnlyHint: true },
+    },
+    async ({ id }) => jsonResult(await service.readTeam(id)),
+  );
+
+  server.registerTool(
+    "writePeopleRegistry",
+    {
+      title: "Write People Registry",
+      description: "Replace the full people and teams registry. Commits the change to git.",
+      inputSchema: z.object({
+        registry: z.object({
+          people: z.array(
+            z.object({
+              id: z.string().min(1),
+              displayName: z.string().min(1),
+              identities: z
+                .object({
+                  slack: z.string().optional(),
+                  confluence: z.string().optional(),
+                  emails: z.array(z.string()).optional(),
+                  names: z.array(z.string()).optional(),
+                })
+                .optional(),
+              teams: z.array(z.string()).optional(),
+              projects: z
+                .array(z.object({ project: z.string().min(1), role: z.string().min(1) }))
+                .optional(),
+            }),
+          ),
+          teams: z.array(
+            z.object({
+              id: z.string().min(1),
+              displayName: z.string().min(1),
+              synonyms: z.array(z.string()).optional(),
+              slackHandles: z.array(z.string()).optional(),
+              projects: z
+                .array(z.object({ project: z.string().min(1), role: z.string().min(1) }))
+                .optional(),
+            }),
+          ),
+        }),
+        message: z.string().optional(),
+        coAuthor: z.string().optional(),
+        expectedFileCommit: z.string().optional(),
+      }),
+      annotations: { destructiveHint: false, idempotentHint: false },
+    },
+    async ({ registry, message, coAuthor, expectedFileCommit }) => {
+      try {
+        await service.writePeopleRegistry({ registry, message, coAuthor, expectedFileCommit });
+      } catch (error) {
+        if (error instanceof PeopleRegistryConflictError) {
+          return jsonResult({ error: error.message, code: error.code }, true);
+        }
+        throw error;
+      }
+      return jsonResult({ ok: true });
+    },
+  );
+
+  server.registerTool(
+    "getPeopleRegistry",
+    {
+      title: "Get People Registry",
+      description: "Return the full people and teams registry.",
+      inputSchema: z.object({}),
+      annotations: { readOnlyHint: true },
+    },
+    async () => jsonResult(await service.getPeopleRegistry()),
   );
 
   server.registerPrompt(

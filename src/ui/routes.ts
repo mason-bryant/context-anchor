@@ -1,6 +1,7 @@
 import type { NextFunction, Request, Response, Express } from "express";
 
 import type { AnchorService } from "../anchorService.js";
+import { PeopleRegistryConflictError } from "../git/repo.js";
 import { isDiscoveryCategory, type DiscoveryCategory } from "../taxonomy.js";
 import type {
   ContextRootFormat,
@@ -204,13 +205,70 @@ export function registerUiRoutes(
       const noDue = req.query["noDue"] === "true";
       const statusRaw = optionalQueryString(req, "status");
       const status = statusRaw ? statusRaw.split(",") : undefined;
+      const owner = optionalQueryString(req, "owner");
       return service.listTasksDue({
         ...(project ? { project } : {}),
         ...(dueBefore ? { dueBefore } : {}),
         ...(dueAfter ? { dueAfter } : {}),
         ...(noDue ? { noDue } : {}),
+        ...(owner ? { owner } : {}),
         status: status as ("todo" | "active" | "blocked" | "done" | "cancelled")[] | undefined,
       });
+    }),
+  );
+
+  app.get(
+    "/api/ui/people",
+    ...protect,
+    jsonRoute(async (req) => service.listPeople(optionalQueryString(req, "team"))),
+  );
+
+  app.get(
+    "/api/ui/person",
+    ...protect,
+    jsonRoute(async (req) => service.readPerson(requiredQueryString(req, "id"))),
+  );
+
+  app.get(
+    "/api/ui/teams",
+    ...protect,
+    jsonRoute(async (_req) => service.listTeams()),
+  );
+
+  app.get(
+    "/api/ui/team",
+    ...protect,
+    jsonRoute(async (req) => service.readTeam(requiredQueryString(req, "id"))),
+  );
+
+  app.get(
+    "/api/ui/people-registry",
+    ...protect,
+    jsonRoute(async (_req) => service.getPeopleRegistry()),
+  );
+
+  app.post(
+    "/api/ui/people-registry",
+    ...protect,
+    jsonRoute(async (req) => {
+      const body = bodyRecord(req);
+      const registry = bodyObject(body, "registry");
+      const people = bodyPeopleArray(registry);
+      const teams = bodyTeamsArray(registry);
+      try {
+        await service.writePeopleRegistry({
+          registry: { people, teams },
+          message: optionalBodyString(body, "message"),
+          coAuthor: optionalBodyString(body, "coAuthor"),
+          expectedFileCommit: optionalBodyString(body, "expectedFileCommit"),
+        });
+      } catch (error) {
+        if (error instanceof PeopleRegistryConflictError) {
+          throw new UiHttpError(409, error.message);
+        }
+        throw error;
+      }
+      return { ok: true };
     }),
   );
 
@@ -612,6 +670,56 @@ function nonNegativeIntQuery(req: Request, key: string, max: number): number | u
     throw new UiHttpError(400, `Invalid ${key}: expected an integer from 0 to ${max}`);
   }
   return parsed;
+}
+
+function bodyPeopleArray(registry: Record<string, unknown>) {
+  const raw = registry["people"];
+  if (!Array.isArray(raw)) {
+    throw new UiHttpError(400, "registry.people must be an array");
+  }
+  return raw.map((item, i) => {
+    if (!item || typeof item !== "object" || Array.isArray(item)) {
+      throw new UiHttpError(400, `registry.people[${i}] must be an object`);
+    }
+    const obj = item as Record<string, unknown>;
+    const id = requiredBodyString(obj, "id");
+    const displayName = requiredBodyString(obj, "displayName");
+    const teams = obj["teams"] !== undefined ? (Array.isArray(obj["teams"]) ? (obj["teams"] as string[]) : undefined) : undefined;
+    const identities = obj["identities"] !== undefined ? (obj["identities"] as Record<string, unknown>) : undefined;
+    const projects = Array.isArray(obj["projects"]) ? (obj["projects"] as unknown[]) : undefined;
+    return {
+      id,
+      displayName,
+      ...(identities ? { identities } : {}),
+      ...(teams ? { teams } : {}),
+      ...(projects ? { projects } : {}),
+    };
+  });
+}
+
+function bodyTeamsArray(registry: Record<string, unknown>) {
+  const raw = registry["teams"];
+  if (!Array.isArray(raw)) {
+    throw new UiHttpError(400, "registry.teams must be an array");
+  }
+  return raw.map((item, i) => {
+    if (!item || typeof item !== "object" || Array.isArray(item)) {
+      throw new UiHttpError(400, `registry.teams[${i}] must be an object`);
+    }
+    const obj = item as Record<string, unknown>;
+    const id = requiredBodyString(obj, "id");
+    const displayName = requiredBodyString(obj, "displayName");
+    const synonyms = obj["synonyms"] !== undefined ? (Array.isArray(obj["synonyms"]) ? (obj["synonyms"] as string[]) : undefined) : undefined;
+    const slackHandles = obj["slackHandles"] !== undefined ? (Array.isArray(obj["slackHandles"]) ? (obj["slackHandles"] as string[]) : undefined) : undefined;
+    const projects = Array.isArray(obj["projects"]) ? (obj["projects"] as unknown[]) : undefined;
+    return {
+      id,
+      displayName,
+      ...(synonyms ? { synonyms } : {}),
+      ...(slackHandles ? { slackHandles } : {}),
+      ...(projects ? { projects } : {}),
+    };
+  });
 }
 
 class UiHttpError extends Error {

@@ -467,6 +467,97 @@ describe("UI HTTP routes", () => {
     }
   });
 
+  it("persists people and teams with project associations through the registry round-trip", async () => {
+    await postJson("/api/ui/people-registry", {
+      registry: {
+        people: [
+          {
+            id: "jdoe",
+            displayName: "Jane Doe",
+            identities: { slack: "U123", emails: ["jane@co.com"], names: ["JD"] },
+            teams: ["platform"],
+            projects: [{ project: "demo", role: "responsible" }],
+          },
+        ],
+        teams: [
+          {
+            id: "platform",
+            displayName: "Platform Team",
+            slackHandles: ["platform-eng"],
+            projects: [{ project: "demo", role: "executive_sponsor" }],
+          },
+        ],
+      },
+      message: "test: seed registry",
+    });
+
+    const registry = await fetchJson<{
+      people: Array<{ id: string; projects?: Array<{ project: string; role: string }> }>;
+      teams: Array<{ id: string; projects?: Array<{ project: string; role: string }> }>;
+    }>("/api/ui/people-registry");
+
+    expect(registry.people[0]?.projects).toEqual([{ project: "demo", role: "responsible" }]);
+    expect(registry.teams[0]?.projects).toEqual([{ project: "demo", role: "executive_sponsor" }]);
+  });
+
+  it("guards concurrent registry writes with an optimistic file-commit check", async () => {
+    await postJson("/api/ui/people-registry", {
+      registry: { people: [{ id: "jdoe", displayName: "Jane Doe" }], teams: [] },
+      message: "test: seed registry",
+    });
+
+    const first = await fetchJson<{ fileCommit?: string }>("/api/ui/people-registry");
+    expect(typeof first.fileCommit).toBe("string");
+
+    // A second writer advances the registry past the commit the first reader holds.
+    await postJson("/api/ui/people-registry", {
+      registry: { people: [{ id: "asmith", displayName: "Alice Smith" }], teams: [] },
+      message: "test: concurrent write",
+      expectedFileCommit: first.fileCommit,
+    });
+
+    // The stale writer using the original commit must be rejected with 409.
+    const stale = await fetch(`${baseUrl}/api/ui/people-registry`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${TOKEN}`, "content-type": "application/json" },
+      body: JSON.stringify({
+        registry: { people: [{ id: "jdoe", displayName: "Jane Doe (stale)" }], teams: [] },
+        expectedFileCommit: first.fileCommit,
+      }),
+    });
+    const body = (await stale.json()) as { error: { message: string } };
+
+    expect(stale.status).toBe(409);
+    expect(body.error.message).toContain("commit mismatch");
+
+    const latest = await fetchJson<{ people: Array<{ id: string }> }>("/api/ui/people-registry");
+    expect(latest.people.map((p) => p.id)).toEqual(["asmith"]);
+  });
+
+  it("drops project associations with invalid roles when writing the registry", async () => {
+    await postJson("/api/ui/people-registry", {
+      registry: {
+        people: [
+          {
+            id: "jdoe",
+            displayName: "Jane Doe",
+            projects: [
+              { project: "demo", role: "responsible" },
+              { project: "demo", role: "not-a-real-role" },
+            ],
+          },
+        ],
+        teams: [],
+      },
+    });
+
+    const registry = await fetchJson<{
+      people: Array<{ id: string; projects?: Array<{ project: string; role: string }> }>;
+    }>("/api/ui/people-registry");
+
+    expect(registry.people[0]?.projects).toEqual([{ project: "demo", role: "responsible" }]);
+  });
+
   it("rejects invalid boolean strings in UI mutation bodies", async () => {
     const response = await fetch(`${baseUrl}/api/ui/anchor-delete`, {
       method: "POST",
