@@ -1384,6 +1384,24 @@ describe("AnchorService task write APIs", () => {
   });
 });
 
+describe("AnchorService people registry caching", () => {
+  it("refreshes the cached registry when the file changes out of band", async () => {
+    await service.writePeopleRegistry({
+      registry: { people: [{ id: "alice", displayName: "Alice" }], teams: [] },
+    });
+    expect((await service.listPeople()).people.map((p) => p.id)).toEqual(["alice"]);
+
+    // Simulate a background AutoSync rebase / external edit: write a new commit
+    // straight through the repo, bypassing the service's own cache invalidation.
+    await repo.writePeopleRegistryRaw(
+      { people: [{ id: "bob", displayName: "Bob" }], teams: [] },
+      { message: "test: out-of-band registry change" },
+    );
+
+    expect((await service.listPeople()).people.map((p) => p.id)).toEqual(["bob"]);
+  });
+});
+
 function roadmapAnchorContent(options: { extraFm?: string } = {}): string {
   const extraLine = options.extraFm ? `${options.extraFm}\n` : "";
   return `---

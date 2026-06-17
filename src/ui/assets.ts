@@ -2326,6 +2326,14 @@ export const UI_JS = `(function () {
     if (state.activeTab === "tasks") {
       await loadTasks();
     }
+    // Anchors are now loaded; re-render the registry views so soft project-slug
+    // validation (which reads state.anchors) runs even when the user landed
+    // directly on the People/Teams tab before anchors finished loading.
+    if ((state.activeTab === "people" || state.activeTab === "teams") && state.registry) {
+      renderPeople();
+      renderTeams();
+      renderProjectAssociations();
+    }
     var proposalId = new URLSearchParams(window.location.search).get("proposal");
     if (state.activeTab === "review" && proposalId) {
       await selectProposal(proposalId);
@@ -3992,7 +4000,7 @@ export const UI_JS = `(function () {
         state.selectedPersonId = state.selectedPersonId === btn.dataset.personId ? null : btn.dataset.personId;
         renderPeople();
         if (state.selectedPersonId) {
-          var card = container.querySelector("[data-person-id=\\"" + btn.dataset.personId + "\\"]");
+          var card = findByDataAttr(container, "person-id", btn.dataset.personId);
           if (card) card.scrollIntoView({ behavior: "smooth", block: "nearest" });
         }
       });
@@ -4036,9 +4044,20 @@ export const UI_JS = `(function () {
     wireAssocRows(container);
   }
 
+  // Find an element by a data attribute without interpolating the (user-provided)
+  // value into a CSS selector — ids may contain quotes/brackets/backslashes that
+  // would make querySelector throw or match the wrong node.
+  function findByDataAttr(root, attr, value) {
+    var nodes = (root || document).querySelectorAll("[data-" + attr + "]");
+    for (var i = 0; i < nodes.length; i++) {
+      if (nodes[i].getAttribute("data-" + attr) === value) return nodes[i];
+    }
+    return null;
+  }
+
   function scrollToRegistryCard(attr, id) {
     setTimeout(function() {
-      var card = document.querySelector("[data-" + attr + "=\\"" + id + "\\"]");
+      var card = findByDataAttr(document, attr, id);
       if (!card) return;
       card.scrollIntoView({ behavior: "smooth", block: "start" });
       card.classList.add("registry-card-flash");
@@ -4047,7 +4066,11 @@ export const UI_JS = `(function () {
   }
 
   function wireAssocRows(container) {
+    // Guard against duplicate listeners: wireAssocRows runs on every render and
+    // again after each "+" click, so only bind buttons not already wired.
     container.querySelectorAll(".assoc-add").forEach(function(btn) {
+      if (btn.dataset.wired) return;
+      btn.dataset.wired = "1";
       btn.addEventListener("click", function() {
         var row = btn.closest(".registry-assoc-row");
         if (!row) return;
@@ -4063,6 +4086,8 @@ export const UI_JS = `(function () {
       });
     });
     container.querySelectorAll(".assoc-remove").forEach(function(btn) {
+      if (btn.dataset.wired) return;
+      btn.dataset.wired = "1";
       btn.addEventListener("click", function() {
         var row = btn.closest(".registry-assoc-row");
         if (row) row.remove();
@@ -4146,7 +4171,7 @@ export const UI_JS = `(function () {
         state.selectedTeamId = state.selectedTeamId === btn.dataset.teamId ? null : btn.dataset.teamId;
         renderTeams();
         if (state.selectedTeamId) {
-          var card = container.querySelector("[data-team-id=\\"" + btn.dataset.teamId + "\\"]");
+          var card = findByDataAttr(container, "team-id", btn.dataset.teamId);
           if (card) card.scrollIntoView({ behavior: "smooth", block: "nearest" });
         }
       });

@@ -151,8 +151,8 @@ export function buildPeopleIndex(registry: PeopleRegistry): PeopleIndex {
       return registry.teams.find((t) => t.id.toLowerCase() === needle);
     },
     getTeamMembers(teamId: string): Person[] {
-      const needle = teamId.toLowerCase();
-      return registry.people.filter((p) => p.teams?.some((t) => t.toLowerCase() === needle));
+      const needle = teamId.toLowerCase().trim();
+      return registry.people.filter((p) => p.teams?.some((t) => t.toLowerCase().trim() === needle));
     },
   };
 }

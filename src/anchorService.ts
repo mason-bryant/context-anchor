@@ -145,6 +145,8 @@ type MilestoneListRow = {
 
 export class AnchorService {
   private _peopleRegistry: PeopleRegistry | undefined;
+  /** Git commit the cached registry was parsed from; used to detect out-of-band changes (e.g. AutoSync rebases). */
+  private _peopleRegistryCommit: string | undefined;
 
   constructor(
     private readonly repo: AnchorRepository,
@@ -156,16 +158,21 @@ export class AnchorService {
   ) {}
 
   private async loadPeopleRegistry(): Promise<PeopleRegistry> {
-    if (this._peopleRegistry !== undefined) {
+    // Key the cache on the registry file's last commit so a background AutoSync
+    // rebase (or any out-of-band change) is picked up instead of served stale.
+    const commit = await this.repo.peopleRegistryCommit();
+    if (this._peopleRegistry !== undefined && this._peopleRegistryCommit === commit) {
       return this._peopleRegistry;
     }
     const raw = await this.repo.readPeopleRegistryRaw();
     this._peopleRegistry = parsePeopleRegistry(raw);
+    this._peopleRegistryCommit = commit;
     return this._peopleRegistry;
   }
 
   private invalidatePeopleRegistry(): void {
     this._peopleRegistry = undefined;
+    this._peopleRegistryCommit = undefined;
   }
 
   async listPeople(team?: string): Promise<{ people: Person[] }> {
@@ -173,10 +180,10 @@ export class AnchorService {
     if (!team) {
       return { people: registry.people };
     }
-    const needle = team.toLowerCase();
+    const needle = team.toLowerCase().trim();
     const index = buildPeopleIndex(registry);
     const resolvedTeam = index.getTeam(needle);
-    const teamId = resolvedTeam?.id ?? team;
+    const teamId = resolvedTeam?.id ?? needle;
     const members = index.getTeamMembers(teamId);
     return { people: members };
   }

@@ -225,6 +225,11 @@ describe("buildPeopleIndex", () => {
     it("returns empty for unknown team", () => {
       expect(index.getTeamMembers("nobody")).toEqual([]);
     });
+
+    it("ignores surrounding whitespace in the team id", () => {
+      const members = index.getTeamMembers("  platform  ");
+      expect(members.map((m) => m.id).sort()).toEqual(["asmith", "jdoe"]);
+    });
   });
 
   describe("getPerson", () => {
