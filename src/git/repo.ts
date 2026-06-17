@@ -72,6 +72,21 @@ export type CommitAnchorInput = {
   push?: boolean;
 };
 
+export class PeopleRegistryConflictError extends Error {
+  readonly code = "people_registry_conflict";
+  constructor(
+    readonly expectedFileCommit: string,
+    readonly currentFileCommit: string | undefined,
+  ) {
+    super(
+      `People registry commit mismatch: expected ${expectedFileCommit || "none"}, found ${
+        currentFileCommit ?? "none"
+      }. Re-load the registry and retry.`,
+    );
+    this.name = "PeopleRegistryConflictError";
+  }
+}
+
 export class AnchorRepository {
   readonly repoPath: string;
   readonly anchorRoot: string;
@@ -755,6 +770,71 @@ export class AnchorRepository {
     } catch {
       return undefined;
     }
+  }
+
+  static readonly PEOPLE_REGISTRY_FILE = "people-registry.json";
+
+  private peopleRegistryRepoRelativePath(): string {
+    const filePath = path.join(this.anchorRootPath, AnchorRepository.PEOPLE_REGISTRY_FILE);
+    return toPosix(path.relative(this.repoPath, filePath));
+  }
+
+  async peopleRegistryCommit(): Promise<string | undefined> {
+    return this.lastCommitForFile(this.peopleRegistryRepoRelativePath());
+  }
+
+  async readPeopleRegistryRaw(): Promise<unknown> {
+    const filePath = path.join(this.anchorRootPath, AnchorRepository.PEOPLE_REGISTRY_FILE);
+    try {
+      const content = await readFile(filePath, "utf8");
+      return JSON.parse(content) as unknown;
+    } catch {
+      return null;
+    }
+  }
+
+  async writePeopleRegistryRaw(
+    registry: unknown,
+    options: { message?: string; coAuthor?: string; push?: boolean; expectedFileCommit?: string } = {},
+  ): Promise<void> {
+    const filePath = path.join(this.anchorRootPath, AnchorRepository.PEOPLE_REGISTRY_FILE);
+    assertInside(this.anchorRootPath, filePath);
+    const repoRelativePath = toPosix(path.relative(this.repoPath, filePath));
+    const content = JSON.stringify(registry, null, 2) + "\n";
+
+    await this.lock.runExclusive(async () => {
+      if (options.expectedFileCommit !== undefined) {
+        const current = await this.lastCommitForFile(repoRelativePath);
+        if ((current ?? "") !== options.expectedFileCommit) {
+          throw new PeopleRegistryConflictError(options.expectedFileCommit, current);
+        }
+      }
+      const tmpPath = `${filePath}.${process.pid}.${Date.now()}.tmp`;
+      await writeFile(tmpPath, content, "utf8");
+      await rename(tmpPath, filePath);
+
+      await this.git.add(repoRelativePath);
+      const status = await this.git.status();
+      if (!status.files.some((file) => file.path === repoRelativePath)) {
+        return;
+      }
+
+      const commitMessage = options.message ?? "chore: update people registry";
+      const args: string[] = [
+        "-c", "user.name=anchor-mcp",
+        "-c", "user.email=anchor-mcp@local",
+        "commit",
+        "-m", commitMessage,
+      ];
+      if (options.coAuthor) {
+        args.push("-m", `Co-authored-by: ${options.coAuthor}`);
+      }
+      await this.git.raw(args);
+
+      if (options.push) {
+        await this.push().catch(() => undefined);
+      }
+    });
   }
 }
 

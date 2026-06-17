@@ -171,6 +171,67 @@ export type ListTasksDueInput = {
   noDue?: boolean;
   /** Filter by task status. Defaults to active, todo, and blocked. */
   status?: MilestoneTaskStatus[];
+  /** Filter by owner: person id, display name, email, slack id, team id, or team synonym. */
+  owner?: string;
+  /** When true, include only tasks that have no owner assigned. */
+  unassigned?: boolean;
+};
+
+export type CreateTaskInput = {
+  /** Project slug (alias-resolved) the task belongs to. */
+  project: string;
+  /** Task title. */
+  title: string;
+  /** Optional milestone anchor name; defaults to the project's backlog milestone (auto-created when missing). */
+  milestone?: string;
+  /** Initial status; defaults to `todo`. */
+  status?: MilestoneTaskStatus;
+  /** Owner: person id/name/email/slack or team id/synonym. Omit to leave unassigned. */
+  owner?: string;
+  /** ISO date (YYYY-MM-DD). Requires dateConfidence when set. */
+  due?: string;
+  /** Required when due is set. */
+  dateConfidence?: DateConfidence;
+  goalIds?: string[];
+  notes?: string;
+  message?: string;
+  approved?: boolean;
+  coAuthor?: string;
+};
+
+export type CreateTaskResult = WriteAnchorResult & {
+  /** Generated task id (e.g. `T-7`) when the write succeeded. */
+  taskId?: string;
+  /** Milestone anchor the task was written to. */
+  milestoneName?: string;
+};
+
+export type CompleteTaskInput = {
+  /** Task id to complete. */
+  taskId: string;
+  /** Milestone anchor containing the task. When omitted, the task is located by id within `project`. */
+  name?: string;
+  /** Project slug used to locate the task when `name` is omitted. */
+  project?: string;
+  /** Completion date (YYYY-MM-DD); defaults to today. */
+  completedOn?: string;
+  message?: string;
+  approved?: boolean;
+  coAuthor?: string;
+  expectedFileCommit?: string;
+};
+
+export type DeleteTaskInput = {
+  /** Task id to delete. */
+  taskId: string;
+  /** Milestone anchor containing the task. When omitted, the task is located by id within `project`. */
+  name?: string;
+  /** Project slug used to locate the task when `name` is omitted. */
+  project?: string;
+  message?: string;
+  approved?: boolean;
+  coAuthor?: string;
+  expectedFileCommit?: string;
 };
 
 export type TaskDueRow = {
@@ -185,7 +246,73 @@ export type TaskDueRow = {
   milestoneDisplayId?: string;
   milestoneStatus: string;
   project?: string;
+  /** Resolved person from the people registry, when the task owner matches a known person. */
+  resolvedPerson?: { id: string; displayName: string };
+  /** Resolved team from the people registry, when the task owner matches a known team. */
+  resolvedTeam?: { id: string; displayName: string };
 };
+
+export type PersonIdentities = {
+  slack?: string;
+  confluence?: string;
+  emails?: string[];
+  names?: string[];
+};
+
+// Canonical association role list. KEEP IN SYNC with VALID_ROLES in
+// src/peopleRegistry.ts (write validation) and ASSOCIATION_ROLES in
+// src/ui/assets.ts (UI dropdown — a static JS string that cannot import this).
+export type AssociationRole =
+  | "responsible"
+  | "accountable"
+  | "informed"
+  | "consulted"
+  | "executive_sponsor"
+  | "stakeholder"
+  | "lead";
+
+export type ProjectAssociation = {
+  project: string;
+  role: AssociationRole;
+};
+
+export type Person = {
+  id: string;
+  displayName: string;
+  identities?: PersonIdentities;
+  teams?: string[];
+  projects?: ProjectAssociation[];
+};
+
+export type Team = {
+  id: string;
+  displayName: string;
+  synonyms?: string[];
+  slackHandles?: string[];
+  projects?: ProjectAssociation[];
+};
+
+export type TeamWithMembers = Team & {
+  members: Person[];
+};
+
+export type PeopleRegistry = {
+  people: Person[];
+  teams: Team[];
+};
+
+export type WritePeopleRegistryInput = {
+  // Accepts a raw registry shape; the service normalizes and validates it
+  // through parsePeopleRegistry before persisting.
+  registry: unknown;
+  message?: string;
+  coAuthor?: string;
+  // Optional optimistic-concurrency guard: the git commit the caller last read.
+  // The write is rejected if the on-disk registry has advanced past it.
+  expectedFileCommit?: string;
+};
+
+export type PeopleRegistryWithCommit = PeopleRegistry & { fileCommit?: string };
 
 export type ProposedChangeStatus = "pending" | "applied" | "rejected" | "changes_requested" | "superseded";
 

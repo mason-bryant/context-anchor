@@ -38,6 +38,16 @@ export const UI_HTML = `<!doctype html>
         <path d="M9 4v5h6V4"></path>
         <path d="M9 16h6"></path>
       </symbol>
+      <symbol id="icon-people" viewBox="0 0 24 24">
+        <circle cx="8" cy="8" r="3"></circle>
+        <path d="M2 20c0-3.3 2.7-6 6-6"></path>
+        <circle cx="16" cy="8" r="3"></circle>
+        <path d="M22 20c0-3.3-2.7-6-6-6h-4c-3.3 0-6 2.7-6 6"></path>
+      </symbol>
+      <symbol id="icon-team" viewBox="0 0 24 24">
+        <rect x="3" y="11" width="18" height="10" rx="2"></rect>
+        <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+      </symbol>
     </svg>
     <div class="app-shell">
       <header class="topbar">
@@ -105,6 +115,8 @@ export const UI_HTML = `<!doctype html>
             <button class="tab active" data-tab="root" type="button"><span class="icon-label"><svg class="icon" aria-hidden="true"><use href="#icon-home"></use></svg><span>Context Root</span></span></button>
             <button class="tab" data-tab="planner" type="button"><span class="icon-label"><svg class="icon" aria-hidden="true"><use href="#icon-plan"></use></svg><span>Planner</span></span></button>
             <button class="tab" data-tab="tasks" type="button"><span class="icon-label"><svg class="icon" aria-hidden="true"><use href="#icon-filter"></use></svg><span>Tasks</span></span></button>
+            <button class="tab" data-tab="people" type="button"><span class="icon-label"><svg class="icon" aria-hidden="true"><use href="#icon-people"></use></svg><span>People</span></span></button>
+            <button class="tab" data-tab="teams" type="button"><span class="icon-label"><svg class="icon" aria-hidden="true"><use href="#icon-team"></use></svg><span>Teams</span></span></button>
             <button class="tab" data-tab="review" type="button"><span class="icon-label"><svg class="icon" aria-hidden="true"><use href="#icon-save"></use></svg><span>Review</span></span></button>
             <button class="tab" data-tab="detail" type="button" disabled><span class="icon-label"><svg class="icon" aria-hidden="true"><use href="#icon-anchor"></use></svg><span>Selected Anchor</span></span></button>
           </nav>
@@ -274,11 +286,107 @@ export const UI_HTML = `<!doctype html>
                   <option value="">All statuses</option>
                 </select>
                 <label class="checkbox-label"><input type="checkbox" id="tasks-no-due"> No due date only</label>
+                <label class="checkbox-label"><input type="checkbox" id="tasks-unassigned"> Unassigned only</label>
+                <button id="tasks-add" type="button">+ Add Task</button>
                 <button id="tasks-refresh" type="button">Refresh</button>
               </div>
             </div>
+            <div id="tasks-add-form" class="registry-add-form" hidden>
+              <h3>New Task</h3>
+              <div class="form-grid">
+                <label>Project<input id="new-task-project" type="text" placeholder="anchor-mcp"></label>
+                <label>Title<input id="new-task-title" type="text" placeholder="Follow up on X"></label>
+                <label>Owner (optional)<input id="new-task-owner" type="text" placeholder="person or team — blank = unassigned"></label>
+                <label>Status<select id="new-task-status">
+                  <option value="todo">todo</option>
+                  <option value="active">active</option>
+                  <option value="blocked">blocked</option>
+                </select></label>
+                <label>Due (optional)<input id="new-task-due" type="date"></label>
+                <label>Date confidence<select id="new-task-confidence">
+                  <option value="estimated">estimated</option>
+                  <option value="internal_goal">internal_goal</option>
+                  <option value="committed">committed</option>
+                </select></label>
+                <label>Milestone (optional)<input id="new-task-milestone" type="text" placeholder="blank = project backlog"></label>
+              </div>
+              <div class="action-row">
+                <button id="new-task-save" type="button">Save</button>
+                <button id="new-task-cancel" type="button">Cancel</button>
+              </div>
+              <p id="new-task-result" class="registry-result"></p>
+            </div>
             <div id="tasks-empty" class="empty-state">No tasks match the current filters.</div>
             <div id="tasks-list" hidden></div>
+          </section>
+
+          <section id="people-view" class="view">
+            <div class="view-header">
+              <div>
+                <h2>People</h2>
+                <p id="people-summary">People registry.</p>
+              </div>
+              <div class="action-row">
+                <button id="people-add" type="button">+ Add Person</button>
+                <button id="people-refresh" type="button">Refresh</button>
+              </div>
+            </div>
+            <div id="people-add-form" class="registry-add-form" hidden>
+              <h3>New Person</h3>
+              <div class="form-grid">
+                <label>ID (slug)<input id="new-person-id" type="text" placeholder="jdoe"></label>
+                <label>Display Name<input id="new-person-name" type="text" placeholder="Jane Doe"></label>
+                <label>Slack ID<input id="new-person-slack" type="text" placeholder="U012345ABC"></label>
+                <label>Confluence ID<input id="new-person-confluence" type="text" placeholder="jdoe"></label>
+                <label>Emails (comma-separated)<input id="new-person-emails" type="text" placeholder="jane@co.com"></label>
+                <label>Name aliases (comma-separated)<input id="new-person-names" type="text" placeholder="Jane, J. Doe"></label>
+                <label>Teams (comma-separated)<input id="new-person-teams" type="text" placeholder="platform, frontend"></label>
+              </div>
+              <div class="action-row">
+                <button id="new-person-save" type="button">Save</button>
+                <button id="new-person-cancel" type="button">Cancel</button>
+              </div>
+              <p id="new-person-result" class="registry-result"></p>
+            </div>
+            <details id="people-assoc-overview" class="assoc-overview">
+              <summary>Associations by project (who's on what)</summary>
+              <div class="assoc-overview-body"></div>
+            </details>
+            <div id="people-empty" class="empty-state" hidden>No people in registry.</div>
+            <div id="people-list" class="registry-cards"></div>
+          </section>
+
+          <section id="teams-view" class="view">
+            <div class="view-header">
+              <div>
+                <h2>Teams</h2>
+                <p id="teams-summary">Teams registry.</p>
+              </div>
+              <div class="action-row">
+                <button id="teams-add" type="button">+ Add Team</button>
+                <button id="teams-refresh" type="button">Refresh</button>
+              </div>
+            </div>
+            <div id="teams-add-form" class="registry-add-form" hidden>
+              <h3>New Team</h3>
+              <div class="form-grid">
+                <label>ID (slug)<input id="new-team-id" type="text" placeholder="platform"></label>
+                <label>Display Name<input id="new-team-name" type="text" placeholder="Platform Team"></label>
+                <label>Synonyms (comma-separated)<input id="new-team-synonyms" type="text" placeholder="core-platform, platform team"></label>
+                <label>Slack Handles (comma-separated)<input id="new-team-handles" type="text" placeholder="platform-team"></label>
+              </div>
+              <div class="action-row">
+                <button id="new-team-save" type="button">Save</button>
+                <button id="new-team-cancel" type="button">Cancel</button>
+              </div>
+              <p id="new-team-result" class="registry-result"></p>
+            </div>
+            <details id="teams-assoc-overview" class="assoc-overview">
+              <summary>Associations by project (who's on what)</summary>
+              <div class="assoc-overview-body"></div>
+            </details>
+            <div id="teams-empty" class="empty-state" hidden>No teams in registry.</div>
+            <div id="teams-list" class="registry-cards"></div>
           </section>
 
           <section id="detail-view" class="view">
@@ -1299,9 +1407,244 @@ textarea {
   text-align: right;
 }
 
+.task-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.task-action-result {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.badge.task-unassigned {
+  background: #fff7e6;
+  border-color: #f0c987;
+  color: #8a5a00;
+}
+
 .compact-action {
   font-size: 12px;
   padding: 3px 8px;
+}
+
+.registry-cards {
+  display: grid;
+  gap: 12px;
+  padding: 4px 0;
+}
+
+.registry-card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 14px 16px;
+  box-shadow: var(--shadow);
+  transition: box-shadow 0.3s ease, border-color 0.3s ease;
+}
+
+.registry-card-flash {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent);
+}
+
+.registry-card-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.registry-card-title {
+  font-size: 15px;
+  font-weight: 600;
+  margin: 0;
+}
+
+.registry-card-id {
+  font-size: 12px;
+  color: var(--muted);
+  font-family: ui-monospace, monospace;
+  margin-top: 2px;
+}
+
+.registry-card-actions {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.registry-card-actions button {
+  font-size: 12px;
+  padding: 4px 10px;
+}
+
+.registry-section {
+  margin-top: 10px;
+  font-size: 13px;
+}
+
+.registry-section-label {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+  margin-bottom: 5px;
+}
+
+.registry-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.registry-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--panel-strong);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 2px 8px;
+  font-size: 12px;
+}
+
+.registry-chip.link-chip {
+  cursor: pointer;
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-color: #c3d9ff;
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.registry-chip.link-chip:hover {
+  border-color: var(--accent);
+}
+
+.registry-chip.link-chip:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.registry-chip.role-chip {
+  background: #f0f9f4;
+  border-color: #b2d8c4;
+  color: var(--ok);
+}
+
+.registry-chip.warn-chip {
+  background: #fff7e6;
+  border-color: #f0c987;
+  color: #8a5a00;
+}
+
+.assoc-warn {
+  color: var(--warn);
+  cursor: help;
+}
+
+.assoc-overview {
+  margin: 4px 0 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+  padding: 6px 12px;
+}
+
+.assoc-overview > summary {
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 13px;
+  padding: 4px 0;
+}
+
+.assoc-overview .assoc-overview-body {
+  padding: 8px 0 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.registry-edit-form {
+  margin-top: 14px;
+  border-top: 1px solid var(--border);
+  padding-top: 14px;
+}
+
+.registry-edit-form .form-grid {
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.registry-edit-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.registry-edit-form input,
+.registry-edit-form select,
+.registry-edit-form textarea {
+  font-size: 13px;
+  padding: 5px 8px;
+}
+
+.registry-assoc-row {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  gap: 6px;
+  align-items: center;
+  margin-bottom: 6px;
+}
+
+.registry-assoc-row input,
+.registry-assoc-row select {
+  font-size: 12px;
+  padding: 4px 7px;
+}
+
+.registry-result {
+  font-size: 12px;
+  color: var(--muted);
+  margin: 8px 0 0;
+  min-height: 16px;
+}
+
+.registry-add-form {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 16px;
+  margin-bottom: 16px;
+  box-shadow: var(--shadow);
+}
+
+.registry-add-form h3 {
+  margin: 0 0 12px;
+  font-size: 14px;
+}
+
+.registry-add-form .form-grid {
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.registry-add-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--muted);
 }
 `;
 
@@ -1333,7 +1676,8 @@ export const UI_JS = `(function () {
     "proposal",
     "tasksProject",
     "tasksStatus",
-    "tasksNoDue"
+    "tasksNoDue",
+    "tasksUnassigned"
   ];
 
   var state = {
@@ -1361,7 +1705,13 @@ export const UI_JS = `(function () {
     tasksLoading: false,
     tasksProject: "",
     tasksStatus: "active,todo,blocked",
-    tasksNoDue: false
+    tasksNoDue: false,
+    tasksUnassigned: false,
+    registry: null,
+    registryLoading: false,
+    registryFileCommit: null,
+    selectedPersonId: null,
+    selectedTeamId: null
   };
 
   var categories = ["", "server-rules", "agent-rules", "projects", "invariants", "conflicts", "shared", "archive"];
@@ -1434,7 +1784,7 @@ export const UI_JS = `(function () {
   }
 
   function validTab(value) {
-    return value === "root" || value === "planner" || value === "tasks" || value === "review" || value === "detail" ? value : null;
+    return value === "root" || value === "planner" || value === "tasks" || value === "people" || value === "teams" || value === "review" || value === "detail" ? value : null;
   }
 
   function validRootMode(value) {
@@ -1480,9 +1830,11 @@ export const UI_JS = `(function () {
     state.tasksProject = params.get("tasksProject") || "";
     state.tasksStatus = params.get("tasksStatus") || "active,todo,blocked";
     state.tasksNoDue = params.get("tasksNoDue") === "true";
+    state.tasksUnassigned = params.get("tasksUnassigned") === "true";
     setSelectValueAllowingNew("tasks-project-filter", state.tasksProject);
     setControlValue("tasks-status-filter", state.tasksStatus);
     setControlChecked("tasks-no-due", state.tasksNoDue);
+    setControlChecked("tasks-unassigned", state.tasksUnassigned);
   }
 
   function urlForState(overrides) {
@@ -1562,6 +1914,9 @@ export const UI_JS = `(function () {
     setNonDefaultParam(params, "tasksStatus", tasksStatus, "active,todo,blocked");
     if (controlChecked("tasks-no-due", state.tasksNoDue)) {
       params.set("tasksNoDue", "true");
+    }
+    if (controlChecked("tasks-unassigned", state.tasksUnassigned)) {
+      params.set("tasksUnassigned", "true");
     }
 
     return params;
@@ -1684,7 +2039,9 @@ export const UI_JS = `(function () {
     var response = await fetch(path, { method: "POST", headers: headers, body: JSON.stringify(body || {}) });
     if (!response.ok) {
       var text = await response.text();
-      throw new Error(response.status + " " + response.statusText + ": " + text);
+      var err = new Error(response.status + " " + response.statusText + ": " + text);
+      err.status = response.status;
+      throw err;
     }
     return response.json();
   }
@@ -1968,6 +2325,14 @@ export const UI_JS = `(function () {
     }
     if (state.activeTab === "tasks") {
       await loadTasks();
+    }
+    // Anchors are now loaded; re-render the registry views so soft project-slug
+    // validation (which reads state.anchors) runs even when the user landed
+    // directly on the People/Teams tab before anchors finished loading.
+    if ((state.activeTab === "people" || state.activeTab === "teams") && state.registry) {
+      renderPeople();
+      renderTeams();
+      renderProjectAssociations();
     }
     var proposalId = new URLSearchParams(window.location.search).get("proposal");
     if (state.activeTab === "review" && proposalId) {
@@ -3101,10 +3466,12 @@ export const UI_JS = `(function () {
     var project = controlValue("tasks-project-filter", state.tasksProject);
     var statusVal = controlValue("tasks-status-filter", state.tasksStatus);
     var noDue = controlChecked("tasks-no-due", state.tasksNoDue);
+    var unassigned = controlChecked("tasks-unassigned", state.tasksUnassigned);
     var qs = [];
     if (project) qs.push("project=" + encodeURIComponent(project));
     if (statusVal) qs.push("status=" + encodeURIComponent(statusVal));
     if (noDue) qs.push("noDue=true");
+    if (unassigned) qs.push("unassigned=true");
     var url = "/api/ui/tasks-due" + (qs.length ? "?" + qs.join("&") : "");
     try {
       var result = await api(url);
@@ -3115,6 +3482,37 @@ export const UI_JS = `(function () {
     } finally {
       state.tasksLoading = false;
     }
+  }
+
+  async function saveNewTask() {
+    var resultEl = el("new-task-result");
+    var project = (el("new-task-project").value || "").trim();
+    var title = (el("new-task-title").value || "").trim();
+    if (!project) { resultEl.textContent = "Project is required."; return; }
+    if (!title) { resultEl.textContent = "Title is required."; return; }
+    var owner = (el("new-task-owner").value || "").trim();
+    var due = (el("new-task-due").value || "").trim();
+    var confidence = el("new-task-confidence").value;
+    var status = el("new-task-status").value;
+    var milestone = (el("new-task-milestone").value || "").trim();
+    var payload = { project: project, title: title, status: status, approved: true };
+    if (owner) payload.owner = owner;
+    if (milestone) payload.milestone = milestone;
+    if (due) {
+      payload.due = due;
+      payload.dateConfidence = confidence;
+    }
+    resultEl.textContent = "Saving...";
+    var res = await apiPost("/api/ui/task-create", payload);
+    if (res.warnings && res.warnings.some(function (w) { return w.severity === "BLOCK"; })) {
+      resultEl.textContent = res.warnings.map(function (w) { return w.message; }).join("; ");
+      return;
+    }
+    resultEl.textContent = "Created " + (res.taskId || "task") + ".";
+    ["new-task-title", "new-task-owner", "new-task-due", "new-task-milestone"].forEach(function (id) { el(id).value = ""; });
+    el("tasks-add-form").hidden = true;
+    state.tasks = [];
+    loadTasks();
   }
 
   function renderTasks() {
@@ -3176,6 +3574,22 @@ export const UI_JS = `(function () {
     list.querySelectorAll(".task-milestone-link").forEach(function (btn) {
       btn.addEventListener("click", function () {
         selectAnchor(btn.dataset.anchor);
+      });
+    });
+
+    wireGotoChips(list);
+
+    list.querySelectorAll(".task-complete-btn").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        var row = btn.closest(".task-actions");
+        runTaskLifecycle("/api/ui/task-complete", row, "Completing...");
+      });
+    });
+    list.querySelectorAll(".task-delete-btn").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        var row = btn.closest(".task-actions");
+        if (!window.confirm("Delete task " + row.dataset.taskId + "?")) return;
+        runTaskLifecycle("/api/ui/task-delete", row, "Deleting...");
       });
     });
 
@@ -3242,7 +3656,7 @@ export const UI_JS = `(function () {
 
   function renderTaskRow(task) {
     var statusBadge = "<span class=\\"badge\\">" + escapeHtml(task.taskStatus) + "</span>";
-    var ownerBadge = task.taskOwner ? "<span class=\\"badge\\">" + escapeHtml(task.taskOwner) + "</span>" : "";
+    var ownerBadge = renderTaskOwner(task);
     var projectBadge = task.project ? "<span class=\\"badge\\">" + escapeHtml(task.project) + "</span>" : "";
     var milestoneLabel = task.milestoneDisplayId || task.milestoneName.split("/").pop().replace(/\\.md$/, "");
     var milestoneBtn = "<button class=\\"task-milestone-link\\" data-anchor=\\"" + escapeHtml(task.milestoneName) + "\\" type=\\"button\\">" + escapeHtml(milestoneLabel) + "</button>";
@@ -3263,13 +3677,539 @@ export const UI_JS = `(function () {
       + "</div>"
       + "<div class=\\"task-due-result\\"></div>"
       + "</form>";
+    var lifecycle = "<div class=\\"task-actions\\" data-task-id=\\"" + escapeHtml(task.taskId) + "\\" data-milestone-name=\\"" + escapeHtml(task.milestoneName) + "\\">"
+      + (task.taskStatus !== "done" && task.taskStatus !== "cancelled"
+        ? "<button type=\\"button\\" class=\\"compact-action task-complete-btn\\">Complete</button>" : "")
+      + "<button type=\\"button\\" class=\\"compact-action task-delete-btn\\">Delete</button>"
+      + "<span class=\\"task-action-result\\"></span>"
+      + "</div>";
     return "<div class=\\"task-row\\">"
       + "<div>"
       + "<div class=\\"task-title-line\\">" + escapeHtml(task.taskId) + " — " + escapeHtml(task.taskTitle) + "</div>"
       + "<div class=\\"task-meta\\">" + statusBadge + ownerBadge + projectBadge + milestoneBtn + (task.due ? "<span class=\\"badge\\">" + escapeHtml(task.due) + "</span>" : "") + "</div>"
+      + lifecycle
       + "</div>"
       + form
       + "</div>";
+  }
+
+  // Render a task's owner. Resolved people/teams are clickable cross-links to
+  // their registry entry; an unresolved string shows as-is; no owner shows
+  // a distinct "Unassigned" badge.
+  function renderTaskOwner(task) {
+    if (task.resolvedPerson) {
+      return linkChip("person", task.resolvedPerson.id, "👤 " + task.resolvedPerson.displayName);
+    }
+    if (task.resolvedTeam) {
+      return linkChip("team", task.resolvedTeam.id, "👥 " + task.resolvedTeam.displayName);
+    }
+    if (task.taskOwner) {
+      return "<span class=\\"badge\\">" + escapeHtml(task.taskOwner) + "</span>";
+    }
+    return "<span class=\\"badge task-unassigned\\">Unassigned</span>";
+  }
+
+  async function runTaskLifecycle(path, row, pendingLabel) {
+    if (!row) return;
+    var resultEl = row.querySelector(".task-action-result");
+    if (resultEl) resultEl.textContent = pendingLabel;
+    try {
+      var res = await apiPost(path, {
+        taskId: row.dataset.taskId,
+        name: row.dataset.milestoneName,
+        approved: true
+      });
+      if (res.warnings && res.warnings.some(function (w) { return w.severity === "BLOCK"; })) {
+        if (resultEl) resultEl.textContent = res.warnings.map(function (w) { return w.message; }).join("; ");
+        return;
+      }
+      state.tasks = [];
+      loadTasks();
+    } catch (err) {
+      if (resultEl) resultEl.textContent = err.message;
+    }
+  }
+
+  // KEEP IN SYNC with AssociationRole (src/types.ts) and VALID_ROLES
+  // (src/peopleRegistry.ts). This UI bundle is a static string and cannot import
+  // them, so update all three together when roles change; backend write
+  // validation (parsePeopleRegistry) is the source of truth and will reject
+  // any role missing from VALID_ROLES.
+  var ASSOCIATION_ROLES = ["responsible", "accountable", "informed", "consulted", "executive_sponsor", "stakeholder", "lead"];
+
+  function showPeopleView(options) {
+    var opts = options || {};
+    if (!opts.skipLocationUpdate) {
+      updateLocationFromState({ anchor: null, view: "people", history: "push" });
+    }
+    state.pendingAnchor = null;
+    showTab("people");
+    if (!state.registry && !state.registryLoading) {
+      loadRegistry();
+    }
+  }
+
+  function showTeamsView(options) {
+    var opts = options || {};
+    if (!opts.skipLocationUpdate) {
+      updateLocationFromState({ anchor: null, view: "teams", history: "push" });
+    }
+    state.pendingAnchor = null;
+    showTab("teams");
+    if (!state.registry && !state.registryLoading) {
+      loadRegistry();
+    }
+  }
+
+  async function loadRegistry() {
+    state.registryLoading = true;
+    try {
+      var result = await api("/api/ui/people-registry");
+      state.registry = { people: result.people || [], teams: result.teams || [] };
+      state.registryFileCommit = result.fileCommit || null;
+      renderPeople();
+      renderTeams();
+      renderProjectAssociations();
+    } catch (error) {
+      setBanner(error.message, "error");
+    } finally {
+      state.registryLoading = false;
+    }
+  }
+
+  async function saveRegistry(message) {
+    if (!state.registry) return;
+    try {
+      await apiPost("/api/ui/people-registry", {
+        registry: state.registry,
+        message: message || undefined,
+        expectedFileCommit: state.registryFileCommit || undefined
+      });
+      await loadRegistry();
+    } catch (error) {
+      // Re-sync from the server so the local optimistic edit never lingers
+      // when the write was rejected (conflict, validation, network).
+      if (error && error.status === 409) {
+        setBanner("The registry changed since you loaded it. Reloading the latest version — please re-apply your edit.", "warn");
+      } else {
+        setBanner(error.message, "error");
+      }
+      await loadRegistry();
+    }
+  }
+
+  function splitCsv(str) {
+    return String(str || "").split(",").map(function(s) { return s.trim(); }).filter(function(s) { return s.length > 0; });
+  }
+
+  // Project slugs known from loaded anchors, used for soft referential
+  // validation of associations. Empty when anchors are not yet loaded, in
+  // which case we suppress warnings rather than emit false positives.
+  function knownProjectSlugs() {
+    var set = new Set();
+    (state.anchors || []).forEach(function(a) {
+      var p = projectOf(a);
+      if (p) set.add(String(p).toLowerCase());
+    });
+    return set;
+  }
+
+  function teamIdSet(registry) {
+    var set = new Set();
+    (registry.teams || []).forEach(function(t) { set.add(String(t.id).toLowerCase()); });
+    return set;
+  }
+
+  // A clickable cross-link rendered as a real <button> so it is reachable by
+  // keyboard and exposed to assistive tech (chips were previously inert spans).
+  function linkChip(kind, id, label) {
+    return "<button type=\\"button\\" class=\\"registry-chip link-chip\\" data-goto-" + kind + "=\\"" + escapeHtml(id) + "\\">"
+      + escapeHtml(label) + "</button>";
+  }
+
+  function warnChip(text) {
+    return "<span class=\\"registry-chip warn-chip\\" title=\\"" + escapeHtml(text) + "\\">⚠ " + escapeHtml(text) + "</span>";
+  }
+
+  function assocChips(projects, knownProjects) {
+    return (projects || []).map(function(a) {
+      var unknown = knownProjects.size > 0 && !knownProjects.has(String(a.project).toLowerCase());
+      return "<span class=\\"registry-chip\\"><span class=\\"registry-chip role-chip\\">" + escapeHtml(a.role) + "</span> "
+        + escapeHtml(a.project)
+        + (unknown ? " <span class=\\"assoc-warn\\" title=\\"No loaded anchor matches this project slug\\">⚠</span>" : "")
+        + "</span>";
+    }).join("");
+  }
+
+  // Wires cross-link buttons (data-goto-person / data-goto-team) within any
+  // container: switch to the target tab and scroll/flash the entry.
+  function wireGotoChips(container) {
+    container.querySelectorAll("[data-goto-team]").forEach(function(chip) {
+      chip.addEventListener("click", function() {
+        showTeamsView();
+        scrollToRegistryCard("team-id", chip.dataset.gotoTeam);
+      });
+    });
+    container.querySelectorAll("[data-goto-person]").forEach(function(chip) {
+      chip.addEventListener("click", function() {
+        showPeopleView();
+        scrollToRegistryCard("person-id", chip.dataset.gotoPerson);
+      });
+    });
+  }
+
+  // Reverse view: group every person/team association by project slug so a
+  // reader can answer "who is on project X" without scanning every card.
+  function renderProjectAssociations() {
+    var registry = state.registry;
+    if (!registry) return;
+    var known = knownProjectSlugs();
+    var byProject = {};
+    function add(project, role, kind, id, label) {
+      if (!byProject[project]) byProject[project] = [];
+      byProject[project].push({ role: role, kind: kind, id: id, label: label });
+    }
+    (registry.people || []).forEach(function(p) {
+      (p.projects || []).forEach(function(a) { add(a.project, a.role, "person", p.id, p.displayName); });
+    });
+    (registry.teams || []).forEach(function(t) {
+      (t.projects || []).forEach(function(a) { add(a.project, a.role, "team", t.id, t.displayName); });
+    });
+    var slugs = Object.keys(byProject).sort();
+    var html;
+    if (slugs.length === 0) {
+      html = "<p class=\\"registry-result\\">No project associations yet. Edit a person or team to add one.</p>";
+    } else {
+      html = slugs.map(function(slug) {
+        var unknown = known.size > 0 && !known.has(String(slug).toLowerCase());
+        var rows = byProject[slug].map(function(e) {
+          return "<span class=\\"registry-chip\\"><span class=\\"registry-chip role-chip\\">" + escapeHtml(e.role) + "</span> "
+            + linkChip(e.kind, e.id, e.label) + "</span>";
+        }).join("");
+        return "<div class=\\"registry-section\\"><div class=\\"registry-section-label\\">" + escapeHtml(slug)
+          + (unknown ? " <span class=\\"assoc-warn\\" title=\\"No loaded anchor matches this project slug\\">⚠</span>" : "")
+          + "</div><div class=\\"registry-chips\\">" + rows + "</div></div>";
+      }).join("");
+    }
+    ["people-assoc-overview", "teams-assoc-overview"].forEach(function(id) {
+      var box = el(id);
+      if (!box) return;
+      var body = box.querySelector(".assoc-overview-body");
+      if (!body) return;
+      body.innerHTML = html;
+      wireGotoChips(body);
+    });
+  }
+
+  function renderPeople() {
+    var registry = state.registry;
+    var list = el("people-list");
+    var emptyEl = el("people-empty");
+    var summary = el("people-summary");
+    if (!registry || !registry.people) return;
+    var people = registry.people;
+    summary.textContent = people.length + " person" + (people.length === 1 ? "" : "s") + " in registry.";
+    if (people.length === 0) {
+      emptyEl.hidden = false;
+      list.innerHTML = "";
+      return;
+    }
+    emptyEl.hidden = true;
+    list.innerHTML = people.map(function(person) {
+      return renderPersonCard(person, registry);
+    }).join("");
+    wirePersonCards(list, registry);
+  }
+
+  function renderPersonCard(person, registry) {
+    var teams = (person.teams || []).map(function(teamId) {
+      var team = (registry.teams || []).find(function(t) { return t.id === teamId; });
+      if (team) return linkChip("team", team.id, team.displayName);
+      return warnChip(teamId + " — unknown team");
+    }).join("");
+    var idents = [];
+    if (person.identities) {
+      if (person.identities.slack) idents.push("<span class=\\"registry-chip\\">Slack: " + escapeHtml(person.identities.slack) + "</span>");
+      if (person.identities.confluence) idents.push("<span class=\\"registry-chip\\">Confluence: " + escapeHtml(person.identities.confluence) + "</span>");
+      (person.identities.emails || []).forEach(function(e) { idents.push("<span class=\\"registry-chip\\">✉ " + escapeHtml(e) + "</span>"); });
+      (person.identities.names || []).forEach(function(n) { idents.push("<span class=\\"registry-chip\\">aka " + escapeHtml(n) + "</span>"); });
+    }
+    var assocs = assocChips(person.projects, knownProjectSlugs());
+    var isEditing = state.selectedPersonId === person.id;
+    return "<div class=\\"registry-card\\" data-person-id=\\"" + escapeHtml(person.id) + "\\">"
+      + "<div class=\\"registry-card-header\\">"
+      + "<div><div class=\\"registry-card-title\\">" + escapeHtml(person.displayName) + "</div>"
+      + "<div class=\\"registry-card-id\\">" + escapeHtml(person.id) + "</div></div>"
+      + "<div class=\\"registry-card-actions\\">"
+      + "<button type=\\"button\\" class=\\"person-edit-btn\\" data-person-id=\\"" + escapeHtml(person.id) + "\\">" + (isEditing ? "Close" : "Edit") + "</button>"
+      + "<button type=\\"button\\" class=\\"person-delete-btn\\" data-person-id=\\"" + escapeHtml(person.id) + "\\">Delete</button>"
+      + "</div></div>"
+      + (idents.length ? "<div class=\\"registry-section\\"><div class=\\"registry-section-label\\">Identities</div><div class=\\"registry-chips\\">" + idents.join("") + "</div></div>" : "")
+      + (teams ? "<div class=\\"registry-section\\"><div class=\\"registry-section-label\\">Teams</div><div class=\\"registry-chips\\">" + teams + "</div></div>" : "")
+      + (assocs ? "<div class=\\"registry-section\\"><div class=\\"registry-section-label\\">Project Associations</div><div class=\\"registry-chips\\">" + assocs + "</div></div>" : "")
+      + (isEditing ? renderPersonEditForm(person) : "")
+      + "</div>";
+  }
+
+  function renderPersonEditForm(person) {
+    var idents = person.identities || {};
+    var assocRows = (person.projects || []).map(function(a, i) {
+      return renderAssocRow("person", i, a.project, a.role);
+    }).join("") + renderAssocRow("person", (person.projects || []).length, "", "");
+    return "<div class=\\"registry-edit-form\\">"
+      + "<div class=\\"form-grid\\">"
+      + "<label>Display Name<input id=\\"edit-person-name\\" type=\\"text\\" value=\\"" + escapeHtml(person.displayName) + "\\"></label>"
+      + "<label>Slack ID<input id=\\"edit-person-slack\\" type=\\"text\\" value=\\"" + escapeHtml(idents.slack || "") + "\\"></label>"
+      + "<label>Confluence ID<input id=\\"edit-person-confluence\\" type=\\"text\\" value=\\"" + escapeHtml(idents.confluence || "") + "\\"></label>"
+      + "<label>Emails (comma-separated)<input id=\\"edit-person-emails\\" type=\\"text\\" value=\\"" + escapeHtml((idents.emails || []).join(", ")) + "\\"></label>"
+      + "<label>Name aliases (comma-separated)<input id=\\"edit-person-names\\" type=\\"text\\" value=\\"" + escapeHtml((idents.names || []).join(", ")) + "\\"></label>"
+      + "<label>Teams (comma-separated)<input id=\\"edit-person-teams\\" type=\\"text\\" value=\\"" + escapeHtml((person.teams || []).join(", ")) + "\\"></label>"
+      + "</div>"
+      + "<div class=\\"registry-section-label\\" style=\\"margin-bottom:6px\\">Project Associations</div>"
+      + "<div id=\\"edit-person-assocs\\">" + assocRows + "</div>"
+      + "<div class=\\"action-row\\">"
+      + "<button type=\\"button\\" class=\\"person-save-btn\\" data-person-id=\\"" + escapeHtml(person.id) + "\\">Save</button>"
+      + "<button type=\\"button\\" class=\\"person-edit-btn\\" data-person-id=\\"" + escapeHtml(person.id) + "\\">Cancel</button>"
+      + "</div>"
+      + "<p class=\\"registry-result\\" id=\\"edit-person-result\\"></p>"
+      + "</div>";
+  }
+
+  function renderAssocRow(kind, index, project, role) {
+    var roleOptions = [""].concat(ASSOCIATION_ROLES).map(function(r) {
+      return "<option value=\\"" + r + "\\"" + (r === role ? " selected" : "") + ">" + (r || "-- role --") + "</option>";
+    }).join("");
+    return "<div class=\\"registry-assoc-row\\" data-assoc-index=\\"" + index + "\\">"
+      + "<input type=\\"text\\" placeholder=\\"project-slug\\" value=\\"" + escapeHtml(project) + "\\" class=\\"assoc-project\\">"
+      + "<select class=\\"assoc-role\\">" + roleOptions + "</select>"
+      + (project ? "<button type=\\"button\\" class=\\"assoc-remove compact-action\\">✕</button>" : "<button type=\\"button\\" class=\\"assoc-add compact-action\\">+</button>")
+      + "</div>";
+  }
+
+  function collectAssocRows(container) {
+    var rows = container.querySelectorAll(".registry-assoc-row");
+    var assocs = [];
+    rows.forEach(function(row) {
+      var proj = (row.querySelector(".assoc-project") || {}).value || "";
+      var role = (row.querySelector(".assoc-role") || {}).value || "";
+      if (proj.trim() && role) {
+        assocs.push({ project: proj.trim(), role: role });
+      }
+    });
+    return assocs;
+  }
+
+  function wirePersonCards(container, registry) {
+    container.querySelectorAll(".person-edit-btn").forEach(function(btn) {
+      btn.addEventListener("click", function() {
+        state.selectedPersonId = state.selectedPersonId === btn.dataset.personId ? null : btn.dataset.personId;
+        renderPeople();
+        if (state.selectedPersonId) {
+          var card = findByDataAttr(container, "person-id", btn.dataset.personId);
+          if (card) card.scrollIntoView({ behavior: "smooth", block: "nearest" });
+        }
+      });
+    });
+    container.querySelectorAll(".person-delete-btn").forEach(function(btn) {
+      btn.addEventListener("click", function() {
+        var id = btn.dataset.personId;
+        if (!window.confirm("Delete person " + id + " from registry?")) return;
+        state.registry.people = state.registry.people.filter(function(p) { return p.id !== id; });
+        saveRegistry("chore: remove person " + id).catch(function(e) { setBanner(e.message, "error"); });
+      });
+    });
+    container.querySelectorAll(".person-save-btn").forEach(function(btn) {
+      btn.addEventListener("click", function() {
+        var id = btn.dataset.personId;
+        var person = state.registry.people.find(function(p) { return p.id === id; });
+        if (!person) return;
+        var name = (el("edit-person-name") || {}).value || "";
+        if (!name.trim()) { if (el("edit-person-result")) el("edit-person-result").textContent = "Display name is required."; return; }
+        var slack = (el("edit-person-slack") || {}).value || "";
+        var confluence = (el("edit-person-confluence") || {}).value || "";
+        var emails = splitCsv((el("edit-person-emails") || {}).value);
+        var names = splitCsv((el("edit-person-names") || {}).value);
+        var teams = splitCsv((el("edit-person-teams") || {}).value);
+        var assocContainer = el("edit-person-assocs");
+        var projects = assocContainer ? collectAssocRows(assocContainer) : (person.projects || []);
+        var identities = {};
+        if (slack.trim()) identities.slack = slack.trim();
+        if (confluence.trim()) identities.confluence = confluence.trim();
+        if (emails.length) identities.emails = emails;
+        if (names.length) identities.names = names;
+        person.displayName = name.trim();
+        person.identities = Object.keys(identities).length ? identities : undefined;
+        person.teams = teams.length ? teams : undefined;
+        person.projects = projects.length ? projects : undefined;
+        state.selectedPersonId = null;
+        saveRegistry("chore: update person " + id).catch(function(e) { setBanner(e.message, "error"); });
+      });
+    });
+    wireGotoChips(container);
+    wireAssocRows(container);
+  }
+
+  // Find an element by a data attribute without interpolating the (user-provided)
+  // value into a CSS selector — ids may contain quotes/brackets/backslashes that
+  // would make querySelector throw or match the wrong node.
+  function findByDataAttr(root, attr, value) {
+    var nodes = (root || document).querySelectorAll("[data-" + attr + "]");
+    for (var i = 0; i < nodes.length; i++) {
+      if (nodes[i].getAttribute("data-" + attr) === value) return nodes[i];
+    }
+    return null;
+  }
+
+  function scrollToRegistryCard(attr, id) {
+    setTimeout(function() {
+      var card = findByDataAttr(document, attr, id);
+      if (!card) return;
+      card.scrollIntoView({ behavior: "smooth", block: "start" });
+      card.classList.add("registry-card-flash");
+      setTimeout(function() { card.classList.remove("registry-card-flash"); }, 1200);
+    }, 60);
+  }
+
+  function wireAssocRows(container) {
+    // Guard against duplicate listeners: wireAssocRows runs on every render and
+    // again after each "+" click, so only bind buttons not already wired.
+    container.querySelectorAll(".assoc-add").forEach(function(btn) {
+      if (btn.dataset.wired) return;
+      btn.dataset.wired = "1";
+      btn.addEventListener("click", function() {
+        var row = btn.closest(".registry-assoc-row");
+        if (!row) return;
+        btn.outerHTML = "<button type=\\"button\\" class=\\"assoc-remove compact-action\\">✕</button>";
+        var newRow = document.createElement("div");
+        newRow.className = "registry-assoc-row";
+        newRow.dataset.assocIndex = "new";
+        newRow.innerHTML = "<input type=\\"text\\" placeholder=\\"project-slug\\" value=\\"\\" class=\\"assoc-project\\">"
+          + "<select class=\\"assoc-role\\">" + [""].concat(ASSOCIATION_ROLES).map(function(r) { return "<option value=\\"" + r + "\\">" + (r || "-- role --") + "</option>"; }).join("") + "</select>"
+          + "<button type=\\"button\\" class=\\"assoc-add compact-action\\">+</button>";
+        row.parentNode.appendChild(newRow);
+        wireAssocRows(row.parentNode);
+      });
+    });
+    container.querySelectorAll(".assoc-remove").forEach(function(btn) {
+      if (btn.dataset.wired) return;
+      btn.dataset.wired = "1";
+      btn.addEventListener("click", function() {
+        var row = btn.closest(".registry-assoc-row");
+        if (row) row.remove();
+      });
+    });
+  }
+
+  function renderTeams() {
+    var registry = state.registry;
+    var list = el("teams-list");
+    var emptyEl = el("teams-empty");
+    var summary = el("teams-summary");
+    if (!registry || !registry.teams) return;
+    var teams = registry.teams;
+    summary.textContent = teams.length + " team" + (teams.length === 1 ? "" : "s") + " in registry.";
+    if (teams.length === 0) {
+      emptyEl.hidden = false;
+      list.innerHTML = "";
+      return;
+    }
+    emptyEl.hidden = true;
+    list.innerHTML = teams.map(function(team) {
+      return renderTeamCard(team, registry);
+    }).join("");
+    wireTeamCards(list, registry);
+  }
+
+  function renderTeamCard(team, registry) {
+    var members = (registry.people || []).filter(function(p) {
+      return (p.teams || []).some(function(t) { return t === team.id; });
+    });
+    var memberChips = members.map(function(p) {
+      return linkChip("person", p.id, p.displayName);
+    }).join("");
+    var synonymChips = (team.synonyms || []).map(function(s) {
+      return "<span class=\\"registry-chip\\">" + escapeHtml(s) + "</span>";
+    }).join("");
+    var handleChips = (team.slackHandles || []).map(function(h) {
+      return "<span class=\\"registry-chip\\">slack: " + escapeHtml(h) + "</span>";
+    }).join("");
+    var assocs = assocChips(team.projects, knownProjectSlugs());
+    var isEditing = state.selectedTeamId === team.id;
+    return "<div class=\\"registry-card\\" data-team-id=\\"" + escapeHtml(team.id) + "\\">"
+      + "<div class=\\"registry-card-header\\">"
+      + "<div><div class=\\"registry-card-title\\">" + escapeHtml(team.displayName) + "</div>"
+      + "<div class=\\"registry-card-id\\">" + escapeHtml(team.id) + "</div></div>"
+      + "<div class=\\"registry-card-actions\\">"
+      + "<button type=\\"button\\" class=\\"team-edit-btn\\" data-team-id=\\"" + escapeHtml(team.id) + "\\">" + (isEditing ? "Close" : "Edit") + "</button>"
+      + "<button type=\\"button\\" class=\\"team-delete-btn\\" data-team-id=\\"" + escapeHtml(team.id) + "\\">Delete</button>"
+      + "</div></div>"
+      + (synonymChips || handleChips ? "<div class=\\"registry-section\\"><div class=\\"registry-section-label\\">Identifiers</div><div class=\\"registry-chips\\">" + synonymChips + handleChips + "</div></div>" : "")
+      + (memberChips ? "<div class=\\"registry-section\\"><div class=\\"registry-section-label\\">Members (" + members.length + ")</div><div class=\\"registry-chips\\">" + memberChips + "</div></div>" : "")
+      + (assocs ? "<div class=\\"registry-section\\"><div class=\\"registry-section-label\\">Project Associations</div><div class=\\"registry-chips\\">" + assocs + "</div></div>" : "")
+      + (isEditing ? renderTeamEditForm(team) : "")
+      + "</div>";
+  }
+
+  function renderTeamEditForm(team) {
+    var assocRows = (team.projects || []).map(function(a, i) {
+      return renderAssocRow("team", i, a.project, a.role);
+    }).join("") + renderAssocRow("team", (team.projects || []).length, "", "");
+    return "<div class=\\"registry-edit-form\\">"
+      + "<div class=\\"form-grid\\">"
+      + "<label>Display Name<input id=\\"edit-team-name\\" type=\\"text\\" value=\\"" + escapeHtml(team.displayName) + "\\"></label>"
+      + "<label>Synonyms (comma-separated)<input id=\\"edit-team-synonyms\\" type=\\"text\\" value=\\"" + escapeHtml((team.synonyms || []).join(", ")) + "\\"></label>"
+      + "<label>Slack Handles (comma-separated)<input id=\\"edit-team-handles\\" type=\\"text\\" value=\\"" + escapeHtml((team.slackHandles || []).join(", ")) + "\\"></label>"
+      + "</div>"
+      + "<div class=\\"registry-section-label\\" style=\\"margin-bottom:6px\\">Project Associations</div>"
+      + "<div id=\\"edit-team-assocs\\">" + assocRows + "</div>"
+      + "<div class=\\"action-row\\">"
+      + "<button type=\\"button\\" class=\\"team-save-btn\\" data-team-id=\\"" + escapeHtml(team.id) + "\\">Save</button>"
+      + "<button type=\\"button\\" class=\\"team-edit-btn\\" data-team-id=\\"" + escapeHtml(team.id) + "\\">Cancel</button>"
+      + "</div>"
+      + "<p class=\\"registry-result\\" id=\\"edit-team-result\\"></p>"
+      + "</div>";
+  }
+
+  function wireTeamCards(container, registry) {
+    container.querySelectorAll(".team-edit-btn").forEach(function(btn) {
+      btn.addEventListener("click", function() {
+        state.selectedTeamId = state.selectedTeamId === btn.dataset.teamId ? null : btn.dataset.teamId;
+        renderTeams();
+        if (state.selectedTeamId) {
+          var card = findByDataAttr(container, "team-id", btn.dataset.teamId);
+          if (card) card.scrollIntoView({ behavior: "smooth", block: "nearest" });
+        }
+      });
+    });
+    container.querySelectorAll(".team-delete-btn").forEach(function(btn) {
+      btn.addEventListener("click", function() {
+        var id = btn.dataset.teamId;
+        if (!window.confirm("Delete team " + id + " from registry?")) return;
+        state.registry.teams = state.registry.teams.filter(function(t) { return t.id !== id; });
+        saveRegistry("chore: remove team " + id).catch(function(e) { setBanner(e.message, "error"); });
+      });
+    });
+    container.querySelectorAll(".team-save-btn").forEach(function(btn) {
+      btn.addEventListener("click", function() {
+        var id = btn.dataset.teamId;
+        var team = state.registry.teams.find(function(t) { return t.id === id; });
+        if (!team) return;
+        var name = (el("edit-team-name") || {}).value || "";
+        if (!name.trim()) { if (el("edit-team-result")) el("edit-team-result").textContent = "Display name is required."; return; }
+        var synonyms = splitCsv((el("edit-team-synonyms") || {}).value);
+        var handles = splitCsv((el("edit-team-handles") || {}).value);
+        var assocContainer = el("edit-team-assocs");
+        var projects = assocContainer ? collectAssocRows(assocContainer) : (team.projects || []);
+        team.displayName = name.trim();
+        team.synonyms = synonyms.length ? synonyms : undefined;
+        team.slackHandles = handles.length ? handles : undefined;
+        team.projects = projects.length ? projects : undefined;
+        state.selectedTeamId = null;
+        saveRegistry("chore: update team " + id).catch(function(e) { setBanner(e.message, "error"); });
+      });
+    });
+    wireGotoChips(container);
+    wireAssocRows(container);
   }
 
   async function selectAnchor(name, options) {
@@ -3538,6 +4478,10 @@ export const UI_JS = `(function () {
       showPlanner({ skipLocationUpdate: true });
     } else if (state.activeTab === "tasks") {
       showTasksView({ skipLocationUpdate: true });
+    } else if (state.activeTab === "people") {
+      showPeopleView({ skipLocationUpdate: true });
+    } else if (state.activeTab === "teams") {
+      showTeamsView({ skipLocationUpdate: true });
     } else if (state.activeTab === "review") {
       showReview({ skipLocationUpdate: true });
     } else if (state.activeTab === "detail" && state.pendingAnchor) {
@@ -3606,6 +4550,27 @@ export const UI_JS = `(function () {
       updateLocationFromState({ anchor: null, view: "tasks", history: "push" });
       state.tasks = [];
       loadTasks().catch(function (error) { setBanner(error.message, "error"); });
+    });
+    el("tasks-unassigned").addEventListener("change", function () {
+      updateLocationFromState({ anchor: null, view: "tasks", history: "push" });
+      state.tasks = [];
+      loadTasks().catch(function (error) { setBanner(error.message, "error"); });
+    });
+    el("tasks-add").addEventListener("click", function () {
+      var form = el("tasks-add-form");
+      form.hidden = !form.hidden;
+      if (!form.hidden) {
+        var proj = controlValue("tasks-project-filter", state.tasksProject);
+        if (proj && !el("new-task-project").value) { el("new-task-project").value = proj; }
+        el("new-task-title").focus();
+      }
+    });
+    el("new-task-cancel").addEventListener("click", function () {
+      el("tasks-add-form").hidden = true;
+      el("new-task-result").textContent = "";
+    });
+    el("new-task-save").addEventListener("click", function () {
+      saveNewTask().catch(function (error) { el("new-task-result").textContent = error.message; });
     });
     el("proposal-list").addEventListener("click", function (event) {
       var card = event.target.closest("[data-proposal-id]");
@@ -3694,6 +4659,14 @@ export const UI_JS = `(function () {
           showTasksView();
           return;
         }
+        if (button.dataset.tab === "people") {
+          showPeopleView();
+          return;
+        }
+        if (button.dataset.tab === "teams") {
+          showTeamsView();
+          return;
+        }
         if (button.dataset.tab === "review") {
           showReview();
           return;
@@ -3717,6 +4690,84 @@ export const UI_JS = `(function () {
         updateLocationFromState({ view: "planner", history: "replace" });
       });
     });
+    el("people-add").addEventListener("click", function () {
+      var form = el("people-add-form");
+      form.hidden = !form.hidden;
+      if (!form.hidden) { el("new-person-id").focus(); }
+    });
+    el("people-refresh").addEventListener("click", function () {
+      state.registry = null;
+      loadRegistry().catch(function (error) { setBanner(error.message, "error"); });
+    });
+    el("new-person-cancel").addEventListener("click", function () {
+      el("people-add-form").hidden = true;
+      el("new-person-result").textContent = "";
+    });
+    el("new-person-save").addEventListener("click", function () {
+      var id = (el("new-person-id").value || "").trim();
+      var name = (el("new-person-name").value || "").trim();
+      if (!id) { el("new-person-result").textContent = "ID is required."; return; }
+      if (!name) { el("new-person-result").textContent = "Display name is required."; return; }
+      if (!state.registry) state.registry = { people: [], teams: [] };
+      if (state.registry.people.some(function (p) { return p.id === id; })) {
+        el("new-person-result").textContent = "A person with that ID already exists.";
+        return;
+      }
+      var slack = (el("new-person-slack").value || "").trim();
+      var confluence = (el("new-person-confluence").value || "").trim();
+      var emails = splitCsv(el("new-person-emails").value);
+      var names = splitCsv(el("new-person-names").value);
+      var teams = splitCsv(el("new-person-teams").value);
+      var identities = {};
+      if (slack) identities.slack = slack;
+      if (confluence) identities.confluence = confluence;
+      if (emails.length) identities.emails = emails;
+      if (names.length) identities.names = names;
+      var person = { id: id, displayName: name };
+      if (Object.keys(identities).length) person.identities = identities;
+      if (teams.length) person.teams = teams;
+      state.registry.people.push(person);
+      el("people-add-form").hidden = true;
+      ["new-person-id", "new-person-name", "new-person-slack", "new-person-confluence", "new-person-emails", "new-person-names", "new-person-teams"].forEach(function (id) { el(id).value = ""; });
+      el("new-person-result").textContent = "";
+      saveRegistry("chore: add person " + id).catch(function (error) { setBanner(error.message, "error"); });
+    });
+
+    el("teams-add").addEventListener("click", function () {
+      var form = el("teams-add-form");
+      form.hidden = !form.hidden;
+      if (!form.hidden) { el("new-team-id").focus(); }
+    });
+    el("teams-refresh").addEventListener("click", function () {
+      state.registry = null;
+      loadRegistry().catch(function (error) { setBanner(error.message, "error"); });
+    });
+    el("new-team-cancel").addEventListener("click", function () {
+      el("teams-add-form").hidden = true;
+      el("new-team-result").textContent = "";
+    });
+    el("new-team-save").addEventListener("click", function () {
+      var id = (el("new-team-id").value || "").trim();
+      var name = (el("new-team-name").value || "").trim();
+      if (!id) { el("new-team-result").textContent = "ID is required."; return; }
+      if (!name) { el("new-team-result").textContent = "Display name is required."; return; }
+      if (!state.registry) state.registry = { people: [], teams: [] };
+      if (state.registry.teams.some(function (t) { return t.id === id; })) {
+        el("new-team-result").textContent = "A team with that ID already exists.";
+        return;
+      }
+      var synonyms = splitCsv(el("new-team-synonyms").value);
+      var handles = splitCsv(el("new-team-handles").value);
+      var team = { id: id, displayName: name };
+      if (synonyms.length) team.synonyms = synonyms;
+      if (handles.length) team.slackHandles = handles;
+      state.registry.teams.push(team);
+      el("teams-add-form").hidden = true;
+      ["new-team-id", "new-team-name", "new-team-synonyms", "new-team-handles"].forEach(function (id) { el(id).value = ""; });
+      el("new-team-result").textContent = "";
+      saveRegistry("chore: add team " + id).catch(function (error) { setBanner(error.message, "error"); });
+    });
+
     window.addEventListener("popstate", handleLocationAnchorChange);
     window.addEventListener("hashchange", handleLocationAnchorChange);
   }
@@ -3752,7 +4803,13 @@ export const UI_JS = `(function () {
   bind();
   showRootMode(state.rootMode);
   showDetailMode(state.detailMode);
-  showTab(state.activeTab);
+  if (state.activeTab === "people") {
+    showPeopleView({ skipLocationUpdate: true });
+  } else if (state.activeTab === "teams") {
+    showTeamsView({ skipLocationUpdate: true });
+  } else {
+    showTab(state.activeTab);
+  }
   load().catch(function (error) {
     setBanner("Enter the HTTP auth token to load anchors. " + error.message, "warn");
   });

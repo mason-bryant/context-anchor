@@ -104,16 +104,27 @@ import type {
   SearchHit,
   TaskDueRow,
   ListTasksDueInput,
+  CreateTaskInput,
+  CreateTaskResult,
+  CompleteTaskInput,
+  DeleteTaskInput,
   UpdateProjectPriorityInput,
   UpdateTaskDueInput,
   ValidationViolation,
   WriteAnchorInput,
   WriteAnchorResult,
+  Person,
+  Team,
+  TeamWithMembers,
+  PeopleRegistry,
+  PeopleRegistryWithCommit,
+  WritePeopleRegistryInput,
 } from "./types.js";
 import {
   buildProjectAliasIndex,
   resolveProjectFilter,
 } from "./projectAliases.js";
+import { buildPeopleIndex, parsePeopleRegistry } from "./peopleRegistry.js";
 import { runValidators } from "./validators/pipeline.js";
 
 const BM25_INDEX_READ_CONCURRENCY = 8;
@@ -133,6 +144,10 @@ type MilestoneListRow = {
 };
 
 export class AnchorService {
+  private _peopleRegistry: PeopleRegistry | undefined;
+  /** Git commit the cached registry was parsed from; used to detect out-of-band changes (e.g. AutoSync rebases). */
+  private _peopleRegistryCommit: string | undefined;
+
   constructor(
     private readonly repo: AnchorRepository,
     private readonly options: {
@@ -141,6 +156,78 @@ export class AnchorService {
       staleAfterDays: number;
     },
   ) {}
+
+  private async loadPeopleRegistry(): Promise<PeopleRegistry> {
+    // Key the cache on the registry file's last commit so a background AutoSync
+    // rebase (or any out-of-band change) is picked up instead of served stale.
+    const commit = await this.repo.peopleRegistryCommit();
+    if (this._peopleRegistry !== undefined && this._peopleRegistryCommit === commit) {
+      return this._peopleRegistry;
+    }
+    const raw = await this.repo.readPeopleRegistryRaw();
+    this._peopleRegistry = parsePeopleRegistry(raw);
+    this._peopleRegistryCommit = commit;
+    return this._peopleRegistry;
+  }
+
+  private invalidatePeopleRegistry(): void {
+    this._peopleRegistry = undefined;
+    this._peopleRegistryCommit = undefined;
+  }
+
+  async listPeople(team?: string): Promise<{ people: Person[] }> {
+    const registry = await this.loadPeopleRegistry();
+    if (!team) {
+      return { people: registry.people };
+    }
+    const needle = team.toLowerCase().trim();
+    const index = buildPeopleIndex(registry);
+    const resolvedTeam = index.getTeam(needle);
+    const teamId = resolvedTeam?.id ?? needle;
+    const members = index.getTeamMembers(teamId);
+    return { people: members };
+  }
+
+  async readPerson(id: string): Promise<{ person: Person | null }> {
+    const registry = await this.loadPeopleRegistry();
+    const index = buildPeopleIndex(registry);
+    // Prefer an exact id match so a colliding alias/email never shadows the
+    // person whose canonical id was requested; fall back to fuzzy resolution.
+    const person = index.getPersonById(id) ?? index.getPerson(id) ?? null;
+    return { person };
+  }
+
+  async listTeams(): Promise<{ teams: Team[] }> {
+    const registry = await this.loadPeopleRegistry();
+    return { teams: registry.teams };
+  }
+
+  async readTeam(id: string): Promise<{ team: TeamWithMembers | null }> {
+    const registry = await this.loadPeopleRegistry();
+    const index = buildPeopleIndex(registry);
+    // Exact id wins over synonym/handle matches for a requested id.
+    const team = index.getTeamById(id) ?? index.getTeam(id);
+    if (!team) return { team: null };
+    const members = index.getTeamMembers(team.id);
+    return { team: { ...team, members } };
+  }
+
+  async writePeopleRegistry(input: WritePeopleRegistryInput): Promise<void> {
+    const normalized = parsePeopleRegistry(input.registry);
+    await this.repo.writePeopleRegistryRaw(normalized, {
+      message: input.message,
+      coAuthor: input.coAuthor,
+      push: this.options.pushOnWrite,
+      expectedFileCommit: input.expectedFileCommit,
+    });
+    this.invalidatePeopleRegistry();
+  }
+
+  async getPeopleRegistry(): Promise<PeopleRegistryWithCommit> {
+    const registry = await this.loadPeopleRegistry();
+    const fileCommit = await this.repo.peopleRegistryCommit();
+    return { ...registry, ...(fileCommit ? { fileCommit } : {}) };
+  }
 
   private async buildBM25SearchIndex(anchors: AnchorMeta[]): Promise<{
     index: BM25Index;
@@ -857,10 +944,251 @@ export class AnchorService {
     });
   }
 
+  private static blockResult(code: string, message: string): WriteAnchorResult {
+    return { warnings: [{ severity: "BLOCK", code, message }] };
+  }
+
+  private static today(): string {
+    return new Date().toISOString().slice(0, 10);
+  }
+
+  /**
+   * True when `name` is a project milestone anchor (`projects/<slug>/milestones/...`).
+   * Optionally require it to belong to `projectSlug`. Task mutations are restricted
+   * to milestone anchors so they stay visible to listTasksDue and share its id space.
+   */
+  private static isMilestonePath(name: string, projectSlug?: string): boolean {
+    const c = classifyAnchorPath(name);
+    if (c.kind !== "anchor" || c.category !== "projects" || !name.includes("/milestones/")) return false;
+    if (projectSlug && c.projectSlug !== projectSlug) return false;
+    return true;
+  }
+
+  /** Read a milestone anchor's raw front-matter tasks array. */
+  private async readRawTasks(name: string): Promise<Record<string, unknown>[] | undefined> {
+    const rawContent = await this.repo.readRaw(name);
+    if (rawContent === undefined) return undefined;
+    const parsed = parseAnchor(rawContent);
+    const rawTasks = parsed.frontmatter.tasks;
+    return Array.isArray(rawTasks) ? (rawTasks as Record<string, unknown>[]) : [];
+  }
+
+  /** Next project-wide task id (`T-<n>`), scanning every milestone so ids stay unique as tasks move. */
+  private async nextTaskId(project?: string): Promise<string> {
+    const milestones = await this.listMilestones(project);
+    let max = 0;
+    for (const milestone of milestones) {
+      for (const task of milestone.tasks ?? []) {
+        const match = /^T-(\d{1,6})$/.exec(task.id);
+        if (match) max = Math.max(max, Number(match[1]));
+      }
+    }
+    return `T-${max + 1}`;
+  }
+
+  /** Locate a task by id: within an explicit milestone anchor, or across a project's milestones. */
+  private async findTaskMilestone(
+    taskId: string,
+    options: { name?: string; project?: string },
+  ): Promise<string | undefined> {
+    if (options.name) {
+      const tasks = await this.readRawTasks(options.name);
+      return tasks?.some((t) => t.id === taskId) ? options.name : undefined;
+    }
+    const milestones = await this.listMilestones(options.project);
+    const match = milestones.find((m) => (m.tasks ?? []).some((t) => t.id === taskId));
+    return match?.name;
+  }
+
+  /** Resolve (and lazily create) the backlog milestone anchor for a project slug. */
+  private async ensureBacklogMilestone(projectSlug: string): Promise<string> {
+    const name = `projects/${projectSlug}/milestones/backlog.md`;
+    const existing = await this.repo.readRaw(name);
+    if (existing !== undefined) return name;
+
+    const content = `---
+project:
+  - ${projectSlug}
+type: project-milestone
+schema_version: 1
+tags:
+  - milestone
+summary: "Backlog tasks for ${projectSlug}."
+read_this_if:
+  - "You are triaging or scheduling unplanned ${projectSlug} tasks."
+last_validated: ${AnchorService.today()}
+milestone_id: backlog
+theme: "Backlog"
+status: active
+relations:
+  goal_ids: []
+tasks: []
+---
+
+# Backlog
+
+## Current State
+
+- Backlog of unscheduled tasks for ${projectSlug}.
+
+## Decisions
+
+- None.
+
+## Constraints
+
+- None.
+
+## PRs
+
+None.
+`;
+    const result = await this.writeAnchor({
+      name,
+      content,
+      message: `chore: create backlog milestone for ${projectSlug}`,
+    });
+    if (hasBlock(result.warnings)) {
+      throw new Error(`Failed to create backlog milestone for ${projectSlug}: ${blockMessages(result.warnings)}`);
+    }
+    return name;
+  }
+
+  async createTask(input: CreateTaskInput): Promise<CreateTaskResult> {
+    const title = input.title?.trim();
+    if (!title) {
+      return AnchorService.blockResult("missing_title", "title is required to create a task.");
+    }
+    if (input.due && !input.dateConfidence) {
+      return AnchorService.blockResult(
+        "missing_date_confidence",
+        "date_confidence is required when due is set. Pass one of: committed, internal_goal, estimated.",
+      );
+    }
+
+    const { effectiveProject } = await this.resolveProjectFilter(input.project);
+    const projectSlug = effectiveProject ?? input.project;
+    if (!projectSlug) {
+      return AnchorService.blockResult("missing_project", "project is required to create a task.");
+    }
+
+    // An explicit milestone target must be a project milestone for this project,
+    // otherwise the task would be invisible to listTasksDue and outside the
+    // project's task-id space (risking duplicate ids).
+    if (input.milestone && !AnchorService.isMilestonePath(input.milestone, projectSlug)) {
+      return AnchorService.blockResult(
+        "invalid_milestone",
+        `milestone must be a project milestone under projects/${projectSlug}/milestones/: ${input.milestone}`,
+      );
+    }
+
+    let targetName: string;
+    try {
+      targetName = input.milestone ?? (await this.ensureBacklogMilestone(projectSlug));
+    } catch (error) {
+      return AnchorService.blockResult("backlog_create_failed", error instanceof Error ? error.message : String(error));
+    }
+
+    const rawTasks = await this.readRawTasks(targetName);
+    if (rawTasks === undefined) {
+      return AnchorService.blockResult("missing_anchor", `Milestone anchor not found: ${targetName}`);
+    }
+
+    const status = input.status ?? "todo";
+    const taskId = await this.nextTaskId(projectSlug);
+    const task: Record<string, unknown> = { id: taskId, title, status };
+    if (input.owner?.trim()) task.owner = input.owner.trim();
+    if (input.goalIds && input.goalIds.length > 0) task.goal_ids = input.goalIds;
+    if (input.due) {
+      task.due = input.due;
+      task.date_confidence = input.dateConfidence;
+    }
+    if (status === "done") {
+      task.completed_on = AnchorService.today();
+    }
+    if (input.notes?.trim()) task.notes = input.notes.trim();
+
+    const result = await this.updateAnchorFrontmatter({
+      name: targetName,
+      updates: { tasks: [...rawTasks, task] },
+      message: input.message ?? `chore: add task ${taskId} to ${targetName}`,
+      approved: input.approved,
+      coAuthor: input.coAuthor,
+    });
+
+    return {
+      ...result,
+      ...(hasBlock(result.warnings) ? {} : { taskId, milestoneName: targetName }),
+    };
+  }
+
+  async completeTask(input: CompleteTaskInput): Promise<WriteAnchorResult> {
+    if (input.name && !AnchorService.isMilestonePath(input.name)) {
+      return AnchorService.blockResult(
+        "invalid_milestone",
+        `name must be a project milestone anchor under .../milestones/: ${input.name}`,
+      );
+    }
+    const name = await this.findTaskMilestone(input.taskId, { name: input.name, project: input.project });
+    if (!name) {
+      return AnchorService.blockResult("task_not_found", `Task "${input.taskId}" not found.`);
+    }
+    const rawTasks = await this.readRawTasks(name);
+    if (rawTasks === undefined) {
+      return AnchorService.blockResult("missing_anchor", `Milestone anchor not found: ${name}`);
+    }
+    const completedOn = input.completedOn ?? AnchorService.today();
+    const updatedTasks = rawTasks.map((t) =>
+      t.id === input.taskId ? { ...t, status: "done", completed_on: completedOn } : t,
+    );
+
+    return this.updateAnchorFrontmatter({
+      name,
+      updates: { tasks: updatedTasks },
+      message: input.message ?? `chore: complete task ${input.taskId}`,
+      approved: input.approved,
+      coAuthor: input.coAuthor,
+      expectedFileCommit: input.expectedFileCommit,
+    });
+  }
+
+  async deleteTask(input: DeleteTaskInput): Promise<WriteAnchorResult> {
+    if (input.name && !AnchorService.isMilestonePath(input.name)) {
+      return AnchorService.blockResult(
+        "invalid_milestone",
+        `name must be a project milestone anchor under .../milestones/: ${input.name}`,
+      );
+    }
+    const name = await this.findTaskMilestone(input.taskId, { name: input.name, project: input.project });
+    if (!name) {
+      return AnchorService.blockResult("task_not_found", `Task "${input.taskId}" not found.`);
+    }
+    const rawTasks = await this.readRawTasks(name);
+    if (rawTasks === undefined) {
+      return AnchorService.blockResult("missing_anchor", `Milestone anchor not found: ${name}`);
+    }
+    const updatedTasks = rawTasks.filter((t) => t.id !== input.taskId);
+
+    return this.updateAnchorFrontmatter({
+      name,
+      updates: { tasks: updatedTasks },
+      message: input.message ?? `chore: delete task ${input.taskId}`,
+      approved: input.approved,
+      coAuthor: input.coAuthor,
+      expectedFileCommit: input.expectedFileCommit,
+    });
+  }
+
   async listTasksDue(input: ListTasksDueInput): Promise<{ tasks: TaskDueRow[] }> {
     const milestones = await this.listMilestones(input.project);
     const DEFAULT_STATUSES = new Set(["active", "todo", "blocked"]);
     const statusFilter = input.status && input.status.length > 0 ? new Set(input.status) : DEFAULT_STATUSES;
+
+    const registry = await this.loadPeopleRegistry();
+    const peopleIndex = buildPeopleIndex(registry);
+
+    const ownerFilter = input.owner ? peopleIndex.resolveOwner(input.owner) : undefined;
+    const ownerFilterRaw = input.owner?.toLowerCase().trim();
 
     const rows: TaskDueRow[] = [];
 
@@ -873,11 +1201,30 @@ export class AnchorService {
       for (const task of milestone.tasks) {
         if (!statusFilter.has(task.status)) continue;
 
+        if (input.unassigned && task.owner && task.owner.trim().length > 0) continue;
+
         if (input.noDue) {
           if (task.due) continue;
         } else {
           if (input.dueBefore && task.due && task.due >= input.dueBefore) continue;
           if (input.dueAfter && (!task.due || task.due < input.dueAfter)) continue;
+        }
+
+        const taskOwnerResolved = task.owner ? peopleIndex.resolveOwner(task.owner) : undefined;
+
+        if (ownerFilterRaw !== undefined) {
+          if (ownerFilter) {
+            if (!taskOwnerResolved) continue;
+            if (ownerFilter.kind === "person" && taskOwnerResolved.kind === "person") {
+              if (ownerFilter.person.id !== taskOwnerResolved.person.id) continue;
+            } else if (ownerFilter.kind === "team" && taskOwnerResolved.kind === "team") {
+              if (ownerFilter.team.id !== taskOwnerResolved.team.id) continue;
+            } else {
+              continue;
+            }
+          } else {
+            if (!task.owner || task.owner.toLowerCase().trim() !== ownerFilterRaw) continue;
+          }
         }
 
         rows.push({
@@ -892,6 +1239,12 @@ export class AnchorService {
           ...(milestone.displayId ? { milestoneDisplayId: milestone.displayId } : {}),
           milestoneStatus: milestone.status,
           ...(projectSlug ? { project: projectSlug } : {}),
+          ...(taskOwnerResolved?.kind === "person"
+            ? { resolvedPerson: { id: taskOwnerResolved.person.id, displayName: taskOwnerResolved.person.displayName } }
+            : {}),
+          ...(taskOwnerResolved?.kind === "team"
+            ? { resolvedTeam: { id: taskOwnerResolved.team.id, displayName: taskOwnerResolved.team.displayName } }
+            : {}),
         });
       }
     }
@@ -2023,6 +2376,17 @@ export class AnchorService {
 
     return { signals, suggestedMoves };
   }
+}
+
+function hasBlock(warnings: ValidationViolation[]): boolean {
+  return warnings.some((warning) => warning.severity === "BLOCK");
+}
+
+function blockMessages(warnings: ValidationViolation[]): string {
+  return warnings
+    .filter((warning) => warning.severity === "BLOCK")
+    .map((warning) => warning.message)
+    .join("; ");
 }
 
 function findProjectAnchor(anchors: AnchorMeta[], project: string): AnchorMeta | undefined {
