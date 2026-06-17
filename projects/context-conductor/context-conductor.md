@@ -8,7 +8,7 @@ summary: Context anchor for the context-conductor (anchor-mcp) repository.
 read_this_if:
   - 'You are changing anchor-mcp server behavior, validators, or MCP tools.'
   - You need the current shipped state of this repository as a product.
-last_validated: '2026-06-16'
+last_validated: '2026-06-17'
 ---
 
 # Context conductor
@@ -21,6 +21,8 @@ last_validated: '2026-06-16'
 - Retrieval quality hardening (Goal G-005) is shipped in PR #34: CI `npm run eval` gate and strict UI boolean query parsing.
 - Project priorities shipped in PR #36: numeric `priority` front matter on project anchors, `sort=priority` in anchor listing, `updateProjectPriority` MCP tool, priority display and editing in the UI.
 - Task due dates shipped in PR #37: `updateTaskDue` and `listTasksDue` MCP tools, Tasks tab in the UI with overdue/due-soon/upcoming/no-due grouping and inline date editing.
+- Structured task write APIs (Goal G-007) shipped in PR #40: `createTask`/`completeTask`/`deleteTask` MCP tools and `/api/ui/task-*` routes, backlog milestone auto-create, project-wide `T-<n>` ids, milestone-path guards, a `listTasksDue` `unassigned` filter, and Tasks-UI create/complete/delete controls with clickable owner cross-links.
+- People and teams registry (Goal G-006) is implemented in PR #39 (in review): `people-registry.json` holding people (slack/confluence/email/alias identities) and teams (synonyms/handles) with RACI project associations; fuzzy, person-over-team owner resolution feeds task owner enrichment; People/Teams UI tabs with inline editing, cross-links, and an associations-by-project view; registry writes are concurrency-guarded (`expectedFileCommit` → 409) and normalized through `parsePeopleRegistry`.
 - Forward-looking acceptance criteria and goals for this codebase live in the sibling roadmap `projects/context-conductor/context-conductor-roadmap.md`.
 
 ## Decisions
@@ -30,10 +32,13 @@ last_validated: '2026-06-16'
 - Planner retrieval quality is gated in CI via `npm run eval`; UI query boolean parsing rejects invalid values with HTTP 400 rather than silently defaulting.
 - Project priority is stored as a finite YAML number on the project context anchor; the UI renders the `P` prefix. Priority changes require `approved: true`.
 - Task due dates use ISO YYYY-MM-DD strings in milestone task front matter; `date_confidence` is required when `due` is set.
+- People and teams are stored in one `people-registry.json` (a lookup table, not per-entity anchors); `parsePeopleRegistry`/`VALID_ROLES` is the single source of truth for shape and association roles, and every write entry point funnels through it.
+- Structured tasks stay sub-objects of milestone anchors; `createTask`/`completeTask`/`deleteTask` only target project milestone paths so tasks remain visible to `listTasksDue` and share its `T-<n>` id space. `createTask` defaults to an auto-created backlog milestone.
 
 ## Constraints
 
 - On-disk taxonomy stays limited to the six anchor directories plus generated `CONTEXT-ROOT.md`.
+- The association role list is duplicated across `AssociationRole` (types), `VALID_ROLES` (registry validation), and the UI dropdown and must be kept in sync; the UI bundle is a static string and cannot import the TypeScript source.
 
 ## PRs
 
@@ -41,3 +46,5 @@ last_validated: '2026-06-16'
 - [PR Retrieval quality hardening and operability (G-005) - #34](https://github.com/mason-bryant/context-anchor/pull/34)
 - [PR Add project priorities - #36](https://github.com/mason-bryant/context-anchor/pull/36)
 - [PR Add task due dates - #37](https://github.com/mason-bryant/context-anchor/pull/37)
+- [PR People & teams registry with project associations - #39](https://github.com/mason-bryant/context-anchor/pull/39)
+- [PR First-class task write APIs - #40](https://github.com/mason-bryant/context-anchor/pull/40)
