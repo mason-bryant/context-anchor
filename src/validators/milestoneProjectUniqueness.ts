@@ -76,7 +76,7 @@ export const validateMilestoneProjectUniqueness: Validator = async (context) => 
     return [];
   }
 
-  const selfName = normalizeAnchorName(context.repoRelativePath);
+  const selfName = normalizeAnchorName(context.path);
   const siblings = await context.repo.listAnchors({ project: slug });
 
   for (const anchor of siblings) {

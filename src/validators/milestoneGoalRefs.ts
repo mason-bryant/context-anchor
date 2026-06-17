@@ -85,7 +85,7 @@ export const validateMilestoneGoalRefs: Validator = async (context) => {
           "WARN",
           "milestone_goal_missing_ac",
           `Roadmap goal "${gid}" (${row.title}) is referenced by this milestone but has no #### Acceptance Criteria block.`,
-          context.repoRelativePath,
+          context.path,
         ),
       );
     }

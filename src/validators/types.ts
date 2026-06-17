@@ -3,7 +3,7 @@ import type { ValidationViolation } from "../types.js";
 
 export type ValidationContext = {
   name: string;
-  repoRelativePath: string;
+  path: string;
   oldContent?: string;
   newContent: string;
   repo: AnchorStore;
@@ -27,5 +27,5 @@ export function maybeMigrationBlock(
   code: string,
   message: string,
 ): ValidationViolation {
-  return violation(context.migrationWarnOnly ? "WARN" : "BLOCK", code, message, context.repoRelativePath);
+  return violation(context.migrationWarnOnly ? "WARN" : "BLOCK", code, message, context.path);
 }

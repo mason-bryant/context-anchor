@@ -4,7 +4,7 @@ import type { Validator } from "./types.js";
 import { maybeMigrationBlock } from "./types.js";
 
 export const validateAgentsSibling: Validator = async (context) => {
-  if (path.basename(context.repoRelativePath) !== "CLAUDE.md") {
+  if (path.basename(context.path) !== "CLAUDE.md") {
     return [];
   }
 
@@ -22,4 +22,3 @@ export const validateAgentsSibling: Validator = async (context) => {
     ),
   ];
 };
-

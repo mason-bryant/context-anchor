@@ -364,9 +364,10 @@ Revision checks use backend-neutral storage methods, while MCP compatibility fie
 remain named `fileCommit` and `expectedFileCommit`. In the git backend, those values
 are still git commit hashes for the touched file.
 
-The git backend maintains an in-memory read index for parsed anchor metadata and file
-content. Writes, deletes, renames, generated context-root commits, and AutoSync pulls
-invalidate affected entries.
+The git backend maintains an in-memory read index for parsed anchor metadata and a
+bounded LRU cache for file content. Oversized files are not cached. Writes, deletes,
+renames, generated context-root commits, and AutoSync pulls invalidate affected
+entries.
 
 Run the local read-path harness with:
 

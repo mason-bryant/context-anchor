@@ -38,8 +38,7 @@ describe("AnchorStore contract", () => {
     expect(read.content).toContain("storage boundary contract search text");
     expect(read.fileCommit).toMatch(/[a-f0-9]{40}/);
 
-    const resolved = store.resolveAnchor("shared/contract");
-    await expect(store.lastRevisionForPath(resolved.repoRelativePath)).resolves.toBe(read.fileCommit);
+    await expect(store.lastRevisionForAnchor("shared/contract")).resolves.toBe(read.fileCommit);
 
     const hits = await store.searchAnchors("boundary contract");
     expect(hits.map((hit) => hit.name)).toContain("shared/contract.md");

@@ -56,6 +56,12 @@ type AnchorMetaWithFrontmatter = {
   frontmatter: Record<string, unknown>;
 };
 
+type ResolvedGitAnchorPath = ResolvedAnchorPath & {
+  absolutePath: string;
+  anchorRelativePath: string;
+  repoRelativePath: string;
+};
+
 type CachedFileContent = {
   mtimeMs: number;
   size: number;
@@ -67,6 +73,9 @@ type CachedAnchorMeta = {
   size: number;
   row: AnchorMetaWithFrontmatter;
 };
+
+const MAX_CACHED_FILE_CONTENT_BYTES = 1_000_000;
+const MAX_FILE_CONTENT_CACHE_BYTES = 16_000_000;
 
 export class PeopleRegistryConflictError extends Error {
   readonly code = "people_registry_conflict";
@@ -91,6 +100,7 @@ export class AnchorRepository implements AnchorStore, SyncableAnchorStore {
 
   private readonly cache = new AnchorParseCache();
   private readonly fileContentCache = new Map<string, CachedFileContent>();
+  private fileContentCacheBytes = 0;
   private readonly metaCache = new Map<string, CachedAnchorMeta>();
   private readonly createdAtCache = new Map<string, string | undefined>();
   private readonly lock = new AsyncLock();
@@ -114,6 +124,15 @@ export class AnchorRepository implements AnchorStore, SyncableAnchorStore {
   }
 
   resolveAnchor(name: string): ResolvedAnchorPath {
+    const resolved = this.resolveGitAnchor(name);
+    return {
+      name: resolved.name,
+      path: resolved.repoRelativePath,
+      revisionKey: resolved.repoRelativePath,
+    };
+  }
+
+  private resolveGitAnchor(name: string): ResolvedGitAnchorPath {
     const clean = normalizeRelative(name);
     if (!clean || clean === "." || clean.includes("\0")) {
       throw new Error("Anchor name must be a non-empty relative path");
@@ -122,12 +141,15 @@ export class AnchorRepository implements AnchorStore, SyncableAnchorStore {
     const anchorRelativePath = clean.endsWith(".md") ? clean : `${clean}.md`;
     const absolutePath = path.resolve(this.anchorRootPath, anchorRelativePath);
     assertInside(this.anchorRootPath, absolutePath);
+    const repoRelativePath = toPosix(path.relative(this.repoPath, absolutePath));
 
     return {
       name: anchorRelativePath,
+      path: repoRelativePath,
+      revisionKey: repoRelativePath,
       absolutePath,
       anchorRelativePath,
-      repoRelativePath: toPosix(path.relative(this.repoPath, absolutePath)),
+      repoRelativePath,
     };
   }
 
@@ -232,7 +254,7 @@ export class AnchorRepository implements AnchorStore, SyncableAnchorStore {
   }
 
   async readAnchor(name: string, version?: string): Promise<AnchorRead> {
-    const resolved = this.resolveAnchor(name);
+    const resolved = this.resolveGitAnchor(name);
     const isLatest = !version || version === "latest";
     const stats = isLatest ? await stat(resolved.absolutePath) : undefined;
     const content = isLatest
@@ -257,6 +279,12 @@ export class AnchorRepository implements AnchorStore, SyncableAnchorStore {
   /** Latest commit hash that touched this repo-relative path (undefined if no commits yet). */
   async lastCommitForFile(repoRelativePath: string): Promise<string | undefined> {
     return this.lastRevisionForPath(repoRelativePath);
+  }
+
+  /** Latest backend revision that touched this anchor (git commit hash for this store). */
+  async lastRevisionForAnchor(name: string): Promise<string | undefined> {
+    const resolved = this.resolveGitAnchor(name);
+    return this.lastRevisionForPath(resolved.repoRelativePath);
   }
 
   /** Latest backend revision that touched this repo-relative path (git commit hash for this store). */
@@ -302,7 +330,7 @@ export class AnchorRepository implements AnchorStore, SyncableAnchorStore {
 
   async commitAnchor(input: CommitAnchorInput): Promise<string | undefined> {
     return this.lock.runExclusive(async () => {
-      const resolved = this.resolveAnchor(input.name);
+      const resolved = this.resolveGitAnchor(input.name);
       await mkdir(path.dirname(resolved.absolutePath), { recursive: true });
 
       const tmpPath = `${resolved.absolutePath}.${process.pid}.${Date.now()}.tmp`;
@@ -381,7 +409,7 @@ export class AnchorRepository implements AnchorStore, SyncableAnchorStore {
   }
 
   async listVersions(name: string, limit = 20): Promise<AnchorVersion[]> {
-    const resolved = this.resolveAnchor(name);
+    const resolved = this.resolveGitAnchor(name);
     const log = await this.git.log({
       file: resolved.repoRelativePath,
       maxCount: limit,
@@ -396,12 +424,12 @@ export class AnchorRepository implements AnchorStore, SyncableAnchorStore {
   }
 
   async diffAnchor(name: string, fromVersion: string, toVersion: string): Promise<string> {
-    const resolved = this.resolveAnchor(name);
+    const resolved = this.resolveGitAnchor(name);
     return this.git.diff([`${fromVersion}..${toVersion}`, "--", resolved.repoRelativePath]);
   }
 
   async revertAnchor(name: string, toVersion: string, message?: string, push?: boolean): Promise<string | undefined> {
-    const resolved = this.resolveAnchor(name);
+    const resolved = this.resolveGitAnchor(name);
     const content = await this.git.show([`${toVersion}:${resolved.repoRelativePath}`]);
     return this.commitAnchor({
       name,
@@ -444,7 +472,7 @@ export class AnchorRepository implements AnchorStore, SyncableAnchorStore {
     push?: boolean;
   }): Promise<string | undefined> {
     return this.lock.runExclusive(async () => {
-      const resolved = this.resolveAnchor(input.name);
+      const resolved = this.resolveGitAnchor(input.name);
       try {
         await stat(resolved.absolutePath);
       } catch (error) {
@@ -498,8 +526,8 @@ export class AnchorRepository implements AnchorStore, SyncableAnchorStore {
     push?: boolean;
   }): Promise<string | undefined> {
     return this.lock.runExclusive(async () => {
-      const fromResolved = this.resolveAnchor(input.from);
-      const toResolved = this.resolveAnchor(input.to);
+      const fromResolved = this.resolveGitAnchor(input.from);
+      const toResolved = this.resolveGitAnchor(input.to);
 
       try {
         await stat(fromResolved.absolutePath);
@@ -569,7 +597,7 @@ export class AnchorRepository implements AnchorStore, SyncableAnchorStore {
   }
 
   async hasFile(anchorName: string): Promise<boolean> {
-    const resolved = this.resolveAnchor(anchorName);
+    const resolved = this.resolveGitAnchor(anchorName);
     try {
       await stat(resolved.absolutePath);
       return true;
@@ -579,7 +607,7 @@ export class AnchorRepository implements AnchorStore, SyncableAnchorStore {
   }
 
   async readRaw(anchorName: string): Promise<string | undefined> {
-    const resolved = this.resolveAnchor(anchorName);
+    const resolved = this.resolveGitAnchor(anchorName);
     try {
       const stats = await stat(resolved.absolutePath);
       return await this.readFileCached(resolved.absolutePath, stats);
@@ -742,11 +770,13 @@ export class AnchorRepository implements AnchorStore, SyncableAnchorStore {
     const stats = knownStats ?? (await stat(absolutePath));
     const cached = this.fileContentCache.get(absolutePath);
     if (cached && cached.mtimeMs === stats.mtimeMs && cached.size === stats.size) {
+      this.fileContentCache.delete(absolutePath);
+      this.fileContentCache.set(absolutePath, cached);
       return cached.content;
     }
 
     const content = await readFile(absolutePath, "utf8");
-    this.fileContentCache.set(absolutePath, {
+    this.setFileContentCacheEntry(absolutePath, {
       mtimeMs: stats.mtimeMs,
       size: stats.size,
       content,
@@ -754,10 +784,41 @@ export class AnchorRepository implements AnchorStore, SyncableAnchorStore {
     return content;
   }
 
+  private setFileContentCacheEntry(absolutePath: string, entry: CachedFileContent): void {
+    this.deleteFileContentCacheEntry(absolutePath);
+    if (entry.size > MAX_CACHED_FILE_CONTENT_BYTES) {
+      return;
+    }
+
+    this.fileContentCache.set(absolutePath, entry);
+    this.fileContentCacheBytes += entry.size;
+    this.trimFileContentCache();
+  }
+
+  private deleteFileContentCacheEntry(absolutePath: string): void {
+    const cached = this.fileContentCache.get(absolutePath);
+    if (!cached) {
+      return;
+    }
+    this.fileContentCache.delete(absolutePath);
+    this.fileContentCacheBytes = Math.max(0, this.fileContentCacheBytes - cached.size);
+  }
+
+  private trimFileContentCache(): void {
+    while (this.fileContentCacheBytes > MAX_FILE_CONTENT_CACHE_BYTES) {
+      const oldest = this.fileContentCache.keys().next().value;
+      if (oldest === undefined) {
+        this.fileContentCacheBytes = 0;
+        return;
+      }
+      this.deleteFileContentCacheEntry(oldest);
+    }
+  }
+
   private invalidateReadIndex(absolutePath?: string, repoRelativePath?: string): void {
     if (absolutePath) {
       this.cache.invalidate(absolutePath);
-      this.fileContentCache.delete(absolutePath);
+      this.deleteFileContentCacheEntry(absolutePath);
       this.metaCache.delete(absolutePath);
       if (repoRelativePath) {
         this.createdAtCache.delete(repoRelativePath);
@@ -767,6 +828,7 @@ export class AnchorRepository implements AnchorStore, SyncableAnchorStore {
 
     this.cache.invalidate();
     this.fileContentCache.clear();
+    this.fileContentCacheBytes = 0;
     this.metaCache.clear();
     this.createdAtCache.clear();
   }

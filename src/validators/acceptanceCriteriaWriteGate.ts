@@ -26,7 +26,7 @@ export const validateAcceptanceCriteriaWriteGate: Validator = (context) => {
       "BLOCK",
       "requires_approval",
       "Acceptance criteria changed. Retry with approved: true after the user explicitly confirms this update.",
-      context.repoRelativePath,
+      context.path,
     ),
   ];
 };

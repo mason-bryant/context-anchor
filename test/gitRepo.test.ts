@@ -114,6 +114,22 @@ None.
     expect(gitLogFollowCalls(rawSpy)).toHaveLength(1);
   });
 
+  it("does not cache oversized file bodies", async () => {
+    const repo = new AnchorRepository({ repoPath: tmpDir });
+    await repo.ensureReady();
+    await mkdir(path.join(tmpDir, "shared"), { recursive: true });
+    await writeFile(path.join(tmpDir, "shared", "large.md"), `${anchorContent("Large")}\n${"x".repeat(1_100_000)}`, "utf8");
+
+    await expect(repo.readRaw("shared/large")).resolves.toContain("Large");
+
+    const internals = repo as unknown as {
+      fileContentCache: Map<string, unknown>;
+      fileContentCacheBytes: number;
+    };
+    expect(internals.fileContentCache.size).toBe(0);
+    expect(internals.fileContentCacheBytes).toBe(0);
+  });
+
   it("returns paged anchor metadata in last-updated order", async () => {
     const repo = new AnchorRepository({ repoPath: tmpDir });
     await repo.ensureReady();

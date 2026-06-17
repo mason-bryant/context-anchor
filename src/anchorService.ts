@@ -1,6 +1,4 @@
 import { randomBytes } from "node:crypto";
-import { readFile } from "node:fs/promises";
-
 import {
   appendToAnchorSection,
   deleteAnchorSection,
@@ -492,7 +490,7 @@ export class AnchorService {
     }
     const resolved = this.repo.resolveAnchor(input.name);
     if (input.expectedFileCommit) {
-      const current = await this.repo.lastRevisionForPath(resolved.repoRelativePath);
+      const current = await this.repo.lastRevisionForAnchor(input.name);
       if (current !== input.expectedFileCommit) {
         return {
           warnings: [
@@ -509,7 +507,7 @@ export class AnchorService {
     const oldContent = await this.repo.readRaw(input.name);
     const violations = await runValidators({
       name: resolved.name,
-      repoRelativePath: resolved.repoRelativePath,
+      path: resolved.path,
       oldContent,
       newContent: input.content,
       repo: this.repo,
@@ -581,7 +579,7 @@ export class AnchorService {
 
     const resolved = this.repo.resolveAnchor(input.name);
     if (input.expectedFileCommit) {
-      const current = await this.repo.lastRevisionForPath(resolved.repoRelativePath);
+      const current = await this.repo.lastRevisionForAnchor(input.name);
       if (current !== input.expectedFileCommit) {
         return {
           warnings: [
@@ -693,7 +691,7 @@ export class AnchorService {
     }
 
     if (input.expectedFileCommit) {
-      const current = await this.repo.lastRevisionForPath(fromResolved.repoRelativePath);
+      const current = await this.repo.lastRevisionForAnchor(input.from);
       if (current !== input.expectedFileCommit) {
         return {
           warnings: [
@@ -1358,10 +1356,9 @@ None.
       return placeholder("proposed_change_ledger", errorMessage(error));
     }
 
-    const resolvedTarget = this.repo.resolveAnchor(target);
     const oldContent = await this.repo.readRaw(target);
     const baseFileCommit =
-      oldContent === undefined ? undefined : await this.repo.lastRevisionForPath(resolvedTarget.repoRelativePath);
+      oldContent === undefined ? undefined : await this.repo.lastRevisionForAnchor(target);
     const now = new Date().toISOString();
     const record: ProposedChangeRecord = {
       id: makeProposalId(input.summary, now),
@@ -1698,7 +1695,7 @@ None.
   private proposalLedgerPath(scope: ProposedChangeScope): string {
     const name = proposedChangeLedgerName(scope);
     try {
-      return this.repo.resolveAnchor(name).repoRelativePath;
+      return this.repo.resolveAnchor(name).path;
     } catch {
       return name;
     }
@@ -1720,7 +1717,7 @@ None.
     const targetResolved = this.repo.resolveAnchor(proposal.target);
     const oldContent = await this.repo.readRaw(proposal.target);
     const targetFileCommit =
-      oldContent === undefined ? undefined : await this.repo.lastRevisionForPath(targetResolved.repoRelativePath);
+      oldContent === undefined ? undefined : await this.repo.lastRevisionForAnchor(proposal.target);
     const stale = (proposal.baseFileCommit ?? undefined) !== (targetFileCommit ?? undefined);
     const warnings: ValidationViolation[] = [];
     if (stale) {
@@ -1740,7 +1737,7 @@ None.
       warnings.push(
         ...(await runValidators({
           name: targetResolved.name,
-          repoRelativePath: targetResolved.repoRelativePath,
+          path: targetResolved.path,
           oldContent,
           newContent: draftContent,
           repo: this.repo,
@@ -2354,8 +2351,10 @@ None.
         continue;
       }
 
-      const resolved = this.repo.resolveAnchor(anchor.name);
-      const content = await readFile(resolved.absolutePath, "utf8");
+      const content = await this.repo.readRaw(anchor.name);
+      if (content === undefined) {
+        continue;
+      }
       const lineCount = content.split(/\r?\n/).length;
       const completedRows = countCompletedRows(content);
 

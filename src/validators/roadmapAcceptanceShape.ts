@@ -78,7 +78,7 @@ export const validatePolicyWeakeningActiveWarn: Validator = (context) => {
       "WARN",
       "policy_weaken_active",
       `anchor_mcp_policy.weaken is active (${[...weaken].join(", ")}). Default enforcement is relaxed for this roadmap.`,
-      context.repoRelativePath,
+      context.path,
     ),
   ];
 };

@@ -7,7 +7,7 @@ import { violation } from "./types.js";
 export const validateCompactionThresholds: Validator = (context) => {
   const warnings = [];
   const lineCount = context.newContent.split(/\r?\n/).length;
-  const basename = path.basename(context.repoRelativePath).toLowerCase();
+  const basename = path.basename(context.path).toLowerCase();
   const isRoadmap = basename.includes("roadmap");
 
   if (isRoadmap && lineCount > 400) {
@@ -16,7 +16,7 @@ export const validateCompactionThresholds: Validator = (context) => {
         "WARN",
         "roadmap_line_count",
         `Roadmap has ${lineCount} lines; consider compacting when it exceeds 400.`,
-        context.repoRelativePath,
+        context.path,
       ),
     );
   }
@@ -28,11 +28,10 @@ export const validateCompactionThresholds: Validator = (context) => {
         "WARN",
         "completed_row_count",
         `## Completed has ${completedRows} rows; consider compacting when it exceeds 10.`,
-        context.repoRelativePath,
+        context.path,
       ),
     );
   }
 
   return warnings;
 };
-

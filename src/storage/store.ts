@@ -9,9 +9,10 @@ import type {
 
 export type ResolvedAnchorPath = {
   name: string;
-  absolutePath: string;
-  repoRelativePath: string;
-  anchorRelativePath: string;
+  /** Stable display/API path for this backend. Git-backed stores use the repo-relative path. */
+  path: string;
+  /** Opaque key accepted by revision APIs; callers must not assume it is a filesystem path. */
+  revisionKey: string;
 };
 
 export type AnchorListSort = "name" | "updated" | "created" | "priority";
@@ -93,7 +94,7 @@ export interface AnchorStore {
   diffAnchor(name: string, fromVersion: string, toVersion: string): Promise<string>;
   conflictStatus(): Promise<ConflictStatus>;
   currentVersion(): Promise<string>;
-  lastRevisionForPath(repoRelativePath: string): Promise<string | undefined>;
+  lastRevisionForAnchor(name: string): Promise<string | undefined>;
 
   hasFile(anchorName: string): Promise<boolean>;
   readRaw(anchorName: string): Promise<string | undefined>;
