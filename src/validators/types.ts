@@ -1,12 +1,12 @@
-import type { AnchorRepository } from "../git/repo.js";
+import type { AnchorStore } from "../storage/store.js";
 import type { ValidationViolation } from "../types.js";
 
 export type ValidationContext = {
   name: string;
-  repoRelativePath: string;
+  path: string;
   oldContent?: string;
   newContent: string;
-  repo: AnchorRepository;
+  repo: AnchorStore;
   migrationWarnOnly: boolean;
   approved: boolean;
 };
@@ -27,6 +27,5 @@ export function maybeMigrationBlock(
   code: string,
   message: string,
 ): ValidationViolation {
-  return violation(context.migrationWarnOnly ? "WARN" : "BLOCK", code, message, context.repoRelativePath);
+  return violation(context.migrationWarnOnly ? "WARN" : "BLOCK", code, message, context.path);
 }
-

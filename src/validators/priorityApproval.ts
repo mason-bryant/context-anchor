@@ -21,7 +21,7 @@ export const validatePriorityApproval: Validator = (context) => {
       "BLOCK",
       "requires_approval",
       "Project priority changes require an explicit approved human request. Retry with approved: true after user approval.",
-      context.repoRelativePath,
+      context.path,
     ),
   ];
 };

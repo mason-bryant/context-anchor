@@ -1,6 +1,6 @@
 import { errorMetadata, noopLogger, type AppLogger } from "../logger.js";
 import type { ConflictStatus } from "../types.js";
-import type { AnchorRepository } from "./repo.js";
+import type { SyncableAnchorStore } from "../storage/store.js";
 
 export class AutoSync {
   private timer: NodeJS.Timeout | undefined;
@@ -8,7 +8,7 @@ export class AutoSync {
   private missingUpstreamLogged = false;
 
   constructor(
-    private readonly repo: AnchorRepository,
+    private readonly repo: SyncableAnchorStore,
     private readonly intervalMs: number,
     private readonly logger: AppLogger = noopLogger,
   ) {}

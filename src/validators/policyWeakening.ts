@@ -30,7 +30,7 @@ export const validatePolicyWeakeningDeclaration: Validator = (context) => {
       "BLOCK",
       "requires_approval",
       "anchor_mcp_policy.weaken changed. Retry with approved: true after the user confirms weakening default enforcement.",
-      context.repoRelativePath,
+      context.path,
     ),
   ];
 };

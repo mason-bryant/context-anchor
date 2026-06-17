@@ -90,6 +90,46 @@ None.
     expect(anchors[0]?.createdAt).toBe("2020-01-02T03:04:05.000Z");
   });
 
+  it("reuses indexed anchor metadata across repeated listings and invalidates after writes", async () => {
+    const repo = new AnchorRepository({ repoPath: tmpDir });
+    await repo.ensureReady();
+    await mkdir(path.join(tmpDir, "shared"), { recursive: true });
+    await commitAnchorFile(repo, "shared/cache-test.md", "Cache Test", "2026-05-03T00:00:00Z");
+
+    const rawSpy = vi.spyOn(repo.git, "raw");
+
+    await repo.listAnchors();
+    await repo.listAnchors();
+
+    expect(gitLogFollowCalls(rawSpy)).toHaveLength(1);
+
+    rawSpy.mockClear();
+    await repo.commitAnchor({
+      name: "shared/cache-test",
+      content: anchorContent("Cache Test Updated"),
+      message: "test: update cache test",
+    });
+    await repo.listAnchors();
+
+    expect(gitLogFollowCalls(rawSpy)).toHaveLength(1);
+  });
+
+  it("does not cache oversized file bodies", async () => {
+    const repo = new AnchorRepository({ repoPath: tmpDir });
+    await repo.ensureReady();
+    await mkdir(path.join(tmpDir, "shared"), { recursive: true });
+    await writeFile(path.join(tmpDir, "shared", "large.md"), `${anchorContent("Large")}\n${"x".repeat(1_100_000)}`, "utf8");
+
+    await expect(repo.readRaw("shared/large")).resolves.toContain("Large");
+
+    const internals = repo as unknown as {
+      fileContentCache: Map<string, unknown>;
+      fileContentCacheBytes: number;
+    };
+    expect(internals.fileContentCache.size).toBe(0);
+    expect(internals.fileContentCacheBytes).toBe(0);
+  });
+
   it("returns paged anchor metadata in last-updated order", async () => {
     const repo = new AnchorRepository({ repoPath: tmpDir });
     await repo.ensureReady();
@@ -188,4 +228,11 @@ None.
 
 None.
 `;
+}
+
+function gitLogFollowCalls(spy: { mock: { calls: unknown[][] } }): unknown[][] {
+  return spy.mock.calls.filter((call) => {
+    const args = call[0];
+    return Array.isArray(args) && args[0] === "log" && args.includes("--follow");
+  });
 }

@@ -1,5 +1,5 @@
 import { isBuiltInAnchorName } from "../builtin/serverPolicy.js";
-import type { AnchorRepository } from "../git/repo.js";
+import type { AnchorStore } from "../storage/store.js";
 import { normalizedMilestoneId, normalizedSequenceFromFm } from "../milestoneFrontmatter.js";
 import { isProjectMilestoneType } from "../schema/milestoneTypes.js";
 import { parseAnchor } from "../storage/markdown.js";
@@ -18,7 +18,7 @@ function normalizeAnchorName(name: string): string {
  */
 async function siblingMilestoneIdAndSequence(
   anchor: AnchorMeta,
-  repo: AnchorRepository,
+  repo: AnchorStore,
 ): Promise<{ milestoneId?: string; sequence?: number }> {
   if (anchor.milestone) {
     return {
@@ -76,7 +76,7 @@ export const validateMilestoneProjectUniqueness: Validator = async (context) => 
     return [];
   }
 
-  const selfName = normalizeAnchorName(context.repoRelativePath);
+  const selfName = normalizeAnchorName(context.path);
   const siblings = await context.repo.listAnchors({ project: slug });
 
   for (const anchor of siblings) {

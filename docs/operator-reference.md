@@ -352,3 +352,31 @@ For basic sync without MCP:
 ```sh
 scripts/anchor-context-sync.sh ~/agent-context 45
 ```
+
+## Storage Backends And Performance
+
+The default backend is still the local git-backed anchor store. Internally,
+`AnchorService` depends on a storage interface so future hosted backends can provide
+the same anchor, metadata, version, search, conflict, and registry capabilities without
+being git repositories.
+
+Revision checks use backend-neutral storage methods, while MCP compatibility fields
+remain named `fileCommit` and `expectedFileCommit`. In the git backend, those values
+are still git commit hashes for the touched file.
+
+The git backend maintains an in-memory read index for parsed anchor metadata and a
+bounded LRU cache for file content. Oversized files are not cached. Writes, deletes,
+renames, generated context-root commits, and AutoSync pulls invalidate affected
+entries.
+
+Run the local read-path harness with:
+
+```sh
+npm run perf:read-paths
+```
+
+To include larger repos, pass comma-separated sizes:
+
+```sh
+ANCHOR_MCP_PERF_SIZES=100,1000,10000 npm run perf:read-paths
+```

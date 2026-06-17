@@ -31,8 +31,7 @@ export const validateNonDestructive: Validator = (context) => {
       "WARN",
       "non_destructive_update",
       `Removed bullets should be relocated to ## History or marked superseded. Examples:\n${examples}`,
-      context.repoRelativePath,
+      context.path,
     ),
   ];
 };
-

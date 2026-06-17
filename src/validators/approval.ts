@@ -27,8 +27,7 @@ export const validateApprovalGate: Validator = (context) => {
       "BLOCK",
       "requires_approval",
       "This write changes Decisions or Constraints, or removes existing bullets. Retry with approved: true after user approval.",
-      context.repoRelativePath,
+      context.path,
     ),
   ];
 };
-
