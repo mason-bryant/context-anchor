@@ -104,6 +104,10 @@ import type {
   SearchHit,
   TaskDueRow,
   ListTasksDueInput,
+  CreateTaskInput,
+  CreateTaskResult,
+  CompleteTaskInput,
+  DeleteTaskInput,
   UpdateProjectPriorityInput,
   UpdateTaskDueInput,
   ValidationViolation,
@@ -933,6 +937,207 @@ export class AnchorService {
     });
   }
 
+  private static blockResult(code: string, message: string): WriteAnchorResult {
+    return { warnings: [{ severity: "BLOCK", code, message }] };
+  }
+
+  private static today(): string {
+    return new Date().toISOString().slice(0, 10);
+  }
+
+  /** Read a milestone anchor's raw front-matter tasks array. */
+  private async readRawTasks(name: string): Promise<Record<string, unknown>[] | undefined> {
+    const rawContent = await this.repo.readRaw(name);
+    if (rawContent === undefined) return undefined;
+    const parsed = parseAnchor(rawContent);
+    const rawTasks = parsed.frontmatter.tasks;
+    return Array.isArray(rawTasks) ? (rawTasks as Record<string, unknown>[]) : [];
+  }
+
+  /** Next project-wide task id (`T-<n>`), scanning every milestone so ids stay unique as tasks move. */
+  private async nextTaskId(project?: string): Promise<string> {
+    const milestones = await this.listMilestones(project);
+    let max = 0;
+    for (const milestone of milestones) {
+      for (const task of milestone.tasks ?? []) {
+        const match = /^T-(\d{1,6})$/.exec(task.id);
+        if (match) max = Math.max(max, Number(match[1]));
+      }
+    }
+    return `T-${max + 1}`;
+  }
+
+  /** Locate a task by id: within an explicit milestone anchor, or across a project's milestones. */
+  private async findTaskMilestone(
+    taskId: string,
+    options: { name?: string; project?: string },
+  ): Promise<string | undefined> {
+    if (options.name) {
+      const tasks = await this.readRawTasks(options.name);
+      return tasks?.some((t) => t.id === taskId) ? options.name : undefined;
+    }
+    const milestones = await this.listMilestones(options.project);
+    const match = milestones.find((m) => (m.tasks ?? []).some((t) => t.id === taskId));
+    return match?.name;
+  }
+
+  /** Resolve (and lazily create) the backlog milestone anchor for a project slug. */
+  private async ensureBacklogMilestone(projectSlug: string): Promise<string> {
+    const name = `projects/${projectSlug}/milestones/backlog.md`;
+    const existing = await this.repo.readRaw(name);
+    if (existing !== undefined) return name;
+
+    const content = `---
+project:
+  - ${projectSlug}
+type: project-milestone
+schema_version: 1
+tags:
+  - milestone
+summary: "Backlog tasks for ${projectSlug}."
+read_this_if:
+  - "You are triaging or scheduling unplanned ${projectSlug} tasks."
+last_validated: ${AnchorService.today()}
+milestone_id: backlog
+theme: "Backlog"
+status: active
+relations:
+  goal_ids: []
+tasks: []
+---
+
+# Backlog
+
+## Current State
+
+- Backlog of unscheduled tasks for ${projectSlug}.
+
+## Decisions
+
+- None.
+
+## Constraints
+
+- None.
+
+## PRs
+
+None.
+`;
+    const result = await this.writeAnchor({
+      name,
+      content,
+      message: `chore: create backlog milestone for ${projectSlug}`,
+    });
+    if (hasBlock(result.warnings)) {
+      throw new Error(`Failed to create backlog milestone for ${projectSlug}: ${blockMessages(result.warnings)}`);
+    }
+    return name;
+  }
+
+  async createTask(input: CreateTaskInput): Promise<CreateTaskResult> {
+    const title = input.title?.trim();
+    if (!title) {
+      return AnchorService.blockResult("missing_title", "title is required to create a task.");
+    }
+    if (input.due && !input.dateConfidence) {
+      return AnchorService.blockResult(
+        "missing_date_confidence",
+        "date_confidence is required when due is set. Pass one of: committed, internal_goal, estimated.",
+      );
+    }
+
+    const { effectiveProject } = await this.resolveProjectFilter(input.project);
+    const projectSlug = effectiveProject ?? input.project;
+    if (!projectSlug) {
+      return AnchorService.blockResult("missing_project", "project is required to create a task.");
+    }
+
+    let targetName: string;
+    try {
+      targetName = input.milestone ?? (await this.ensureBacklogMilestone(projectSlug));
+    } catch (error) {
+      return AnchorService.blockResult("backlog_create_failed", error instanceof Error ? error.message : String(error));
+    }
+
+    const rawTasks = await this.readRawTasks(targetName);
+    if (rawTasks === undefined) {
+      return AnchorService.blockResult("missing_anchor", `Milestone anchor not found: ${targetName}`);
+    }
+
+    const status = input.status ?? "todo";
+    const taskId = await this.nextTaskId(projectSlug);
+    const task: Record<string, unknown> = { id: taskId, title, status };
+    if (input.owner?.trim()) task.owner = input.owner.trim();
+    if (input.goalIds && input.goalIds.length > 0) task.goal_ids = input.goalIds;
+    if (input.due) {
+      task.due = input.due;
+      task.date_confidence = input.dateConfidence;
+    }
+    if (status === "done") {
+      task.completed_on = AnchorService.today();
+    }
+    if (input.notes?.trim()) task.notes = input.notes.trim();
+
+    const result = await this.updateAnchorFrontmatter({
+      name: targetName,
+      updates: { tasks: [...rawTasks, task] },
+      message: input.message ?? `chore: add task ${taskId} to ${targetName}`,
+      approved: input.approved,
+      coAuthor: input.coAuthor,
+    });
+
+    return {
+      ...result,
+      ...(hasBlock(result.warnings) ? {} : { taskId, milestoneName: targetName }),
+    };
+  }
+
+  async completeTask(input: CompleteTaskInput): Promise<WriteAnchorResult> {
+    const name = await this.findTaskMilestone(input.taskId, { name: input.name, project: input.project });
+    if (!name) {
+      return AnchorService.blockResult("task_not_found", `Task "${input.taskId}" not found.`);
+    }
+    const rawTasks = await this.readRawTasks(name);
+    if (rawTasks === undefined) {
+      return AnchorService.blockResult("missing_anchor", `Milestone anchor not found: ${name}`);
+    }
+    const completedOn = input.completedOn ?? AnchorService.today();
+    const updatedTasks = rawTasks.map((t) =>
+      t.id === input.taskId ? { ...t, status: "done", completed_on: completedOn } : t,
+    );
+
+    return this.updateAnchorFrontmatter({
+      name,
+      updates: { tasks: updatedTasks },
+      message: input.message ?? `chore: complete task ${input.taskId}`,
+      approved: input.approved,
+      coAuthor: input.coAuthor,
+      expectedFileCommit: input.expectedFileCommit,
+    });
+  }
+
+  async deleteTask(input: DeleteTaskInput): Promise<WriteAnchorResult> {
+    const name = await this.findTaskMilestone(input.taskId, { name: input.name, project: input.project });
+    if (!name) {
+      return AnchorService.blockResult("task_not_found", `Task "${input.taskId}" not found.`);
+    }
+    const rawTasks = await this.readRawTasks(name);
+    if (rawTasks === undefined) {
+      return AnchorService.blockResult("missing_anchor", `Milestone anchor not found: ${name}`);
+    }
+    const updatedTasks = rawTasks.filter((t) => t.id !== input.taskId);
+
+    return this.updateAnchorFrontmatter({
+      name,
+      updates: { tasks: updatedTasks },
+      message: input.message ?? `chore: delete task ${input.taskId}`,
+      approved: input.approved,
+      coAuthor: input.coAuthor,
+      expectedFileCommit: input.expectedFileCommit,
+    });
+  }
+
   async listTasksDue(input: ListTasksDueInput): Promise<{ tasks: TaskDueRow[] }> {
     const milestones = await this.listMilestones(input.project);
     const DEFAULT_STATUSES = new Set(["active", "todo", "blocked"]);
@@ -954,6 +1159,8 @@ export class AnchorService {
 
       for (const task of milestone.tasks) {
         if (!statusFilter.has(task.status)) continue;
+
+        if (input.unassigned && task.owner && task.owner.trim().length > 0) continue;
 
         if (input.noDue) {
           if (task.due) continue;
@@ -2128,6 +2335,17 @@ export class AnchorService {
 
     return { signals, suggestedMoves };
   }
+}
+
+function hasBlock(warnings: ValidationViolation[]): boolean {
+  return warnings.some((warning) => warning.severity === "BLOCK");
+}
+
+function blockMessages(warnings: ValidationViolation[]): string {
+  return warnings
+    .filter((warning) => warning.severity === "BLOCK")
+    .map((warning) => warning.message)
+    .join("; ");
 }
 
 function findProjectAnchor(anchors: AnchorMeta[], project: string): AnchorMeta | undefined {

@@ -286,8 +286,35 @@ export const UI_HTML = `<!doctype html>
                   <option value="">All statuses</option>
                 </select>
                 <label class="checkbox-label"><input type="checkbox" id="tasks-no-due"> No due date only</label>
+                <label class="checkbox-label"><input type="checkbox" id="tasks-unassigned"> Unassigned only</label>
+                <button id="tasks-add" type="button">+ Add Task</button>
                 <button id="tasks-refresh" type="button">Refresh</button>
               </div>
+            </div>
+            <div id="tasks-add-form" class="registry-add-form" hidden>
+              <h3>New Task</h3>
+              <div class="form-grid">
+                <label>Project<input id="new-task-project" type="text" placeholder="anchor-mcp"></label>
+                <label>Title<input id="new-task-title" type="text" placeholder="Follow up on X"></label>
+                <label>Owner (optional)<input id="new-task-owner" type="text" placeholder="person or team — blank = unassigned"></label>
+                <label>Status<select id="new-task-status">
+                  <option value="todo">todo</option>
+                  <option value="active">active</option>
+                  <option value="blocked">blocked</option>
+                </select></label>
+                <label>Due (optional)<input id="new-task-due" type="date"></label>
+                <label>Date confidence<select id="new-task-confidence">
+                  <option value="estimated">estimated</option>
+                  <option value="internal_goal">internal_goal</option>
+                  <option value="committed">committed</option>
+                </select></label>
+                <label>Milestone (optional)<input id="new-task-milestone" type="text" placeholder="blank = project backlog"></label>
+              </div>
+              <div class="action-row">
+                <button id="new-task-save" type="button">Save</button>
+                <button id="new-task-cancel" type="button">Cancel</button>
+              </div>
+              <p id="new-task-result" class="registry-result"></p>
             </div>
             <div id="tasks-empty" class="empty-state">No tasks match the current filters.</div>
             <div id="tasks-list" hidden></div>
@@ -1380,6 +1407,24 @@ textarea {
   text-align: right;
 }
 
+.task-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.task-action-result {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.badge.task-unassigned {
+  background: #fff7e6;
+  border-color: #f0c987;
+  color: #8a5a00;
+}
+
 .compact-action {
   font-size: 12px;
   padding: 3px 8px;
@@ -1631,7 +1676,8 @@ export const UI_JS = `(function () {
     "proposal",
     "tasksProject",
     "tasksStatus",
-    "tasksNoDue"
+    "tasksNoDue",
+    "tasksUnassigned"
   ];
 
   var state = {
@@ -1660,6 +1706,7 @@ export const UI_JS = `(function () {
     tasksProject: "",
     tasksStatus: "active,todo,blocked",
     tasksNoDue: false,
+    tasksUnassigned: false,
     registry: null,
     registryLoading: false,
     registryFileCommit: null,
@@ -1783,9 +1830,11 @@ export const UI_JS = `(function () {
     state.tasksProject = params.get("tasksProject") || "";
     state.tasksStatus = params.get("tasksStatus") || "active,todo,blocked";
     state.tasksNoDue = params.get("tasksNoDue") === "true";
+    state.tasksUnassigned = params.get("tasksUnassigned") === "true";
     setSelectValueAllowingNew("tasks-project-filter", state.tasksProject);
     setControlValue("tasks-status-filter", state.tasksStatus);
     setControlChecked("tasks-no-due", state.tasksNoDue);
+    setControlChecked("tasks-unassigned", state.tasksUnassigned);
   }
 
   function urlForState(overrides) {
@@ -1865,6 +1914,9 @@ export const UI_JS = `(function () {
     setNonDefaultParam(params, "tasksStatus", tasksStatus, "active,todo,blocked");
     if (controlChecked("tasks-no-due", state.tasksNoDue)) {
       params.set("tasksNoDue", "true");
+    }
+    if (controlChecked("tasks-unassigned", state.tasksUnassigned)) {
+      params.set("tasksUnassigned", "true");
     }
 
     return params;
@@ -3406,10 +3458,12 @@ export const UI_JS = `(function () {
     var project = controlValue("tasks-project-filter", state.tasksProject);
     var statusVal = controlValue("tasks-status-filter", state.tasksStatus);
     var noDue = controlChecked("tasks-no-due", state.tasksNoDue);
+    var unassigned = controlChecked("tasks-unassigned", state.tasksUnassigned);
     var qs = [];
     if (project) qs.push("project=" + encodeURIComponent(project));
     if (statusVal) qs.push("status=" + encodeURIComponent(statusVal));
     if (noDue) qs.push("noDue=true");
+    if (unassigned) qs.push("unassigned=true");
     var url = "/api/ui/tasks-due" + (qs.length ? "?" + qs.join("&") : "");
     try {
       var result = await api(url);
@@ -3420,6 +3474,37 @@ export const UI_JS = `(function () {
     } finally {
       state.tasksLoading = false;
     }
+  }
+
+  async function saveNewTask() {
+    var resultEl = el("new-task-result");
+    var project = (el("new-task-project").value || "").trim();
+    var title = (el("new-task-title").value || "").trim();
+    if (!project) { resultEl.textContent = "Project is required."; return; }
+    if (!title) { resultEl.textContent = "Title is required."; return; }
+    var owner = (el("new-task-owner").value || "").trim();
+    var due = (el("new-task-due").value || "").trim();
+    var confidence = el("new-task-confidence").value;
+    var status = el("new-task-status").value;
+    var milestone = (el("new-task-milestone").value || "").trim();
+    var payload = { project: project, title: title, status: status, approved: true };
+    if (owner) payload.owner = owner;
+    if (milestone) payload.milestone = milestone;
+    if (due) {
+      payload.due = due;
+      payload.dateConfidence = confidence;
+    }
+    resultEl.textContent = "Saving...";
+    var res = await apiPost("/api/ui/task-create", payload);
+    if (res.warnings && res.warnings.some(function (w) { return w.severity === "BLOCK"; })) {
+      resultEl.textContent = res.warnings.map(function (w) { return w.message; }).join("; ");
+      return;
+    }
+    resultEl.textContent = "Created " + (res.taskId || "task") + ".";
+    ["new-task-title", "new-task-owner", "new-task-due", "new-task-milestone"].forEach(function (id) { el(id).value = ""; });
+    el("tasks-add-form").hidden = true;
+    state.tasks = [];
+    loadTasks();
   }
 
   function renderTasks() {
@@ -3481,6 +3566,22 @@ export const UI_JS = `(function () {
     list.querySelectorAll(".task-milestone-link").forEach(function (btn) {
       btn.addEventListener("click", function () {
         selectAnchor(btn.dataset.anchor);
+      });
+    });
+
+    wireGotoChips(list);
+
+    list.querySelectorAll(".task-complete-btn").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        var row = btn.closest(".task-actions");
+        runTaskLifecycle("/api/ui/task-complete", row, "Completing...");
+      });
+    });
+    list.querySelectorAll(".task-delete-btn").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        var row = btn.closest(".task-actions");
+        if (!window.confirm("Delete task " + row.dataset.taskId + "?")) return;
+        runTaskLifecycle("/api/ui/task-delete", row, "Deleting...");
       });
     });
 
@@ -3547,7 +3648,7 @@ export const UI_JS = `(function () {
 
   function renderTaskRow(task) {
     var statusBadge = "<span class=\\"badge\\">" + escapeHtml(task.taskStatus) + "</span>";
-    var ownerBadge = task.taskOwner ? "<span class=\\"badge\\">" + escapeHtml(task.taskOwner) + "</span>" : "";
+    var ownerBadge = renderTaskOwner(task);
     var projectBadge = task.project ? "<span class=\\"badge\\">" + escapeHtml(task.project) + "</span>" : "";
     var milestoneLabel = task.milestoneDisplayId || task.milestoneName.split("/").pop().replace(/\\.md$/, "");
     var milestoneBtn = "<button class=\\"task-milestone-link\\" data-anchor=\\"" + escapeHtml(task.milestoneName) + "\\" type=\\"button\\">" + escapeHtml(milestoneLabel) + "</button>";
@@ -3568,13 +3669,57 @@ export const UI_JS = `(function () {
       + "</div>"
       + "<div class=\\"task-due-result\\"></div>"
       + "</form>";
+    var lifecycle = "<div class=\\"task-actions\\" data-task-id=\\"" + escapeHtml(task.taskId) + "\\" data-milestone-name=\\"" + escapeHtml(task.milestoneName) + "\\">"
+      + (task.taskStatus !== "done" && task.taskStatus !== "cancelled"
+        ? "<button type=\\"button\\" class=\\"compact-action task-complete-btn\\">Complete</button>" : "")
+      + "<button type=\\"button\\" class=\\"compact-action task-delete-btn\\">Delete</button>"
+      + "<span class=\\"task-action-result\\"></span>"
+      + "</div>";
     return "<div class=\\"task-row\\">"
       + "<div>"
       + "<div class=\\"task-title-line\\">" + escapeHtml(task.taskId) + " — " + escapeHtml(task.taskTitle) + "</div>"
       + "<div class=\\"task-meta\\">" + statusBadge + ownerBadge + projectBadge + milestoneBtn + (task.due ? "<span class=\\"badge\\">" + escapeHtml(task.due) + "</span>" : "") + "</div>"
+      + lifecycle
       + "</div>"
       + form
       + "</div>";
+  }
+
+  // Render a task's owner. Resolved people/teams are clickable cross-links to
+  // their registry entry; an unresolved string shows as-is; no owner shows
+  // a distinct "Unassigned" badge.
+  function renderTaskOwner(task) {
+    if (task.resolvedPerson) {
+      return linkChip("person", task.resolvedPerson.id, "👤 " + task.resolvedPerson.displayName);
+    }
+    if (task.resolvedTeam) {
+      return linkChip("team", task.resolvedTeam.id, "👥 " + task.resolvedTeam.displayName);
+    }
+    if (task.taskOwner) {
+      return "<span class=\\"badge\\">" + escapeHtml(task.taskOwner) + "</span>";
+    }
+    return "<span class=\\"badge task-unassigned\\">Unassigned</span>";
+  }
+
+  async function runTaskLifecycle(path, row, pendingLabel) {
+    if (!row) return;
+    var resultEl = row.querySelector(".task-action-result");
+    if (resultEl) resultEl.textContent = pendingLabel;
+    try {
+      var res = await apiPost(path, {
+        taskId: row.dataset.taskId,
+        name: row.dataset.milestoneName,
+        approved: true
+      });
+      if (res.warnings && res.warnings.some(function (w) { return w.severity === "BLOCK"; })) {
+        if (resultEl) resultEl.textContent = res.warnings.map(function (w) { return w.message; }).join("; ");
+        return;
+      }
+      state.tasks = [];
+      loadTasks();
+    } catch (err) {
+      if (resultEl) resultEl.textContent = err.message;
+    }
   }
 
   var ASSOCIATION_ROLES = ["responsible", "accountable", "informed", "consulted", "executive_sponsor", "stakeholder", "lead"];
@@ -4375,6 +4520,27 @@ export const UI_JS = `(function () {
       updateLocationFromState({ anchor: null, view: "tasks", history: "push" });
       state.tasks = [];
       loadTasks().catch(function (error) { setBanner(error.message, "error"); });
+    });
+    el("tasks-unassigned").addEventListener("change", function () {
+      updateLocationFromState({ anchor: null, view: "tasks", history: "push" });
+      state.tasks = [];
+      loadTasks().catch(function (error) { setBanner(error.message, "error"); });
+    });
+    el("tasks-add").addEventListener("click", function () {
+      var form = el("tasks-add-form");
+      form.hidden = !form.hidden;
+      if (!form.hidden) {
+        var proj = controlValue("tasks-project-filter", state.tasksProject);
+        if (proj && !el("new-task-project").value) { el("new-task-project").value = proj; }
+        el("new-task-title").focus();
+      }
+    });
+    el("new-task-cancel").addEventListener("click", function () {
+      el("tasks-add-form").hidden = true;
+      el("new-task-result").textContent = "";
+    });
+    el("new-task-save").addEventListener("click", function () {
+      saveNewTask().catch(function (error) { el("new-task-result").textContent = error.message; });
     });
     el("proposal-list").addEventListener("click", function (event) {
       var card = event.target.closest("[data-proposal-id]");

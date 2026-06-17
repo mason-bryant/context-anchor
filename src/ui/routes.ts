@@ -203,6 +203,7 @@ export function registerUiRoutes(
       const dueBefore = optionalQueryString(req, "dueBefore");
       const dueAfter = optionalQueryString(req, "dueAfter");
       const noDue = req.query["noDue"] === "true";
+      const unassigned = req.query["unassigned"] === "true";
       const statusRaw = optionalQueryString(req, "status");
       const status = statusRaw ? statusRaw.split(",") : undefined;
       const owner = optionalQueryString(req, "owner");
@@ -211,6 +212,7 @@ export function registerUiRoutes(
         ...(dueBefore ? { dueBefore } : {}),
         ...(dueAfter ? { dueAfter } : {}),
         ...(noDue ? { noDue } : {}),
+        ...(unassigned ? { unassigned } : {}),
         ...(owner ? { owner } : {}),
         status: status as ("todo" | "active" | "blocked" | "done" | "cancelled")[] | undefined,
       });
@@ -283,6 +285,77 @@ export function registerUiRoutes(
         taskId: requiredBodyString(body, "taskId"),
         due,
         dateConfidence: optionalBodyString(body, "dateConfidence") as "committed" | "internal_goal" | "estimated" | undefined,
+        message: optionalBodyString(body, "message"),
+        approved: booleanBody(body, "approved"),
+        coAuthor: optionalBodyString(body, "coAuthor"),
+        expectedFileCommit: optionalBodyString(body, "expectedFileCommit"),
+      });
+    }),
+  );
+
+  app.post(
+    "/api/ui/task-create",
+    ...protect,
+    jsonRoute(async (req) => {
+      const body = bodyRecord(req);
+      const goalIdsRaw = body["goalIds"];
+      const goalIds = Array.isArray(goalIdsRaw)
+        ? goalIdsRaw.filter((g): g is string => typeof g === "string")
+        : undefined;
+      return service.createTask({
+        project: requiredBodyString(body, "project"),
+        title: requiredBodyString(body, "title"),
+        milestone: optionalBodyString(body, "milestone"),
+        status: optionalBodyString(body, "status") as
+          | "todo"
+          | "active"
+          | "blocked"
+          | "done"
+          | "cancelled"
+          | undefined,
+        owner: optionalBodyString(body, "owner"),
+        due: optionalBodyString(body, "due"),
+        dateConfidence: optionalBodyString(body, "dateConfidence") as
+          | "committed"
+          | "internal_goal"
+          | "estimated"
+          | undefined,
+        ...(goalIds && goalIds.length > 0 ? { goalIds } : {}),
+        notes: optionalBodyString(body, "notes"),
+        message: optionalBodyString(body, "message"),
+        approved: booleanBody(body, "approved"),
+        coAuthor: optionalBodyString(body, "coAuthor"),
+      });
+    }),
+  );
+
+  app.post(
+    "/api/ui/task-complete",
+    ...protect,
+    jsonRoute(async (req) => {
+      const body = bodyRecord(req);
+      return service.completeTask({
+        taskId: requiredBodyString(body, "taskId"),
+        name: optionalBodyString(body, "name"),
+        project: optionalBodyString(body, "project"),
+        completedOn: optionalBodyString(body, "completedOn"),
+        message: optionalBodyString(body, "message"),
+        approved: booleanBody(body, "approved"),
+        coAuthor: optionalBodyString(body, "coAuthor"),
+        expectedFileCommit: optionalBodyString(body, "expectedFileCommit"),
+      });
+    }),
+  );
+
+  app.post(
+    "/api/ui/task-delete",
+    ...protect,
+    jsonRoute(async (req) => {
+      const body = bodyRecord(req);
+      return service.deleteTask({
+        taskId: requiredBodyString(body, "taskId"),
+        name: optionalBodyString(body, "name"),
+        project: optionalBodyString(body, "project"),
         message: optionalBodyString(body, "message"),
         approved: booleanBody(body, "approved"),
         coAuthor: optionalBodyString(body, "coAuthor"),

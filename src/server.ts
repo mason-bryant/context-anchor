@@ -728,10 +728,11 @@ the index when your workflow checks in that file.`,
         noDue: z.boolean().optional().describe("When true, return only tasks with no due date."),
         status: z.union([z.array(TaskStatusSchema), JsonStringSchema]).optional().describe("Filter by task status. Defaults to active, todo, blocked."),
         owner: z.string().optional().describe("Filter by person or team: id, display name, email, slack id, or team synonym."),
+        unassigned: z.boolean().optional().describe("When true, return only tasks with no owner assigned."),
       }),
       annotations: { destructiveHint: false, idempotentHint: true },
     },
-    async ({ project, dueBefore, dueAfter, noDue, status, owner }) => {
+    async ({ project, dueBefore, dueAfter, noDue, status, owner, unassigned }) => {
       const parsedStatus = typeof status === "string" ? (JSON.parse(status) as string[]) : status;
       const result = await service.listTasksDue({
         project,
@@ -740,8 +741,114 @@ the index when your workflow checks in that file.`,
         noDue,
         status: parsedStatus as ("todo" | "active" | "blocked" | "done" | "cancelled")[] | undefined,
         owner,
+        unassigned,
       });
       return jsonResult(result, false);
+    },
+  );
+
+  server.registerTool(
+    "createTask",
+    {
+      title: "Create Task",
+      description:
+        "Create a structured task in a milestone anchor so it appears in the Tasks view. Defaults to the project's backlog milestone (auto-created when missing). Provide owner to assign it (person or team) or omit to leave it unassigned. due requires dateConfidence.",
+      inputSchema: z.object({
+        project: z.string().describe("Project slug the task belongs to."),
+        title: z.string().min(1).describe("Task title."),
+        milestone: z.string().optional().describe("Milestone anchor name. Defaults to the project's backlog milestone."),
+        status: TaskStatusSchema.optional().describe("Initial status. Defaults to todo."),
+        owner: z.string().optional().describe("Owner: person or team (id, name, email, slack, synonym). Omit to leave unassigned."),
+        due: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().describe("ISO date (YYYY-MM-DD). Requires dateConfidence."),
+        dateConfidence: DateConfidenceSchema.optional().describe("Required when due is set: committed, internal_goal, or estimated."),
+        goalIds: z.array(z.string().regex(/^G-\d{1,6}$/)).optional().describe("Roadmap goal ids this task advances."),
+        notes: z.string().optional(),
+        message: z.string().optional(),
+        approved: z.boolean().default(false),
+        coAuthor: z.string().optional(),
+      }),
+      annotations: { destructiveHint: false, idempotentHint: false },
+    },
+    async ({ project, title, milestone, status, owner, due, dateConfidence, goalIds, notes, message, approved, coAuthor }) => {
+      const result = await service.createTask({
+        project,
+        title,
+        milestone,
+        status,
+        owner,
+        due,
+        dateConfidence,
+        goalIds,
+        notes,
+        message,
+        approved,
+        coAuthor,
+      });
+      return jsonResult(result, result.version ? false : true);
+    },
+  );
+
+  server.registerTool(
+    "completeTask",
+    {
+      title: "Complete Task",
+      description:
+        "Mark a task done and set its completion date (defaults to today). Locate the task by id within a milestone anchor (name) or across a project's milestones (project).",
+      inputSchema: z.object({
+        taskId: z.string().describe("Task id to complete."),
+        name: z.string().optional().describe("Milestone anchor containing the task."),
+        project: z.string().optional().describe("Project slug to locate the task when name is omitted."),
+        completedOn: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().describe("Completion date (YYYY-MM-DD). Defaults to today."),
+        message: z.string().optional(),
+        approved: z.boolean().default(false),
+        coAuthor: z.string().optional(),
+        expectedFileCommit: z.string().optional(),
+      }),
+      annotations: { destructiveHint: false, idempotentHint: false },
+    },
+    async ({ taskId, name, project, completedOn, message, approved, coAuthor, expectedFileCommit }) => {
+      const result = await service.completeTask({
+        taskId,
+        name,
+        project,
+        completedOn,
+        message,
+        approved,
+        coAuthor,
+        expectedFileCommit,
+      });
+      return jsonResult(result, result.version ? false : true);
+    },
+  );
+
+  server.registerTool(
+    "deleteTask",
+    {
+      title: "Delete Task",
+      description:
+        "Remove a task from its milestone anchor. Locate the task by id within a milestone anchor (name) or across a project's milestones (project).",
+      inputSchema: z.object({
+        taskId: z.string().describe("Task id to delete."),
+        name: z.string().optional().describe("Milestone anchor containing the task."),
+        project: z.string().optional().describe("Project slug to locate the task when name is omitted."),
+        message: z.string().optional(),
+        approved: z.boolean().default(false),
+        coAuthor: z.string().optional(),
+        expectedFileCommit: z.string().optional(),
+      }),
+      annotations: { destructiveHint: true, idempotentHint: false },
+    },
+    async ({ taskId, name, project, message, approved, coAuthor, expectedFileCommit }) => {
+      const result = await service.deleteTask({
+        taskId,
+        name,
+        project,
+        message,
+        approved,
+        coAuthor,
+        expectedFileCommit,
+      });
+      return jsonResult(result, result.version ? false : true);
     },
   );
 

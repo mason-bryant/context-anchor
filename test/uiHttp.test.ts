@@ -558,6 +558,69 @@ describe("UI HTTP routes", () => {
     expect(registry.people[0]?.projects).toEqual([{ project: "demo", role: "responsible" }]);
   });
 
+  it("creates, lists, completes, and deletes a task through the UI routes", async () => {
+    type TaskWrite = { taskId?: string; milestoneName?: string; version?: string; warnings: { severity: string }[] };
+    type TasksDue = { tasks: Array<{ taskId: string; taskTitle: string; taskStatus: string; taskOwner?: string }> };
+
+    // Create on a project with no milestones — the backlog milestone is auto-created.
+    const created = await postJson<TaskWrite>("/api/ui/task-create", {
+      project: "demo",
+      title: "Follow up on the thing",
+      approved: true,
+    });
+    expect(created.warnings.filter((w) => w.severity === "BLOCK")).toEqual([]);
+    expect(created.taskId).toBe("T-1");
+    expect(created.milestoneName).toBe("projects/demo/milestones/backlog.md");
+
+    const listed = await fetchJson<TasksDue>("/api/ui/tasks-due?project=demo");
+    const row = listed.tasks.find((t) => t.taskId === "T-1");
+    expect(row?.taskTitle).toBe("Follow up on the thing");
+    expect(row?.taskOwner).toBeUndefined();
+
+    // Complete it, then confirm it only shows under a done-status query.
+    const completed = await postJson<TaskWrite>("/api/ui/task-complete", {
+      taskId: "T-1",
+      project: "demo",
+      approved: true,
+    });
+    expect(completed.warnings.filter((w) => w.severity === "BLOCK")).toEqual([]);
+    const done = await fetchJson<TasksDue>("/api/ui/tasks-due?project=demo&status=done");
+    expect(done.tasks.find((t) => t.taskId === "T-1")?.taskStatus).toBe("done");
+
+    // Delete it.
+    const deleted = await postJson<TaskWrite>("/api/ui/task-delete", {
+      taskId: "T-1",
+      project: "demo",
+      approved: true,
+    });
+    expect(deleted.warnings.filter((w) => w.severity === "BLOCK")).toEqual([]);
+    const after = await fetchJson<TasksDue>(
+      "/api/ui/tasks-due?project=demo&status=todo,active,blocked,done,cancelled",
+    );
+    expect(after.tasks.map((t) => t.taskId)).not.toContain("T-1");
+  });
+
+  it("filters unassigned tasks through the tasks-due route", async () => {
+    await postJson("/api/ui/task-create", { project: "demo", title: "owned", owner: "alice", approved: true });
+    await postJson("/api/ui/task-create", { project: "demo", title: "free", approved: true });
+
+    const unassigned = await fetchJson<{ tasks: Array<{ taskTitle: string }> }>(
+      "/api/ui/tasks-due?project=demo&unassigned=true",
+    );
+    expect(unassigned.tasks.map((t) => t.taskTitle)).toEqual(["free"]);
+  });
+
+  it("blocks task creation with a due date but no date confidence", async () => {
+    const response = await postJson<{ taskId?: string; warnings: { code: string }[] }>("/api/ui/task-create", {
+      project: "demo",
+      title: "needs confidence",
+      due: "2026-07-01",
+      approved: true,
+    });
+    expect(response.taskId).toBeUndefined();
+    expect(response.warnings.map((w) => w.code)).toContain("missing_date_confidence");
+  });
+
   it("rejects invalid boolean strings in UI mutation bodies", async () => {
     const response = await fetch(`${baseUrl}/api/ui/anchor-delete`, {
       method: "POST",
