@@ -1,5 +1,8 @@
 import type { AssociationRole, Person, PersonIdentities, PeopleRegistry, ProjectAssociation, Team } from "./types.js";
 
+// KEEP IN SYNC with AssociationRole in src/types.ts and ASSOCIATION_ROLES in
+// src/ui/assets.ts (UI dropdown). If these drift, the UI can offer a role the
+// backend rejects, or vice versa.
 const VALID_ROLES = new Set<string>(["responsible", "accountable", "informed", "consulted", "executive_sponsor", "stakeholder", "lead"]);
 
 export function parsePeopleRegistry(raw: unknown): PeopleRegistry {

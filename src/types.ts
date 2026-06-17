@@ -259,6 +259,9 @@ export type PersonIdentities = {
   names?: string[];
 };
 
+// Canonical association role list. KEEP IN SYNC with VALID_ROLES in
+// src/peopleRegistry.ts (write validation) and ASSOCIATION_ROLES in
+// src/ui/assets.ts (UI dropdown — a static JS string that cannot import this).
 export type AssociationRole =
   | "responsible"
   | "accountable"

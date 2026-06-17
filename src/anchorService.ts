@@ -952,6 +952,18 @@ export class AnchorService {
     return new Date().toISOString().slice(0, 10);
   }
 
+  /**
+   * True when `name` is a project milestone anchor (`projects/<slug>/milestones/...`).
+   * Optionally require it to belong to `projectSlug`. Task mutations are restricted
+   * to milestone anchors so they stay visible to listTasksDue and share its id space.
+   */
+  private static isMilestonePath(name: string, projectSlug?: string): boolean {
+    const c = classifyAnchorPath(name);
+    if (c.kind !== "anchor" || c.category !== "projects" || !name.includes("/milestones/")) return false;
+    if (projectSlug && c.projectSlug !== projectSlug) return false;
+    return true;
+  }
+
   /** Read a milestone anchor's raw front-matter tasks array. */
   private async readRawTasks(name: string): Promise<Record<string, unknown>[] | undefined> {
     const rawContent = await this.repo.readRaw(name);
@@ -1060,6 +1072,16 @@ None.
       return AnchorService.blockResult("missing_project", "project is required to create a task.");
     }
 
+    // An explicit milestone target must be a project milestone for this project,
+    // otherwise the task would be invisible to listTasksDue and outside the
+    // project's task-id space (risking duplicate ids).
+    if (input.milestone && !AnchorService.isMilestonePath(input.milestone, projectSlug)) {
+      return AnchorService.blockResult(
+        "invalid_milestone",
+        `milestone must be a project milestone under projects/${projectSlug}/milestones/: ${input.milestone}`,
+      );
+    }
+
     let targetName: string;
     try {
       targetName = input.milestone ?? (await this.ensureBacklogMilestone(projectSlug));
@@ -1101,6 +1123,12 @@ None.
   }
 
   async completeTask(input: CompleteTaskInput): Promise<WriteAnchorResult> {
+    if (input.name && !AnchorService.isMilestonePath(input.name)) {
+      return AnchorService.blockResult(
+        "invalid_milestone",
+        `name must be a project milestone anchor under .../milestones/: ${input.name}`,
+      );
+    }
     const name = await this.findTaskMilestone(input.taskId, { name: input.name, project: input.project });
     if (!name) {
       return AnchorService.blockResult("task_not_found", `Task "${input.taskId}" not found.`);
@@ -1125,6 +1153,12 @@ None.
   }
 
   async deleteTask(input: DeleteTaskInput): Promise<WriteAnchorResult> {
+    if (input.name && !AnchorService.isMilestonePath(input.name)) {
+      return AnchorService.blockResult(
+        "invalid_milestone",
+        `name must be a project milestone anchor under .../milestones/: ${input.name}`,
+      );
+    }
     const name = await this.findTaskMilestone(input.taskId, { name: input.name, project: input.project });
     if (!name) {
       return AnchorService.blockResult("task_not_found", `Task "${input.taskId}" not found.`);

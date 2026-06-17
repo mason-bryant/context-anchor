@@ -1382,6 +1382,29 @@ describe("AnchorService task write APIs", () => {
     });
     expect(tasks.map((t) => t.taskId)).not.toContain(created.taskId);
   });
+
+  it("createTask rejects an explicit milestone that is not a project milestone path", async () => {
+    await service.writeAnchor({ name: "projects/demo/demo", content: projectAnchorContent() });
+
+    const result = await service.createTask({
+      project: "demo",
+      title: "stray",
+      milestone: "projects/demo/demo.md",
+    });
+
+    expect(result.taskId).toBeUndefined();
+    expect(result.warnings.map((w) => w.code)).toContain("invalid_milestone");
+  });
+
+  it("completeTask and deleteTask reject a non-milestone anchor name", async () => {
+    await service.writeAnchor({ name: "projects/demo/demo", content: projectAnchorContent() });
+
+    const completed = await service.completeTask({ taskId: "T-1", name: "projects/demo/demo.md" });
+    expect(completed.warnings.map((w) => w.code)).toContain("invalid_milestone");
+
+    const deleted = await service.deleteTask({ taskId: "T-1", name: "projects/demo/demo.md" });
+    expect(deleted.warnings.map((w) => w.code)).toContain("invalid_milestone");
+  });
 });
 
 describe("AnchorService people registry caching", () => {

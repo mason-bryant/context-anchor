@@ -3730,6 +3730,11 @@ export const UI_JS = `(function () {
     }
   }
 
+  // KEEP IN SYNC with AssociationRole (src/types.ts) and VALID_ROLES
+  // (src/peopleRegistry.ts). This UI bundle is a static string and cannot import
+  // them, so update all three together when roles change; backend write
+  // validation (parsePeopleRegistry) is the source of truth and will reject
+  // any role missing from VALID_ROLES.
   var ASSOCIATION_ROLES = ["responsible", "accountable", "informed", "consulted", "executive_sponsor", "stakeholder", "lead"];
 
   function showPeopleView(options) {
