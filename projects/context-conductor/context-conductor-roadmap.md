@@ -11,7 +11,7 @@ summary: >-
 read_this_if:
   - Planning or prioritizing anchor-mcp work.
   - Checking definition of done for context-conductor milestones.
-last_validated: 2026-06-15T00:00:00.000Z
+last_validated: '2026-06-16'
 ---
 
 # Context conductor roadmap
@@ -109,7 +109,9 @@ last_validated: 2026-06-15T00:00:00.000Z
 - Roadmap is maintained alongside shipped behavior in `context-conductor.md`.
 - Goal G-003 steel-thread milestone tooling is shipped.
 - Goal G-004 session-start and retrieval quality v1 is shipped and merged in PR #30 (2026-06-11).
-- Goal G-005 retrieval quality hardening (CI `npm run eval` gate, strict UI boolean query parsing) is implemented on `feat/retrieval-hardening-v1` (208 tests + eval green as of 2026-06-15); the registry/relation-kinds items remain parked under Proposed until a concrete need arises.
+- Goal G-005 retrieval quality hardening shipped in PR #34 (2026-06-15): CI `npm run eval` gate, strict UI boolean query parsing. Proposed AC-P001 and AC-P002 (registry and relation-kinds extensions) remain parked until a concrete need arises.
+- Project priorities shipped in PR #36 (2026-06-16): numeric `priority` front matter on project anchors, `sort=priority` in anchor listing, `updateProjectPriority` MCP tool, priority display and editing in the UI.
+- Task due dates shipped in PR #37 (2026-06-16): `updateTaskDue` and `listTasksDue` MCP tools, Tasks tab in the UI with overdue/due-soon/upcoming/no-due grouping and inline date editing.
 
 ## Decisions
 
@@ -122,5 +124,6 @@ last_validated: 2026-06-15T00:00:00.000Z
 ## PRs
 
 - [PR Session-start and retrieval quality v1 - #30](https://github.com/mason-bryant/context-anchor/pull/30)
-
 - [PR Retrieval quality hardening and operability (G-005) - #34](https://github.com/mason-bryant/context-anchor/pull/34)
+- [PR Add project priorities - #36](https://github.com/mason-bryant/context-anchor/pull/36)
+- [PR Add task due dates - #37](https://github.com/mason-bryant/context-anchor/pull/37)
