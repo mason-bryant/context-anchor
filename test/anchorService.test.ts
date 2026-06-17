@@ -1310,6 +1310,80 @@ None.
   });
 });
 
+describe("AnchorService task write APIs", () => {
+  const noBlocks = (result: { warnings: { severity: string }[] }) =>
+    result.warnings.filter((w) => w.severity === "BLOCK");
+
+  it("createTask auto-creates a backlog milestone and assigns a T- id", async () => {
+    await service.writeAnchor({ name: "projects/demo/demo", content: projectAnchorContent() });
+
+    const result = await service.createTask({ project: "demo", title: "Write the thing" });
+
+    expect(noBlocks(result)).toEqual([]);
+    expect(result.taskId).toBe("T-1");
+    expect(result.milestoneName).toBe("projects/demo/milestones/backlog.md");
+
+    const { tasks } = await service.listTasksDue({ project: "demo" });
+    const created = tasks.find((t) => t.taskId === "T-1");
+    expect(created?.taskTitle).toBe("Write the thing");
+    expect(created?.taskStatus).toBe("todo");
+    expect(created?.taskOwner).toBeUndefined();
+  });
+
+  it("createTask requires dateConfidence when due is set", async () => {
+    await service.writeAnchor({ name: "projects/demo/demo", content: projectAnchorContent() });
+
+    const result = await service.createTask({ project: "demo", title: "x", due: "2026-07-01" });
+
+    expect(result.taskId).toBeUndefined();
+    expect(result.warnings.map((w) => w.code)).toContain("missing_date_confidence");
+  });
+
+  it("createTask increments task ids across calls", async () => {
+    await service.writeAnchor({ name: "projects/demo/demo", content: projectAnchorContent() });
+
+    const first = await service.createTask({ project: "demo", title: "first" });
+    const second = await service.createTask({ project: "demo", title: "second" });
+
+    expect(first.taskId).toBe("T-1");
+    expect(second.taskId).toBe("T-2");
+  });
+
+  it("listTasksDue can filter to unassigned tasks only", async () => {
+    await service.writeAnchor({ name: "projects/demo/demo", content: projectAnchorContent() });
+    await service.createTask({ project: "demo", title: "owned", owner: "alice" });
+    await service.createTask({ project: "demo", title: "free" });
+
+    const { tasks } = await service.listTasksDue({ project: "demo", unassigned: true });
+    expect(tasks.map((t) => t.taskTitle)).toEqual(["free"]);
+  });
+
+  it("completeTask marks a task done with a completion date", async () => {
+    await service.writeAnchor({ name: "projects/demo/demo", content: projectAnchorContent() });
+    const created = await service.createTask({ project: "demo", title: "finish me" });
+
+    const done = await service.completeTask({ taskId: created.taskId!, project: "demo" });
+    expect(noBlocks(done)).toEqual([]);
+
+    const { tasks } = await service.listTasksDue({ project: "demo", status: ["done"] });
+    expect(tasks.find((t) => t.taskId === created.taskId)?.taskStatus).toBe("done");
+  });
+
+  it("deleteTask removes a task from its milestone", async () => {
+    await service.writeAnchor({ name: "projects/demo/demo", content: projectAnchorContent() });
+    const created = await service.createTask({ project: "demo", title: "temporary" });
+
+    const deleted = await service.deleteTask({ taskId: created.taskId!, project: "demo" });
+    expect(noBlocks(deleted)).toEqual([]);
+
+    const { tasks } = await service.listTasksDue({
+      project: "demo",
+      status: ["todo", "active", "blocked", "done", "cancelled"],
+    });
+    expect(tasks.map((t) => t.taskId)).not.toContain(created.taskId);
+  });
+});
+
 function roadmapAnchorContent(options: { extraFm?: string } = {}): string {
   const extraLine = options.extraFm ? `${options.extraFm}\n` : "";
   return `---

@@ -173,6 +173,65 @@ export type ListTasksDueInput = {
   status?: MilestoneTaskStatus[];
   /** Filter by owner: person id, display name, email, slack id, team id, or team synonym. */
   owner?: string;
+  /** When true, include only tasks that have no owner assigned. */
+  unassigned?: boolean;
+};
+
+export type CreateTaskInput = {
+  /** Project slug (alias-resolved) the task belongs to. */
+  project: string;
+  /** Task title. */
+  title: string;
+  /** Optional milestone anchor name; defaults to the project's backlog milestone (auto-created when missing). */
+  milestone?: string;
+  /** Initial status; defaults to `todo`. */
+  status?: MilestoneTaskStatus;
+  /** Owner: person id/name/email/slack or team id/synonym. Omit to leave unassigned. */
+  owner?: string;
+  /** ISO date (YYYY-MM-DD). Requires dateConfidence when set. */
+  due?: string;
+  /** Required when due is set. */
+  dateConfidence?: DateConfidence;
+  goalIds?: string[];
+  notes?: string;
+  message?: string;
+  approved?: boolean;
+  coAuthor?: string;
+};
+
+export type CreateTaskResult = WriteAnchorResult & {
+  /** Generated task id (e.g. `T-7`) when the write succeeded. */
+  taskId?: string;
+  /** Milestone anchor the task was written to. */
+  milestoneName?: string;
+};
+
+export type CompleteTaskInput = {
+  /** Task id to complete. */
+  taskId: string;
+  /** Milestone anchor containing the task. When omitted, the task is located by id within `project`. */
+  name?: string;
+  /** Project slug used to locate the task when `name` is omitted. */
+  project?: string;
+  /** Completion date (YYYY-MM-DD); defaults to today. */
+  completedOn?: string;
+  message?: string;
+  approved?: boolean;
+  coAuthor?: string;
+  expectedFileCommit?: string;
+};
+
+export type DeleteTaskInput = {
+  /** Task id to delete. */
+  taskId: string;
+  /** Milestone anchor containing the task. When omitted, the task is located by id within `project`. */
+  name?: string;
+  /** Project slug used to locate the task when `name` is omitted. */
+  project?: string;
+  message?: string;
+  approved?: boolean;
+  coAuthor?: string;
+  expectedFileCommit?: string;
 };
 
 export type TaskDueRow = {
