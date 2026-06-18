@@ -591,9 +591,9 @@ describe("UI HTTP routes", () => {
     expect(registry.people[0]?.projects).toEqual([{ project: "demo", role: "responsible" }]);
   });
 
-  it("creates, lists, completes, and deletes a task through the UI routes", async () => {
+  it("creates, lists, completes, reopens, and deletes a task through the UI routes", async () => {
     type TaskWrite = { taskId?: string; milestoneName?: string; version?: string; warnings: { severity: string }[] };
-    type TasksDue = { tasks: Array<{ taskId: string; taskTitle: string; taskStatus: string; taskOwner?: string; taskPriority?: number }> };
+    type TasksDue = { tasks: Array<{ taskId: string; taskTitle: string; taskStatus: string; taskOwner?: string; taskPriority?: number; completedOn?: string }> };
 
     // Create on a project with no milestones — the backlog milestone is auto-created.
     const created = await postJson<TaskWrite>("/api/ui/task-create", {
@@ -621,6 +621,18 @@ describe("UI HTTP routes", () => {
     expect(completed.warnings.filter((w) => w.severity === "BLOCK")).toEqual([]);
     const done = await fetchJson<TasksDue>("/api/ui/tasks-due?project=demo&status=done");
     expect(done.tasks.find((t) => t.taskId === "T-1")?.taskStatus).toBe("done");
+
+    // Reopen it, then confirm completed_on is cleared and status is todo again.
+    const reopened = await postJson<TaskWrite>("/api/ui/task-reopen", {
+      taskId: "T-1",
+      project: "demo",
+      approved: true,
+    });
+    expect(reopened.warnings.filter((w) => w.severity === "BLOCK")).toEqual([]);
+    const reopenedTasks = await fetchJson<TasksDue>("/api/ui/tasks-due?project=demo&status=todo,done");
+    const reopenedRow = reopenedTasks.tasks.find((t) => t.taskId === "T-1");
+    expect(reopenedRow?.taskStatus).toBe("todo");
+    expect(reopenedRow?.completedOn).toBeUndefined();
 
     // Delete it.
     const deleted = await postJson<TaskWrite>("/api/ui/task-delete", {
@@ -763,6 +775,41 @@ describe("UI HTTP routes", () => {
     expect(cleared.warnings.filter((w) => w.severity === "BLOCK")).toEqual([]);
     listed = await fetchJson<TasksDue>("/api/ui/tasks-due?project=demo");
     expect(listed.tasks.find((task) => task.taskId === created.taskId)?.taskPriority).toBeUndefined();
+  });
+
+  it("updates task notes through the UI routes", async () => {
+    type TaskWrite = { taskId?: string; milestoneName?: string; warnings: { severity: string }[] };
+    type TasksDue = { tasks: Array<{ taskId: string; notes?: string }> };
+
+    const created = await postJson<TaskWrite>("/api/ui/task-create", {
+      project: "demo",
+      title: "annotate through UI",
+      notes: "Initial note",
+      approved: true,
+    });
+
+    let listed = await fetchJson<TasksDue>("/api/ui/tasks-due?project=demo");
+    expect(listed.tasks.find((task) => task.taskId === created.taskId)?.notes).toBe("Initial note");
+
+    const updated = await postJson<TaskWrite>("/api/ui/task-notes", {
+      name: created.milestoneName,
+      taskId: created.taskId,
+      notes: "Updated note",
+      approved: true,
+    });
+    expect(updated.warnings.filter((w) => w.severity === "BLOCK")).toEqual([]);
+    listed = await fetchJson<TasksDue>("/api/ui/tasks-due?project=demo");
+    expect(listed.tasks.find((task) => task.taskId === created.taskId)?.notes).toBe("Updated note");
+
+    const cleared = await postJson<TaskWrite>("/api/ui/task-notes", {
+      name: created.milestoneName,
+      taskId: created.taskId,
+      notes: null,
+      approved: true,
+    });
+    expect(cleared.warnings.filter((w) => w.severity === "BLOCK")).toEqual([]);
+    listed = await fetchJson<TasksDue>("/api/ui/tasks-due?project=demo");
+    expect(listed.tasks.find((task) => task.taskId === created.taskId)?.notes).toBeUndefined();
   });
 
   it("blocks task creation with a due date but no date confidence", async () => {

@@ -341,6 +341,24 @@ export function registerUiRoutes(
   );
 
   app.post(
+    "/api/ui/task-notes",
+    ...protect,
+    jsonRoute(async (req) => {
+      const body = bodyRecord(req);
+      const notes = body["notes"] === null ? null : optionalBodyString(body, "notes") ?? null;
+      return service.updateTaskNotes({
+        name: requiredBodyString(body, "name"),
+        taskId: requiredBodyString(body, "taskId"),
+        notes,
+        message: optionalBodyString(body, "message"),
+        approved: booleanBody(body, "approved"),
+        coAuthor: optionalBodyString(body, "coAuthor"),
+        expectedFileCommit: optionalBodyString(body, "expectedFileCommit"),
+      });
+    }),
+  );
+
+  app.post(
     "/api/ui/task-create",
     ...protect,
     jsonRoute(async (req) => {
@@ -387,6 +405,23 @@ export function registerUiRoutes(
         name: optionalBodyString(body, "name"),
         project: optionalBodyString(body, "project"),
         completedOn: optionalBodyString(body, "completedOn"),
+        message: optionalBodyString(body, "message"),
+        approved: booleanBody(body, "approved"),
+        coAuthor: optionalBodyString(body, "coAuthor"),
+        expectedFileCommit: optionalBodyString(body, "expectedFileCommit"),
+      });
+    }),
+  );
+
+  app.post(
+    "/api/ui/task-reopen",
+    ...protect,
+    jsonRoute(async (req) => {
+      const body = bodyRecord(req);
+      return service.reopenTask({
+        taskId: requiredBodyString(body, "taskId"),
+        name: optionalBodyString(body, "name"),
+        project: optionalBodyString(body, "project"),
         message: optionalBodyString(body, "message"),
         approved: booleanBody(body, "approved"),
         coAuthor: optionalBodyString(body, "coAuthor"),

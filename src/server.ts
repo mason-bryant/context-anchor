@@ -779,6 +779,37 @@ the index when your workflow checks in that file.`,
   );
 
   server.registerTool(
+    "updateTaskNotes",
+    {
+      title: "Update Task Notes",
+      description:
+        "Set or clear notes for a specific task in a milestone anchor. Pass notes as text to set it, or null to clear it.",
+      inputSchema: z.object({
+        name: z.string().describe("Milestone anchor name containing the task."),
+        taskId: z.string().describe("Task id to update."),
+        notes: z.union([z.string(), z.null()]).describe("Notes text to set, or null to clear notes."),
+        message: z.string().optional(),
+        approved: z.boolean().default(false),
+        coAuthor: z.string().optional(),
+        expectedFileCommit: z.string().optional(),
+      }),
+      annotations: { destructiveHint: false, idempotentHint: false },
+    },
+    async ({ name, taskId, notes, message, approved, coAuthor, expectedFileCommit }) => {
+      const result = await service.updateTaskNotes({
+        name,
+        taskId,
+        notes,
+        message,
+        approved,
+        coAuthor,
+        expectedFileCommit,
+      });
+      return jsonResult(result, result.version ? false : true);
+    },
+  );
+
+  server.registerTool(
     "listTasksDue",
     {
       title: "List Tasks by Due Date",
@@ -883,6 +914,37 @@ the index when your workflow checks in that file.`,
         name,
         project,
         completedOn,
+        message,
+        approved,
+        coAuthor,
+        expectedFileCommit,
+      });
+      return jsonResult(result, result.version ? false : true);
+    },
+  );
+
+  server.registerTool(
+    "reopenTask",
+    {
+      title: "Reopen Task",
+      description:
+        "Reopen a completed task by setting its status to todo and clearing completed_on. Locate the task by id within a milestone anchor (name) or across a project's milestones (project).",
+      inputSchema: z.object({
+        taskId: z.string().describe("Task id to reopen."),
+        name: z.string().optional().describe("Milestone anchor containing the task."),
+        project: z.string().optional().describe("Project slug to locate the task when name is omitted."),
+        message: z.string().optional(),
+        approved: z.boolean().default(false),
+        coAuthor: z.string().optional(),
+        expectedFileCommit: z.string().optional(),
+      }),
+      annotations: { destructiveHint: false, idempotentHint: false },
+    },
+    async ({ taskId, name, project, message, approved, coAuthor, expectedFileCommit }) => {
+      const result = await service.reopenTask({
+        taskId,
+        name,
+        project,
         message,
         approved,
         coAuthor,

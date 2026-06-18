@@ -34,6 +34,10 @@ type UiAssetHooks = {
     excludedRemoved: string[];
     tokenDelta: number;
   } | null;
+  proposalListWithUpdatedProposal(
+    proposals: Array<Record<string, unknown>>,
+    proposal: Record<string, unknown>,
+  ): Array<Record<string, unknown>>;
   sortTasksForDisplay(tasks: Array<Record<string, unknown>>, sortMode: string): Array<Record<string, unknown>>;
   taskGroupsForDisplay(
     tasks: Array<Record<string, unknown>>,
@@ -41,7 +45,7 @@ type UiAssetHooks = {
     sortMode: string,
     today: string,
     soon: string,
-  ): Array<{ label: string; cls?: string; projectPriority?: number; tasks: Array<Record<string, unknown>> }>;
+  ): Array<{ key?: string; label: string; cls?: string; projectPriority?: number; tasks: Array<Record<string, unknown>> }>;
   taskGroupPriority(tasks: Array<Record<string, unknown>>): number;
   taskProjectPriority(task: Record<string, unknown>): number;
   taskPriority(task: Record<string, unknown>): number;
@@ -196,6 +200,10 @@ describe("UI browser assets", () => {
     expect(UI_JS).toContain("project-priority-badge");
     expect(UI_JS).toContain("task-priority-badge");
     expect(UI_JS).toContain("task-priority-form");
+    expect(UI_JS).toContain("task-notes-form");
+    expect(UI_JS).toContain("task-reopen-btn");
+    expect(UI_JS).toContain("task-group-toggle");
+    expect(UI_JS).toContain("collapsedTaskGroups");
     expect(UI_JS).toContain("task-owner-form");
     expect(UI_JS).toContain("task-owner-suggestions");
     expect(UI_HTML).toContain('id="project-slug-suggestions"');
@@ -205,11 +213,14 @@ describe("UI browser assets", () => {
     expect(UI_HTML).toContain('id="teams-search"');
     expect(UI_JS).toContain("/api/ui/task-owner");
     expect(UI_JS).toContain("/api/ui/task-priority");
+    expect(UI_JS).toContain("/api/ui/task-notes");
+    expect(UI_JS).toContain("/api/ui/task-reopen");
     expect(UI_JS).toContain("/api/ui/people-search");
     expect(UI_HTML).toContain('id="new-task-project" type="text" placeholder="anchor-mcp" list="project-slug-suggestions" autocomplete="off"');
     expect(UI_HTML).toContain('id="new-task-owner" type="text" placeholder="person or team — blank = unassigned" list="task-owner-suggestions" autocomplete="off"');
     expect(UI_HTML).toContain('id="new-task-priority" type="number"');
     expect(UI_HTML).toContain('id="new-task-milestone" type="text" placeholder="blank = project backlog" list="milestone-anchor-suggestions" autocomplete="off"');
+    expect(UI_HTML).toContain('id="new-task-notes" maxlength="480"');
     expect(UI_HTML).toContain('id="new-person-teams" type="text" placeholder="platform, frontend" list="team-id-suggestions" autocomplete="off"');
     expect(UI_CSS).toContain(".project-priority-badge");
     expect(UI_CSS).toContain(".task-priority-badge");
@@ -218,6 +229,8 @@ describe("UI browser assets", () => {
     expect(UI_CSS).toContain(".task-row.task-state-overdue");
     expect(UI_CSS).toContain(".task-owner-form");
     expect(UI_CSS).toContain(".task-priority-form");
+    expect(UI_CSS).toContain(".task-notes-form");
+    expect(UI_CSS).toContain(".task-group-toggle");
     expect(UI_CSS).toContain(".registry-search");
   });
 
@@ -333,6 +346,7 @@ describe("UI browser assets", () => {
     const groups = hooks.taskGroupsForDisplay(tasks, "project", "dueAsc", "2026-06-17", "2026-07-01");
 
     expect(groups.map((group) => group.label)).toEqual(["alpha", "beta", "No project"]);
+    expect(groups.map((group) => group.key)).toEqual(["project:alpha", "project:beta", "project:No project"]);
     expect(groups[0]?.tasks.map((task) => task.taskId)).toEqual(["T-2", "T-1"]);
     expect(groups[1]?.tasks.map((task) => task.taskId)).toEqual(["T-3"]);
     expect(groups[2]?.tasks.map((task) => task.taskId)).toEqual(["T-4"]);
@@ -422,10 +436,27 @@ describe("UI browser assets", () => {
     expect(UI_HTML).toContain('<option value="priority">Priority</option>');
     expect(UI_JS).toContain("/api/ui/propose-change");
     expect(UI_JS).toContain("/api/ui/proposed-change-apply");
+    expect(UI_JS).toContain("updateProposalFromMutationResult(result)");
+    expect(UI_JS).not.toContain("await selectAnchor(state.selectedName");
     expect(UI_JS).toContain("/api/ui/anchor-frontmatter");
     expect(UI_JS).toContain("/api/ui/project-priority");
     expect(UI_JS).toContain("/api/ui/anchor-versions");
     expect(UI_JS).toContain("/api/ui/anchor-delete");
+  });
+
+  it("keeps mutated proposals visible and updates their status in place", () => {
+    const hooks = loadHooks();
+
+    expect(
+      hooks.proposalListWithUpdatedProposal(
+        [{ id: "PC-1", status: "pending", summary: "Old" }],
+        { id: "PC-1", status: "applied", summary: "Old" },
+      ),
+    ).toEqual([{ id: "PC-1", status: "applied", summary: "Old" }]);
+
+    expect(
+      hooks.proposalListWithUpdatedProposal([], { id: "PC-2", status: "applied", summary: "Inserted" }),
+    ).toEqual([{ id: "PC-2", status: "applied", summary: "Inserted" }]);
   });
 
   it("renders numeric priorities as project badges", () => {
