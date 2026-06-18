@@ -1387,6 +1387,16 @@ describe("AnchorService task write APIs", () => {
     expect(tasks.find((task) => task.taskTitle === "prioritized")?.projectPriority).toBe(1.1);
   });
 
+  it("createTask stores task priority for task display", async () => {
+    await service.writeAnchor({ name: "projects/demo/demo", content: projectAnchorContent() });
+
+    const created = await service.createTask({ project: "demo", title: "task-prioritized", priority: 2.5 });
+
+    expect(noBlocks(created)).toEqual([]);
+    const { tasks } = await service.listTasksDue({ project: "demo" });
+    expect(tasks.find((task) => task.taskId === created.taskId)?.taskPriority).toBe(2.5);
+  });
+
   it("listTasksDue combines completed and due report windows with a project priority threshold", async () => {
     await service.writeAnchor({ name: "projects/demo/demo", content: projectAnchorContent() });
     await service.writeAnchor({
@@ -1455,6 +1465,42 @@ describe("AnchorService task write APIs", () => {
     expect(listed.tasks.find((task) => task.taskId === created.taskId)?.taskOwner).toBeUndefined();
   });
 
+  it("updateTaskPriority assigns and clears a task priority", async () => {
+    await service.writeAnchor({ name: "projects/demo/demo", content: projectAnchorContent() });
+    const created = await service.createTask({ project: "demo", title: "prioritize me" });
+
+    const assigned = await service.updateTaskPriority({
+      name: created.milestoneName!,
+      taskId: created.taskId!,
+      priority: 1.2,
+    });
+    expect(noBlocks(assigned)).toEqual([]);
+    let listed = await service.listTasksDue({ project: "demo" });
+    expect(listed.tasks.find((task) => task.taskId === created.taskId)?.taskPriority).toBe(1.2);
+
+    const cleared = await service.updateTaskPriority({
+      name: created.milestoneName!,
+      taskId: created.taskId!,
+      priority: null,
+    });
+    expect(noBlocks(cleared)).toEqual([]);
+    listed = await service.listTasksDue({ project: "demo" });
+    expect(listed.tasks.find((task) => task.taskId === created.taskId)?.taskPriority).toBeUndefined();
+  });
+
+  it("updateTaskPriority rejects non-finite priority values", async () => {
+    await service.writeAnchor({ name: "projects/demo/demo", content: projectAnchorContent() });
+    const created = await service.createTask({ project: "demo", title: "bad priority" });
+
+    const result = await service.updateTaskPriority({
+      name: created.milestoneName!,
+      taskId: created.taskId!,
+      priority: Number.NaN,
+    });
+
+    expect(result.warnings.map((w) => w.code)).toContain("task_priority_invalid");
+  });
+
   it("completeTask marks a task done with a completion date", async () => {
     await service.writeAnchor({ name: "projects/demo/demo", content: projectAnchorContent() });
     const created = await service.createTask({ project: "demo", title: "finish me" });
@@ -1493,7 +1539,7 @@ describe("AnchorService task write APIs", () => {
     expect(result.warnings.map((w) => w.code)).toContain("invalid_milestone");
   });
 
-  it("updateTaskOwner and updateTaskDue reject a non-milestone anchor name", async () => {
+  it("updateTaskOwner, updateTaskDue, and updateTaskPriority reject a non-milestone anchor name", async () => {
     await service.writeAnchor({ name: "projects/demo/demo", content: projectAnchorContent() });
 
     const owner = await service.updateTaskOwner({ name: "projects/demo/demo.md", taskId: "T-1", owner: "alice" });
@@ -1506,6 +1552,13 @@ describe("AnchorService task write APIs", () => {
       dateConfidence: "estimated",
     });
     expect(due.warnings.map((w) => w.code)).toContain("invalid_milestone");
+
+    const priority = await service.updateTaskPriority({
+      name: "projects/demo/demo.md",
+      taskId: "T-1",
+      priority: 1,
+    });
+    expect(priority.warnings.map((w) => w.code)).toContain("invalid_milestone");
   });
 
   it("completeTask and deleteTask reject a non-milestone anchor name", async () => {

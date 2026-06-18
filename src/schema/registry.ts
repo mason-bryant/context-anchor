@@ -34,6 +34,7 @@ const milestoneTaskSchema = z.object({
   id: z.string().regex(/^T-\d{1,6}$/),
   title: z.string().min(1).max(240),
   status: milestoneTaskStatusSchema,
+  priority: z.number().finite().optional(),
   owner: z.string().min(1).max(160).optional(),
   goal_ids: z.array(z.string().regex(/^G-\d{1,6}$/)).optional(),
   due: nullableIsoDateSchema.optional(),

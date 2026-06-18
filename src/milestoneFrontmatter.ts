@@ -65,6 +65,7 @@ export function normalizedTasksFromFm(fm: Record<string, unknown>): MilestoneTas
     if (!id || !title || !status) {
       return [];
     }
+    const priority = numberValue(task.priority);
     const owner = stringValue(task.owner);
     const goalIds = Array.isArray(task.goal_ids)
       ? task.goal_ids.filter((goalId): goalId is string => typeof goalId === "string" && /^G-\d{1,6}$/.test(goalId))
@@ -79,6 +80,7 @@ export function normalizedTasksFromFm(fm: Record<string, unknown>): MilestoneTas
         id,
         title,
         status,
+        ...(priority !== undefined ? { priority } : {}),
         ...(owner ? { owner } : {}),
         ...(goalIds && goalIds.length > 0 ? { goalIds } : {}),
         ...(due !== undefined ? { due } : {}),
@@ -104,6 +106,10 @@ function normalizedTaskStatus(raw: unknown): MilestoneTaskStatus | undefined {
 
 function stringValue(raw: unknown): string | undefined {
   return typeof raw === "string" && raw.trim().length > 0 ? raw.trim() : undefined;
+}
+
+function numberValue(raw: unknown): number | undefined {
+  return typeof raw === "number" && Number.isFinite(raw) ? raw : undefined;
 }
 
 /** Positive integer `sequence` from milestone front matter, if present and valid. */

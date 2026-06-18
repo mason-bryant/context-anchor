@@ -23,6 +23,7 @@ const ProjectUpdateStatusSchema = z.enum(["proposed", "active", "shipped", "canc
 const ProjectUpdateFormatSchema = z.enum(["markdown", "slack", "email"]);
 const ProposedChangeStatusSchema = z.enum(["pending", "applied", "rejected", "changes_requested", "superseded"]);
 const ProjectPrioritySchema = z.union([z.number().finite(), z.null()]);
+const TaskPrioritySchema = z.union([z.number().finite(), z.null()]);
 const JsonStringSchema = z.string();
 const JsonRecordSchema = z.union([z.record(z.string(), z.unknown()), JsonStringSchema]);
 const StringArraySchema = z.union([z.array(z.string()), JsonStringSchema]);
@@ -747,6 +748,37 @@ the index when your workflow checks in that file.`,
   );
 
   server.registerTool(
+    "updateTaskPriority",
+    {
+      title: "Update Task Priority",
+      description:
+        "Set or clear the numeric priority for a specific task in a milestone anchor. Project priority remains separate and is stored on project anchors.",
+      inputSchema: z.object({
+        name: z.string().describe("Milestone anchor name containing the task."),
+        taskId: z.string().describe("Task id to update."),
+        priority: TaskPrioritySchema.describe("Numeric task priority to set, or null to clear it."),
+        message: z.string().optional(),
+        approved: z.boolean().default(false),
+        coAuthor: z.string().optional(),
+        expectedFileCommit: z.string().optional(),
+      }),
+      annotations: { destructiveHint: false, idempotentHint: false },
+    },
+    async ({ name, taskId, priority, message, approved, coAuthor, expectedFileCommit }) => {
+      const result = await service.updateTaskPriority({
+        name,
+        taskId,
+        priority,
+        message,
+        approved,
+        coAuthor,
+        expectedFileCommit,
+      });
+      return jsonResult(result, result.version ? false : true);
+    },
+  );
+
+  server.registerTool(
     "listTasksDue",
     {
       title: "List Tasks by Due Date",
@@ -796,6 +828,7 @@ the index when your workflow checks in that file.`,
         milestone: z.string().optional().describe("Milestone anchor name. Defaults to the project's backlog milestone."),
         status: TaskStatusSchema.optional().describe("Initial status. Defaults to todo."),
         owner: z.string().optional().describe("Owner: person or team (id, name, email, slack, synonym). Omit to leave unassigned."),
+        priority: z.number().finite().optional().describe("Optional task-level priority. Project priority is edited separately."),
         due: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().describe("ISO date (YYYY-MM-DD). Requires dateConfidence."),
         dateConfidence: DateConfidenceSchema.optional().describe("Required when due is set: committed, internal_goal, or estimated."),
         goalIds: z.array(z.string().regex(/^G-\d{1,6}$/)).optional().describe("Roadmap goal ids this task advances."),
@@ -806,13 +839,14 @@ the index when your workflow checks in that file.`,
       }),
       annotations: { destructiveHint: false, idempotentHint: false },
     },
-    async ({ project, title, milestone, status, owner, due, dateConfidence, goalIds, notes, message, approved, coAuthor }) => {
+    async ({ project, title, milestone, status, owner, priority, due, dateConfidence, goalIds, notes, message, approved, coAuthor }) => {
       const result = await service.createTask({
         project,
         title,
         milestone,
         status,
         owner,
+        priority,
         due,
         dateConfidence,
         goalIds,

@@ -296,7 +296,7 @@ export const UI_HTML = `<!doctype html>
                 </select>
                 <label class="task-report-field">Completed last<input id="tasks-completed-days" type="number" min="1" max="3650" placeholder="days"></label>
                 <label class="task-report-field">Due next<input id="tasks-due-days" type="number" min="1" max="3650" placeholder="days"></label>
-                <label class="task-report-field">Priority P &lt;=<input id="tasks-priority-max" type="number" min="0" step="0.001" placeholder="any"></label>
+                <label class="task-report-field">Project P &lt;=<input id="tasks-project-priority-max" type="number" min="0" step="0.001" placeholder="any"></label>
                 <label class="checkbox-label"><input type="checkbox" id="tasks-no-due"> No due date only</label>
                 <label class="checkbox-label"><input type="checkbox" id="tasks-unassigned"> Unassigned only</label>
                 <button id="tasks-add" type="button">+ Add Task</button>
@@ -309,6 +309,7 @@ export const UI_HTML = `<!doctype html>
                 <label>Project<input id="new-task-project" type="text" placeholder="anchor-mcp" list="project-slug-suggestions" autocomplete="off"></label>
                 <label>Title<input id="new-task-title" type="text" placeholder="Follow up on X"></label>
                 <label>Owner (optional)<input id="new-task-owner" type="text" placeholder="person or team — blank = unassigned" list="task-owner-suggestions" autocomplete="off"></label>
+                <label>Priority (optional)<input id="new-task-priority" type="number" min="0" step="0.001" placeholder="1.1"></label>
                 <label>Status<select id="new-task-status">
                   <option value="todo">todo</option>
                   <option value="active">active</option>
@@ -1443,12 +1444,14 @@ textarea {
   font-weight: 500;
 }
 
+.project-priority-badge,
 .task-priority-badge {
   border-color: var(--accent);
   color: var(--accent);
   font-weight: 700;
 }
 
+.project-priority-badge.missing,
 .task-priority-badge.missing {
   border-color: var(--border);
   color: var(--muted);
@@ -1534,7 +1537,8 @@ textarea {
 }
 
 .task-due-form,
-.task-owner-form {
+.task-owner-form,
+.task-priority-form {
   display: flex;
   flex-direction: column;
   gap: 4px;
@@ -1544,7 +1548,8 @@ textarea {
 
 .task-due-form input[type="date"],
 .task-due-form select,
-.task-owner-form input[type="text"] {
+.task-owner-form input[type="text"],
+.task-priority-form input[type="number"] {
   font: inherit;
   font-size: 12px;
   background: var(--panel);
@@ -1554,20 +1559,23 @@ textarea {
   color: var(--text);
 }
 
-.task-owner-form input[type="text"] {
+.task-owner-form input[type="text"],
+.task-priority-form input[type="number"] {
   box-sizing: border-box;
   width: 100%;
   min-width: 180px;
 }
 
 .task-due-controls,
-.task-owner-controls {
+.task-owner-controls,
+.task-priority-controls {
   display: flex;
   gap: 4px;
 }
 
 .task-due-result,
-.task-owner-result {
+.task-owner-result,
+.task-priority-result {
   font-size: 11px;
   color: var(--muted);
   max-width: 200px;
@@ -1854,6 +1862,7 @@ export const UI_JS = `(function () {
     "tasksSort",
     "tasksCompletedDays",
     "tasksDueDays",
+    "tasksProjectPriorityMax",
     "tasksPriorityMax",
     "tasksNoDue",
     "tasksUnassigned"
@@ -1889,7 +1898,7 @@ export const UI_JS = `(function () {
     tasksSort: DEFAULT_TASK_SORT,
     tasksCompletedDays: "",
     tasksDueDays: "",
-    tasksPriorityMax: "",
+    tasksProjectPriorityMax: "",
     tasksNoDue: false,
     tasksUnassigned: false,
     taskOwnerMatchCache: [],
@@ -2078,7 +2087,7 @@ export const UI_JS = `(function () {
     state.tasksSort = validTasksSort(params.get("tasksSort"));
     state.tasksCompletedDays = params.get("tasksCompletedDays") || "";
     state.tasksDueDays = params.get("tasksDueDays") || "";
-    state.tasksPriorityMax = params.get("tasksPriorityMax") || "";
+    state.tasksProjectPriorityMax = params.get("tasksProjectPriorityMax") || params.get("tasksPriorityMax") || "";
     state.tasksNoDue = params.get("tasksNoDue") === "true";
     state.tasksUnassigned = params.get("tasksUnassigned") === "true";
     setSelectValueAllowingNew("tasks-project-filter", state.tasksProject);
@@ -2087,7 +2096,7 @@ export const UI_JS = `(function () {
     setControlValue("tasks-sort", state.tasksSort);
     setControlValue("tasks-completed-days", state.tasksCompletedDays);
     setControlValue("tasks-due-days", state.tasksDueDays);
-    setControlValue("tasks-priority-max", state.tasksPriorityMax);
+    setControlValue("tasks-project-priority-max", state.tasksProjectPriorityMax);
     setControlChecked("tasks-no-due", state.tasksNoDue);
     setControlChecked("tasks-unassigned", state.tasksUnassigned);
   }
@@ -2173,7 +2182,7 @@ export const UI_JS = `(function () {
     setNonDefaultParam(params, "tasksSort", tasksSort, DEFAULT_TASK_SORT);
     setParam(params, "tasksCompletedDays", controlValue("tasks-completed-days", sourceParams.get("tasksCompletedDays") || ""));
     setParam(params, "tasksDueDays", controlValue("tasks-due-days", sourceParams.get("tasksDueDays") || ""));
-    setParam(params, "tasksPriorityMax", controlValue("tasks-priority-max", sourceParams.get("tasksPriorityMax") || ""));
+    setParam(params, "tasksProjectPriorityMax", controlValue("tasks-project-priority-max", sourceParams.get("tasksProjectPriorityMax") || sourceParams.get("tasksPriorityMax") || ""));
     if (controlChecked("tasks-no-due", state.tasksNoDue)) {
       params.set("tasksNoDue", "true");
     }
@@ -3751,7 +3760,7 @@ export const UI_JS = `(function () {
       controlValue("tasks-due-days", state.tasksDueDays),
       todayIso()
     );
-    var maxPriority = finiteNumberValue(controlValue("tasks-priority-max", state.tasksPriorityMax));
+    var maxProjectPriority = finiteNumberValue(controlValue("tasks-project-priority-max", state.tasksProjectPriorityMax));
     var qs = [];
     if (project) qs.push("project=" + encodeURIComponent(project));
     if ((reportRanges.completedDays || reportRanges.dueDays) && statusVal === "active,todo,blocked") {
@@ -3762,7 +3771,7 @@ export const UI_JS = `(function () {
     if (reportRanges.completedBefore) qs.push("completedBefore=" + encodeURIComponent(reportRanges.completedBefore));
     if (reportRanges.dueAfter) qs.push("dueAfter=" + encodeURIComponent(reportRanges.dueAfter));
     if (reportRanges.dueBefore) qs.push("dueBefore=" + encodeURIComponent(reportRanges.dueBefore));
-    if (maxPriority !== "") qs.push("maxProjectPriority=" + encodeURIComponent(String(maxPriority)));
+    if (maxProjectPriority !== "") qs.push("maxProjectPriority=" + encodeURIComponent(String(maxProjectPriority)));
     if (noDue) qs.push("noDue=true");
     if (unassigned) qs.push("unassigned=true");
     var url = "/api/ui/tasks-due" + (qs.length ? "?" + qs.join("&") : "");
@@ -3792,9 +3801,16 @@ export const UI_JS = `(function () {
     var due = (el("new-task-due").value || "").trim();
     var confidence = el("new-task-confidence").value;
     var status = el("new-task-status").value;
+    var priorityRaw = (el("new-task-priority").value || "").trim();
+    var priority = finiteNumberValue(priorityRaw);
+    if (priorityRaw && priority === "") {
+      resultEl.textContent = "Priority must be a finite number.";
+      return;
+    }
     var milestone = (el("new-task-milestone").value || "").trim();
     var payload = { project: project, title: title, status: status, approved: true };
     if (owner) payload.owner = owner;
+    if (priority !== "") payload.priority = priority;
     if (milestone) payload.milestone = milestone;
     if (due) {
       payload.due = due;
@@ -3808,7 +3824,7 @@ export const UI_JS = `(function () {
     }
     resultEl.textContent = "Created " + (res.taskId || "task") + ".";
     if (owner) rememberTaskOwnerName(owner);
-    ["new-task-title", "new-task-owner", "new-task-due", "new-task-milestone"].forEach(function (id) { el(id).value = ""; });
+    ["new-task-title", "new-task-owner", "new-task-priority", "new-task-due", "new-task-milestone"].forEach(function (id) { el(id).value = ""; });
     el("tasks-add-form").hidden = true;
     state.tasks = [];
     loadTasks();
@@ -3844,7 +3860,7 @@ export const UI_JS = `(function () {
     var noDue = state.tasks.filter(function (task) { return !task.due; });
     var completed = state.tasks.filter(function (task) { return task.taskStatus === "done"; });
     var blocked = state.tasks.filter(function (task) { return task.taskStatus === "blocked"; });
-    var maxPriority = finiteNumberValue(controlValue("tasks-priority-max", state.tasksPriorityMax));
+    var maxProjectPriority = finiteNumberValue(controlValue("tasks-project-priority-max", state.tasksProjectPriorityMax));
 
     var html = "";
 
@@ -3872,7 +3888,7 @@ export const UI_JS = `(function () {
     var reportBits = [];
     if (reportRanges.completedDays) reportBits.push("completed last " + reportRanges.completedDays + " days");
     if (reportRanges.dueDays) reportBits.push("due next " + reportRanges.dueDays + " days");
-    if (maxPriority !== "") reportBits.push("P <= " + maxPriority);
+    if (maxProjectPriority !== "") reportBits.push("project P <= " + maxProjectPriority);
     summary.textContent = total + " task" + (total === 1 ? "" : "s")
       + " · " + overdue.length + " overdue"
       + " · " + blocked.length + " blocked"
@@ -3951,6 +3967,63 @@ export const UI_JS = `(function () {
           resultEl.textContent = "Clearing...";
           try {
             var res = await apiPost("/api/ui/task-owner", { name: milestoneName, taskId: taskId, owner: null, approved: true });
+            if (res.warnings && res.warnings.some(function(w) { return w.severity === "BLOCK"; })) {
+              resultEl.textContent = res.warnings.map(function(w) { return w.message; }).join("; ");
+            } else {
+              resultEl.textContent = "Cleared.";
+              state.tasks = [];
+              loadTasks();
+            }
+          } catch (err) {
+            resultEl.textContent = err.message;
+          }
+        });
+      }
+    });
+
+    list.querySelectorAll(".task-priority-form").forEach(function (form) {
+      form.addEventListener("submit", async function (e) {
+        e.preventDefault();
+        var taskId = form.dataset.taskId;
+        var milestoneName = form.dataset.milestoneName;
+        var priorityInput = form.querySelector(".task-priority-input");
+        var resultEl = form.querySelector(".task-priority-result");
+        var rawPriority = priorityInput ? priorityInput.value.trim() : "";
+        var priority = finiteNumberValue(rawPriority);
+        if (rawPriority && priority === "") {
+          resultEl.textContent = "Enter a finite priority.";
+          return;
+        }
+        resultEl.textContent = rawPriority ? "Saving..." : "Clearing...";
+        try {
+          var res = await apiPost("/api/ui/task-priority", {
+            name: milestoneName,
+            taskId: taskId,
+            priority: rawPriority ? priority : null,
+            approved: true
+          });
+          if (res.warnings && res.warnings.some(function(w) { return w.severity === "BLOCK"; })) {
+            resultEl.textContent = res.warnings.map(function(w) { return w.message; }).join("; ");
+          } else {
+            resultEl.textContent = rawPriority ? "Updated." : "Cleared.";
+            state.tasks = [];
+            loadTasks();
+          }
+        } catch (err) {
+          resultEl.textContent = err.message;
+        }
+      });
+      var clearPriorityBtn = form.querySelector(".task-priority-clear");
+      if (clearPriorityBtn) {
+        clearPriorityBtn.addEventListener("click", async function () {
+          var taskId = form.dataset.taskId;
+          var milestoneName = form.dataset.milestoneName;
+          var priorityInput = form.querySelector(".task-priority-input");
+          var resultEl = form.querySelector(".task-priority-result");
+          if (priorityInput) priorityInput.value = "";
+          resultEl.textContent = "Clearing...";
+          try {
+            var res = await apiPost("/api/ui/task-priority", { name: milestoneName, taskId: taskId, priority: null, approved: true });
             if (res.warnings && res.warnings.some(function(w) { return w.severity === "BLOCK"; })) {
               resultEl.textContent = res.warnings.map(function(w) { return w.message; }).join("; ");
             } else {
@@ -4166,6 +4239,11 @@ export const UI_JS = `(function () {
     return typeof priority === "number" && Number.isFinite(priority) ? priority : NaN;
   }
 
+  function taskPriority(task) {
+    var priority = task && (task.taskPriority !== undefined ? task.taskPriority : task.priority);
+    return typeof priority === "number" && Number.isFinite(priority) ? priority : NaN;
+  }
+
   function wireTaskOwnerSearch(form) {
     wireTaskOwnerInput(form.querySelector(".task-owner-input"));
   }
@@ -4350,8 +4428,10 @@ export const UI_JS = `(function () {
     var statusBadge = "<span class=\\"badge" + taskStatusBadgeClass(task, today) + "\\">" + escapeHtml(task.taskStatus) + "</span>";
     var ownerBadge = renderTaskOwner(task);
     var projectBadge = task.project ? "<span class=\\"badge\\">" + escapeHtml(task.project) + "</span>" : "";
-    var priority = priorityLabel(taskProjectPriority(task));
-    var priorityBadge = "<span class=\\"badge task-priority-badge" + (priority ? "" : " missing") + "\\" title=\\"Project priority\\">" + escapeHtml(priority || "No priority") + "</span>";
+    var projectPriority = priorityLabel(taskProjectPriority(task));
+    var projectPriorityBadge = "<span class=\\"badge project-priority-badge" + (projectPriority ? "" : " missing") + "\\" title=\\"Project priority\\">" + escapeHtml(projectPriority ? "Project " + projectPriority : "No project priority") + "</span>";
+    var taskPriorityValue = priorityLabel(taskPriority(task));
+    var taskPriorityBadge = "<span class=\\"badge task-priority-badge" + (taskPriorityValue ? "" : " missing") + "\\" title=\\"Task priority\\">" + escapeHtml(taskPriorityValue ? "Task " + taskPriorityValue : "No task priority") + "</span>";
     var milestoneLabel = task.milestoneDisplayId || task.milestoneName.split("/").pop().replace(/\\.md$/, "");
     var milestoneBtn = "<a class=\\"task-milestone-link\\" href=\\"" + escapeHtml(anchorHref(task.milestoneName)) + "\\" data-anchor=\\"" + escapeHtml(task.milestoneName) + "\\" data-task-id=\\"" + escapeHtml(task.taskId) + "\\" title=\\"Open milestone anchor\\">" + escapeHtml(milestoneLabel) + "</a>";
     var confidenceOptions = ["committed", "internal_goal", "estimated"].map(function (c) {
@@ -4360,6 +4440,7 @@ export const UI_JS = `(function () {
     var currentDue = task.due || "";
     var currentConf = task.dateConfidence || "estimated";
     var currentOwner = task.taskOwner || "";
+    var currentPriority = Number.isFinite(taskPriority(task)) ? String(taskPriority(task)) : "";
     var confSelected = ["committed", "internal_goal", "estimated"].map(function(c) {
       return "<option value=\\"" + c + "\\"" + (c === currentConf ? " selected" : "") + ">" + c + "</option>";
     }).join("");
@@ -4370,6 +4451,14 @@ export const UI_JS = `(function () {
       + (currentOwner ? "<button type=\\"button\\" class=\\"compact-action task-owner-clear\\">Clear</button>" : "")
       + "</div>"
       + "<div class=\\"task-owner-result\\"></div>"
+      + "</form>";
+    var priorityForm = "<form class=\\"task-priority-form\\" data-task-id=\\"" + escapeHtml(task.taskId) + "\\" data-milestone-name=\\"" + escapeHtml(task.milestoneName) + "\\">"
+      + "<input class=\\"task-priority-input\\" type=\\"number\\" min=\\"0\\" step=\\"0.001\\" value=\\"" + escapeHtml(currentPriority) + "\\" placeholder=\\"priority\\" aria-label=\\"Task priority\\">"
+      + "<div class=\\"task-priority-controls\\">"
+      + "<button type=\\"submit\\" class=\\"compact-action\\">Set</button>"
+      + (currentPriority ? "<button type=\\"button\\" class=\\"compact-action task-priority-clear\\">Clear</button>" : "")
+      + "</div>"
+      + "<div class=\\"task-priority-result\\"></div>"
       + "</form>";
     var form = "<form class=\\"task-due-form\\" data-task-id=\\"" + escapeHtml(task.taskId) + "\\" data-milestone-name=\\"" + escapeHtml(task.milestoneName) + "\\">"
       + "<input class=\\"task-due-date\\" type=\\"date\\" value=\\"" + escapeHtml(currentDue) + "\\" aria-label=\\"Due date\\">"
@@ -4388,14 +4477,14 @@ export const UI_JS = `(function () {
       + "</div>";
     return "<div class=\\"task-row" + (stateClass ? " " + stateClass : "") + "\\" data-task-id=\\"" + escapeHtml(task.taskId) + "\\">"
       + "<div>"
-      + "<div class=\\"task-title-line\\">" + priorityBadge + "<span>" + escapeHtml(task.taskId) + " — " + escapeHtml(task.taskTitle) + "</span></div>"
+      + "<div class=\\"task-title-line\\">" + projectPriorityBadge + taskPriorityBadge + "<span>" + escapeHtml(task.taskId) + " — " + escapeHtml(task.taskTitle) + "</span></div>"
       + "<div class=\\"task-meta\\">" + statusBadge + ownerBadge + projectBadge + milestoneBtn
       + (task.due ? "<span class=\\"badge\\">due " + escapeHtml(task.due) + "</span>" : "")
       + (task.completedOn ? "<span class=\\"badge\\">completed " + escapeHtml(task.completedOn) + "</span>" : "")
       + "</div>"
       + lifecycle
       + "</div>"
-      + "<div class=\\"task-edit-forms\\">" + ownerForm + form + "</div>"
+      + "<div class=\\"task-edit-forms\\">" + ownerForm + priorityForm + form + "</div>"
       + "</div>";
   }
 
@@ -5239,6 +5328,10 @@ export const UI_JS = `(function () {
       }
       var owner = task && (task.owner || task.assignee);
       badges += "<span class=\\"badge\\">" + escapeHtml(owner ? String(owner) : "Unassigned") + "</span>";
+      var taskPriorityValue = priorityLabel(taskPriority(task));
+      if (taskPriorityValue) {
+        badges += "<span class=\\"badge task-priority-badge\\" title=\\"Task priority\\">" + escapeHtml("Task " + taskPriorityValue) + "</span>";
+      }
       if (task && task.due) {
         badges += "<span class=\\"badge\\">due " + escapeHtml(String(task.due))
           + (task.date_confidence ? " · " + escapeHtml(String(task.date_confidence)) : "") + "</span>";
@@ -5540,7 +5633,7 @@ export const UI_JS = `(function () {
         loadTasks().catch(function (error) { setBanner(error.message, "error"); });
       });
     });
-    ["tasks-completed-days", "tasks-due-days", "tasks-priority-max"].forEach(function (id) {
+    ["tasks-completed-days", "tasks-due-days", "tasks-project-priority-max"].forEach(function (id) {
       el(id).addEventListener("input", debounce(function () {
         updateLocationFromState({ anchor: null, view: "tasks", history: "replace" });
         state.tasks = [];
@@ -5815,6 +5908,7 @@ export const UI_JS = `(function () {
     window.__ANCHOR_MCP_UI_TEST_HOOKS__.taskGroupsForDisplay = taskGroupsForDisplay;
     window.__ANCHOR_MCP_UI_TEST_HOOKS__.taskGroupPriority = taskGroupPriority;
     window.__ANCHOR_MCP_UI_TEST_HOOKS__.taskProjectPriority = taskProjectPriority;
+    window.__ANCHOR_MCP_UI_TEST_HOOKS__.taskPriority = taskPriority;
     window.__ANCHOR_MCP_UI_TEST_HOOKS__.taskReportRanges = taskReportRanges;
     window.__ANCHOR_MCP_UI_TEST_HOOKS__.taskStateClass = taskStateClass;
     window.__ANCHOR_MCP_UI_TEST_HOOKS__.rememberTaskOwnerMatches = rememberTaskOwnerMatches;
