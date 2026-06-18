@@ -1820,6 +1820,7 @@ export const UI_JS = `(function () {
     anchorGroupSort: DEFAULT_ANCHOR_SORT,
     tasks: [],
     tasksLoading: false,
+    pendingTaskFocus: null,
     tasksProject: "",
     tasksStatus: "active,todo,blocked",
     tasksGroupBy: DEFAULT_TASK_GROUP_BY,
@@ -3882,8 +3883,9 @@ export const UI_JS = `(function () {
     applyPendingTaskFocus();
   }
 
-  // Scroll to and briefly highlight a task row when arriving from a detail-view
-  // "Edit in tasks" link. No-op if the task is filtered out of the current view.
+  // Scroll to and highlight the task row matching state.pendingTaskFocus when
+  // arriving from a detail-view "Edit in tasks" link. Clears any prior focus so
+  // only one row is highlighted; no-op if the task is filtered out of the view.
   function applyPendingTaskFocus() {
     if (!state.pendingTaskFocus) {
       return;
@@ -3896,10 +3898,13 @@ export const UI_JS = `(function () {
     }
     var rows = list.querySelectorAll(".task-row");
     for (var i = 0; i < rows.length; i++) {
-      if (rows[i].dataset.taskId === targetId) {
-        rows[i].classList.add("focus");
-        if (rows[i].scrollIntoView) {
-          rows[i].scrollIntoView({ block: "center" });
+      rows[i].classList.remove("focus");
+    }
+    for (var j = 0; j < rows.length; j++) {
+      if (rows[j].dataset.taskId === targetId) {
+        rows[j].classList.add("focus");
+        if (rows[j].scrollIntoView) {
+          rows[j].scrollIntoView({ block: "center" });
         }
         break;
       }
