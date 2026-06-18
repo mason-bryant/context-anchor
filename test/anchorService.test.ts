@@ -1448,6 +1448,21 @@ describe("AnchorService task write APIs", () => {
     expect(result.warnings.map((w) => w.code)).toContain("invalid_milestone");
   });
 
+  it("updateTaskOwner and updateTaskDue reject a non-milestone anchor name", async () => {
+    await service.writeAnchor({ name: "projects/demo/demo", content: projectAnchorContent() });
+
+    const owner = await service.updateTaskOwner({ name: "projects/demo/demo.md", taskId: "T-1", owner: "alice" });
+    expect(owner.warnings.map((w) => w.code)).toContain("invalid_milestone");
+
+    const due = await service.updateTaskDue({
+      name: "projects/demo/demo.md",
+      taskId: "T-1",
+      due: "2026-07-01",
+      dateConfidence: "estimated",
+    });
+    expect(due.warnings.map((w) => w.code)).toContain("invalid_milestone");
+  });
+
   it("completeTask and deleteTask reject a non-milestone anchor name", async () => {
     await service.writeAnchor({ name: "projects/demo/demo", content: projectAnchorContent() });
 

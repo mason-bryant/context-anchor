@@ -969,6 +969,12 @@ export class AnchorService {
     },
     updateTask: (task: Record<string, unknown>) => Record<string, unknown>,
   ): Promise<WriteAnchorResult> {
+    if (!AnchorService.isMilestonePath(input.name)) {
+      return AnchorService.blockResult(
+        "invalid_milestone",
+        `name must be a project milestone anchor under .../milestones/: ${input.name}`,
+      );
+    }
     const rawContent = await this.repo.readRaw(input.name);
     if (rawContent === undefined) {
       return AnchorService.blockResult("missing_anchor", `Anchor not found: ${input.name}`);
