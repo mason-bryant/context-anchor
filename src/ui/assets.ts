@@ -517,6 +517,7 @@ export const UI_HTML = `<!doctype html>
                   <pre id="history-diff" class="compact-raw">Load history to inspect diffs or revert.</pre>
                 </div>
               </section>
+              <div id="detail-tasks" class="detail-tasks" hidden></div>
               <article id="detail-rendered" class="markdown"></article>
               <pre id="detail-raw" class="raw-view" hidden></pre>
               <pre id="detail-frontmatter" class="raw-view" hidden></pre>
@@ -1367,6 +1368,11 @@ textarea {
   border-bottom: none;
 }
 
+.task-row.focus {
+  background: var(--panel-strong);
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
 .task-meta {
   display: flex;
   flex-wrap: wrap;
@@ -1394,6 +1400,60 @@ textarea {
   border-color: var(--border);
   color: var(--muted);
   font-weight: 600;
+}
+
+.detail-tasks {
+  margin: 0 0 16px;
+  padding: 12px 14px;
+  border: 1px solid var(--panel-strong);
+  border-radius: 8px;
+  background: var(--panel-strong);
+}
+
+.detail-tasks-heading {
+  margin: 0 0 8px;
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+
+.detail-task {
+  padding: 8px 10px;
+  border-radius: 6px;
+  border: 1px solid transparent;
+}
+
+.detail-task + .detail-task {
+  margin-top: 4px;
+}
+
+.detail-task.focus {
+  border-color: var(--accent);
+  background: var(--panel);
+}
+
+.detail-task-title {
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.detail-task-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  align-items: center;
+  margin-top: 4px;
+}
+
+.detail-task-edit {
+  font-size: 12px;
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.detail-task-edit:hover {
+  text-decoration: underline;
 }
 
 .task-milestone-link {
@@ -1799,6 +1859,12 @@ export const UI_JS = `(function () {
 
   function anchorHref(anchorName) {
     var params = paramsForState({ anchor: anchorName, view: "detail" });
+    var query = params.toString();
+    return query ? "?" + query : window.location.pathname;
+  }
+
+  function tasksHref() {
+    var params = paramsForState({ anchor: null, view: "tasks" });
     var query = params.toString();
     return query ? "?" + query : window.location.pathname;
   }
@@ -3486,6 +3552,10 @@ export const UI_JS = `(function () {
       button.classList.toggle("active", button.dataset.detailMode === mode);
     });
     el("detail-rendered").hidden = mode !== "rendered";
+    var tasksBlock = safeEl("detail-tasks");
+    if (tasksBlock) {
+      tasksBlock.hidden = mode !== "rendered" || !tasksBlock.innerHTML;
+    }
     el("detail-raw").hidden = mode !== "raw";
     el("detail-frontmatter").hidden = mode !== "frontmatter";
     updateLocationFromState({ view: state.activeTab, history: "replace" });
@@ -3539,6 +3609,18 @@ export const UI_JS = `(function () {
     showTab("tasks");
     if (state.tasks.length === 0 && !state.tasksLoading) {
       loadTasks();
+    }
+  }
+
+  // Switch to the tasks view (where tasks are editable) and focus a specific
+  // task, used by the detail-view "Edit in tasks" links. loadTasks re-renders
+  // and applies the focus; if tasks are already loaded we apply it directly.
+  function openTasksForEditing(taskId) {
+    state.pendingTaskFocus = taskId || null;
+    var alreadyLoaded = state.tasks.length > 0;
+    showTasksView();
+    if (alreadyLoaded) {
+      applyPendingTaskFocus();
     }
   }
 
@@ -3654,9 +3736,13 @@ export const UI_JS = `(function () {
       + " · grouped by " + (groupBy === "project" ? "project" : "due date")
       + " · " + (sortMode === "dueDesc" ? "due date descending" : "due date ascending");
 
-    list.querySelectorAll(".task-milestone-link").forEach(function (btn) {
-      btn.addEventListener("click", function () {
-        selectAnchor(btn.dataset.anchor);
+    list.querySelectorAll(".task-milestone-link").forEach(function (link) {
+      link.addEventListener("click", function (event) {
+        if (!shouldHandleClientNavigation(event, link)) {
+          return;
+        }
+        event.preventDefault();
+        selectAnchor(link.dataset.anchor, { focusTask: link.dataset.taskId });
       });
     });
 
@@ -3792,6 +3878,32 @@ export const UI_JS = `(function () {
         });
       }
     });
+
+    applyPendingTaskFocus();
+  }
+
+  // Scroll to and briefly highlight a task row when arriving from a detail-view
+  // "Edit in tasks" link. No-op if the task is filtered out of the current view.
+  function applyPendingTaskFocus() {
+    if (!state.pendingTaskFocus) {
+      return;
+    }
+    var targetId = state.pendingTaskFocus;
+    state.pendingTaskFocus = null;
+    var list = safeEl("tasks-list");
+    if (!list || list.hidden) {
+      return;
+    }
+    var rows = list.querySelectorAll(".task-row");
+    for (var i = 0; i < rows.length; i++) {
+      if (rows[i].dataset.taskId === targetId) {
+        rows[i].classList.add("focus");
+        if (rows[i].scrollIntoView) {
+          rows[i].scrollIntoView({ block: "center" });
+        }
+        break;
+      }
+    }
   }
 
   function taskGroupsForDisplay(tasks, groupBy, sortMode, today, soon) {
@@ -4061,7 +4173,7 @@ export const UI_JS = `(function () {
     var priority = priorityLabel(taskProjectPriority(task));
     var priorityBadge = "<span class=\\"badge task-priority-badge" + (priority ? "" : " missing") + "\\" title=\\"Project priority\\">" + escapeHtml(priority || "No priority") + "</span>";
     var milestoneLabel = task.milestoneDisplayId || task.milestoneName.split("/").pop().replace(/\\.md$/, "");
-    var milestoneBtn = "<button class=\\"task-milestone-link\\" data-anchor=\\"" + escapeHtml(task.milestoneName) + "\\" type=\\"button\\">" + escapeHtml(milestoneLabel) + "</button>";
+    var milestoneBtn = "<a class=\\"task-milestone-link\\" href=\\"" + escapeHtml(anchorHref(task.milestoneName)) + "\\" data-anchor=\\"" + escapeHtml(task.milestoneName) + "\\" data-task-id=\\"" + escapeHtml(task.taskId) + "\\" title=\\"Open milestone anchor\\">" + escapeHtml(milestoneLabel) + "</a>";
     var confidenceOptions = ["committed", "internal_goal", "estimated"].map(function (c) {
       return "<option value=\\"" + c + "\\">" + c + "</option>";
     }).join("");
@@ -4094,7 +4206,7 @@ export const UI_JS = `(function () {
       + "<button type=\\"button\\" class=\\"compact-action task-delete-btn\\">Delete</button>"
       + "<span class=\\"task-action-result\\"></span>"
       + "</div>";
-    return "<div class=\\"task-row\\">"
+    return "<div class=\\"task-row\\" data-task-id=\\"" + escapeHtml(task.taskId) + "\\">"
       + "<div>"
       + "<div class=\\"task-title-line\\">" + priorityBadge + "<span>" + escapeHtml(task.taskId) + " — " + escapeHtml(task.taskTitle) + "</span></div>"
       + "<div class=\\"task-meta\\">" + statusBadge + ownerBadge + projectBadge + milestoneBtn + (task.due ? "<span class=\\"badge\\">" + escapeHtml(task.due) + "</span>" : "") + "</div>"
@@ -4858,7 +4970,7 @@ export const UI_JS = `(function () {
     setBanner("Loading anchor detail...", "info");
     try {
       var detail = await api("/api/ui/anchor?name=" + encodeURIComponent(name));
-      renderDetail(detail.anchor);
+      renderDetail(detail.anchor, { focusTask: opts.focusTask });
       setBanner("", "info");
     } catch (error) {
       setBanner(error.message, "error");
@@ -4880,7 +4992,8 @@ export const UI_JS = `(function () {
     selectAnchor(match.name, { skipLocationUpdate: true });
   }
 
-  function renderDetail(anchor) {
+  function renderDetail(anchor, options) {
+    var detailOpts = options || {};
     state.selectedAnchor = anchor;
     state.anchorVersions = [];
     el("detail-empty").hidden = true;
@@ -4895,6 +5008,7 @@ export const UI_JS = `(function () {
       return "<span class=\\"badge " + (ok ? "ok" : "block") + "\\">" + escapeHtml(section) + "</span>";
     }).join("");
     el("validation-status").innerHTML = renderIssues(anchor.ui.health);
+    renderDetailTasks(anchor, detailOpts.focusTask);
     el("detail-rendered").innerHTML = renderMarkdown(markdownBody(anchor.content || ""));
     decorateAnchorLinks(el("detail-rendered"));
     el("detail-raw").textContent = anchor.content || "";
@@ -4913,6 +5027,64 @@ export const UI_JS = `(function () {
     el("history-list").innerHTML = "";
     el("history-diff").textContent = "Load history to inspect diffs or revert.";
     showDetailMode(state.detailMode);
+  }
+
+  // Render the milestone's structured tasks frontmatter as a readable block,
+  // since markdownBody strips frontmatter and the rendered body would
+  // otherwise show no task details. Highlights and scrolls to focusTaskId when
+  // arriving from a task row's milestone link.
+  function renderDetailTasks(anchor, focusTaskId) {
+    var container = safeEl("detail-tasks");
+    if (!container) {
+      return;
+    }
+    var tasks = anchor && anchor.frontmatter && Array.isArray(anchor.frontmatter.tasks)
+      ? anchor.frontmatter.tasks
+      : [];
+    if (tasks.length === 0) {
+      container.innerHTML = "";
+      container.hidden = true;
+      return;
+    }
+    var rows = tasks.map(function (task) {
+      var id = task && task.id ? String(task.id) : "";
+      var isFocus = focusTaskId && id === String(focusTaskId);
+      var badges = "";
+      if (task && task.status) {
+        badges += "<span class=\\"badge\\">" + escapeHtml(String(task.status)) + "</span>";
+      }
+      var owner = task && (task.owner || task.assignee);
+      badges += "<span class=\\"badge\\">" + escapeHtml(owner ? String(owner) : "Unassigned") + "</span>";
+      if (task && task.due) {
+        badges += "<span class=\\"badge\\">" + escapeHtml(String(task.due))
+          + (task.date_confidence ? " · " + escapeHtml(String(task.date_confidence)) : "") + "</span>";
+      }
+      var title = task && task.title ? String(task.title) : "(untitled task)";
+      var editLink = "<a class=\\"detail-task-edit\\" href=\\"" + escapeHtml(tasksHref()) + "\\""
+        + (id ? " data-task-id=\\"" + escapeHtml(id) + "\\"" : "")
+        + " title=\\"Edit this task on the Tasks page\\">Edit in tasks →</a>";
+      return "<div class=\\"detail-task" + (isFocus ? " focus" : "") + "\\"" + (id ? " data-task-id=\\"" + escapeHtml(id) + "\\"" : "") + ">"
+        + "<div class=\\"detail-task-title\\">" + escapeHtml(id ? id + " — " + title : title) + "</div>"
+        + "<div class=\\"detail-task-meta\\">" + badges + editLink + "</div>"
+        + "</div>";
+    }).join("");
+    container.innerHTML = "<h3 class=\\"detail-tasks-heading\\">Tasks</h3>" + rows;
+    container.hidden = false;
+    container.querySelectorAll(".detail-task-edit").forEach(function (link) {
+      link.addEventListener("click", function (event) {
+        if (!shouldHandleClientNavigation(event, link)) {
+          return;
+        }
+        event.preventDefault();
+        openTasksForEditing(link.dataset.taskId);
+      });
+    });
+    if (focusTaskId) {
+      var focused = container.querySelector(".detail-task.focus");
+      if (focused && focused.scrollIntoView) {
+        focused.scrollIntoView({ block: "nearest" });
+      }
+    }
   }
 
   function renderIssues(health) {
