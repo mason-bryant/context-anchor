@@ -1387,6 +1387,51 @@ describe("AnchorService task write APIs", () => {
     expect(tasks.find((task) => task.taskTitle === "prioritized")?.projectPriority).toBe(1.1);
   });
 
+  it("listTasksDue combines completed and due report windows with a project priority threshold", async () => {
+    await service.writeAnchor({ name: "projects/demo/demo", content: projectAnchorContent() });
+    await service.writeAnchor({
+      name: "projects/low/low",
+      content: projectAnchorContent({ project: "low", summary: "Lower priority project anchor." }),
+    });
+    await service.updateProjectPriority({ project: "demo", priority: 1.1, approved: true });
+    await service.updateProjectPriority({ project: "low", priority: 4, approved: true });
+
+    await service.createTask({
+      project: "demo",
+      title: "due soon",
+      due: "2026-06-20",
+      dateConfidence: "estimated",
+    });
+    await service.createTask({
+      project: "demo",
+      title: "due later",
+      due: "2026-07-10",
+      dateConfidence: "estimated",
+    });
+    const recent = await service.createTask({ project: "demo", title: "recently done" });
+    const old = await service.createTask({ project: "demo", title: "old done" });
+    await service.completeTask({ taskId: recent.taskId!, project: "demo", completedOn: "2026-06-17" });
+    await service.completeTask({ taskId: old.taskId!, project: "demo", completedOn: "2026-05-30" });
+    await service.createTask({
+      project: "low",
+      title: "low priority due",
+      due: "2026-06-20",
+      dateConfidence: "estimated",
+    });
+
+    const { tasks } = await service.listTasksDue({
+      dueAfter: "2026-06-18",
+      dueBefore: "2026-06-26",
+      completedAfter: "2026-06-11",
+      completedBefore: "2026-06-19",
+      maxProjectPriority: 2,
+    });
+
+    expect(tasks.map((task) => task.taskTitle)).toEqual(["due soon", "recently done"]);
+    expect(tasks.find((task) => task.taskTitle === "recently done")?.completedOn).toBe("2026-06-17");
+    expect(tasks.every((task) => task.projectPriority !== undefined && task.projectPriority <= 2)).toBe(true);
+  });
+
   it("updateTaskOwner assigns and clears a task owner", async () => {
     await service.writeAnchor({ name: "projects/demo/demo", content: projectAnchorContent() });
     const created = await service.createTask({ project: "demo", title: "assign me" });

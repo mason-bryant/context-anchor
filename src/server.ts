@@ -751,28 +751,34 @@ the index when your workflow checks in that file.`,
     {
       title: "List Tasks by Due Date",
       description:
-        "List tasks across all milestones (or one project) sorted by due date. Defaults to active, todo, and blocked tasks. Use dueBefore/dueAfter to filter by date range, or noDue:true to find tasks without a due date. Use owner to filter by person or team (id, display name, email, slack id, or team synonym).",
+        "List tasks across all milestones (or one project) sorted by due date. Defaults to active, todo, and blocked tasks, plus done when a completed window is set. Use dueBefore/dueAfter and completedBefore/completedAfter to build task reports, noDue:true to find tasks without a due date, and owner to filter by person or team.",
       inputSchema: z.object({
         project: z.string().optional().describe("Filter by project slug."),
         dueBefore: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().describe("Include only tasks with due date before this date (exclusive)."),
         dueAfter: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().describe("Include only tasks with due date on or after this date."),
+        completedBefore: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().describe("Include done tasks completed before this date (exclusive)."),
+        completedAfter: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().describe("Include done tasks completed on or after this date."),
         noDue: z.boolean().optional().describe("When true, return only tasks with no due date."),
-        status: z.union([z.array(TaskStatusSchema), JsonStringSchema]).optional().describe("Filter by task status. Defaults to active, todo, blocked."),
+        status: z.union([z.array(TaskStatusSchema), JsonStringSchema]).optional().describe("Filter by task status. Defaults to active, todo, blocked (plus done when a completed window is set)."),
         owner: z.string().optional().describe("Filter by person or team: id, display name, email, slack id, or team synonym."),
         unassigned: z.boolean().optional().describe("When true, return only tasks with no owner assigned."),
+        maxProjectPriority: z.number().finite().optional().describe("Include only tasks from projects with priority P less than or equal to this value."),
       }),
       annotations: { destructiveHint: false, idempotentHint: true },
     },
-    async ({ project, dueBefore, dueAfter, noDue, status, owner, unassigned }) => {
+    async ({ project, dueBefore, dueAfter, completedBefore, completedAfter, noDue, status, owner, unassigned, maxProjectPriority }) => {
       const parsedStatus = typeof status === "string" ? (JSON.parse(status) as string[]) : status;
       const result = await service.listTasksDue({
         project,
         dueBefore,
         dueAfter,
+        completedBefore,
+        completedAfter,
         noDue,
         status: parsedStatus as ("todo" | "active" | "blocked" | "done" | "cancelled")[] | undefined,
         owner,
         unassigned,
+        maxProjectPriority,
       });
       return jsonResult(result, false);
     },

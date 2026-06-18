@@ -279,6 +279,7 @@ export const UI_HTML = `<!doctype html>
                 </select>
                 <select id="tasks-status-filter" aria-label="Filter by status">
                   <option value="active,todo,blocked">Active / Todo / Blocked</option>
+                  <option value="active,todo,blocked,done">Active / Todo / Blocked / Done</option>
                   <option value="todo">Todo only</option>
                   <option value="active">Active only</option>
                   <option value="blocked">Blocked only</option>
@@ -293,6 +294,9 @@ export const UI_HTML = `<!doctype html>
                   <option value="dueAsc">Due date ascending</option>
                   <option value="dueDesc">Due date descending</option>
                 </select>
+                <label class="task-report-field">Completed last<input id="tasks-completed-days" type="number" min="1" max="3650" placeholder="days"></label>
+                <label class="task-report-field">Due next<input id="tasks-due-days" type="number" min="1" max="3650" placeholder="days"></label>
+                <label class="task-report-field">Priority P &lt;=<input id="tasks-priority-max" type="number" min="0" step="0.001" placeholder="any"></label>
                 <label class="checkbox-label"><input type="checkbox" id="tasks-no-due"> No due date only</label>
                 <label class="checkbox-label"><input type="checkbox" id="tasks-unassigned"> Unassigned only</label>
                 <button id="tasks-add" type="button">+ Add Task</button>
@@ -1317,7 +1321,8 @@ textarea {
   align-items: center;
 }
 
-.tasks-filters select {
+.tasks-filters select,
+.tasks-filters input[type="number"] {
   font: inherit;
   font-size: 13px;
   background: var(--panel);
@@ -1325,6 +1330,18 @@ textarea {
   border-radius: 6px;
   padding: 4px 8px;
   color: var(--text);
+}
+
+.task-report-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 13px;
+  color: var(--text);
+}
+
+.task-report-field input {
+  width: 72px;
 }
 
 .checkbox-label {
@@ -1371,6 +1388,42 @@ textarea {
 .task-row.focus {
   background: var(--panel-strong);
   box-shadow: inset 3px 0 0 var(--accent);
+}
+
+.task-row.task-state-blocked,
+.detail-task.task-state-blocked {
+  background: rgba(177, 106, 3, 0.08);
+  box-shadow: inset 3px 0 0 var(--warn);
+}
+
+.task-row.task-state-completed,
+.detail-task.task-state-completed {
+  background: rgba(31, 143, 95, 0.08);
+  box-shadow: inset 3px 0 0 var(--ok);
+}
+
+.task-row.task-state-overdue,
+.detail-task.task-state-overdue {
+  background: rgba(199, 53, 45, 0.08);
+  box-shadow: inset 3px 0 0 var(--block);
+}
+
+.badge.task-status-blocked {
+  color: var(--warn);
+  border-color: rgba(177, 106, 3, 0.28);
+  background: rgba(177, 106, 3, 0.08);
+}
+
+.badge.task-status-completed {
+  color: var(--ok);
+  border-color: rgba(31, 143, 95, 0.28);
+  background: rgba(31, 143, 95, 0.08);
+}
+
+.badge.task-status-overdue {
+  color: var(--block);
+  border-color: rgba(199, 53, 45, 0.28);
+  background: rgba(199, 53, 45, 0.08);
 }
 
 .task-meta {
@@ -1431,6 +1484,12 @@ textarea {
 .detail-task.focus {
   border-color: var(--accent);
   background: var(--panel);
+}
+
+.task-row.focus,
+.detail-task.focus {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
 }
 
 .detail-task-title {
@@ -1793,6 +1852,9 @@ export const UI_JS = `(function () {
     "tasksStatus",
     "tasksGroup",
     "tasksSort",
+    "tasksCompletedDays",
+    "tasksDueDays",
+    "tasksPriorityMax",
     "tasksNoDue",
     "tasksUnassigned"
   ];
@@ -1825,6 +1887,9 @@ export const UI_JS = `(function () {
     tasksStatus: "active,todo,blocked",
     tasksGroupBy: DEFAULT_TASK_GROUP_BY,
     tasksSort: DEFAULT_TASK_SORT,
+    tasksCompletedDays: "",
+    tasksDueDays: "",
+    tasksPriorityMax: "",
     tasksNoDue: false,
     tasksUnassigned: false,
     taskOwnerMatchCache: [],
@@ -1934,6 +1999,47 @@ export const UI_JS = `(function () {
     return value === "dueDesc" ? "dueDesc" : DEFAULT_TASK_SORT;
   }
 
+  function todayIso() {
+    return new Date().toISOString().slice(0, 10);
+  }
+
+  function addIsoDays(isoDate, days) {
+    var date = new Date(String(isoDate) + "T00:00:00.000Z");
+    if (Number.isNaN(date.getTime())) {
+      return "";
+    }
+    date.setUTCDate(date.getUTCDate() + days);
+    return date.toISOString().slice(0, 10);
+  }
+
+  function positiveIntegerValue(value) {
+    var raw = String(value || "").trim();
+    if (!raw) return "";
+    var parsed = Number(raw);
+    return Number.isInteger(parsed) && parsed > 0 ? parsed : "";
+  }
+
+  function finiteNumberValue(value) {
+    var raw = String(value || "").trim();
+    if (!raw) return "";
+    var parsed = Number(raw);
+    return Number.isFinite(parsed) ? parsed : "";
+  }
+
+  function taskReportRanges(completedDaysRaw, dueDaysRaw, today) {
+    var base = today || todayIso();
+    var completedDays = positiveIntegerValue(completedDaysRaw);
+    var dueDays = positiveIntegerValue(dueDaysRaw);
+    return {
+      completedDays: completedDays,
+      dueDays: dueDays,
+      completedAfter: completedDays ? addIsoDays(base, -completedDays) : "",
+      completedBefore: completedDays ? addIsoDays(base, 1) : "",
+      dueAfter: dueDays ? base : "",
+      dueBefore: dueDays ? addIsoDays(base, dueDays + 1) : ""
+    };
+  }
+
   function applyUrlStateToControls() {
     var params = new URLSearchParams(window.location.search);
     state.pendingAnchor = readAnchorFromLocation();
@@ -1970,12 +2076,18 @@ export const UI_JS = `(function () {
     state.tasksStatus = params.get("tasksStatus") || "active,todo,blocked";
     state.tasksGroupBy = validTasksGroupBy(params.get("tasksGroup"));
     state.tasksSort = validTasksSort(params.get("tasksSort"));
+    state.tasksCompletedDays = params.get("tasksCompletedDays") || "";
+    state.tasksDueDays = params.get("tasksDueDays") || "";
+    state.tasksPriorityMax = params.get("tasksPriorityMax") || "";
     state.tasksNoDue = params.get("tasksNoDue") === "true";
     state.tasksUnassigned = params.get("tasksUnassigned") === "true";
     setSelectValueAllowingNew("tasks-project-filter", state.tasksProject);
     setControlValue("tasks-status-filter", state.tasksStatus);
     setControlValue("tasks-group-by", state.tasksGroupBy);
     setControlValue("tasks-sort", state.tasksSort);
+    setControlValue("tasks-completed-days", state.tasksCompletedDays);
+    setControlValue("tasks-due-days", state.tasksDueDays);
+    setControlValue("tasks-priority-max", state.tasksPriorityMax);
     setControlChecked("tasks-no-due", state.tasksNoDue);
     setControlChecked("tasks-unassigned", state.tasksUnassigned);
   }
@@ -2059,6 +2171,9 @@ export const UI_JS = `(function () {
     setNonDefaultParam(params, "tasksGroup", tasksGroupBy, DEFAULT_TASK_GROUP_BY);
     var tasksSort = validTasksSort(controlValue("tasks-sort", sourceParams.get("tasksSort") || DEFAULT_TASK_SORT));
     setNonDefaultParam(params, "tasksSort", tasksSort, DEFAULT_TASK_SORT);
+    setParam(params, "tasksCompletedDays", controlValue("tasks-completed-days", sourceParams.get("tasksCompletedDays") || ""));
+    setParam(params, "tasksDueDays", controlValue("tasks-due-days", sourceParams.get("tasksDueDays") || ""));
+    setParam(params, "tasksPriorityMax", controlValue("tasks-priority-max", sourceParams.get("tasksPriorityMax") || ""));
     if (controlChecked("tasks-no-due", state.tasksNoDue)) {
       params.set("tasksNoDue", "true");
     }
@@ -3631,9 +3746,23 @@ export const UI_JS = `(function () {
     var statusVal = controlValue("tasks-status-filter", state.tasksStatus);
     var noDue = controlChecked("tasks-no-due", state.tasksNoDue);
     var unassigned = controlChecked("tasks-unassigned", state.tasksUnassigned);
+    var reportRanges = taskReportRanges(
+      controlValue("tasks-completed-days", state.tasksCompletedDays),
+      controlValue("tasks-due-days", state.tasksDueDays),
+      todayIso()
+    );
+    var maxPriority = finiteNumberValue(controlValue("tasks-priority-max", state.tasksPriorityMax));
     var qs = [];
     if (project) qs.push("project=" + encodeURIComponent(project));
+    if ((reportRanges.completedDays || reportRanges.dueDays) && statusVal === "active,todo,blocked") {
+      statusVal = "active,todo,blocked,done";
+    }
     if (statusVal) qs.push("status=" + encodeURIComponent(statusVal));
+    if (reportRanges.completedAfter) qs.push("completedAfter=" + encodeURIComponent(reportRanges.completedAfter));
+    if (reportRanges.completedBefore) qs.push("completedBefore=" + encodeURIComponent(reportRanges.completedBefore));
+    if (reportRanges.dueAfter) qs.push("dueAfter=" + encodeURIComponent(reportRanges.dueAfter));
+    if (reportRanges.dueBefore) qs.push("dueBefore=" + encodeURIComponent(reportRanges.dueBefore));
+    if (maxPriority !== "") qs.push("maxProjectPriority=" + encodeURIComponent(String(maxPriority)));
     if (noDue) qs.push("noDue=true");
     if (unassigned) qs.push("unassigned=true");
     var url = "/api/ui/tasks-due" + (qs.length ? "?" + qs.join("&") : "");
@@ -3702,11 +3831,20 @@ export const UI_JS = `(function () {
     emptyEl.hidden = true;
     list.hidden = false;
 
-    var today = new Date().toISOString().slice(0, 10);
-    var soon = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
-    var groups = taskGroupsForDisplay(state.tasks, groupBy, sortMode, today, soon);
+    var today = todayIso();
+    var reportRanges = taskReportRanges(
+      controlValue("tasks-completed-days", state.tasksCompletedDays),
+      controlValue("tasks-due-days", state.tasksDueDays),
+      today
+    );
+    var dueSoonDays = reportRanges.dueDays || 14;
+    var soon = addIsoDays(today, dueSoonDays);
+    var groups = taskGroupsForDisplay(state.tasks, groupBy, sortMode, today, soon, "Due within " + dueSoonDays + " days");
     var overdue = state.tasks.filter(function (task) { return task.due && task.due < today; });
     var noDue = state.tasks.filter(function (task) { return !task.due; });
+    var completed = state.tasks.filter(function (task) { return task.taskStatus === "done"; });
+    var blocked = state.tasks.filter(function (task) { return task.taskStatus === "blocked"; });
+    var maxPriority = finiteNumberValue(controlValue("tasks-priority-max", state.tasksPriorityMax));
 
     var html = "";
 
@@ -3719,7 +3857,7 @@ export const UI_JS = `(function () {
       var heading = priority ? priority + " · " + label : label;
       var out = "<div class=\\"task-group-header " + (cls || "") + "\\">" + escapeHtml(heading) + " (" + tasks.length + ")</div>";
       tasks.forEach(function (task) {
-        out += renderTaskRow(task);
+        out += renderTaskRow(task, today);
       });
       return out;
     }
@@ -3731,11 +3869,18 @@ export const UI_JS = `(function () {
     list.innerHTML = html;
 
     var total = state.tasks.length;
+    var reportBits = [];
+    if (reportRanges.completedDays) reportBits.push("completed last " + reportRanges.completedDays + " days");
+    if (reportRanges.dueDays) reportBits.push("due next " + reportRanges.dueDays + " days");
+    if (maxPriority !== "") reportBits.push("P <= " + maxPriority);
     summary.textContent = total + " task" + (total === 1 ? "" : "s")
       + " · " + overdue.length + " overdue"
+      + " · " + blocked.length + " blocked"
+      + " · " + completed.length + " completed"
       + " · " + noDue.length + " without due date"
       + " · grouped by " + (groupBy === "project" ? "project" : "due date")
-      + " · " + (sortMode === "dueDesc" ? "due date descending" : "due date ascending");
+      + " · " + (sortMode === "dueDesc" ? "due date descending" : "due date ascending")
+      + (reportBits.length ? " · " + reportBits.join(" · ") : "");
 
     list.querySelectorAll(".task-milestone-link").forEach(function (link) {
       link.addEventListener("click", function (event) {
@@ -3911,12 +4056,12 @@ export const UI_JS = `(function () {
     }
   }
 
-  function taskGroupsForDisplay(tasks, groupBy, sortMode, today, soon) {
+  function taskGroupsForDisplay(tasks, groupBy, sortMode, today, soon, soonLabel) {
     var sorted = sortTasksForDisplay(tasks, sortMode);
     if (groupBy === "project") {
       return projectTaskGroups(sorted);
     }
-    return dueTaskGroups(sorted, today, soon, sortMode);
+    return dueTaskGroups(sorted, today, soon, sortMode, soonLabel);
   }
 
   function sortTasksForDisplay(tasks, sortMode) {
@@ -3954,11 +4099,12 @@ export const UI_JS = `(function () {
     ].join("\\u0000");
   }
 
-  function dueTaskGroups(sortedTasks, today, soon, sortMode) {
+  function dueTaskGroups(sortedTasks, today, soon, sortMode, soonLabel) {
     var overdue = [];
     var dueSoon = [];
     var upcoming = [];
     var noDue = [];
+    var dueSoonLabel = soonLabel || "Due within 14 days";
 
     sortedTasks.forEach(function (task) {
       if (!task.due) {
@@ -3975,13 +4121,13 @@ export const UI_JS = `(function () {
     var groups = sortMode === "dueDesc"
       ? [
         { label: "Upcoming", tasks: upcoming },
-        { label: "Due within 14 days", tasks: dueSoon, cls: "due-soon" },
+        { label: dueSoonLabel, tasks: dueSoon, cls: "due-soon" },
         { label: "Overdue", tasks: overdue, cls: "overdue" },
         { label: "No due date", tasks: noDue }
       ]
       : [
         { label: "Overdue", tasks: overdue, cls: "overdue" },
-        { label: "Due within 14 days", tasks: dueSoon, cls: "due-soon" },
+        { label: dueSoonLabel, tasks: dueSoon, cls: "due-soon" },
         { label: "Upcoming", tasks: upcoming },
         { label: "No due date", tasks: noDue }
       ];
@@ -4171,8 +4317,37 @@ export const UI_JS = `(function () {
     ].filter(Boolean).join(" ").toLowerCase();
   }
 
-  function renderTaskRow(task) {
-    var statusBadge = "<span class=\\"badge\\">" + escapeHtml(task.taskStatus) + "</span>";
+  function normalizedTaskStatus(task) {
+    return String((task && (task.taskStatus || task.status)) || "");
+  }
+
+  function taskStateClass(task, today) {
+    var status = normalizedTaskStatus(task);
+    var due = task && task.due ? String(task.due) : "";
+    var base = today || todayIso();
+    if (status === "done") {
+      return "task-state-completed";
+    }
+    if (due && due < base && status !== "cancelled") {
+      return "task-state-overdue";
+    }
+    if (status === "blocked") {
+      return "task-state-blocked";
+    }
+    return "";
+  }
+
+  function taskStatusBadgeClass(task, today) {
+    var stateClass = taskStateClass(task, today);
+    if (stateClass === "task-state-completed") return " task-status-completed";
+    if (stateClass === "task-state-overdue") return " task-status-overdue";
+    if (stateClass === "task-state-blocked") return " task-status-blocked";
+    return "";
+  }
+
+  function renderTaskRow(task, today) {
+    var stateClass = taskStateClass(task, today);
+    var statusBadge = "<span class=\\"badge" + taskStatusBadgeClass(task, today) + "\\">" + escapeHtml(task.taskStatus) + "</span>";
     var ownerBadge = renderTaskOwner(task);
     var projectBadge = task.project ? "<span class=\\"badge\\">" + escapeHtml(task.project) + "</span>" : "";
     var priority = priorityLabel(taskProjectPriority(task));
@@ -4211,10 +4386,13 @@ export const UI_JS = `(function () {
       + "<button type=\\"button\\" class=\\"compact-action task-delete-btn\\">Delete</button>"
       + "<span class=\\"task-action-result\\"></span>"
       + "</div>";
-    return "<div class=\\"task-row\\" data-task-id=\\"" + escapeHtml(task.taskId) + "\\">"
+    return "<div class=\\"task-row" + (stateClass ? " " + stateClass : "") + "\\" data-task-id=\\"" + escapeHtml(task.taskId) + "\\">"
       + "<div>"
       + "<div class=\\"task-title-line\\">" + priorityBadge + "<span>" + escapeHtml(task.taskId) + " — " + escapeHtml(task.taskTitle) + "</span></div>"
-      + "<div class=\\"task-meta\\">" + statusBadge + ownerBadge + projectBadge + milestoneBtn + (task.due ? "<span class=\\"badge\\">" + escapeHtml(task.due) + "</span>" : "") + "</div>"
+      + "<div class=\\"task-meta\\">" + statusBadge + ownerBadge + projectBadge + milestoneBtn
+      + (task.due ? "<span class=\\"badge\\">due " + escapeHtml(task.due) + "</span>" : "")
+      + (task.completedOn ? "<span class=\\"badge\\">completed " + escapeHtml(task.completedOn) + "</span>" : "")
+      + "</div>"
       + lifecycle
       + "</div>"
       + "<div class=\\"task-edit-forms\\">" + ownerForm + form + "</div>"
@@ -5051,24 +5229,29 @@ export const UI_JS = `(function () {
       container.hidden = true;
       return;
     }
+    var today = todayIso();
     var rows = tasks.map(function (task) {
       var id = task && task.id ? String(task.id) : "";
       var isFocus = focusTaskId && id === String(focusTaskId);
       var badges = "";
       if (task && task.status) {
-        badges += "<span class=\\"badge\\">" + escapeHtml(String(task.status)) + "</span>";
+        badges += "<span class=\\"badge" + taskStatusBadgeClass(task, today) + "\\">" + escapeHtml(String(task.status)) + "</span>";
       }
       var owner = task && (task.owner || task.assignee);
       badges += "<span class=\\"badge\\">" + escapeHtml(owner ? String(owner) : "Unassigned") + "</span>";
       if (task && task.due) {
-        badges += "<span class=\\"badge\\">" + escapeHtml(String(task.due))
+        badges += "<span class=\\"badge\\">due " + escapeHtml(String(task.due))
           + (task.date_confidence ? " · " + escapeHtml(String(task.date_confidence)) : "") + "</span>";
+      }
+      if (task && task.completed_on) {
+        badges += "<span class=\\"badge\\">completed " + escapeHtml(String(task.completed_on)) + "</span>";
       }
       var title = task && task.title ? String(task.title) : "(untitled task)";
       var editLink = "<a class=\\"detail-task-edit\\" href=\\"" + escapeHtml(tasksHref()) + "\\""
         + (id ? " data-task-id=\\"" + escapeHtml(id) + "\\"" : "")
         + " title=\\"Edit this task on the Tasks page\\">Edit in tasks →</a>";
-      return "<div class=\\"detail-task" + (isFocus ? " focus" : "") + "\\"" + (id ? " data-task-id=\\"" + escapeHtml(id) + "\\"" : "") + ">"
+      var stateClass = taskStateClass(task, today);
+      return "<div class=\\"detail-task" + (stateClass ? " " + stateClass : "") + (isFocus ? " focus" : "") + "\\"" + (id ? " data-task-id=\\"" + escapeHtml(id) + "\\"" : "") + ">"
         + "<div class=\\"detail-task-title\\">" + escapeHtml(id ? id + " — " + title : title) + "</div>"
         + "<div class=\\"detail-task-meta\\">" + badges + editLink + "</div>"
         + "</div>";
@@ -5357,6 +5540,13 @@ export const UI_JS = `(function () {
         loadTasks().catch(function (error) { setBanner(error.message, "error"); });
       });
     });
+    ["tasks-completed-days", "tasks-due-days", "tasks-priority-max"].forEach(function (id) {
+      el(id).addEventListener("input", debounce(function () {
+        updateLocationFromState({ anchor: null, view: "tasks", history: "replace" });
+        state.tasks = [];
+        loadTasks().catch(function (error) { setBanner(error.message, "error"); });
+      }, 180));
+    });
     ["tasks-group-by", "tasks-sort"].forEach(function (id) {
       el(id).addEventListener("change", function () {
         state.tasksGroupBy = validTasksGroupBy(controlValue("tasks-group-by", state.tasksGroupBy));
@@ -5625,6 +5815,8 @@ export const UI_JS = `(function () {
     window.__ANCHOR_MCP_UI_TEST_HOOKS__.taskGroupsForDisplay = taskGroupsForDisplay;
     window.__ANCHOR_MCP_UI_TEST_HOOKS__.taskGroupPriority = taskGroupPriority;
     window.__ANCHOR_MCP_UI_TEST_HOOKS__.taskProjectPriority = taskProjectPriority;
+    window.__ANCHOR_MCP_UI_TEST_HOOKS__.taskReportRanges = taskReportRanges;
+    window.__ANCHOR_MCP_UI_TEST_HOOKS__.taskStateClass = taskStateClass;
     window.__ANCHOR_MCP_UI_TEST_HOOKS__.rememberTaskOwnerMatches = rememberTaskOwnerMatches;
     window.__ANCHOR_MCP_UI_TEST_HOOKS__.taskOwnerCachedMatches = taskOwnerCachedMatches;
     window.__ANCHOR_MCP_UI_TEST_HOOKS__.taskOwnerAssignmentValue = taskOwnerAssignmentValue;
