@@ -44,6 +44,19 @@ type UiAssetHooks = {
   ): Array<{ label: string; cls?: string; projectPriority?: number; tasks: Array<Record<string, unknown>> }>;
   taskGroupPriority(tasks: Array<Record<string, unknown>>): number;
   taskProjectPriority(task: Record<string, unknown>): number;
+  taskReportRanges(
+    completedDaysRaw: string,
+    dueDaysRaw: string,
+    today: string,
+  ): {
+    completedDays: number | "";
+    dueDays: number | "";
+    completedAfter: string;
+    completedBefore: string;
+    dueAfter: string;
+    dueBefore: string;
+  };
+  taskStateClass(task: Record<string, unknown>, today: string): string;
   rememberTaskOwnerMatches(matches: Array<Record<string, unknown>>): void;
   taskOwnerCachedMatches(query: string): Array<{ id: string; displayName: string; aliases: string[]; matched: string; value: string }>;
   taskOwnerAssignmentValue(value: string): string;
@@ -167,10 +180,17 @@ describe("UI browser assets", () => {
   it("includes task grouping and due-date sort controls", () => {
     expect(UI_HTML).toContain('id="tasks-group-by"');
     expect(UI_HTML).toContain('id="tasks-sort"');
+    expect(UI_HTML).toContain('id="tasks-completed-days" type="number"');
+    expect(UI_HTML).toContain('id="tasks-due-days" type="number"');
+    expect(UI_HTML).toContain('id="tasks-priority-max" type="number"');
     expect(UI_HTML).toContain("Group: Project");
     expect(UI_HTML).toContain("Due date ascending");
+    expect(UI_HTML).toContain("Active / Todo / Blocked / Done");
     expect(UI_JS).toContain('"tasksGroup"');
     expect(UI_JS).toContain('"tasksSort"');
+    expect(UI_JS).toContain('"tasksCompletedDays"');
+    expect(UI_JS).toContain('"tasksDueDays"');
+    expect(UI_JS).toContain('"tasksPriorityMax"');
     expect(UI_JS).toContain("task-priority-badge");
     expect(UI_JS).toContain("task-owner-form");
     expect(UI_JS).toContain("task-owner-suggestions");
@@ -186,6 +206,9 @@ describe("UI browser assets", () => {
     expect(UI_HTML).toContain('id="new-task-milestone" type="text" placeholder="blank = project backlog" list="milestone-anchor-suggestions" autocomplete="off"');
     expect(UI_HTML).toContain('id="new-person-teams" type="text" placeholder="platform, frontend" list="team-id-suggestions" autocomplete="off"');
     expect(UI_CSS).toContain(".task-priority-badge");
+    expect(UI_CSS).toContain(".task-row.task-state-blocked");
+    expect(UI_CSS).toContain(".task-row.task-state-completed");
+    expect(UI_CSS).toContain(".task-row.task-state-overdue");
     expect(UI_CSS).toContain(".task-owner-form");
     expect(UI_CSS).toContain(".registry-search");
   });
@@ -325,6 +348,29 @@ describe("UI browser assets", () => {
     expect(Number.isNaN(groups[1]?.projectPriority as number)).toBe(true);
     expect(hooks.taskProjectPriority({ projectPriority: 2.045 })).toBe(2.045);
     expect(Number.isNaN(hooks.taskProjectPriority({}))).toBe(true);
+  });
+
+  it("computes task report windows and color state classes", () => {
+    const hooks = loadHooks();
+
+    expect(hooks.taskReportRanges("7", "14", "2026-06-18")).toEqual({
+      completedDays: 7,
+      dueDays: 14,
+      completedAfter: "2026-06-11",
+      completedBefore: "2026-06-19",
+      dueAfter: "2026-06-18",
+      dueBefore: "2026-07-03",
+    });
+    expect(hooks.taskStateClass({ taskStatus: "done", due: "2026-06-01" }, "2026-06-18")).toBe(
+      "task-state-completed",
+    );
+    expect(hooks.taskStateClass({ taskStatus: "active", due: "2026-06-01" }, "2026-06-18")).toBe(
+      "task-state-overdue",
+    );
+    expect(hooks.taskStateClass({ taskStatus: "blocked", due: "2026-06-20" }, "2026-06-18")).toBe(
+      "task-state-blocked",
+    );
+    expect(hooks.taskStateClass({ taskStatus: "todo", due: "2026-06-20" }, "2026-06-18")).toBe("");
   });
 
   it("reverses due buckets when task sort is descending", () => {

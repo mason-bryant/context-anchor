@@ -1248,7 +1248,12 @@ None.
   async listTasksDue(input: ListTasksDueInput): Promise<{ tasks: TaskDueRow[] }> {
     const milestones = await this.listMilestones(input.project);
     const DEFAULT_STATUSES = new Set(["active", "todo", "blocked"]);
-    const statusFilter = input.status && input.status.length > 0 ? new Set(input.status) : DEFAULT_STATUSES;
+    const hasCompletedWindow = Boolean(input.completedAfter || input.completedBefore);
+    const hasDueWindow = Boolean(input.noDue || input.dueAfter || input.dueBefore);
+    const defaultStatuses = hasCompletedWindow
+      ? new Set(["active", "todo", "blocked", "done"])
+      : DEFAULT_STATUSES;
+    const statusFilter = input.status && input.status.length > 0 ? new Set(input.status) : defaultStatuses;
 
     const registry = await this.loadPeopleRegistry();
     const peopleIndex = buildPeopleIndex(registry);
@@ -1263,17 +1268,23 @@ None.
 
       const classification = classifyAnchorPath(milestone.name);
       const projectSlug = classification.kind === "anchor" ? classification.projectSlug : undefined;
+      if (input.maxProjectPriority !== undefined) {
+        if (milestone.projectPriority === undefined || milestone.projectPriority > input.maxProjectPriority) {
+          continue;
+        }
+      }
 
       for (const task of milestone.tasks) {
         if (!statusFilter.has(task.status)) continue;
 
         if (input.unassigned && task.owner && task.owner.trim().length > 0) continue;
 
-        if (input.noDue) {
-          if (task.due) continue;
+        const matchesDueWindow = taskMatchesDueWindow(task, input);
+        const matchesCompletedWindow = taskMatchesCompletedWindow(task, input);
+        if (hasDueWindow && hasCompletedWindow && !input.noDue) {
+          if (!matchesDueWindow && !matchesCompletedWindow) continue;
         } else {
-          if (input.dueBefore && task.due && task.due >= input.dueBefore) continue;
-          if (input.dueAfter && (!task.due || task.due < input.dueAfter)) continue;
+          if (!matchesDueWindow || !matchesCompletedWindow) continue;
         }
 
         const taskOwnerResolved = task.owner ? peopleIndex.resolveOwner(task.owner) : undefined;
@@ -1299,6 +1310,7 @@ None.
           taskStatus: task.status,
           ...(task.owner ? { taskOwner: task.owner } : {}),
           ...(task.due ? { due: task.due } : {}),
+          ...(task.completedOn ? { completedOn: task.completedOn } : {}),
           ...(task.dateConfidence ? { dateConfidence: task.dateConfidence } : {}),
           ...(task.notes ? { notes: task.notes } : {}),
           milestoneName: milestone.name,
@@ -2650,6 +2662,41 @@ function projectPriorityMap(anchors: AnchorMeta[]): Map<string, number> {
   }
 
   return priorities;
+}
+
+function taskMatchesDueWindow(task: MilestoneTaskMeta, input: ListTasksDueInput): boolean {
+  if (input.noDue) {
+    return !task.due;
+  }
+  if (!input.dueBefore && !input.dueAfter) {
+    return true;
+  }
+  if (!task.due) {
+    return Boolean(input.dueBefore && !input.dueAfter);
+  }
+  if (input.dueBefore && task.due >= input.dueBefore) {
+    return false;
+  }
+  if (input.dueAfter && task.due < input.dueAfter) {
+    return false;
+  }
+  return true;
+}
+
+function taskMatchesCompletedWindow(task: MilestoneTaskMeta, input: ListTasksDueInput): boolean {
+  if (!input.completedBefore && !input.completedAfter) {
+    return true;
+  }
+  if (!task.completedOn) {
+    return false;
+  }
+  if (input.completedBefore && task.completedOn >= input.completedBefore) {
+    return false;
+  }
+  if (input.completedAfter && task.completedOn < input.completedAfter) {
+    return false;
+  }
+  return true;
 }
 
 function compareAnchorTimestamp(

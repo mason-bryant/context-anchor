@@ -643,6 +643,64 @@ describe("UI HTTP routes", () => {
     expect(unassigned.tasks.map((t) => t.taskTitle)).toEqual(["free"]);
   });
 
+  it("filters task reports by completed/due windows and project priority through the tasks-due route", async () => {
+    await postJson("/api/ui/project-priority", { project: "demo", priority: 1.1, approved: true });
+    await service.writeAnchor({
+      name: "projects/low/low.md",
+      content: projectAnchorContent("low"),
+      message: "test: add low priority anchor",
+      approved: true,
+    });
+    await postJson("/api/ui/project-priority", { project: "low", priority: 4, approved: true });
+
+    await postJson("/api/ui/task-create", {
+      project: "demo",
+      title: "due soon",
+      due: "2026-06-20",
+      dateConfidence: "estimated",
+      approved: true,
+    });
+    const recent = await postJson<{ taskId?: string }>("/api/ui/task-create", {
+      project: "demo",
+      title: "recently done",
+      approved: true,
+    });
+    const old = await postJson<{ taskId?: string }>("/api/ui/task-create", {
+      project: "demo",
+      title: "old done",
+      approved: true,
+    });
+    await postJson("/api/ui/task-complete", {
+      taskId: recent.taskId,
+      project: "demo",
+      completedOn: "2026-06-17",
+      approved: true,
+    });
+    await postJson("/api/ui/task-complete", {
+      taskId: old.taskId,
+      project: "demo",
+      completedOn: "2026-05-30",
+      approved: true,
+    });
+    await postJson("/api/ui/task-create", {
+      project: "low",
+      title: "low priority due",
+      due: "2026-06-20",
+      dateConfidence: "estimated",
+      approved: true,
+    });
+
+    const report = await fetchJson<{
+      tasks: Array<{ taskTitle: string; taskStatus: string; completedOn?: string; projectPriority?: number }>;
+    }>(
+      "/api/ui/tasks-due?dueAfter=2026-06-18&dueBefore=2026-06-26&completedAfter=2026-06-11&completedBefore=2026-06-19&maxProjectPriority=2",
+    );
+
+    expect(report.tasks.map((task) => task.taskTitle)).toEqual(["due soon", "recently done"]);
+    expect(report.tasks.find((task) => task.taskTitle === "recently done")?.completedOn).toBe("2026-06-17");
+    expect(report.tasks.every((task) => task.projectPriority !== undefined && task.projectPriority <= 2)).toBe(true);
+  });
+
   it("updates task assignment through the UI routes", async () => {
     type TaskWrite = { taskId?: string; milestoneName?: string; warnings: { severity: string }[] };
     type TasksDue = { tasks: Array<{ taskId: string; taskOwner?: string }> };
@@ -841,10 +899,10 @@ async function postJson<T = unknown>(pathSuffix: string, body: unknown): Promise
   return (await response.json()) as T;
 }
 
-function projectAnchorContent(): string {
+function projectAnchorContent(project = "demo"): string {
   return `---
 project:
-  - demo
+  - ${project}
 type: context-anchor
 tags:
   - context-anchor

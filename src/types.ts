@@ -188,14 +188,20 @@ export type ListTasksDueInput = {
   dueBefore?: string;
   /** Include only tasks with due date on or after this ISO date. */
   dueAfter?: string;
+  /** Include done tasks completed before this ISO date (exclusive). */
+  completedBefore?: string;
+  /** Include done tasks completed on or after this ISO date. */
+  completedAfter?: string;
   /** When true, include only tasks that have no due date set. */
   noDue?: boolean;
-  /** Filter by task status. Defaults to active, todo, and blocked. */
+  /** Filter by task status. Defaults to active/todo/blocked, plus done when a completed window is set. */
   status?: MilestoneTaskStatus[];
   /** Filter by owner: person id, display name, email, slack id, team id, or team synonym. */
   owner?: string;
   /** When true, include only tasks that have no owner assigned. */
   unassigned?: boolean;
+  /** Include only tasks from projects with priority at or above this threshold (P1 before P2). */
+  maxProjectPriority?: number;
 };
 
 export type CreateTaskInput = {
@@ -261,6 +267,7 @@ export type TaskDueRow = {
   taskStatus: MilestoneTaskStatus;
   taskOwner?: string;
   due?: string;
+  completedOn?: string;
   dateConfidence?: DateConfidence;
   notes?: string;
   milestoneName: string;

@@ -202,18 +202,24 @@ export function registerUiRoutes(
       const project = optionalQueryString(req, "project");
       const dueBefore = optionalQueryString(req, "dueBefore");
       const dueAfter = optionalQueryString(req, "dueAfter");
+      const completedBefore = optionalQueryString(req, "completedBefore");
+      const completedAfter = optionalQueryString(req, "completedAfter");
       const noDue = req.query["noDue"] === "true";
       const unassigned = req.query["unassigned"] === "true";
       const statusRaw = optionalQueryString(req, "status");
       const status = statusRaw ? statusRaw.split(",") : undefined;
       const owner = optionalQueryString(req, "owner");
+      const maxProjectPriority = finiteNumberQuery(req, "maxProjectPriority");
       return service.listTasksDue({
         ...(project ? { project } : {}),
         ...(dueBefore ? { dueBefore } : {}),
         ...(dueAfter ? { dueAfter } : {}),
+        ...(completedBefore ? { completedBefore } : {}),
+        ...(completedAfter ? { completedAfter } : {}),
         ...(noDue ? { noDue } : {}),
         ...(unassigned ? { unassigned } : {}),
         ...(owner ? { owner } : {}),
+        ...(maxProjectPriority !== undefined ? { maxProjectPriority } : {}),
         status: status as ("todo" | "active" | "blocked" | "done" | "cancelled")[] | undefined,
       });
     }),
@@ -735,6 +741,18 @@ function booleanQuery(req: Request, key: string): boolean | undefined {
     return false;
   }
   throw new UiHttpError(400, `Invalid ${key}: expected a boolean`);
+}
+
+function finiteNumberQuery(req: Request, key: string): number | undefined {
+  const value = optionalQueryString(req, key);
+  if (value === undefined) {
+    return undefined;
+  }
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) {
+    throw new UiHttpError(400, `Invalid ${key}: expected a finite number`);
+  }
+  return parsed;
 }
 
 function positiveIntQuery(
