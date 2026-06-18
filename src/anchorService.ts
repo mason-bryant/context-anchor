@@ -110,6 +110,7 @@ import type {
   UpdateProjectPriorityInput,
   UpdateTaskDueInput,
   UpdateTaskOwnerInput,
+  UpdateTaskPriorityInput,
   ValidationViolation,
   WriteAnchorInput,
   WriteAnchorResult,
@@ -958,6 +959,22 @@ export class AnchorService {
     });
   }
 
+  async updateTaskPriority(input: UpdateTaskPriorityInput): Promise<WriteAnchorResult> {
+    const priorityViolation = validateTaskPriorityValue(input.priority);
+    if (priorityViolation) {
+      return { warnings: [priorityViolation], requiresApproval: false };
+    }
+
+    return this.updateTaskInMilestone(input, (task) => {
+      if (input.priority === null) {
+        delete task.priority;
+      } else {
+        task.priority = input.priority;
+      }
+      return task;
+    });
+  }
+
   private async updateTaskInMilestone(
     input: {
       name: string;
@@ -1131,6 +1148,13 @@ None.
         "date_confidence is required when due is set. Pass one of: committed, internal_goal, estimated.",
       );
     }
+    const priorityViolation = validateTaskPriorityValue(input.priority);
+    if (priorityViolation) {
+      return {
+        ...AnchorService.blockResult(priorityViolation.code, priorityViolation.message),
+        requiresApproval: false,
+      };
+    }
 
     const { effectiveProject } = await this.resolveProjectFilter(input.project);
     const projectSlug = effectiveProject ?? input.project;
@@ -1164,6 +1188,7 @@ None.
     const taskId = await this.nextTaskId(projectSlug);
     const task: Record<string, unknown> = { id: taskId, title, status };
     if (input.owner?.trim()) task.owner = input.owner.trim();
+    if (input.priority !== undefined) task.priority = input.priority;
     if (input.goalIds && input.goalIds.length > 0) task.goal_ids = input.goalIds;
     if (input.due) {
       task.due = input.due;
@@ -1309,6 +1334,7 @@ None.
           taskTitle: task.title,
           taskStatus: task.status,
           ...(task.owner ? { taskOwner: task.owner } : {}),
+          ...(task.priority !== undefined ? { taskPriority: task.priority } : {}),
           ...(task.due ? { due: task.due } : {}),
           ...(task.completedOn ? { completedOn: task.completedOn } : {}),
           ...(task.dateConfidence ? { dateConfidence: task.dateConfidence } : {}),
@@ -2727,6 +2753,20 @@ function validatePriorityValue(value: number | null): ValidationViolation | unde
     severity: "BLOCK",
     code: "project_priority_invalid",
     message: "Project priority must be a finite number or null to clear it.",
+  };
+}
+
+function validateTaskPriorityValue(value: number | null | undefined): ValidationViolation | undefined {
+  if (value === undefined || value === null) {
+    return undefined;
+  }
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return undefined;
+  }
+  return {
+    severity: "BLOCK",
+    code: "task_priority_invalid",
+    message: "Task priority must be a finite number or null to clear it.",
   };
 }
 

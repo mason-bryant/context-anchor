@@ -324,6 +324,23 @@ export function registerUiRoutes(
   );
 
   app.post(
+    "/api/ui/task-priority",
+    ...protect,
+    jsonRoute(async (req) => {
+      const body = bodyRecord(req);
+      return service.updateTaskPriority({
+        name: requiredBodyString(body, "name"),
+        taskId: requiredBodyString(body, "taskId"),
+        priority: nullableNumberBody(body, "priority"),
+        message: optionalBodyString(body, "message"),
+        approved: booleanBody(body, "approved"),
+        coAuthor: optionalBodyString(body, "coAuthor"),
+        expectedFileCommit: optionalBodyString(body, "expectedFileCommit"),
+      });
+    }),
+  );
+
+  app.post(
     "/api/ui/task-create",
     ...protect,
     jsonRoute(async (req) => {
@@ -344,6 +361,7 @@ export function registerUiRoutes(
           | "cancelled"
           | undefined,
         owner: optionalBodyString(body, "owner"),
+        priority: optionalNumberBody(body, "priority"),
         due: optionalBodyString(body, "due"),
         dateConfidence: optionalBodyString(body, "dateConfidence") as
           | "committed"
@@ -726,6 +744,23 @@ function nullableNumberBody(body: Record<string, unknown>, key: string): number 
     }
   }
   throw new UiHttpError(400, `Invalid ${key}: expected a finite number or null`);
+}
+
+function optionalNumberBody(body: Record<string, unknown>, key: string): number | undefined {
+  const value = body[key];
+  if (value === undefined || value === null) {
+    return undefined;
+  }
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+  if (typeof value === "string" && value.trim().length > 0) {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) {
+      return parsed;
+    }
+  }
+  throw new UiHttpError(400, `Invalid ${key}: expected a finite number`);
 }
 
 function booleanQuery(req: Request, key: string): boolean | undefined {

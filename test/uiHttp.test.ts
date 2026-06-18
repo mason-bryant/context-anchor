@@ -593,12 +593,13 @@ describe("UI HTTP routes", () => {
 
   it("creates, lists, completes, and deletes a task through the UI routes", async () => {
     type TaskWrite = { taskId?: string; milestoneName?: string; version?: string; warnings: { severity: string }[] };
-    type TasksDue = { tasks: Array<{ taskId: string; taskTitle: string; taskStatus: string; taskOwner?: string }> };
+    type TasksDue = { tasks: Array<{ taskId: string; taskTitle: string; taskStatus: string; taskOwner?: string; taskPriority?: number }> };
 
     // Create on a project with no milestones — the backlog milestone is auto-created.
     const created = await postJson<TaskWrite>("/api/ui/task-create", {
       project: "demo",
       title: "Follow up on the thing",
+      priority: 2.5,
       approved: true,
     });
     expect(created.warnings.filter((w) => w.severity === "BLOCK")).toEqual([]);
@@ -609,6 +610,7 @@ describe("UI HTTP routes", () => {
     const row = listed.tasks.find((t) => t.taskId === "T-1");
     expect(row?.taskTitle).toBe("Follow up on the thing");
     expect(row?.taskOwner).toBeUndefined();
+    expect(row?.taskPriority).toBe(2.5);
 
     // Complete it, then confirm it only shows under a done-status query.
     const completed = await postJson<TaskWrite>("/api/ui/task-complete", {
@@ -730,6 +732,37 @@ describe("UI HTTP routes", () => {
     expect(cleared.warnings.filter((w) => w.severity === "BLOCK")).toEqual([]);
     listed = await fetchJson<TasksDue>("/api/ui/tasks-due?project=demo");
     expect(listed.tasks.find((task) => task.taskId === created.taskId)?.taskOwner).toBeUndefined();
+  });
+
+  it("updates task priority through the UI routes", async () => {
+    type TaskWrite = { taskId?: string; milestoneName?: string; warnings: { severity: string }[] };
+    type TasksDue = { tasks: Array<{ taskId: string; taskPriority?: number }> };
+
+    const created = await postJson<TaskWrite>("/api/ui/task-create", {
+      project: "demo",
+      title: "prioritize through UI",
+      approved: true,
+    });
+
+    const assigned = await postJson<TaskWrite>("/api/ui/task-priority", {
+      name: created.milestoneName,
+      taskId: created.taskId,
+      priority: 1.2,
+      approved: true,
+    });
+    expect(assigned.warnings.filter((w) => w.severity === "BLOCK")).toEqual([]);
+    let listed = await fetchJson<TasksDue>("/api/ui/tasks-due?project=demo");
+    expect(listed.tasks.find((task) => task.taskId === created.taskId)?.taskPriority).toBe(1.2);
+
+    const cleared = await postJson<TaskWrite>("/api/ui/task-priority", {
+      name: created.milestoneName,
+      taskId: created.taskId,
+      priority: null,
+      approved: true,
+    });
+    expect(cleared.warnings.filter((w) => w.severity === "BLOCK")).toEqual([]);
+    listed = await fetchJson<TasksDue>("/api/ui/tasks-due?project=demo");
+    expect(listed.tasks.find((task) => task.taskId === created.taskId)?.taskPriority).toBeUndefined();
   });
 
   it("blocks task creation with a due date but no date confidence", async () => {

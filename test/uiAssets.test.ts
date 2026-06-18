@@ -44,6 +44,7 @@ type UiAssetHooks = {
   ): Array<{ label: string; cls?: string; projectPriority?: number; tasks: Array<Record<string, unknown>> }>;
   taskGroupPriority(tasks: Array<Record<string, unknown>>): number;
   taskProjectPriority(task: Record<string, unknown>): number;
+  taskPriority(task: Record<string, unknown>): number;
   taskReportRanges(
     completedDaysRaw: string,
     dueDaysRaw: string,
@@ -182,7 +183,7 @@ describe("UI browser assets", () => {
     expect(UI_HTML).toContain('id="tasks-sort"');
     expect(UI_HTML).toContain('id="tasks-completed-days" type="number"');
     expect(UI_HTML).toContain('id="tasks-due-days" type="number"');
-    expect(UI_HTML).toContain('id="tasks-priority-max" type="number"');
+    expect(UI_HTML).toContain('id="tasks-project-priority-max" type="number"');
     expect(UI_HTML).toContain("Group: Project");
     expect(UI_HTML).toContain("Due date ascending");
     expect(UI_HTML).toContain("Active / Todo / Blocked / Done");
@@ -190,8 +191,11 @@ describe("UI browser assets", () => {
     expect(UI_JS).toContain('"tasksSort"');
     expect(UI_JS).toContain('"tasksCompletedDays"');
     expect(UI_JS).toContain('"tasksDueDays"');
+    expect(UI_JS).toContain('"tasksProjectPriorityMax"');
     expect(UI_JS).toContain('"tasksPriorityMax"');
+    expect(UI_JS).toContain("project-priority-badge");
     expect(UI_JS).toContain("task-priority-badge");
+    expect(UI_JS).toContain("task-priority-form");
     expect(UI_JS).toContain("task-owner-form");
     expect(UI_JS).toContain("task-owner-suggestions");
     expect(UI_HTML).toContain('id="project-slug-suggestions"');
@@ -200,16 +204,20 @@ describe("UI browser assets", () => {
     expect(UI_HTML).toContain('id="people-search"');
     expect(UI_HTML).toContain('id="teams-search"');
     expect(UI_JS).toContain("/api/ui/task-owner");
+    expect(UI_JS).toContain("/api/ui/task-priority");
     expect(UI_JS).toContain("/api/ui/people-search");
     expect(UI_HTML).toContain('id="new-task-project" type="text" placeholder="anchor-mcp" list="project-slug-suggestions" autocomplete="off"');
     expect(UI_HTML).toContain('id="new-task-owner" type="text" placeholder="person or team — blank = unassigned" list="task-owner-suggestions" autocomplete="off"');
+    expect(UI_HTML).toContain('id="new-task-priority" type="number"');
     expect(UI_HTML).toContain('id="new-task-milestone" type="text" placeholder="blank = project backlog" list="milestone-anchor-suggestions" autocomplete="off"');
     expect(UI_HTML).toContain('id="new-person-teams" type="text" placeholder="platform, frontend" list="team-id-suggestions" autocomplete="off"');
+    expect(UI_CSS).toContain(".project-priority-badge");
     expect(UI_CSS).toContain(".task-priority-badge");
     expect(UI_CSS).toContain(".task-row.task-state-blocked");
     expect(UI_CSS).toContain(".task-row.task-state-completed");
     expect(UI_CSS).toContain(".task-row.task-state-overdue");
     expect(UI_CSS).toContain(".task-owner-form");
+    expect(UI_CSS).toContain(".task-priority-form");
     expect(UI_CSS).toContain(".registry-search");
   });
 
@@ -348,6 +356,9 @@ describe("UI browser assets", () => {
     expect(Number.isNaN(groups[1]?.projectPriority as number)).toBe(true);
     expect(hooks.taskProjectPriority({ projectPriority: 2.045 })).toBe(2.045);
     expect(Number.isNaN(hooks.taskProjectPriority({}))).toBe(true);
+    expect(hooks.taskPriority({ taskPriority: 3 })).toBe(3);
+    expect(hooks.taskPriority({ priority: 4 })).toBe(4);
+    expect(Number.isNaN(hooks.taskPriority({}))).toBe(true);
   });
 
   it("computes task report windows and color state classes", () => {

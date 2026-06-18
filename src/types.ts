@@ -45,6 +45,8 @@ export type MilestoneTaskMeta = {
   id: string;
   title: string;
   status: MilestoneTaskStatus;
+  /** Optional task-level priority. Project priority stays on project anchors. */
+  priority?: number;
   owner?: string;
   goalIds?: string[];
   due?: string;
@@ -174,6 +176,19 @@ export type UpdateTaskOwnerInput = {
   expectedFileCommit?: string;
 };
 
+export type UpdateTaskPriorityInput = {
+  /** Milestone anchor name containing the task. */
+  name: string;
+  /** Task id to update. */
+  taskId: string;
+  /** Numeric task priority to set, or null to clear it. */
+  priority: number | null;
+  message?: string;
+  approved?: boolean;
+  coAuthor?: string;
+  expectedFileCommit?: string;
+};
+
 export type PersonSearchMatch = {
   id: string;
   displayName: string;
@@ -215,6 +230,8 @@ export type CreateTaskInput = {
   status?: MilestoneTaskStatus;
   /** Owner: person id/name/email/slack or team id/synonym. Omit to leave unassigned. */
   owner?: string;
+  /** Optional task-level priority. */
+  priority?: number;
   /** ISO date (YYYY-MM-DD). Requires dateConfidence when set. */
   due?: string;
   /** Required when due is set. */
@@ -266,6 +283,8 @@ export type TaskDueRow = {
   taskTitle: string;
   taskStatus: MilestoneTaskStatus;
   taskOwner?: string;
+  /** Task-level priority stored on the task itself, when set. */
+  taskPriority?: number;
   due?: string;
   completedOn?: string;
   dateConfidence?: DateConfidence;
