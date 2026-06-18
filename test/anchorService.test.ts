@@ -1377,6 +1377,39 @@ describe("AnchorService task write APIs", () => {
     expect(tasks.map((t) => t.taskTitle)).toEqual(["free"]);
   });
 
+  it("listTasksDue includes project priority for task display", async () => {
+    await service.writeAnchor({ name: "projects/demo/demo", content: projectAnchorContent() });
+    await service.updateProjectPriority({ project: "demo", priority: 1.1, approved: true });
+    await service.createTask({ project: "demo", title: "prioritized" });
+
+    const { tasks } = await service.listTasksDue({ project: "demo" });
+
+    expect(tasks.find((task) => task.taskTitle === "prioritized")?.projectPriority).toBe(1.1);
+  });
+
+  it("updateTaskOwner assigns and clears a task owner", async () => {
+    await service.writeAnchor({ name: "projects/demo/demo", content: projectAnchorContent() });
+    const created = await service.createTask({ project: "demo", title: "assign me" });
+
+    const assigned = await service.updateTaskOwner({
+      name: created.milestoneName!,
+      taskId: created.taskId!,
+      owner: "alice",
+    });
+    expect(noBlocks(assigned)).toEqual([]);
+    let listed = await service.listTasksDue({ project: "demo" });
+    expect(listed.tasks.find((task) => task.taskId === created.taskId)?.taskOwner).toBe("alice");
+
+    const cleared = await service.updateTaskOwner({
+      name: created.milestoneName!,
+      taskId: created.taskId!,
+      owner: null,
+    });
+    expect(noBlocks(cleared)).toEqual([]);
+    listed = await service.listTasksDue({ project: "demo" });
+    expect(listed.tasks.find((task) => task.taskId === created.taskId)?.taskOwner).toBeUndefined();
+  });
+
   it("completeTask marks a task done with a completion date", async () => {
     await service.writeAnchor({ name: "projects/demo/demo", content: projectAnchorContent() });
     const created = await service.createTask({ project: "demo", title: "finish me" });

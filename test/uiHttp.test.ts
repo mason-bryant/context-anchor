@@ -500,6 +500,39 @@ describe("UI HTTP routes", () => {
     expect(registry.teams[0]?.projects).toEqual([{ project: "demo", role: "executive_sponsor" }]);
   });
 
+  it("searches people by display name and name alias for task assignment", async () => {
+    await postJson("/api/ui/people-registry", {
+      registry: {
+        people: [
+          {
+            id: "jdoe",
+            displayName: "Jane Doe",
+            identities: { names: ["JD", "Janie"] },
+          },
+          {
+            id: "asmith",
+            displayName: "Alice Smith",
+            identities: { names: ["Ace"] },
+          },
+        ],
+        teams: [],
+      },
+    });
+
+    const alias = await fetchJson<{ people: Array<{ id: string; displayName: string; matched: string; value: string }> }>(
+      "/api/ui/people-search?q=JD",
+    );
+    expect(alias.people[0]).toMatchObject({
+      id: "jdoe",
+      displayName: "Jane Doe",
+      matched: "JD",
+      value: "Jane Doe",
+    });
+
+    const name = await fetchJson<{ people: Array<{ id: string }> }>("/api/ui/people-search?q=alice");
+    expect(name.people.map((person) => person.id)).toEqual(["asmith"]);
+  });
+
   it("guards concurrent registry writes with an optimistic file-commit check", async () => {
     await postJson("/api/ui/people-registry", {
       registry: { people: [{ id: "jdoe", displayName: "Jane Doe" }], teams: [] },
@@ -608,6 +641,37 @@ describe("UI HTTP routes", () => {
       "/api/ui/tasks-due?project=demo&unassigned=true",
     );
     expect(unassigned.tasks.map((t) => t.taskTitle)).toEqual(["free"]);
+  });
+
+  it("updates task assignment through the UI routes", async () => {
+    type TaskWrite = { taskId?: string; milestoneName?: string; warnings: { severity: string }[] };
+    type TasksDue = { tasks: Array<{ taskId: string; taskOwner?: string }> };
+
+    const created = await postJson<TaskWrite>("/api/ui/task-create", {
+      project: "demo",
+      title: "assign through UI",
+      approved: true,
+    });
+
+    const assigned = await postJson<TaskWrite>("/api/ui/task-owner", {
+      name: created.milestoneName,
+      taskId: created.taskId,
+      owner: "alice",
+      approved: true,
+    });
+    expect(assigned.warnings.filter((w) => w.severity === "BLOCK")).toEqual([]);
+    let listed = await fetchJson<TasksDue>("/api/ui/tasks-due?project=demo");
+    expect(listed.tasks.find((task) => task.taskId === created.taskId)?.taskOwner).toBe("alice");
+
+    const cleared = await postJson<TaskWrite>("/api/ui/task-owner", {
+      name: created.milestoneName,
+      taskId: created.taskId,
+      owner: null,
+      approved: true,
+    });
+    expect(cleared.warnings.filter((w) => w.severity === "BLOCK")).toEqual([]);
+    listed = await fetchJson<TasksDue>("/api/ui/tasks-due?project=demo");
+    expect(listed.tasks.find((task) => task.taskId === created.taskId)?.taskOwner).toBeUndefined();
   });
 
   it("blocks task creation with a due date but no date confidence", async () => {

@@ -139,7 +139,8 @@ last_validated: '2026-06-17'
 - Project priorities shipped in PR #36 (2026-06-16): numeric `priority` front matter on project anchors, `sort=priority` in anchor listing, `updateProjectPriority` MCP tool, priority display and editing in the UI.
 - Task due dates shipped in PR #37 (2026-06-16): `updateTaskDue` and `listTasksDue` MCP tools, Tasks tab in the UI with overdue/due-soon/upcoming/no-due grouping and inline date editing.
 - Structured task write APIs (Goal G-007) shipped in PR #40 (2026-06-17): `createTask`/`completeTask`/`deleteTask` MCP tools and `/api/ui/task-*` routes, backlog milestone auto-create, project-wide `T-<n>` ids, milestone-path guards, an `unassigned` filter, and Tasks-UI create/complete/delete controls with clickable owner cross-links.
-- People and teams registry (Goal G-006) is implemented in PR #39 (in review): `people-registry.json` with identity-aware fuzzy owner resolution, RACI project associations, People/Teams UI tabs and reverse view, and optimistic-concurrency-guarded writes.
+- Tasks UI follow-up work adds project grouping, due-date sorting, project priority display, inline owner reassignment, and search-while-you-type suggestions for task owners, new-task projects, and milestone fields.
+- People and teams registry (Goal G-006) is implemented in PR #39 (in review): `people-registry.json` with identity-aware fuzzy owner resolution, RACI project associations, People/Teams UI tabs and reverse view, search-while-you-type card filtering, typeahead suggestions for team/project fields, and optimistic-concurrency-guarded writes.
 
 ## Decisions
 

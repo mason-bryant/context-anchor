@@ -161,6 +161,27 @@ export type UpdateTaskDueInput = {
   expectedFileCommit?: string;
 };
 
+export type UpdateTaskOwnerInput = {
+  /** Milestone anchor name containing the task. */
+  name: string;
+  /** Task id to update. */
+  taskId: string;
+  /** Owner string to set, or null/empty to clear the assignment. */
+  owner: string | null;
+  message?: string;
+  approved?: boolean;
+  coAuthor?: string;
+  expectedFileCommit?: string;
+};
+
+export type PersonSearchMatch = {
+  id: string;
+  displayName: string;
+  aliases: string[];
+  matched: string;
+  value: string;
+};
+
 export type ListTasksDueInput = {
   project?: string;
   /** Include only tasks with due date before this ISO date (exclusive). */
@@ -246,6 +267,8 @@ export type TaskDueRow = {
   milestoneDisplayId?: string;
   milestoneStatus: string;
   project?: string;
+  /** Project-level priority inherited from the task's project anchor, when set. */
+  projectPriority?: number;
   /** Resolved person from the people registry, when the task owner matches a known person. */
   resolvedPerson?: { id: string; displayName: string };
   /** Resolved team from the people registry, when the task owner matches a known team. */

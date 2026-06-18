@@ -85,6 +85,7 @@ import type {
   ProjectUpdateMilestoneStatus,
   ProjectUpdateSnapshot,
   ProjectUpdateSnapshotInput,
+  PersonSearchMatch,
   ProposeChangeInput,
   ProposeChangeResult,
   ProposedChangeListInput,
@@ -108,6 +109,7 @@ import type {
   DeleteTaskInput,
   UpdateProjectPriorityInput,
   UpdateTaskDueInput,
+  UpdateTaskOwnerInput,
   ValidationViolation,
   WriteAnchorInput,
   WriteAnchorResult,
@@ -132,6 +134,8 @@ type MilestoneListRow = {
   path: string;
   status: string;
   theme: string;
+  project?: string;
+  projectPriority?: number;
   steelThread?: string;
   goalIds: string[];
   milestoneId?: string;
@@ -184,6 +188,56 @@ export class AnchorService {
     const teamId = resolvedTeam?.id ?? needle;
     const members = index.getTeamMembers(teamId);
     return { people: members };
+  }
+
+  async searchPeople(query: string, limit = 10): Promise<{ people: PersonSearchMatch[] }> {
+    const registry = await this.loadPeopleRegistry();
+    const needle = query.toLowerCase().trim();
+    if (!needle) {
+      return { people: [] };
+    }
+
+    const matches = registry.people.flatMap((person): Array<PersonSearchMatch & { score: number }> => {
+      const aliases = person.identities?.names ?? [];
+      const candidates = [person.displayName, person.id, ...aliases];
+      let best: { value: string; score: number } | undefined;
+
+      for (const candidate of candidates) {
+        const normalized = candidate.toLowerCase();
+        let score: number | undefined;
+        if (normalized === needle) {
+          score = 0;
+        } else if (normalized.startsWith(needle)) {
+          score = 1;
+        } else if (normalized.includes(needle)) {
+          score = 2;
+        }
+        if (score !== undefined && (!best || score < best.score || (score === best.score && candidate.length < best.value.length))) {
+          best = { value: candidate, score };
+        }
+      }
+
+      if (!best) {
+        return [];
+      }
+
+      return [
+        {
+          id: person.id,
+          displayName: person.displayName,
+          aliases,
+          matched: best.value,
+          value: person.displayName,
+          score: best.score,
+        },
+      ];
+    });
+
+    matches.sort((left, right) => left.score - right.score || left.displayName.localeCompare(right.displayName) || left.id.localeCompare(right.id));
+
+    return {
+      people: matches.slice(0, Math.max(1, Math.min(limit, 25))).map(({ score: _score, ...match }) => match),
+    };
   }
 
   async readPerson(id: string): Promise<{ person: Person | null }> {
@@ -880,53 +934,7 @@ export class AnchorService {
       };
     }
 
-    const rawContent = await this.repo.readRaw(input.name);
-    if (rawContent === undefined) {
-      return {
-        warnings: [
-          {
-            severity: "BLOCK",
-            code: "missing_anchor",
-            message: `Anchor not found: ${input.name}`,
-          },
-        ],
-      };
-    }
-
-    const parsed = parseAnchor(rawContent);
-    const rawTasks = parsed.frontmatter.tasks;
-    if (!Array.isArray(rawTasks)) {
-      return {
-        warnings: [
-          {
-            severity: "BLOCK",
-            code: "no_tasks",
-            message: `Anchor has no tasks array: ${input.name}`,
-          },
-        ],
-      };
-    }
-
-    const taskIdx = rawTasks.findIndex(
-      (t): t is Record<string, unknown> =>
-        !!t && typeof t === "object" && !Array.isArray(t) && (t as Record<string, unknown>).id === input.taskId,
-    );
-
-    if (taskIdx === -1) {
-      return {
-        warnings: [
-          {
-            severity: "BLOCK",
-            code: "task_not_found",
-            message: `Task "${input.taskId}" not found in ${input.name}`,
-          },
-        ],
-      };
-    }
-
-    const updatedTasks = rawTasks.map((t, i) => {
-      if (i !== taskIdx || typeof t !== "object" || !t) return t;
-      const task = { ...(t as Record<string, unknown>) };
+    return this.updateTaskInMilestone(input, (task) => {
       if (input.due === null) {
         delete task.due;
         delete task.date_confidence;
@@ -935,6 +943,55 @@ export class AnchorService {
         task.date_confidence = input.dateConfidence;
       }
       return task;
+    });
+  }
+
+  async updateTaskOwner(input: UpdateTaskOwnerInput): Promise<WriteAnchorResult> {
+    return this.updateTaskInMilestone(input, (task) => {
+      const owner = input.owner?.trim() ?? "";
+      if (owner) {
+        task.owner = owner;
+      } else {
+        delete task.owner;
+      }
+      return task;
+    });
+  }
+
+  private async updateTaskInMilestone(
+    input: {
+      name: string;
+      taskId: string;
+      message?: string;
+      approved?: boolean;
+      coAuthor?: string;
+      expectedFileCommit?: string;
+    },
+    updateTask: (task: Record<string, unknown>) => Record<string, unknown>,
+  ): Promise<WriteAnchorResult> {
+    const rawContent = await this.repo.readRaw(input.name);
+    if (rawContent === undefined) {
+      return AnchorService.blockResult("missing_anchor", `Anchor not found: ${input.name}`);
+    }
+
+    const parsed = parseAnchor(rawContent);
+    const rawTasks = parsed.frontmatter.tasks;
+    if (!Array.isArray(rawTasks)) {
+      return AnchorService.blockResult("no_tasks", `Anchor has no tasks array: ${input.name}`);
+    }
+
+    const taskIdx = rawTasks.findIndex(
+      (t): t is Record<string, unknown> =>
+        !!t && typeof t === "object" && !Array.isArray(t) && (t as Record<string, unknown>).id === input.taskId,
+    );
+
+    if (taskIdx === -1) {
+      return AnchorService.blockResult("task_not_found", `Task "${input.taskId}" not found in ${input.name}`);
+    }
+
+    const updatedTasks = rawTasks.map((t, i) => {
+      if (i !== taskIdx || typeof t !== "object" || !t) return t;
+      return updateTask({ ...(t as Record<string, unknown>) });
     });
 
     return this.updateAnchorFrontmatter({
@@ -1242,6 +1299,7 @@ None.
           ...(milestone.displayId ? { milestoneDisplayId: milestone.displayId } : {}),
           milestoneStatus: milestone.status,
           ...(projectSlug ? { project: projectSlug } : {}),
+          ...(milestone.projectPriority !== undefined ? { projectPriority: milestone.projectPriority } : {}),
           ...(taskOwnerResolved?.kind === "person"
             ? { resolvedPerson: { id: taskOwnerResolved.person.id, displayName: taskOwnerResolved.person.displayName } }
             : {}),
@@ -2032,10 +2090,14 @@ None.
     const anchors = await this.repo.listAnchors({
       ...(effectiveProject ? { project: effectiveProject } : {}),
     });
+    const projectPriorityBySlug = projectPriorityMap(anchors);
     const rows = anchors
       .filter((anchor) => anchor.name.includes("/milestones/") && anchor.milestone)
       .map((anchor) => {
         const m = anchor.milestone!;
+        const classification = classifyAnchorPath(anchor.name);
+        const projectSlug = classification.kind === "anchor" ? classification.projectSlug : undefined;
+        const projectPriority = projectSlug ? projectPriorityBySlug.get(projectSlug) : undefined;
         let displayId: string | undefined;
         if (m.milestoneId === "backlog") {
           displayId = "backlog";
@@ -2049,6 +2111,8 @@ None.
           path: anchor.path,
           status: m.status,
           theme: m.theme,
+          ...(projectSlug !== undefined ? { project: projectSlug } : {}),
+          ...(projectPriority !== undefined ? { projectPriority } : {}),
           ...(m.steelThread !== undefined ? { steelThread: m.steelThread } : {}),
           goalIds: m.goalIds,
           ...(m.milestoneId !== undefined ? { milestoneId: m.milestoneId } : {}),
@@ -2549,6 +2613,37 @@ function compareAnchorPriority(left: AnchorMeta, right: AnchorMeta): number {
   const leftPriority = typeof left.priority === "number" && Number.isFinite(left.priority) ? left.priority : Number.POSITIVE_INFINITY;
   const rightPriority = typeof right.priority === "number" && Number.isFinite(right.priority) ? right.priority : Number.POSITIVE_INFINITY;
   return leftPriority === rightPriority ? 0 : leftPriority < rightPriority ? -1 : 1;
+}
+
+function projectPriorityMap(anchors: AnchorMeta[]): Map<string, number> {
+  const candidatesByProject = new Map<string, AnchorMeta[]>();
+
+  for (const anchor of anchors) {
+    const classification = classifyAnchorPath(anchor.name);
+    if (classification.kind !== "anchor" || classification.category !== "projects" || anchor.name.includes("/milestones/")) {
+      continue;
+    }
+    const projectSlug = classification.projectSlug;
+    if (!projectSlug) {
+      continue;
+    }
+    const items = candidatesByProject.get(projectSlug) ?? [];
+    items.push(anchor);
+    candidatesByProject.set(projectSlug, items);
+  }
+
+  const priorities = new Map<string, number>();
+  for (const [project, candidates] of candidatesByProject.entries()) {
+    const preferred =
+      candidates.find((meta) => meta.name === `projects/${project}/${project}.md`) ??
+      candidates.find((meta) => !frontmatterTypeIncludes(meta.type, "project-roadmap") && !isProposedChangesType(meta.type)) ??
+      candidates.find((meta) => frontmatterTypeIncludes(meta.type, "project-roadmap"));
+    if (typeof preferred?.priority === "number" && Number.isFinite(preferred.priority)) {
+      priorities.set(project, preferred.priority);
+    }
+  }
+
+  return priorities;
 }
 
 function compareAnchorTimestamp(

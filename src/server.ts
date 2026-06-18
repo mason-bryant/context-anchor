@@ -716,6 +716,37 @@ the index when your workflow checks in that file.`,
   );
 
   server.registerTool(
+    "updateTaskOwner",
+    {
+      title: "Update Task Owner",
+      description:
+        "Set or clear the owner assignment for a specific task in a milestone anchor. Pass owner as a person/team identifier or null to clear assignment.",
+      inputSchema: z.object({
+        name: z.string().describe("Milestone anchor name containing the task."),
+        taskId: z.string().describe("Task id to update."),
+        owner: z.union([z.string(), z.null()]).describe("Owner string to set, or null to clear assignment."),
+        message: z.string().optional(),
+        approved: z.boolean().default(false),
+        coAuthor: z.string().optional(),
+        expectedFileCommit: z.string().optional(),
+      }),
+      annotations: { destructiveHint: false, idempotentHint: false },
+    },
+    async ({ name, taskId, owner, message, approved, coAuthor, expectedFileCommit }) => {
+      const result = await service.updateTaskOwner({
+        name,
+        taskId,
+        owner,
+        message,
+        approved,
+        coAuthor,
+        expectedFileCommit,
+      });
+      return jsonResult(result, result.version ? false : true);
+    },
+  );
+
+  server.registerTool(
     "listTasksDue",
     {
       title: "List Tasks by Due Date",

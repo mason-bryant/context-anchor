@@ -226,6 +226,12 @@ export function registerUiRoutes(
   );
 
   app.get(
+    "/api/ui/people-search",
+    ...protect,
+    jsonRoute(async (req) => service.searchPeople(requiredQueryString(req, "q"), positiveIntQuery(req, "limit", 25) ?? 10)),
+  );
+
+  app.get(
     "/api/ui/person",
     ...protect,
     jsonRoute(async (req) => service.readPerson(requiredQueryString(req, "id"))),
@@ -285,6 +291,24 @@ export function registerUiRoutes(
         taskId: requiredBodyString(body, "taskId"),
         due,
         dateConfidence: optionalBodyString(body, "dateConfidence") as "committed" | "internal_goal" | "estimated" | undefined,
+        message: optionalBodyString(body, "message"),
+        approved: booleanBody(body, "approved"),
+        coAuthor: optionalBodyString(body, "coAuthor"),
+        expectedFileCommit: optionalBodyString(body, "expectedFileCommit"),
+      });
+    }),
+  );
+
+  app.post(
+    "/api/ui/task-owner",
+    ...protect,
+    jsonRoute(async (req) => {
+      const body = bodyRecord(req);
+      const owner = body["owner"] === null ? null : optionalBodyString(body, "owner") ?? null;
+      return service.updateTaskOwner({
+        name: requiredBodyString(body, "name"),
+        taskId: requiredBodyString(body, "taskId"),
+        owner,
         message: optionalBodyString(body, "message"),
         approved: booleanBody(body, "approved"),
         coAuthor: optionalBodyString(body, "coAuthor"),

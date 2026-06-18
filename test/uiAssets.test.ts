@@ -4,6 +4,9 @@ import { describe, expect, it } from "vitest";
 
 import { UI_CSS, UI_HTML, UI_JS } from "../src/ui/assets.js";
 
+type UiSuggestion = { value: string; label: string; searchText?: string };
+type UiRegistry = { people: Array<Record<string, unknown>>; teams: Array<Record<string, unknown>> };
+
 type UiAssetHooks = {
   renderMarkdown(markdown: string): string;
   sanitizeLinkHref(href: string): string | null;
@@ -31,6 +34,31 @@ type UiAssetHooks = {
     excludedRemoved: string[];
     tokenDelta: number;
   } | null;
+  sortTasksForDisplay(tasks: Array<Record<string, unknown>>, sortMode: string): Array<Record<string, unknown>>;
+  taskGroupsForDisplay(
+    tasks: Array<Record<string, unknown>>,
+    groupBy: string,
+    sortMode: string,
+    today: string,
+    soon: string,
+  ): Array<{ label: string; cls?: string; projectPriority?: number; tasks: Array<Record<string, unknown>> }>;
+  taskGroupPriority(tasks: Array<Record<string, unknown>>): number;
+  taskProjectPriority(task: Record<string, unknown>): number;
+  rememberTaskOwnerMatches(matches: Array<Record<string, unknown>>): void;
+  taskOwnerCachedMatches(query: string): Array<{ id: string; displayName: string; aliases: string[]; matched: string; value: string }>;
+  taskOwnerAssignmentValue(value: string): string;
+  peopleForDisplay(registry: UiRegistry, query: string): Array<Record<string, unknown>>;
+  teamsForDisplay(registry: UiRegistry, query: string): Array<Record<string, unknown>>;
+  projectSuggestionOptions(): UiSuggestion[];
+  milestoneSuggestionOptions(): UiSuggestion[];
+  teamSuggestionOptions(query: string): UiSuggestion[];
+  resolveTeamIdsFromCsv(value: string): string[];
+  setTypeaheadStateForTest(nextState: {
+    anchors?: Array<Record<string, unknown>>;
+    tasks?: Array<Record<string, unknown>>;
+    registry?: UiRegistry | null;
+  }): void;
+  setTasksDisplayForTest(groupBy: string, sortMode: string): void;
   shouldHandleClientNavigation(event: Record<string, unknown>, link: { getAttribute(name: string): string | null }): boolean;
   parsePlannerLogPaste(text: unknown): Record<string, unknown> | null;
   buildJudgePrompt(plan: Record<string, unknown>, anchorBodies: Record<string, string>): string;
@@ -134,6 +162,193 @@ describe("UI browser assets", () => {
     expect(UI_HTML).toContain('id="planner-load-context"');
     expect(UI_HTML).toContain('id="planner-comparison"');
     expect(UI_HTML).toContain('id="planner-raw"');
+  });
+
+  it("includes task grouping and due-date sort controls", () => {
+    expect(UI_HTML).toContain('id="tasks-group-by"');
+    expect(UI_HTML).toContain('id="tasks-sort"');
+    expect(UI_HTML).toContain("Group: Project");
+    expect(UI_HTML).toContain("Due date ascending");
+    expect(UI_JS).toContain('"tasksGroup"');
+    expect(UI_JS).toContain('"tasksSort"');
+    expect(UI_JS).toContain("task-priority-badge");
+    expect(UI_JS).toContain("task-owner-form");
+    expect(UI_JS).toContain("task-owner-suggestions");
+    expect(UI_HTML).toContain('id="project-slug-suggestions"');
+    expect(UI_HTML).toContain('id="milestone-anchor-suggestions"');
+    expect(UI_HTML).toContain('id="team-id-suggestions"');
+    expect(UI_HTML).toContain('id="people-search"');
+    expect(UI_HTML).toContain('id="teams-search"');
+    expect(UI_JS).toContain("/api/ui/task-owner");
+    expect(UI_JS).toContain("/api/ui/people-search");
+    expect(UI_HTML).toContain('id="new-task-project" type="text" placeholder="anchor-mcp" list="project-slug-suggestions" autocomplete="off"');
+    expect(UI_HTML).toContain('id="new-task-owner" type="text" placeholder="person or team — blank = unassigned" list="task-owner-suggestions" autocomplete="off"');
+    expect(UI_HTML).toContain('id="new-task-milestone" type="text" placeholder="blank = project backlog" list="milestone-anchor-suggestions" autocomplete="off"');
+    expect(UI_HTML).toContain('id="new-person-teams" type="text" placeholder="platform, frontend" list="team-id-suggestions" autocomplete="off"');
+    expect(UI_CSS).toContain(".task-priority-badge");
+    expect(UI_CSS).toContain(".task-owner-form");
+    expect(UI_CSS).toContain(".registry-search");
+  });
+
+  it("caches the last ten task owner person matches for quick reuse", () => {
+    const hooks = loadHooks();
+    Array.from({ length: 12 }, (_value, index) => ({
+      id: `p${index}`,
+      displayName: `Person ${index}`,
+      aliases: [`Alias ${index}`],
+      matched: `Alias ${index}`,
+      value: `Person ${index}`,
+    })).forEach((match) => hooks.rememberTaskOwnerMatches([match]));
+
+    expect(hooks.taskOwnerCachedMatches("").map((match) => match.displayName)).toEqual([
+      "Person 11",
+      "Person 10",
+      "Person 9",
+      "Person 8",
+      "Person 7",
+      "Person 6",
+      "Person 5",
+      "Person 4",
+      "Person 3",
+      "Person 2",
+    ]);
+    expect(hooks.taskOwnerCachedMatches("alias 3").map((match) => match.displayName)).toEqual(["Person 3"]);
+    expect(hooks.taskOwnerAssignmentValue("Alias 3")).toBe("Person 3");
+    expect(hooks.taskOwnerAssignmentValue("Unknown Alias")).toBe("Unknown Alias");
+  });
+
+  it("filters registry cards and suggests known registry/project values while typing", () => {
+    const hooks = loadHooks();
+    const registry: UiRegistry = {
+      people: [
+        {
+          id: "jdoe",
+          displayName: "Jane Doe",
+          identities: { names: ["Janie"], emails: ["jane@example.com"] },
+          teams: ["platform"],
+          projects: [{ project: "alpha", role: "lead" }],
+        },
+        { id: "asmith", displayName: "Alice Smith", teams: ["design"] },
+      ],
+      teams: [
+        {
+          id: "platform",
+          displayName: "Platform Team",
+          synonyms: ["core-platform"],
+          slackHandles: ["platform-team"],
+          projects: [{ project: "gamma", role: "responsible" }],
+        },
+        { id: "design", displayName: "Design" },
+      ],
+    };
+    hooks.setTypeaheadStateForTest({
+      registry,
+      anchors: [
+        { name: "projects/alpha/alpha.md", projectSlug: "alpha" },
+        { name: "projects/alpha/milestones/backlog.md", projectSlug: "alpha", title: "Backlog" },
+      ],
+      tasks: [
+        {
+          project: "beta",
+          milestoneName: "projects/beta/milestones/m1.md",
+          milestoneDisplayId: "M1",
+        },
+      ],
+    });
+
+    expect(hooks.peopleForDisplay(registry, "Janie").map((person) => person.id)).toEqual(["jdoe"]);
+    expect(hooks.peopleForDisplay(registry, "core-platform").map((person) => person.id)).toEqual(["jdoe"]);
+    expect(hooks.teamsForDisplay(registry, "Jane").map((team) => team.id)).toEqual(["platform"]);
+    expect(hooks.teamSuggestionOptions("core").map((team) => team.value)).toEqual(["platform"]);
+    expect(hooks.resolveTeamIdsFromCsv("Platform Team, platform-team, unknown")).toEqual(["platform", "platform", "unknown"]);
+    expect(hooks.projectSuggestionOptions().map((project) => project.value)).toEqual(["alpha", "beta", "gamma"]);
+    expect(hooks.milestoneSuggestionOptions().map((milestone) => milestone.value)).toEqual([
+      "projects/alpha/milestones/backlog.md",
+      "projects/beta/milestones/m1.md",
+    ]);
+  });
+
+  it("groups tasks by project while sorting each group by due date", () => {
+    const hooks = loadHooks();
+    const tasks = [
+      {
+        taskId: "T-3",
+        taskTitle: "Later beta",
+        project: "beta",
+        milestoneName: "projects/beta/milestones/backlog.md",
+        due: "2026-08-15",
+      },
+      {
+        taskId: "T-1",
+        taskTitle: "No due alpha",
+        project: "alpha",
+        milestoneName: "projects/alpha/milestones/backlog.md",
+      },
+      {
+        taskId: "T-2",
+        taskTitle: "Soon alpha",
+        project: "alpha",
+        milestoneName: "projects/alpha/milestones/backlog.md",
+        due: "2026-06-20",
+      },
+      {
+        taskId: "T-4",
+        taskTitle: "Unscoped",
+        milestoneName: "shared/misc.md",
+        due: "2026-06-18",
+      },
+    ];
+
+    const groups = hooks.taskGroupsForDisplay(tasks, "project", "dueAsc", "2026-06-17", "2026-07-01");
+
+    expect(groups.map((group) => group.label)).toEqual(["alpha", "beta", "No project"]);
+    expect(groups[0]?.tasks.map((task) => task.taskId)).toEqual(["T-2", "T-1"]);
+    expect(groups[1]?.tasks.map((task) => task.taskId)).toEqual(["T-3"]);
+    expect(groups[2]?.tasks.map((task) => task.taskId)).toEqual(["T-4"]);
+  });
+
+  it("carries project priority into project task groups", () => {
+    const hooks = loadHooks();
+    const groups = hooks.taskGroupsForDisplay(
+      [
+        { taskId: "T-1", taskTitle: "First", project: "alpha", milestoneName: "m1", projectPriority: 2.045 },
+        { taskId: "T-2", taskTitle: "Second", project: "alpha", milestoneName: "m1", projectPriority: 1.1 },
+        { taskId: "T-3", taskTitle: "Third", project: "beta", milestoneName: "m2" },
+      ],
+      "project",
+      "dueAsc",
+      "2026-06-17",
+      "2026-07-01",
+    );
+
+    expect(hooks.priorityLabel(groups[0]?.projectPriority as number)).toBe("P1.1");
+    expect(Number.isNaN(groups[1]?.projectPriority as number)).toBe(true);
+    expect(hooks.taskProjectPriority({ projectPriority: 2.045 })).toBe(2.045);
+    expect(Number.isNaN(hooks.taskProjectPriority({}))).toBe(true);
+  });
+
+  it("reverses due buckets when task sort is descending", () => {
+    const hooks = loadHooks();
+    const groups = hooks.taskGroupsForDisplay(
+      [
+        { taskId: "T-1", taskTitle: "Past", milestoneName: "m1", due: "2026-06-01" },
+        { taskId: "T-2", taskTitle: "Soon", milestoneName: "m1", due: "2026-06-20" },
+        { taskId: "T-3", taskTitle: "Later", milestoneName: "m1", due: "2026-08-15" },
+        { taskId: "T-4", taskTitle: "No due", milestoneName: "m1" },
+      ],
+      "due",
+      "dueDesc",
+      "2026-06-17",
+      "2026-07-01",
+    );
+
+    expect(groups.map((group) => group.label)).toEqual([
+      "Upcoming",
+      "Due within 14 days",
+      "Overdue",
+      "No due date",
+    ]);
+    expect(groups.flatMap((group) => group.tasks.map((task) => task.taskId))).toEqual(["T-3", "T-2", "T-1", "T-4"]);
   });
 
   it("includes guarded editing and proposal review surfaces", () => {
