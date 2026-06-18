@@ -11,7 +11,7 @@ summary: >-
 read_this_if:
   - Planning or prioritizing anchor-mcp work.
   - Checking definition of done for context-conductor milestones.
-last_validated: '2026-06-16'
+last_validated: '2026-06-17'
 ---
 
 # Context conductor roadmap
@@ -104,6 +104,32 @@ last_validated: '2026-06-16'
 
 - [ ] AC-P002: Add relation kinds (`supersedes`, `valid_until`) to the relations overlay once a concrete need exists. Evidence: relations validation and `src/relations` coverage when scheduled.
 
+### Goal G-006 -- People and teams registry
+
+#### Acceptance Criteria
+
+#### Approved
+
+- [x] AC-016: `people-registry.json` is parsed and validated by a single `parsePeopleRegistry`; people carry identities (slack/confluence/emails/name aliases), teams carry synonyms/slack handles, and both carry RACI-style project associations (`{ project, role }`). Evidence: `test/peopleRegistry.test.ts`, `test/uiHttp.test.ts`.
+
+- [x] AC-017: Owner resolution is fuzzy (id, display name, email, slack, confluence, aliases, synonyms, handles) with person-over-team precedence and exact-id precedence over colliding aliases; `listTasksDue` gains `owner` and `unassigned` filters. Evidence: `test/peopleRegistry.test.ts`.
+
+- [x] AC-018: Registry writes use optimistic concurrency (`expectedFileCommit` → HTTP 409 / `PeopleRegistryConflictError`) and are normalized through `parsePeopleRegistry`; the registry cache is keyed on the file's git commit so background AutoSync changes are not served stale. Evidence: `test/uiHttp.test.ts`, `test/anchorService.test.ts`.
+
+- [x] AC-019: People and Teams UI tabs provide inline add/edit/delete, keyboard-accessible cross-links, and an "associations by project" reverse view. Evidence: PR #39.
+
+### Goal G-007 -- Structured task write APIs
+
+#### Acceptance Criteria
+
+#### Approved
+
+- [x] AC-020: `createTask` appends a task to a project milestone, defaulting to an auto-created backlog milestone (`milestone_id: backlog`); ids are project-wide unique `T-<n>`; `due` requires `dateConfidence`. Evidence: `test/anchorService.test.ts`, `test/uiHttp.test.ts`.
+
+- [x] AC-021: `completeTask` and `deleteTask` locate a task by id within a milestone or across a project, and task mutations are restricted to project milestone paths via an `isMilestonePath` guard (non-milestone targets return `invalid_milestone`). Evidence: `test/anchorService.test.ts`.
+
+- [x] AC-022: `listTasksDue` supports an `unassigned` filter; the Tasks UI adds create/complete/delete controls and renders task owners as clickable cross-links to their registry entry, or an "Unassigned" badge. Evidence: `test/uiHttp.test.ts`, PR #40.
+
 ## Current State
 
 - Roadmap is maintained alongside shipped behavior in `context-conductor.md`.
@@ -112,14 +138,20 @@ last_validated: '2026-06-16'
 - Goal G-005 retrieval quality hardening shipped in PR #34 (2026-06-15): CI `npm run eval` gate, strict UI boolean query parsing. Proposed AC-P001 and AC-P002 (registry and relation-kinds extensions) remain parked until a concrete need arises.
 - Project priorities shipped in PR #36 (2026-06-16): numeric `priority` front matter on project anchors, `sort=priority` in anchor listing, `updateProjectPriority` MCP tool, priority display and editing in the UI.
 - Task due dates shipped in PR #37 (2026-06-16): `updateTaskDue` and `listTasksDue` MCP tools, Tasks tab in the UI with overdue/due-soon/upcoming/no-due grouping and inline date editing.
+- Structured task write APIs (Goal G-007) shipped in PR #40 (2026-06-17): `createTask`/`completeTask`/`deleteTask` MCP tools and `/api/ui/task-*` routes, backlog milestone auto-create, project-wide `T-<n>` ids, milestone-path guards, an `unassigned` filter, and Tasks-UI create/complete/delete controls with clickable owner cross-links.
+- Tasks UI follow-up work adds project grouping, due-date sorting, project priority display, inline owner reassignment, and search-while-you-type suggestions for task owners, new-task projects, and milestone fields.
+- People and teams registry (Goal G-006) is implemented in PR #39 (in review): `people-registry.json` with identity-aware fuzzy owner resolution, RACI project associations, People/Teams UI tabs and reverse view, search-while-you-type card filtering, typeahead suggestions for team/project fields, and optimistic-concurrency-guarded writes.
 
 ## Decisions
 
 - Acceptance criteria for planned work stay in this roadmap until shipped facts move to the context anchor.
+- People and teams live in a single `people-registry.json` (a lookup table), not individual anchors; `parsePeopleRegistry`/`VALID_ROLES` is the single source of truth for shape and association roles.
+- Structured tasks remain sub-objects of milestone anchors; task write tools only target project milestone paths so tasks stay visible to `listTasksDue` and share its `T-<n>` id space.
 
 ## Constraints
 
 - Roadmap body must satisfy `project-roadmap` shape rules enforced by anchor-mcp validators.
+- The association role list is duplicated across `AssociationRole` (types), `VALID_ROLES` (registry validation), and the UI dropdown; all three must be kept in sync because the UI bundle is a static string that cannot import the TypeScript source.
 
 ## PRs
 
@@ -127,3 +159,5 @@ last_validated: '2026-06-16'
 - [PR Retrieval quality hardening and operability (G-005) - #34](https://github.com/mason-bryant/context-anchor/pull/34)
 - [PR Add project priorities - #36](https://github.com/mason-bryant/context-anchor/pull/36)
 - [PR Add task due dates - #37](https://github.com/mason-bryant/context-anchor/pull/37)
+- [PR People & teams registry with project associations - #39](https://github.com/mason-bryant/context-anchor/pull/39)
+- [PR First-class task write APIs - #40](https://github.com/mason-bryant/context-anchor/pull/40)

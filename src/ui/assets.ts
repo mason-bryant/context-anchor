@@ -270,7 +270,7 @@ export const UI_HTML = `<!doctype html>
           <section id="tasks-view" class="view">
             <div class="view-header">
               <div>
-                <h2>Tasks by Due Date</h2>
+                <h2>Tasks</h2>
                 <p id="tasks-summary">Tasks across all milestones.</p>
               </div>
               <div class="tasks-filters">
@@ -285,6 +285,14 @@ export const UI_HTML = `<!doctype html>
                   <option value="done,cancelled">Done / Cancelled</option>
                   <option value="">All statuses</option>
                 </select>
+                <select id="tasks-group-by" aria-label="Group tasks">
+                  <option value="due">Group: Due date</option>
+                  <option value="project">Group: Project</option>
+                </select>
+                <select id="tasks-sort" aria-label="Sort tasks">
+                  <option value="dueAsc">Due date ascending</option>
+                  <option value="dueDesc">Due date descending</option>
+                </select>
                 <label class="checkbox-label"><input type="checkbox" id="tasks-no-due"> No due date only</label>
                 <label class="checkbox-label"><input type="checkbox" id="tasks-unassigned"> Unassigned only</label>
                 <button id="tasks-add" type="button">+ Add Task</button>
@@ -294,9 +302,9 @@ export const UI_HTML = `<!doctype html>
             <div id="tasks-add-form" class="registry-add-form" hidden>
               <h3>New Task</h3>
               <div class="form-grid">
-                <label>Project<input id="new-task-project" type="text" placeholder="anchor-mcp"></label>
+                <label>Project<input id="new-task-project" type="text" placeholder="anchor-mcp" list="project-slug-suggestions" autocomplete="off"></label>
                 <label>Title<input id="new-task-title" type="text" placeholder="Follow up on X"></label>
-                <label>Owner (optional)<input id="new-task-owner" type="text" placeholder="person or team — blank = unassigned"></label>
+                <label>Owner (optional)<input id="new-task-owner" type="text" placeholder="person or team — blank = unassigned" list="task-owner-suggestions" autocomplete="off"></label>
                 <label>Status<select id="new-task-status">
                   <option value="todo">todo</option>
                   <option value="active">active</option>
@@ -308,7 +316,7 @@ export const UI_HTML = `<!doctype html>
                   <option value="internal_goal">internal_goal</option>
                   <option value="committed">committed</option>
                 </select></label>
-                <label>Milestone (optional)<input id="new-task-milestone" type="text" placeholder="blank = project backlog"></label>
+                <label>Milestone (optional)<input id="new-task-milestone" type="text" placeholder="blank = project backlog" list="milestone-anchor-suggestions" autocomplete="off"></label>
               </div>
               <div class="action-row">
                 <button id="new-task-save" type="button">Save</button>
@@ -317,6 +325,10 @@ export const UI_HTML = `<!doctype html>
               <p id="new-task-result" class="registry-result"></p>
             </div>
             <div id="tasks-empty" class="empty-state">No tasks match the current filters.</div>
+            <datalist id="task-owner-suggestions"></datalist>
+            <datalist id="project-slug-suggestions"></datalist>
+            <datalist id="milestone-anchor-suggestions"></datalist>
+            <datalist id="team-id-suggestions"></datalist>
             <div id="tasks-list" hidden></div>
           </section>
 
@@ -327,6 +339,7 @@ export const UI_HTML = `<!doctype html>
                 <p id="people-summary">People registry.</p>
               </div>
               <div class="action-row">
+                <input id="people-search" class="registry-search" type="search" placeholder="Search people" aria-label="Search people">
                 <button id="people-add" type="button">+ Add Person</button>
                 <button id="people-refresh" type="button">Refresh</button>
               </div>
@@ -340,7 +353,7 @@ export const UI_HTML = `<!doctype html>
                 <label>Confluence ID<input id="new-person-confluence" type="text" placeholder="jdoe"></label>
                 <label>Emails (comma-separated)<input id="new-person-emails" type="text" placeholder="jane@co.com"></label>
                 <label>Name aliases (comma-separated)<input id="new-person-names" type="text" placeholder="Jane, J. Doe"></label>
-                <label>Teams (comma-separated)<input id="new-person-teams" type="text" placeholder="platform, frontend"></label>
+                <label>Teams (comma-separated)<input id="new-person-teams" type="text" placeholder="platform, frontend" list="team-id-suggestions" autocomplete="off"></label>
               </div>
               <div class="action-row">
                 <button id="new-person-save" type="button">Save</button>
@@ -363,6 +376,7 @@ export const UI_HTML = `<!doctype html>
                 <p id="teams-summary">Teams registry.</p>
               </div>
               <div class="action-row">
+                <input id="teams-search" class="registry-search" type="search" placeholder="Search teams" aria-label="Search teams">
                 <button id="teams-add" type="button">+ Add Team</button>
                 <button id="teams-refresh" type="button">Refresh</button>
               </div>
@@ -1362,8 +1376,24 @@ textarea {
 }
 
 .task-title-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
   font-size: 14px;
   font-weight: 500;
+}
+
+.task-priority-badge {
+  border-color: var(--accent);
+  color: var(--accent);
+  font-weight: 700;
+}
+
+.task-priority-badge.missing {
+  border-color: var(--border);
+  color: var(--muted);
+  font-weight: 600;
 }
 
 .task-milestone-link {
@@ -1376,16 +1406,26 @@ textarea {
   text-decoration: underline;
 }
 
-.task-due-form {
+.task-edit-forms {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  align-items: flex-end;
+  min-width: 220px;
+}
+
+.task-due-form,
+.task-owner-form {
   display: flex;
   flex-direction: column;
   gap: 4px;
   align-items: flex-end;
-  min-width: 200px;
+  width: 100%;
 }
 
 .task-due-form input[type="date"],
-.task-due-form select {
+.task-due-form select,
+.task-owner-form input[type="text"] {
   font: inherit;
   font-size: 12px;
   background: var(--panel);
@@ -1395,12 +1435,20 @@ textarea {
   color: var(--text);
 }
 
-.task-due-controls {
+.task-owner-form input[type="text"] {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 180px;
+}
+
+.task-due-controls,
+.task-owner-controls {
   display: flex;
   gap: 4px;
 }
 
-.task-due-result {
+.task-due-result,
+.task-owner-result {
   font-size: 11px;
   color: var(--muted);
   max-width: 200px;
@@ -1434,6 +1482,11 @@ textarea {
   display: grid;
   gap: 12px;
   padding: 4px 0;
+}
+
+.registry-search {
+  min-width: 180px;
+  max-width: 260px;
 }
 
 .registry-card {
@@ -1650,6 +1703,8 @@ textarea {
 
 export const UI_JS = `(function () {
   var DEFAULT_ANCHOR_SORT = "priority";
+  var DEFAULT_TASK_GROUP_BY = "due";
+  var DEFAULT_TASK_SORT = "dueAsc";
   var ANCHOR_BATCH_SIZE = 50;
   var KNOWN_URL_PARAMS = [
     "anchor",
@@ -1676,6 +1731,8 @@ export const UI_JS = `(function () {
     "proposal",
     "tasksProject",
     "tasksStatus",
+    "tasksGroup",
+    "tasksSort",
     "tasksNoDue",
     "tasksUnassigned"
   ];
@@ -1705,11 +1762,18 @@ export const UI_JS = `(function () {
     tasksLoading: false,
     tasksProject: "",
     tasksStatus: "active,todo,blocked",
+    tasksGroupBy: DEFAULT_TASK_GROUP_BY,
+    tasksSort: DEFAULT_TASK_SORT,
     tasksNoDue: false,
     tasksUnassigned: false,
+    taskOwnerMatchCache: [],
+    taskOwnerSearchTimer: null,
+    taskOwnerSearchSeq: 0,
     registry: null,
     registryLoading: false,
     registryFileCommit: null,
+    peopleSearch: "",
+    teamsSearch: "",
     selectedPersonId: null,
     selectedTeamId: null
   };
@@ -1795,6 +1859,14 @@ export const UI_JS = `(function () {
     return value === "raw" || value === "frontmatter" || value === "rendered" ? value : "rendered";
   }
 
+  function validTasksGroupBy(value) {
+    return value === "project" ? "project" : DEFAULT_TASK_GROUP_BY;
+  }
+
+  function validTasksSort(value) {
+    return value === "dueDesc" ? "dueDesc" : DEFAULT_TASK_SORT;
+  }
+
   function applyUrlStateToControls() {
     var params = new URLSearchParams(window.location.search);
     state.pendingAnchor = readAnchorFromLocation();
@@ -1829,10 +1901,14 @@ export const UI_JS = `(function () {
 
     state.tasksProject = params.get("tasksProject") || "";
     state.tasksStatus = params.get("tasksStatus") || "active,todo,blocked";
+    state.tasksGroupBy = validTasksGroupBy(params.get("tasksGroup"));
+    state.tasksSort = validTasksSort(params.get("tasksSort"));
     state.tasksNoDue = params.get("tasksNoDue") === "true";
     state.tasksUnassigned = params.get("tasksUnassigned") === "true";
     setSelectValueAllowingNew("tasks-project-filter", state.tasksProject);
     setControlValue("tasks-status-filter", state.tasksStatus);
+    setControlValue("tasks-group-by", state.tasksGroupBy);
+    setControlValue("tasks-sort", state.tasksSort);
     setControlChecked("tasks-no-due", state.tasksNoDue);
     setControlChecked("tasks-unassigned", state.tasksUnassigned);
   }
@@ -1912,6 +1988,10 @@ export const UI_JS = `(function () {
     setParam(params, "tasksProject", controlValue("tasks-project-filter", sourceParams.get("tasksProject") || ""));
     var tasksStatus = controlValue("tasks-status-filter", sourceParams.get("tasksStatus") || "active,todo,blocked");
     setNonDefaultParam(params, "tasksStatus", tasksStatus, "active,todo,blocked");
+    var tasksGroupBy = validTasksGroupBy(controlValue("tasks-group-by", sourceParams.get("tasksGroup") || DEFAULT_TASK_GROUP_BY));
+    setNonDefaultParam(params, "tasksGroup", tasksGroupBy, DEFAULT_TASK_GROUP_BY);
+    var tasksSort = validTasksSort(controlValue("tasks-sort", sourceParams.get("tasksSort") || DEFAULT_TASK_SORT));
+    setNonDefaultParam(params, "tasksSort", tasksSort, DEFAULT_TASK_SORT);
     if (controlChecked("tasks-no-due", state.tasksNoDue)) {
       params.set("tasksNoDue", "true");
     }
@@ -2476,6 +2556,7 @@ export const UI_JS = `(function () {
     plannerTagSelect.value = currentPlannerTag && tags.includes(currentPlannerTag) ? currentPlannerTag : "";
     plannerCategorySelect.value = categories.includes(currentPlannerCategory) ? currentPlannerCategory : "";
     tasksProjectSelect.value = currentTasksProject && projects.includes(currentTasksProject) ? currentTasksProject : "";
+    refreshTypeaheadOptions();
   }
 
   function filteredAnchors() {
@@ -3476,6 +3557,7 @@ export const UI_JS = `(function () {
     try {
       var result = await api(url);
       state.tasks = result.tasks || [];
+      refreshTypeaheadOptions();
       renderTasks();
     } catch (error) {
       setBanner(error.message, "error");
@@ -3490,7 +3572,11 @@ export const UI_JS = `(function () {
     var title = (el("new-task-title").value || "").trim();
     if (!project) { resultEl.textContent = "Project is required."; return; }
     if (!title) { resultEl.textContent = "Title is required."; return; }
-    var owner = (el("new-task-owner").value || "").trim();
+    var ownerInput = el("new-task-owner");
+    var rawOwner = ownerInput.value || "";
+    if (rawOwner.trim()) resultEl.textContent = "Resolving owner...";
+    var owner = await resolveTaskOwnerAssignmentValue(rawOwner);
+    if (ownerInput.value.trim() !== owner) ownerInput.value = owner;
     var due = (el("new-task-due").value || "").trim();
     var confidence = el("new-task-confidence").value;
     var status = el("new-task-status").value;
@@ -3509,6 +3595,7 @@ export const UI_JS = `(function () {
       return;
     }
     resultEl.textContent = "Created " + (res.taskId || "task") + ".";
+    if (owner) rememberTaskOwnerName(owner);
     ["new-task-title", "new-task-owner", "new-task-due", "new-task-milestone"].forEach(function (id) { el(id).value = ""; });
     el("tasks-add-form").hidden = true;
     state.tasks = [];
@@ -3519,6 +3606,8 @@ export const UI_JS = `(function () {
     var list = el("tasks-list");
     var emptyEl = el("tasks-empty");
     var summary = el("tasks-summary");
+    var groupBy = validTasksGroupBy(controlValue("tasks-group-by", state.tasksGroupBy));
+    var sortMode = validTasksSort(controlValue("tasks-sort", state.tasksSort));
 
     if (!state.tasks || state.tasks.length === 0) {
       list.hidden = true;
@@ -3532,44 +3621,38 @@ export const UI_JS = `(function () {
 
     var today = new Date().toISOString().slice(0, 10);
     var soon = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
-
-    var overdue = [];
-    var dueSoon = [];
-    var upcoming = [];
-    var noDue = [];
-
-    state.tasks.forEach(function (task) {
-      if (!task.due) {
-        noDue.push(task);
-      } else if (task.due < today) {
-        overdue.push(task);
-      } else if (task.due <= soon) {
-        dueSoon.push(task);
-      } else {
-        upcoming.push(task);
-      }
-    });
+    var groups = taskGroupsForDisplay(state.tasks, groupBy, sortMode, today, soon);
+    var overdue = state.tasks.filter(function (task) { return task.due && task.due < today; });
+    var noDue = state.tasks.filter(function (task) { return !task.due; });
 
     var html = "";
 
-    function renderGroup(label, tasks, cls) {
+    function renderGroup(group) {
+      var label = group.label;
+      var tasks = group.tasks;
+      var cls = group.cls || "";
       if (tasks.length === 0) return "";
-      var out = "<div class=\\"task-group-header " + (cls || "") + "\\">" + escapeHtml(label) + " (" + tasks.length + ")</div>";
+      var priority = Number.isFinite(group.projectPriority) ? priorityLabel(group.projectPriority) : "";
+      var heading = priority ? priority + " · " + label : label;
+      var out = "<div class=\\"task-group-header " + (cls || "") + "\\">" + escapeHtml(heading) + " (" + tasks.length + ")</div>";
       tasks.forEach(function (task) {
         out += renderTaskRow(task);
       });
       return out;
     }
 
-    html += renderGroup("Overdue", overdue, "overdue");
-    html += renderGroup("Due within 14 days", dueSoon, "due-soon");
-    html += renderGroup("Upcoming", upcoming, "");
-    html += renderGroup("No due date", noDue, "");
+    groups.forEach(function (group) {
+      html += renderGroup(group);
+    });
 
     list.innerHTML = html;
 
     var total = state.tasks.length;
-    summary.textContent = total + " task" + (total === 1 ? "" : "s") + " · " + overdue.length + " overdue · " + noDue.length + " without due date";
+    summary.textContent = total + " task" + (total === 1 ? "" : "s")
+      + " · " + overdue.length + " overdue"
+      + " · " + noDue.length + " without due date"
+      + " · grouped by " + (groupBy === "project" ? "project" : "due date")
+      + " · " + (sortMode === "dueDesc" ? "due date descending" : "due date ascending");
 
     list.querySelectorAll(".task-milestone-link").forEach(function (btn) {
       btn.addEventListener("click", function () {
@@ -3591,6 +3674,63 @@ export const UI_JS = `(function () {
         if (!window.confirm("Delete task " + row.dataset.taskId + "?")) return;
         runTaskLifecycle("/api/ui/task-delete", row, "Deleting...");
       });
+    });
+
+    list.querySelectorAll(".task-owner-form").forEach(function (form) {
+      wireTaskOwnerSearch(form);
+      form.addEventListener("submit", async function (e) {
+        e.preventDefault();
+        var taskId = form.dataset.taskId;
+        var milestoneName = form.dataset.milestoneName;
+        var ownerInput = form.querySelector(".task-owner-input");
+        var resultEl = form.querySelector(".task-owner-result");
+        var rawOwner = ownerInput ? ownerInput.value : "";
+        if (rawOwner.trim()) resultEl.textContent = "Resolving owner...";
+        var owner = await resolveTaskOwnerAssignmentValue(rawOwner);
+        if (ownerInput && ownerInput.value.trim() !== owner) ownerInput.value = owner;
+        resultEl.textContent = owner ? "Assigning..." : "Clearing...";
+        try {
+          var res = await apiPost("/api/ui/task-owner", {
+            name: milestoneName,
+            taskId: taskId,
+            owner: owner || null,
+            approved: true
+          });
+          if (res.warnings && res.warnings.some(function(w) { return w.severity === "BLOCK"; })) {
+            resultEl.textContent = res.warnings.map(function(w) { return w.message; }).join("; ");
+          } else {
+            resultEl.textContent = owner ? "Assigned." : "Cleared.";
+            if (owner) rememberTaskOwnerName(owner);
+            state.tasks = [];
+            loadTasks();
+          }
+        } catch (err) {
+          resultEl.textContent = err.message;
+        }
+      });
+      var clearOwnerBtn = form.querySelector(".task-owner-clear");
+      if (clearOwnerBtn) {
+        clearOwnerBtn.addEventListener("click", async function () {
+          var taskId = form.dataset.taskId;
+          var milestoneName = form.dataset.milestoneName;
+          var ownerInput = form.querySelector(".task-owner-input");
+          var resultEl = form.querySelector(".task-owner-result");
+          if (ownerInput) ownerInput.value = "";
+          resultEl.textContent = "Clearing...";
+          try {
+            var res = await apiPost("/api/ui/task-owner", { name: milestoneName, taskId: taskId, owner: null, approved: true });
+            if (res.warnings && res.warnings.some(function(w) { return w.severity === "BLOCK"; })) {
+              resultEl.textContent = res.warnings.map(function(w) { return w.message; }).join("; ");
+            } else {
+              resultEl.textContent = "Cleared.";
+              state.tasks = [];
+              loadTasks();
+            }
+          } catch (err) {
+            resultEl.textContent = err.message;
+          }
+        });
+      }
     });
 
     list.querySelectorAll(".task-due-form").forEach(function (form) {
@@ -3654,10 +3794,272 @@ export const UI_JS = `(function () {
     });
   }
 
+  function taskGroupsForDisplay(tasks, groupBy, sortMode, today, soon) {
+    var sorted = sortTasksForDisplay(tasks, sortMode);
+    if (groupBy === "project") {
+      return projectTaskGroups(sorted);
+    }
+    return dueTaskGroups(sorted, today, soon, sortMode);
+  }
+
+  function sortTasksForDisplay(tasks, sortMode) {
+    var direction = validTasksSort(sortMode);
+    return (tasks || []).slice().sort(function (left, right) {
+      var dueCompare = compareTaskDue(left, right, direction);
+      if (dueCompare !== 0) {
+        return dueCompare;
+      }
+      return taskStableLabel(left).localeCompare(taskStableLabel(right));
+    });
+  }
+
+  function compareTaskDue(left, right, sortMode) {
+    var leftDue = left && left.due ? String(left.due) : "";
+    var rightDue = right && right.due ? String(right.due) : "";
+    if (leftDue && rightDue) {
+      return sortMode === "dueDesc" ? rightDue.localeCompare(leftDue) : leftDue.localeCompare(rightDue);
+    }
+    if (leftDue) {
+      return -1;
+    }
+    if (rightDue) {
+      return 1;
+    }
+    return 0;
+  }
+
+  function taskStableLabel(task) {
+    return [
+      task && task.project ? task.project : "",
+      task && task.milestoneName ? task.milestoneName : "",
+      task && task.taskId ? task.taskId : "",
+      task && task.taskTitle ? task.taskTitle : ""
+    ].join("\\u0000");
+  }
+
+  function dueTaskGroups(sortedTasks, today, soon, sortMode) {
+    var overdue = [];
+    var dueSoon = [];
+    var upcoming = [];
+    var noDue = [];
+
+    sortedTasks.forEach(function (task) {
+      if (!task.due) {
+        noDue.push(task);
+      } else if (task.due < today) {
+        overdue.push(task);
+      } else if (task.due <= soon) {
+        dueSoon.push(task);
+      } else {
+        upcoming.push(task);
+      }
+    });
+
+    var groups = sortMode === "dueDesc"
+      ? [
+        { label: "Upcoming", tasks: upcoming },
+        { label: "Due within 14 days", tasks: dueSoon, cls: "due-soon" },
+        { label: "Overdue", tasks: overdue, cls: "overdue" },
+        { label: "No due date", tasks: noDue }
+      ]
+      : [
+        { label: "Overdue", tasks: overdue, cls: "overdue" },
+        { label: "Due within 14 days", tasks: dueSoon, cls: "due-soon" },
+        { label: "Upcoming", tasks: upcoming },
+        { label: "No due date", tasks: noDue }
+      ];
+    return groups.filter(function (group) { return group.tasks.length > 0; });
+  }
+
+  function projectTaskGroups(sortedTasks) {
+    var byProject = new Map();
+    sortedTasks.forEach(function (task) {
+      var project = task.project || "No project";
+      if (!byProject.has(project)) {
+        byProject.set(project, []);
+      }
+      byProject.get(project).push(task);
+    });
+    return Array.from(byProject.entries()).sort(function (left, right) {
+      if (left[0] === "No project") return 1;
+      if (right[0] === "No project") return -1;
+      return left[0].localeCompare(right[0]);
+    }).map(function (entry) {
+      return { label: entry[0], tasks: entry[1], projectPriority: taskGroupPriority(entry[1]) };
+    });
+  }
+
+  function taskGroupPriority(tasks) {
+    var priorities = tasks.map(function (task) {
+      return taskProjectPriority(task);
+    }).filter(function (priority) {
+      return Number.isFinite(priority);
+    });
+    return priorities.length ? Math.min.apply(null, priorities) : NaN;
+  }
+
+  function taskProjectPriority(task) {
+    var priority = task && task.projectPriority;
+    return typeof priority === "number" && Number.isFinite(priority) ? priority : NaN;
+  }
+
+  function wireTaskOwnerSearch(form) {
+    wireTaskOwnerInput(form.querySelector(".task-owner-input"));
+  }
+
+  function wireTaskOwnerInput(input) {
+    if (!input) return;
+    input.addEventListener("focus", function () {
+      renderTaskOwnerSuggestions(input.value || "", []);
+    });
+    input.addEventListener("input", function () {
+      queueTaskOwnerSearch(input);
+    });
+  }
+
+  function queueTaskOwnerSearch(input) {
+    if (state.taskOwnerSearchTimer) {
+      clearTimeout(state.taskOwnerSearchTimer);
+    }
+    state.taskOwnerSearchTimer = setTimeout(function () {
+      searchTaskOwners(input);
+    }, 120);
+  }
+
+  async function searchTaskOwners(input) {
+    var query = (input && input.value ? input.value : "").trim();
+    renderTaskOwnerSuggestions(query, []);
+    if (!query || !document.body.contains(input)) {
+      return;
+    }
+    var seq = ++state.taskOwnerSearchSeq;
+    try {
+      var result = await api("/api/ui/people-search?q=" + encodeURIComponent(query) + "&limit=10");
+      if (seq !== state.taskOwnerSearchSeq || !document.body.contains(input)) {
+        return;
+      }
+      var matches = normalizeTaskOwnerMatches(result.people || []);
+      rememberTaskOwnerMatches(matches);
+      renderTaskOwnerSuggestions(query, matches);
+    } catch (_error) {
+      renderTaskOwnerSuggestions(query, []);
+    }
+  }
+
+  function normalizeTaskOwnerMatches(items) {
+    return (items || []).map(function (item) {
+      return {
+        id: String(item.id || ""),
+        displayName: String(item.displayName || item.value || item.id || ""),
+        aliases: Array.isArray(item.aliases) ? item.aliases.filter(Boolean).map(String) : [],
+        matched: String(item.matched || item.displayName || item.value || item.id || ""),
+        value: String(item.value || item.displayName || item.id || "")
+      };
+    }).filter(function (item) {
+      return item.displayName || item.value;
+    });
+  }
+
+  function rememberTaskOwnerName(name) {
+    var trimmed = String(name || "").trim();
+    if (!trimmed) return;
+    rememberTaskOwnerMatches([{ id: trimmed, displayName: trimmed, aliases: [], matched: trimmed, value: trimmed }]);
+  }
+
+  function rememberTaskOwnerMatches(matches) {
+    normalizeTaskOwnerMatches(matches).slice().reverse().forEach(function (match) {
+      var key = taskOwnerMatchKey(match);
+      state.taskOwnerMatchCache = state.taskOwnerMatchCache.filter(function (cached) {
+        return taskOwnerMatchKey(cached) !== key;
+      });
+      state.taskOwnerMatchCache.unshift(match);
+    });
+    state.taskOwnerMatchCache = state.taskOwnerMatchCache.slice(0, 10);
+  }
+
+  function taskOwnerCachedMatches(query) {
+    var needle = String(query || "").toLowerCase().trim();
+    return state.taskOwnerMatchCache.filter(function (match) {
+      if (!needle) return true;
+      return taskOwnerSearchText(match).indexOf(needle) >= 0;
+    });
+  }
+
+  function taskOwnerAssignmentValue(value) {
+    var trimmed = String(value || "").trim();
+    if (!trimmed) return "";
+    var needle = trimmed.toLowerCase();
+    var match = state.taskOwnerMatchCache.find(function (cached) {
+      return taskOwnerExactValues(cached).some(function (candidate) {
+        return candidate.toLowerCase() === needle;
+      });
+    });
+    return match ? (match.value || match.displayName || match.id || trimmed) : trimmed;
+  }
+
+  async function resolveTaskOwnerAssignmentValue(value) {
+    var resolved = taskOwnerAssignmentValue(value);
+    var trimmed = String(value || "").trim();
+    if (!trimmed || resolved !== trimmed) {
+      return resolved;
+    }
+    try {
+      var result = await api("/api/ui/people-search?q=" + encodeURIComponent(trimmed) + "&limit=10");
+      rememberTaskOwnerMatches(result.people || []);
+      return taskOwnerAssignmentValue(trimmed);
+    } catch (_error) {
+      return trimmed;
+    }
+  }
+
+  function taskOwnerExactValues(match) {
+    return [
+      match && match.id,
+      match && match.displayName,
+      match && match.value,
+      match && match.matched
+    ].concat(match && Array.isArray(match.aliases) ? match.aliases : []).filter(Boolean).map(String);
+  }
+
+  function renderTaskOwnerSuggestions(query, matches) {
+    var datalist = safeEl("task-owner-suggestions");
+    if (!datalist) return;
+    var seen = new Set();
+    var options = taskOwnerCachedMatches(query).concat(normalizeTaskOwnerMatches(matches)).filter(function (match) {
+      var key = taskOwnerMatchKey(match);
+      if (!key || seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    }).slice(0, 10);
+    datalist.innerHTML = options.map(function (match) {
+      var value = match.value || match.displayName || match.id;
+      var labelParts = [match.id];
+      if (match.matched && match.matched !== match.displayName && match.matched !== match.id) {
+        labelParts.push("matched " + match.matched);
+      }
+      return "<option value=\\"" + escapeHtml(value) + "\\" label=\\"" + escapeHtml(labelParts.filter(Boolean).join(" · ")) + "\\"></option>";
+    }).join("");
+  }
+
+  function taskOwnerMatchKey(match) {
+    return String((match && (match.value || match.displayName || match.id)) || "").toLowerCase().trim();
+  }
+
+  function taskOwnerSearchText(match) {
+    return [
+      match && match.id,
+      match && match.displayName,
+      match && match.matched,
+      match && Array.isArray(match.aliases) ? match.aliases.join(" ") : ""
+    ].filter(Boolean).join(" ").toLowerCase();
+  }
+
   function renderTaskRow(task) {
     var statusBadge = "<span class=\\"badge\\">" + escapeHtml(task.taskStatus) + "</span>";
     var ownerBadge = renderTaskOwner(task);
     var projectBadge = task.project ? "<span class=\\"badge\\">" + escapeHtml(task.project) + "</span>" : "";
+    var priority = priorityLabel(taskProjectPriority(task));
+    var priorityBadge = "<span class=\\"badge task-priority-badge" + (priority ? "" : " missing") + "\\" title=\\"Project priority\\">" + escapeHtml(priority || "No priority") + "</span>";
     var milestoneLabel = task.milestoneDisplayId || task.milestoneName.split("/").pop().replace(/\\.md$/, "");
     var milestoneBtn = "<button class=\\"task-milestone-link\\" data-anchor=\\"" + escapeHtml(task.milestoneName) + "\\" type=\\"button\\">" + escapeHtml(milestoneLabel) + "</button>";
     var confidenceOptions = ["committed", "internal_goal", "estimated"].map(function (c) {
@@ -3665,9 +4067,18 @@ export const UI_JS = `(function () {
     }).join("");
     var currentDue = task.due || "";
     var currentConf = task.dateConfidence || "estimated";
+    var currentOwner = task.taskOwner || "";
     var confSelected = ["committed", "internal_goal", "estimated"].map(function(c) {
       return "<option value=\\"" + c + "\\"" + (c === currentConf ? " selected" : "") + ">" + c + "</option>";
     }).join("");
+    var ownerForm = "<form class=\\"task-owner-form\\" data-task-id=\\"" + escapeHtml(task.taskId) + "\\" data-milestone-name=\\"" + escapeHtml(task.milestoneName) + "\\">"
+      + "<input class=\\"task-owner-input\\" type=\\"text\\" value=\\"" + escapeHtml(currentOwner) + "\\" placeholder=\\"person or team\\" aria-label=\\"Task owner\\" list=\\"task-owner-suggestions\\" autocomplete=\\"off\\">"
+      + "<div class=\\"task-owner-controls\\">"
+      + "<button type=\\"submit\\" class=\\"compact-action\\">Assign</button>"
+      + (currentOwner ? "<button type=\\"button\\" class=\\"compact-action task-owner-clear\\">Clear</button>" : "")
+      + "</div>"
+      + "<div class=\\"task-owner-result\\"></div>"
+      + "</form>";
     var form = "<form class=\\"task-due-form\\" data-task-id=\\"" + escapeHtml(task.taskId) + "\\" data-milestone-name=\\"" + escapeHtml(task.milestoneName) + "\\">"
       + "<input class=\\"task-due-date\\" type=\\"date\\" value=\\"" + escapeHtml(currentDue) + "\\" aria-label=\\"Due date\\">"
       + "<select class=\\"task-due-confidence\\" aria-label=\\"Date confidence\\">" + confSelected + "</select>"
@@ -3685,11 +4096,11 @@ export const UI_JS = `(function () {
       + "</div>";
     return "<div class=\\"task-row\\">"
       + "<div>"
-      + "<div class=\\"task-title-line\\">" + escapeHtml(task.taskId) + " — " + escapeHtml(task.taskTitle) + "</div>"
+      + "<div class=\\"task-title-line\\">" + priorityBadge + "<span>" + escapeHtml(task.taskId) + " — " + escapeHtml(task.taskTitle) + "</span></div>"
       + "<div class=\\"task-meta\\">" + statusBadge + ownerBadge + projectBadge + milestoneBtn + (task.due ? "<span class=\\"badge\\">" + escapeHtml(task.due) + "</span>" : "") + "</div>"
       + lifecycle
       + "</div>"
-      + form
+      + "<div class=\\"task-edit-forms\\">" + ownerForm + form + "</div>"
       + "</div>";
   }
 
@@ -3767,6 +4178,7 @@ export const UI_JS = `(function () {
       var result = await api("/api/ui/people-registry");
       state.registry = { people: result.people || [], teams: result.teams || [] };
       state.registryFileCommit = result.fileCommit || null;
+      refreshTypeaheadOptions();
       renderPeople();
       renderTeams();
       renderProjectAssociations();
@@ -3818,6 +4230,152 @@ export const UI_JS = `(function () {
     var set = new Set();
     (registry.teams || []).forEach(function(t) { set.add(String(t.id).toLowerCase()); });
     return set;
+  }
+
+  function addSuggestion(map, value, label, searchText) {
+    var normalizedValue = String(value || "").trim();
+    if (!normalizedValue) return;
+    var key = normalizedValue.toLowerCase();
+    if (map.has(key)) return;
+    map.set(key, {
+      value: normalizedValue,
+      label: label || normalizedValue,
+      searchText: String(searchText || label || normalizedValue).toLowerCase()
+    });
+  }
+
+  function projectSuggestionOptions() {
+    var map = new Map();
+    (state.anchors || []).forEach(function(anchor) {
+      var project = projectOf(anchor);
+      if (project) addSuggestion(map, project, project);
+    });
+    (state.tasks || []).forEach(function(task) {
+      if (task.project) addSuggestion(map, task.project, task.project);
+    });
+    if (state.registry) {
+      (state.registry.people || []).forEach(function(person) {
+        (person.projects || []).forEach(function(assoc) { addSuggestion(map, assoc.project, assoc.project); });
+      });
+      (state.registry.teams || []).forEach(function(team) {
+        (team.projects || []).forEach(function(assoc) { addSuggestion(map, assoc.project, assoc.project); });
+      });
+    }
+    return Array.from(map.values()).sort(function(left, right) {
+      return left.value.localeCompare(right.value);
+    });
+  }
+
+  function milestoneSuggestionOptions() {
+    var map = new Map();
+    (state.anchors || []).forEach(function(anchor) {
+      var name = anchor.name || anchor.path || "";
+      if (name.indexOf("/milestones/") < 0) return;
+      var project = projectOf(anchor);
+      var fallback = name.split("/").pop().replace(/\\.md$/, "");
+      var label = [project, anchor.title || fallback].filter(Boolean).join(" · ");
+      addSuggestion(map, name, label || name, name + " " + label);
+    });
+    (state.tasks || []).forEach(function(task) {
+      if (!task.milestoneName) return;
+      var label = [task.project, task.milestoneDisplayId || task.milestoneName.split("/").pop().replace(/\\.md$/, "")].filter(Boolean).join(" · ");
+      addSuggestion(map, task.milestoneName, label || task.milestoneName, task.milestoneName + " " + label);
+    });
+    return Array.from(map.values()).sort(function(left, right) {
+      return left.value.localeCompare(right.value);
+    });
+  }
+
+  function teamSuggestionOptions(query) {
+    var needle = String(query || "").toLowerCase().trim();
+    if (!state.registry) return [];
+    return (state.registry.teams || []).map(function(team) {
+      var search = teamSearchText(team, state.registry);
+      return {
+        value: team.id,
+        label: [team.displayName, (team.synonyms || []).join(", ")].filter(Boolean).join(" · "),
+        searchText: search
+      };
+    }).filter(function(option) {
+      return !needle || option.searchText.indexOf(needle) >= 0;
+    }).sort(function(left, right) {
+      return String(left.value).localeCompare(String(right.value));
+    });
+  }
+
+  function renderDatalist(id, options) {
+    var datalist = safeEl(id);
+    if (!datalist) return;
+    datalist.innerHTML = (options || []).slice(0, 80).map(function(option) {
+      return "<option value=\\"" + escapeHtml(option.value) + "\\" label=\\"" + escapeHtml(option.label || option.value) + "\\"></option>";
+    }).join("");
+  }
+
+  function refreshTypeaheadOptions() {
+    renderDatalist("project-slug-suggestions", projectSuggestionOptions());
+    renderDatalist("milestone-anchor-suggestions", milestoneSuggestionOptions());
+    renderTeamIdSuggestions(null);
+  }
+
+  function wireTeamCsvInputs(container) {
+    (container || document).querySelectorAll("[list=\\"team-id-suggestions\\"]").forEach(function(input) {
+      wireTeamCsvInput(input);
+    });
+  }
+
+  function wireTeamCsvInput(input) {
+    if (!input || input.dataset.teamSuggestWired) return;
+    input.dataset.teamSuggestWired = "1";
+    input.addEventListener("focus", function() { renderTeamIdSuggestions(input); });
+    input.addEventListener("input", function() { renderTeamIdSuggestions(input); });
+  }
+
+  function renderTeamIdSuggestions(input) {
+    var token = csvActiveToken(input ? input.value : "");
+    var suffix = token.prefix ? token.prefix + (/\\s$/.test(token.prefix) ? "" : " ") : "";
+    var options = teamSuggestionOptions(token.value).map(function(option) {
+      return {
+        value: suffix + option.value,
+        label: option.label || option.value,
+        searchText: option.searchText
+      };
+    });
+    renderDatalist("team-id-suggestions", options);
+  }
+
+  function csvActiveToken(value) {
+    var raw = String(value || "");
+    var commaIndex = raw.lastIndexOf(",");
+    if (commaIndex < 0) return { prefix: "", value: raw.trim() };
+    return {
+      prefix: raw.slice(0, commaIndex + 1),
+      value: raw.slice(commaIndex + 1).trim()
+    };
+  }
+
+  function resolveTeamIdsFromCsv(value) {
+    return splitCsv(value).map(resolveTeamId);
+  }
+
+  function resolveTeamId(value) {
+    var raw = String(value || "").trim();
+    var needle = raw.toLowerCase();
+    if (!needle || !state.registry) return raw;
+    var match = (state.registry.teams || []).find(function(team) {
+      return teamExactValues(team).some(function(candidate) {
+        return candidate.toLowerCase() === needle;
+      });
+    });
+    return match ? match.id : raw;
+  }
+
+  function teamExactValues(team) {
+    return [
+      team && team.id,
+      team && team.displayName
+    ].concat(team && Array.isArray(team.synonyms) ? team.synonyms : [])
+      .concat(team && Array.isArray(team.slackHandles) ? team.slackHandles : [])
+      .filter(Boolean).map(String);
   }
 
   // A clickable cross-link rendered as a real <button> so it is reachable by
@@ -3901,15 +4459,80 @@ export const UI_JS = `(function () {
     });
   }
 
+  function peopleForDisplay(registry, query) {
+    var people = (registry && registry.people) || [];
+    return people.filter(function(person) {
+      return searchTextMatches(personSearchText(person, registry), query);
+    });
+  }
+
+  function teamsForDisplay(registry, query) {
+    var teams = (registry && registry.teams) || [];
+    return teams.filter(function(team) {
+      return searchTextMatches(teamSearchText(team, registry), query);
+    });
+  }
+
+  function searchTextMatches(text, query) {
+    var terms = String(query || "").toLowerCase().trim().split(/\\s+/).filter(Boolean);
+    if (terms.length === 0) return true;
+    var haystack = String(text || "").toLowerCase();
+    return terms.every(function(term) {
+      return haystack.indexOf(term) >= 0;
+    });
+  }
+
+  function personSearchText(person, registry) {
+    var identities = person.identities || {};
+    var teamValues = (person.teams || []).flatMap(function(teamId) {
+      var team = ((registry && registry.teams) || []).find(function(t) { return t.id === teamId; });
+      return team ? [team.id, team.displayName].concat(team.synonyms || [], team.slackHandles || []) : [teamId];
+    });
+    var projectValues = (person.projects || []).flatMap(function(assoc) {
+      return [assoc.project, assoc.role];
+    });
+    return [
+      person.id,
+      person.displayName,
+      identities.slack,
+      identities.confluence
+    ].concat(identities.emails || [], identities.names || [], teamValues, projectValues).filter(Boolean).join(" ");
+  }
+
+  function teamSearchText(team, registry) {
+    var memberValues = ((registry && registry.people) || []).filter(function(person) {
+      return (person.teams || []).some(function(teamId) { return teamId === team.id; });
+    }).flatMap(function(person) {
+      return [person.id, person.displayName];
+    });
+    var projectValues = (team.projects || []).flatMap(function(assoc) {
+      return [assoc.project, assoc.role];
+    });
+    return [
+      team.id,
+      team.displayName
+    ].concat(team.synonyms || [], team.slackHandles || [], memberValues, projectValues).filter(Boolean).join(" ").toLowerCase();
+  }
+
   function renderPeople() {
     var registry = state.registry;
     var list = el("people-list");
     var emptyEl = el("people-empty");
     var summary = el("people-summary");
     if (!registry || !registry.people) return;
-    var people = registry.people;
-    summary.textContent = people.length + " person" + (people.length === 1 ? "" : "s") + " in registry.";
+    var query = controlValue("people-search", state.peopleSearch).trim();
+    state.peopleSearch = query;
+    var allPeople = registry.people;
+    var people = peopleForDisplay(registry, query);
+    summary.textContent = people.length + " of " + allPeople.length + " person" + (allPeople.length === 1 ? "" : "s") + " shown.";
+    if (allPeople.length === 0) {
+      emptyEl.textContent = "No people in registry.";
+      emptyEl.hidden = false;
+      list.innerHTML = "";
+      return;
+    }
     if (people.length === 0) {
+      emptyEl.textContent = "No people match the current search.";
       emptyEl.hidden = false;
       list.innerHTML = "";
       return;
@@ -3963,7 +4586,7 @@ export const UI_JS = `(function () {
       + "<label>Confluence ID<input id=\\"edit-person-confluence\\" type=\\"text\\" value=\\"" + escapeHtml(idents.confluence || "") + "\\"></label>"
       + "<label>Emails (comma-separated)<input id=\\"edit-person-emails\\" type=\\"text\\" value=\\"" + escapeHtml((idents.emails || []).join(", ")) + "\\"></label>"
       + "<label>Name aliases (comma-separated)<input id=\\"edit-person-names\\" type=\\"text\\" value=\\"" + escapeHtml((idents.names || []).join(", ")) + "\\"></label>"
-      + "<label>Teams (comma-separated)<input id=\\"edit-person-teams\\" type=\\"text\\" value=\\"" + escapeHtml((person.teams || []).join(", ")) + "\\"></label>"
+      + "<label>Teams (comma-separated)<input id=\\"edit-person-teams\\" type=\\"text\\" value=\\"" + escapeHtml((person.teams || []).join(", ")) + "\\" list=\\"team-id-suggestions\\" autocomplete=\\"off\\"></label>"
       + "</div>"
       + "<div class=\\"registry-section-label\\" style=\\"margin-bottom:6px\\">Project Associations</div>"
       + "<div id=\\"edit-person-assocs\\">" + assocRows + "</div>"
@@ -3980,7 +4603,7 @@ export const UI_JS = `(function () {
       return "<option value=\\"" + r + "\\"" + (r === role ? " selected" : "") + ">" + (r || "-- role --") + "</option>";
     }).join("");
     return "<div class=\\"registry-assoc-row\\" data-assoc-index=\\"" + index + "\\">"
-      + "<input type=\\"text\\" placeholder=\\"project-slug\\" value=\\"" + escapeHtml(project) + "\\" class=\\"assoc-project\\">"
+      + "<input type=\\"text\\" placeholder=\\"project-slug\\" value=\\"" + escapeHtml(project) + "\\" class=\\"assoc-project\\" list=\\"project-slug-suggestions\\" autocomplete=\\"off\\">"
       + "<select class=\\"assoc-role\\">" + roleOptions + "</select>"
       + (project ? "<button type=\\"button\\" class=\\"assoc-remove compact-action\\">✕</button>" : "<button type=\\"button\\" class=\\"assoc-add compact-action\\">+</button>")
       + "</div>";
@@ -4029,7 +4652,7 @@ export const UI_JS = `(function () {
         var confluence = (el("edit-person-confluence") || {}).value || "";
         var emails = splitCsv((el("edit-person-emails") || {}).value);
         var names = splitCsv((el("edit-person-names") || {}).value);
-        var teams = splitCsv((el("edit-person-teams") || {}).value);
+        var teams = resolveTeamIdsFromCsv((el("edit-person-teams") || {}).value);
         var assocContainer = el("edit-person-assocs");
         var projects = assocContainer ? collectAssocRows(assocContainer) : (person.projects || []);
         var identities = {};
@@ -4047,6 +4670,7 @@ export const UI_JS = `(function () {
     });
     wireGotoChips(container);
     wireAssocRows(container);
+    wireTeamCsvInputs(container);
   }
 
   // Find an element by a data attribute without interpolating the (user-provided)
@@ -4083,7 +4707,7 @@ export const UI_JS = `(function () {
         var newRow = document.createElement("div");
         newRow.className = "registry-assoc-row";
         newRow.dataset.assocIndex = "new";
-        newRow.innerHTML = "<input type=\\"text\\" placeholder=\\"project-slug\\" value=\\"\\" class=\\"assoc-project\\">"
+        newRow.innerHTML = "<input type=\\"text\\" placeholder=\\"project-slug\\" value=\\"\\" class=\\"assoc-project\\" list=\\"project-slug-suggestions\\" autocomplete=\\"off\\">"
           + "<select class=\\"assoc-role\\">" + [""].concat(ASSOCIATION_ROLES).map(function(r) { return "<option value=\\"" + r + "\\">" + (r || "-- role --") + "</option>"; }).join("") + "</select>"
           + "<button type=\\"button\\" class=\\"assoc-add compact-action\\">+</button>";
         row.parentNode.appendChild(newRow);
@@ -4106,9 +4730,19 @@ export const UI_JS = `(function () {
     var emptyEl = el("teams-empty");
     var summary = el("teams-summary");
     if (!registry || !registry.teams) return;
-    var teams = registry.teams;
-    summary.textContent = teams.length + " team" + (teams.length === 1 ? "" : "s") + " in registry.";
+    var query = controlValue("teams-search", state.teamsSearch).trim();
+    state.teamsSearch = query;
+    var allTeams = registry.teams;
+    var teams = teamsForDisplay(registry, query);
+    summary.textContent = teams.length + " of " + allTeams.length + " team" + (allTeams.length === 1 ? "" : "s") + " shown.";
+    if (allTeams.length === 0) {
+      emptyEl.textContent = "No teams in registry.";
+      emptyEl.hidden = false;
+      list.innerHTML = "";
+      return;
+    }
     if (teams.length === 0) {
+      emptyEl.textContent = "No teams match the current search.";
       emptyEl.hidden = false;
       list.innerHTML = "";
       return;
@@ -4546,6 +5180,14 @@ export const UI_JS = `(function () {
         loadTasks().catch(function (error) { setBanner(error.message, "error"); });
       });
     });
+    ["tasks-group-by", "tasks-sort"].forEach(function (id) {
+      el(id).addEventListener("change", function () {
+        state.tasksGroupBy = validTasksGroupBy(controlValue("tasks-group-by", state.tasksGroupBy));
+        state.tasksSort = validTasksSort(controlValue("tasks-sort", state.tasksSort));
+        updateLocationFromState({ anchor: null, view: "tasks", history: "push" });
+        renderTasks();
+      });
+    });
     el("tasks-no-due").addEventListener("change", function () {
       updateLocationFromState({ anchor: null, view: "tasks", history: "push" });
       state.tasks = [];
@@ -4569,6 +5211,7 @@ export const UI_JS = `(function () {
       el("tasks-add-form").hidden = true;
       el("new-task-result").textContent = "";
     });
+    wireTaskOwnerInput(el("new-task-owner"));
     el("new-task-save").addEventListener("click", function () {
       saveNewTask().catch(function (error) { el("new-task-result").textContent = error.message; });
     });
@@ -4699,10 +5342,15 @@ export const UI_JS = `(function () {
       state.registry = null;
       loadRegistry().catch(function (error) { setBanner(error.message, "error"); });
     });
+    el("people-search").addEventListener("input", function () {
+      state.peopleSearch = el("people-search").value || "";
+      renderPeople();
+    });
     el("new-person-cancel").addEventListener("click", function () {
       el("people-add-form").hidden = true;
       el("new-person-result").textContent = "";
     });
+    wireTeamCsvInput(el("new-person-teams"));
     el("new-person-save").addEventListener("click", function () {
       var id = (el("new-person-id").value || "").trim();
       var name = (el("new-person-name").value || "").trim();
@@ -4717,7 +5365,7 @@ export const UI_JS = `(function () {
       var confluence = (el("new-person-confluence").value || "").trim();
       var emails = splitCsv(el("new-person-emails").value);
       var names = splitCsv(el("new-person-names").value);
-      var teams = splitCsv(el("new-person-teams").value);
+      var teams = resolveTeamIdsFromCsv(el("new-person-teams").value);
       var identities = {};
       if (slack) identities.slack = slack;
       if (confluence) identities.confluence = confluence;
@@ -4741,6 +5389,10 @@ export const UI_JS = `(function () {
     el("teams-refresh").addEventListener("click", function () {
       state.registry = null;
       loadRegistry().catch(function (error) { setBanner(error.message, "error"); });
+    });
+    el("teams-search").addEventListener("input", function () {
+      state.teamsSearch = el("teams-search").value || "";
+      renderTeams();
     });
     el("new-team-cancel").addEventListener("click", function () {
       el("teams-add-form").hidden = true;
@@ -4792,6 +5444,28 @@ export const UI_JS = `(function () {
     };
     window.__ANCHOR_MCP_UI_TEST_HOOKS__.renderPlannerItem = renderPlannerItem;
     window.__ANCHOR_MCP_UI_TEST_HOOKS__.comparePlannerRuns = comparePlannerRuns;
+    window.__ANCHOR_MCP_UI_TEST_HOOKS__.sortTasksForDisplay = sortTasksForDisplay;
+    window.__ANCHOR_MCP_UI_TEST_HOOKS__.taskGroupsForDisplay = taskGroupsForDisplay;
+    window.__ANCHOR_MCP_UI_TEST_HOOKS__.taskGroupPriority = taskGroupPriority;
+    window.__ANCHOR_MCP_UI_TEST_HOOKS__.taskProjectPriority = taskProjectPriority;
+    window.__ANCHOR_MCP_UI_TEST_HOOKS__.rememberTaskOwnerMatches = rememberTaskOwnerMatches;
+    window.__ANCHOR_MCP_UI_TEST_HOOKS__.taskOwnerCachedMatches = taskOwnerCachedMatches;
+    window.__ANCHOR_MCP_UI_TEST_HOOKS__.taskOwnerAssignmentValue = taskOwnerAssignmentValue;
+    window.__ANCHOR_MCP_UI_TEST_HOOKS__.peopleForDisplay = peopleForDisplay;
+    window.__ANCHOR_MCP_UI_TEST_HOOKS__.teamsForDisplay = teamsForDisplay;
+    window.__ANCHOR_MCP_UI_TEST_HOOKS__.projectSuggestionOptions = projectSuggestionOptions;
+    window.__ANCHOR_MCP_UI_TEST_HOOKS__.milestoneSuggestionOptions = milestoneSuggestionOptions;
+    window.__ANCHOR_MCP_UI_TEST_HOOKS__.teamSuggestionOptions = teamSuggestionOptions;
+    window.__ANCHOR_MCP_UI_TEST_HOOKS__.resolveTeamIdsFromCsv = resolveTeamIdsFromCsv;
+    window.__ANCHOR_MCP_UI_TEST_HOOKS__.setTypeaheadStateForTest = function (nextState) {
+      state.anchors = nextState.anchors || [];
+      state.tasks = nextState.tasks || [];
+      state.registry = nextState.registry || null;
+    };
+    window.__ANCHOR_MCP_UI_TEST_HOOKS__.setTasksDisplayForTest = function (groupBy, sortMode) {
+      state.tasksGroupBy = validTasksGroupBy(groupBy);
+      state.tasksSort = validTasksSort(sortMode);
+    };
     window.__ANCHOR_MCP_UI_TEST_HOOKS__.shouldHandleClientNavigation = shouldHandleClientNavigation;
     window.__ANCHOR_MCP_UI_TEST_HOOKS__.parsePlannerLogPaste = parsePlannerLogPaste;
     window.__ANCHOR_MCP_UI_TEST_HOOKS__.buildJudgePrompt = buildJudgePrompt;
