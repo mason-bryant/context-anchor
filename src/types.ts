@@ -200,7 +200,7 @@ export type ListTasksDueInput = {
   owner?: string;
   /** When true, include only tasks that have no owner assigned. */
   unassigned?: boolean;
-  /** Include only tasks from projects with priority at or above this threshold (P1 before P2). */
+  /** Include only tasks from projects whose numeric priority is at or below this value (e.g. 2 keeps P1/P2; lower numbers are higher priority). */
   maxProjectPriority?: number;
 };
 
