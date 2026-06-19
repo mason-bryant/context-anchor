@@ -1410,9 +1410,7 @@ textarea {
 
 .task-row {
   display: grid;
-  grid-template-columns: 1fr auto;
-  gap: 8px 16px;
-  align-items: start;
+  gap: 8px;
   padding: 10px 0;
   border-bottom: 1px solid var(--panel-strong);
 }
@@ -1572,23 +1570,96 @@ textarea {
   text-decoration: underline;
 }
 
-.task-edit-forms {
+.task-edit-details {
+  margin-top: 8px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.55);
+}
+
+.task-edit-summary {
   display: flex;
-  flex-direction: column;
-  gap: 10px;
-  align-items: flex-end;
-  min-width: 220px;
+  align-items: center;
+  gap: 7px;
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 1.2;
+  list-style: none;
+  padding: 7px 9px;
+  user-select: none;
+}
+
+.task-edit-summary::-webkit-details-marker {
+  display: none;
+}
+
+.task-edit-summary::marker {
+  content: "";
+}
+
+.task-edit-summary::before {
+  content: "";
+  width: 0;
+  height: 0;
+  border-top: 4px solid transparent;
+  border-bottom: 4px solid transparent;
+  border-left: 6px solid currentColor;
+  transition: transform 120ms ease;
+}
+
+.task-edit-details[open] .task-edit-summary::before {
+  transform: rotate(90deg);
+}
+
+.task-edit-details[open] .task-edit-summary {
+  border-bottom: 1px solid var(--border);
+}
+
+.task-edit-details:not([open]) .task-edit-forms {
+  display: none;
+}
+
+.task-edit-forms {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) minmax(130px, 0.6fr) minmax(250px, 1.2fr);
+  gap: 10px 12px;
+  align-items: start;
+  min-width: 0;
+  padding: 10px;
 }
 
 .task-due-form,
 .task-owner-form,
 .task-priority-form,
 .task-notes-form {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  align-items: flex-end;
+  display: grid;
+  gap: 6px;
+  align-items: end;
   width: 100%;
+}
+
+.task-owner-form,
+.task-priority-form {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.task-due-form {
+  grid-template-columns: minmax(120px, 1fr) minmax(130px, 1fr) auto;
+}
+
+.task-notes-form {
+  grid-column: 1 / -1;
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.task-edit-label {
+  display: grid;
+  gap: 3px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.2;
 }
 
 .task-due-form input[type="date"],
@@ -1610,7 +1681,7 @@ textarea {
 .task-notes-form textarea {
   box-sizing: border-box;
   width: 100%;
-  min-width: 180px;
+  min-width: 0;
 }
 
 .task-notes-form textarea {
@@ -1624,6 +1695,7 @@ textarea {
 .task-notes-controls {
   display: flex;
   gap: 4px;
+  justify-content: flex-end;
 }
 
 .task-due-result,
@@ -1632,8 +1704,38 @@ textarea {
 .task-notes-result {
   font-size: 11px;
   color: var(--muted);
-  max-width: 200px;
-  text-align: right;
+  min-height: 14px;
+  text-align: left;
+}
+
+.task-owner-result,
+.task-priority-result {
+  grid-column: 1 / -1;
+}
+
+.task-due-result {
+  grid-column: 1 / -1;
+}
+
+.task-notes-result {
+  grid-column: 1 / -1;
+}
+
+@media (max-width: 900px) {
+  .task-edit-forms,
+  .task-owner-form,
+  .task-priority-form,
+  .task-due-form,
+  .task-notes-form {
+    grid-template-columns: 1fr;
+  }
+
+  .task-due-controls,
+  .task-owner-controls,
+  .task-priority-controls,
+  .task-notes-controls {
+    justify-content: flex-start;
+  }
 }
 
 .task-actions {
@@ -4611,9 +4713,6 @@ export const UI_JS = `(function () {
     var taskPriorityBadge = "<span class=\\"badge task-priority-badge" + (taskPriorityValue ? "" : " missing") + "\\" title=\\"Task priority\\">" + escapeHtml(taskPriorityValue ? "Task " + taskPriorityValue : "No task priority") + "</span>";
     var milestoneLabel = task.milestoneDisplayId || task.milestoneName.split("/").pop().replace(/\\.md$/, "");
     var milestoneBtn = "<a class=\\"task-milestone-link\\" href=\\"" + escapeHtml(anchorHref(task.milestoneName)) + "\\" data-anchor=\\"" + escapeHtml(task.milestoneName) + "\\" data-task-id=\\"" + escapeHtml(task.taskId) + "\\" title=\\"Open milestone anchor\\">" + escapeHtml(milestoneLabel) + "</a>";
-    var confidenceOptions = ["committed", "internal_goal", "estimated"].map(function (c) {
-      return "<option value=\\"" + c + "\\">" + c + "</option>";
-    }).join("");
     var currentDue = task.due || "";
     var currentConf = task.dateConfidence || "estimated";
     var currentOwner = task.taskOwner || "";
@@ -4623,7 +4722,7 @@ export const UI_JS = `(function () {
       return "<option value=\\"" + c + "\\"" + (c === currentConf ? " selected" : "") + ">" + c + "</option>";
     }).join("");
     var ownerForm = "<form class=\\"task-owner-form\\" data-task-id=\\"" + escapeHtml(task.taskId) + "\\" data-milestone-name=\\"" + escapeHtml(task.milestoneName) + "\\">"
-      + "<input class=\\"task-owner-input\\" type=\\"text\\" value=\\"" + escapeHtml(currentOwner) + "\\" placeholder=\\"person or team\\" aria-label=\\"Task owner\\" list=\\"task-owner-suggestions\\" autocomplete=\\"off\\">"
+      + "<label class=\\"task-edit-label\\">Owner<input class=\\"task-owner-input\\" type=\\"text\\" value=\\"" + escapeHtml(currentOwner) + "\\" placeholder=\\"person or team\\" aria-label=\\"Task owner\\" list=\\"task-owner-suggestions\\" autocomplete=\\"off\\"></label>"
       + "<div class=\\"task-owner-controls\\">"
       + "<button type=\\"submit\\" class=\\"compact-action\\">Assign</button>"
       + (currentOwner ? "<button type=\\"button\\" class=\\"compact-action task-owner-clear\\">Clear</button>" : "")
@@ -4631,7 +4730,7 @@ export const UI_JS = `(function () {
       + "<div class=\\"task-owner-result\\"></div>"
       + "</form>";
     var priorityForm = "<form class=\\"task-priority-form\\" data-task-id=\\"" + escapeHtml(task.taskId) + "\\" data-milestone-name=\\"" + escapeHtml(task.milestoneName) + "\\">"
-      + "<input class=\\"task-priority-input\\" type=\\"number\\" min=\\"0\\" step=\\"0.001\\" value=\\"" + escapeHtml(currentPriority) + "\\" placeholder=\\"priority\\" aria-label=\\"Task priority\\">"
+      + "<label class=\\"task-edit-label\\">Priority<input class=\\"task-priority-input\\" type=\\"number\\" min=\\"0\\" step=\\"0.001\\" value=\\"" + escapeHtml(currentPriority) + "\\" placeholder=\\"priority\\" aria-label=\\"Task priority\\"></label>"
       + "<div class=\\"task-priority-controls\\">"
       + "<button type=\\"submit\\" class=\\"compact-action\\">Set</button>"
       + (currentPriority ? "<button type=\\"button\\" class=\\"compact-action task-priority-clear\\">Clear</button>" : "")
@@ -4639,7 +4738,7 @@ export const UI_JS = `(function () {
       + "<div class=\\"task-priority-result\\"></div>"
       + "</form>";
     var notesForm = "<form class=\\"task-notes-form\\" data-task-id=\\"" + escapeHtml(task.taskId) + "\\" data-milestone-name=\\"" + escapeHtml(task.milestoneName) + "\\">"
-      + "<textarea class=\\"task-notes-input\\" maxlength=\\"480\\" rows=\\"3\\" placeholder=\\"note\\" aria-label=\\"Task notes\\">" + escapeHtml(currentNotes) + "</textarea>"
+      + "<label class=\\"task-edit-label\\">Note<textarea class=\\"task-notes-input\\" maxlength=\\"480\\" rows=\\"3\\" placeholder=\\"note\\" aria-label=\\"Task notes\\">" + escapeHtml(currentNotes) + "</textarea></label>"
       + "<div class=\\"task-notes-controls\\">"
       + "<button type=\\"submit\\" class=\\"compact-action\\">Save note</button>"
       + (currentNotes ? "<button type=\\"button\\" class=\\"compact-action task-notes-clear\\">Clear</button>" : "")
@@ -4647,8 +4746,8 @@ export const UI_JS = `(function () {
       + "<div class=\\"task-notes-result\\"></div>"
       + "</form>";
     var form = "<form class=\\"task-due-form\\" data-task-id=\\"" + escapeHtml(task.taskId) + "\\" data-milestone-name=\\"" + escapeHtml(task.milestoneName) + "\\">"
-      + "<input class=\\"task-due-date\\" type=\\"date\\" value=\\"" + escapeHtml(currentDue) + "\\" aria-label=\\"Due date\\">"
-      + "<select class=\\"task-due-confidence\\" aria-label=\\"Date confidence\\">" + confSelected + "</select>"
+      + "<label class=\\"task-edit-label\\">Due<input class=\\"task-due-date\\" type=\\"date\\" value=\\"" + escapeHtml(currentDue) + "\\" aria-label=\\"Due date\\"></label>"
+      + "<label class=\\"task-edit-label\\">Confidence<select class=\\"task-due-confidence\\" aria-label=\\"Date confidence\\">" + confSelected + "</select></label>"
       + "<div class=\\"task-due-controls\\">"
       + "<button type=\\"submit\\" class=\\"compact-action\\">Set</button>"
       + (currentDue ? "<button type=\\"button\\" class=\\"compact-action task-due-clear\\">Clear</button>" : "")
@@ -4662,6 +4761,10 @@ export const UI_JS = `(function () {
       + "<button type=\\"button\\" class=\\"compact-action task-delete-btn\\">Delete</button>"
       + "<span class=\\"task-action-result\\"></span>"
       + "</div>";
+    var editDetails = "<details class=\\"task-edit-details\\">"
+      + "<summary class=\\"task-edit-summary\\">Edit task</summary>"
+      + "<div class=\\"task-edit-forms\\">" + ownerForm + priorityForm + form + notesForm + "</div>"
+      + "</details>";
     return "<div class=\\"task-row" + (stateClass ? " " + stateClass : "") + "\\" data-task-id=\\"" + escapeHtml(task.taskId) + "\\">"
       + "<div>"
       + "<div class=\\"task-title-line\\">" + projectPriorityBadge + taskPriorityBadge + "<span>" + escapeHtml(task.taskId) + " — " + escapeHtml(task.taskTitle) + "</span></div>"
@@ -4671,8 +4774,8 @@ export const UI_JS = `(function () {
       + (task.completedOn ? "<span class=\\"badge\\">completed " + escapeHtml(task.completedOn) + "</span>" : "")
       + "</div>"
       + lifecycle
+      + editDetails
       + "</div>"
-      + "<div class=\\"task-edit-forms\\">" + ownerForm + priorityForm + form + notesForm + "</div>"
       + "</div>";
   }
 
@@ -6102,6 +6205,7 @@ export const UI_JS = `(function () {
     window.__ANCHOR_MCP_UI_TEST_HOOKS__.taskPriority = taskPriority;
     window.__ANCHOR_MCP_UI_TEST_HOOKS__.taskReportRanges = taskReportRanges;
     window.__ANCHOR_MCP_UI_TEST_HOOKS__.taskStateClass = taskStateClass;
+    window.__ANCHOR_MCP_UI_TEST_HOOKS__.renderTaskRow = renderTaskRow;
     window.__ANCHOR_MCP_UI_TEST_HOOKS__.rememberTaskOwnerMatches = rememberTaskOwnerMatches;
     window.__ANCHOR_MCP_UI_TEST_HOOKS__.taskOwnerCachedMatches = taskOwnerCachedMatches;
     window.__ANCHOR_MCP_UI_TEST_HOOKS__.taskOwnerAssignmentValue = taskOwnerAssignmentValue;
