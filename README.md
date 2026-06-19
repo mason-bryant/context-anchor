@@ -2,7 +2,7 @@
 
 Persistent project memory for AI coding agents.
 
-`anchor-mcp` helps Cursor, Codex, Claude, and other MCP clients start work with the
+`anchor-mcp` helps Cursor, Codex, Claude, and other codegen tools start work with the
 right project context already in view. It serves curated Markdown anchors from a
 private git repo, plans task-specific context bundles, and validates every write so
 decisions, constraints, roadmaps, PR history, and agent rules stay durable instead of
