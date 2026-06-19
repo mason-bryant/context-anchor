@@ -106,11 +106,13 @@ import type {
   CreateTaskInput,
   CreateTaskResult,
   CompleteTaskInput,
+  ReopenTaskInput,
   DeleteTaskInput,
   UpdateProjectPriorityInput,
   UpdateTaskDueInput,
   UpdateTaskOwnerInput,
   UpdateTaskPriorityInput,
+  UpdateTaskNotesInput,
   ValidationViolation,
   WriteAnchorInput,
   WriteAnchorResult,
@@ -975,6 +977,18 @@ export class AnchorService {
     });
   }
 
+  async updateTaskNotes(input: UpdateTaskNotesInput): Promise<WriteAnchorResult> {
+    return this.updateTaskInMilestone(input, (task) => {
+      const notes = input.notes?.trim() ?? "";
+      if (notes) {
+        task.notes = notes;
+      } else {
+        delete task.notes;
+      }
+      return task;
+    });
+  }
+
   private async updateTaskInMilestone(
     input: {
       name: string;
@@ -1237,6 +1251,38 @@ None.
       name,
       updates: { tasks: updatedTasks },
       message: input.message ?? `chore: complete task ${input.taskId}`,
+      approved: input.approved,
+      coAuthor: input.coAuthor,
+      expectedFileCommit: input.expectedFileCommit,
+    });
+  }
+
+  async reopenTask(input: ReopenTaskInput): Promise<WriteAnchorResult> {
+    if (input.name && !AnchorService.isMilestonePath(input.name)) {
+      return AnchorService.blockResult(
+        "invalid_milestone",
+        `name must be a project milestone anchor under .../milestones/: ${input.name}`,
+      );
+    }
+    const name = await this.findTaskMilestone(input.taskId, { name: input.name, project: input.project });
+    if (!name) {
+      return AnchorService.blockResult("task_not_found", `Task "${input.taskId}" not found.`);
+    }
+    const rawTasks = await this.readRawTasks(name);
+    if (rawTasks === undefined) {
+      return AnchorService.blockResult("missing_anchor", `Milestone anchor not found: ${name}`);
+    }
+    const updatedTasks = rawTasks.map((t) => {
+      if (t.id !== input.taskId) return t;
+      const reopened: Record<string, unknown> = { ...t, status: "todo" };
+      delete reopened.completed_on;
+      return reopened;
+    });
+
+    return this.updateAnchorFrontmatter({
+      name,
+      updates: { tasks: updatedTasks },
+      message: input.message ?? `chore: reopen task ${input.taskId}`,
       approved: input.approved,
       coAuthor: input.coAuthor,
       expectedFileCommit: input.expectedFileCommit,

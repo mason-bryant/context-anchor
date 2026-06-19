@@ -1397,6 +1397,32 @@ describe("AnchorService task write APIs", () => {
     expect(tasks.find((task) => task.taskId === created.taskId)?.taskPriority).toBe(2.5);
   });
 
+  it("updateTaskNotes assigns and clears task notes", async () => {
+    await service.writeAnchor({ name: "projects/demo/demo", content: projectAnchorContent() });
+    const created = await service.createTask({ project: "demo", title: "annotate me", notes: "Initial note" });
+
+    let listed = await service.listTasksDue({ project: "demo" });
+    expect(listed.tasks.find((task) => task.taskId === created.taskId)?.notes).toBe("Initial note");
+
+    const updated = await service.updateTaskNotes({
+      name: created.milestoneName!,
+      taskId: created.taskId!,
+      notes: "Updated note",
+    });
+    expect(noBlocks(updated)).toEqual([]);
+    listed = await service.listTasksDue({ project: "demo" });
+    expect(listed.tasks.find((task) => task.taskId === created.taskId)?.notes).toBe("Updated note");
+
+    const cleared = await service.updateTaskNotes({
+      name: created.milestoneName!,
+      taskId: created.taskId!,
+      notes: null,
+    });
+    expect(noBlocks(cleared)).toEqual([]);
+    listed = await service.listTasksDue({ project: "demo" });
+    expect(listed.tasks.find((task) => task.taskId === created.taskId)?.notes).toBeUndefined();
+  });
+
   it("listTasksDue combines completed and due report windows with a project priority threshold", async () => {
     await service.writeAnchor({ name: "projects/demo/demo", content: projectAnchorContent() });
     await service.writeAnchor({
@@ -1512,6 +1538,20 @@ describe("AnchorService task write APIs", () => {
     expect(tasks.find((t) => t.taskId === created.taskId)?.taskStatus).toBe("done");
   });
 
+  it("reopenTask reopens a completed task and clears its completion date", async () => {
+    await service.writeAnchor({ name: "projects/demo/demo", content: projectAnchorContent() });
+    const created = await service.createTask({ project: "demo", title: "reopen me" });
+    await service.completeTask({ taskId: created.taskId!, project: "demo", completedOn: "2026-06-17" });
+
+    const reopened = await service.reopenTask({ taskId: created.taskId!, project: "demo" });
+    expect(noBlocks(reopened)).toEqual([]);
+
+    const { tasks } = await service.listTasksDue({ project: "demo", status: ["todo", "done"] });
+    const task = tasks.find((t) => t.taskId === created.taskId);
+    expect(task?.taskStatus).toBe("todo");
+    expect(task?.completedOn).toBeUndefined();
+  });
+
   it("deleteTask removes a task from its milestone", async () => {
     await service.writeAnchor({ name: "projects/demo/demo", content: projectAnchorContent() });
     const created = await service.createTask({ project: "demo", title: "temporary" });
@@ -1539,7 +1579,7 @@ describe("AnchorService task write APIs", () => {
     expect(result.warnings.map((w) => w.code)).toContain("invalid_milestone");
   });
 
-  it("updateTaskOwner, updateTaskDue, and updateTaskPriority reject a non-milestone anchor name", async () => {
+  it("task field updates reject a non-milestone anchor name", async () => {
     await service.writeAnchor({ name: "projects/demo/demo", content: projectAnchorContent() });
 
     const owner = await service.updateTaskOwner({ name: "projects/demo/demo.md", taskId: "T-1", owner: "alice" });
@@ -1559,13 +1599,23 @@ describe("AnchorService task write APIs", () => {
       priority: 1,
     });
     expect(priority.warnings.map((w) => w.code)).toContain("invalid_milestone");
+
+    const notes = await service.updateTaskNotes({
+      name: "projects/demo/demo.md",
+      taskId: "T-1",
+      notes: "not allowed here",
+    });
+    expect(notes.warnings.map((w) => w.code)).toContain("invalid_milestone");
   });
 
-  it("completeTask and deleteTask reject a non-milestone anchor name", async () => {
+  it("completeTask, reopenTask, and deleteTask reject a non-milestone anchor name", async () => {
     await service.writeAnchor({ name: "projects/demo/demo", content: projectAnchorContent() });
 
     const completed = await service.completeTask({ taskId: "T-1", name: "projects/demo/demo.md" });
     expect(completed.warnings.map((w) => w.code)).toContain("invalid_milestone");
+
+    const reopened = await service.reopenTask({ taskId: "T-1", name: "projects/demo/demo.md" });
+    expect(reopened.warnings.map((w) => w.code)).toContain("invalid_milestone");
 
     const deleted = await service.deleteTask({ taskId: "T-1", name: "projects/demo/demo.md" });
     expect(deleted.warnings.map((w) => w.code)).toContain("invalid_milestone");

@@ -322,6 +322,7 @@ export const UI_HTML = `<!doctype html>
                   <option value="committed">committed</option>
                 </select></label>
                 <label>Milestone (optional)<input id="new-task-milestone" type="text" placeholder="blank = project backlog" list="milestone-anchor-suggestions" autocomplete="off"></label>
+                <label>Notes (optional)<textarea id="new-task-notes" maxlength="480" rows="3" placeholder="Decision, context, or follow-up detail"></textarea></label>
               </div>
               <div class="action-row">
                 <button id="new-task-save" type="button">Save</button>
@@ -1355,6 +1356,9 @@ textarea {
 }
 
 .task-group-header {
+  display: flex;
+  align-items: center;
+  gap: 7px;
   font-size: 12px;
   font-weight: 600;
   text-transform: uppercase;
@@ -1363,6 +1367,37 @@ textarea {
   padding: 16px 0 6px;
   border-bottom: 1px solid var(--border);
   margin-bottom: 4px;
+}
+
+.task-group-toggle {
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+}
+
+.task-group-toggle:hover {
+  color: var(--text);
+  border: none;
+}
+
+.task-group-triangle {
+  display: block;
+  width: 0;
+  height: 0;
+  border-top: 5px solid transparent;
+  border-bottom: 5px solid transparent;
+  border-left: 7px solid currentColor;
+}
+
+.task-group-toggle[aria-expanded="true"] .task-group-triangle {
+  transform: rotate(90deg);
+}
+
+.task-group-heading {
+  min-width: 0;
 }
 
 .task-group-header.overdue {
@@ -1442,6 +1477,15 @@ textarea {
   gap: 6px;
   font-size: 14px;
   font-weight: 500;
+}
+
+.task-notes-preview,
+.detail-task-notes {
+  margin-top: 5px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.35;
+  white-space: pre-wrap;
 }
 
 .project-priority-badge,
@@ -1538,7 +1582,8 @@ textarea {
 
 .task-due-form,
 .task-owner-form,
-.task-priority-form {
+.task-priority-form,
+.task-notes-form {
   display: flex;
   flex-direction: column;
   gap: 4px;
@@ -1549,7 +1594,8 @@ textarea {
 .task-due-form input[type="date"],
 .task-due-form select,
 .task-owner-form input[type="text"],
-.task-priority-form input[type="number"] {
+.task-priority-form input[type="number"],
+.task-notes-form textarea {
   font: inherit;
   font-size: 12px;
   background: var(--panel);
@@ -1560,22 +1606,30 @@ textarea {
 }
 
 .task-owner-form input[type="text"],
-.task-priority-form input[type="number"] {
+.task-priority-form input[type="number"],
+.task-notes-form textarea {
   box-sizing: border-box;
   width: 100%;
   min-width: 180px;
 }
 
+.task-notes-form textarea {
+  min-height: 64px;
+  resize: vertical;
+}
+
 .task-due-controls,
 .task-owner-controls,
-.task-priority-controls {
+.task-priority-controls,
+.task-notes-controls {
   display: flex;
   gap: 4px;
 }
 
 .task-due-result,
 .task-owner-result,
-.task-priority-result {
+.task-priority-result,
+.task-notes-result {
   font-size: 11px;
   color: var(--muted);
   max-width: 200px;
@@ -1901,6 +1955,7 @@ export const UI_JS = `(function () {
     tasksProjectPriorityMax: "",
     tasksNoDue: false,
     tasksUnassigned: false,
+    collapsedTaskGroups: new Set(),
     taskOwnerMatchCache: [],
     taskOwnerSearchTimer: null,
     taskOwnerSearchSeq: 0,
@@ -3240,6 +3295,38 @@ export const UI_JS = `(function () {
       + "</button>";
   }
 
+  function proposalListWithUpdatedProposal(proposals, proposal) {
+    if (!proposal || !proposal.id) {
+      return proposals || [];
+    }
+    var updated = false;
+    var next = (proposals || []).map(function (item) {
+      if (item && item.id === proposal.id) {
+        updated = true;
+        return proposal;
+      }
+      return item;
+    });
+    if (!updated) {
+      next.unshift(proposal);
+    }
+    return next;
+  }
+
+  function updateProposalFromMutationResult(result) {
+    var proposal = result && result.proposal;
+    if (!proposal || !proposal.id) {
+      return;
+    }
+    state.activeProposal = proposal;
+    state.proposals = proposalListWithUpdatedProposal(state.proposals, proposal);
+    el("proposal-status").textContent = "Proposal " + proposal.id + " is " + proposal.status + ".";
+    el("proposal-actions").hidden = proposal.status !== "pending";
+    renderProposalList();
+    updateLocationFromState({ anchor: null, view: "review", history: "replace" });
+    showTab("review");
+  }
+
   async function selectProposal(id) {
     var proposal = state.proposals.find(function (item) { return item.id === id; });
     if (!proposal) {
@@ -3392,10 +3479,7 @@ export const UI_JS = `(function () {
       expectedLedgerFileCommit: state.activeProposal.ledgerFileCommit
     });
     el("proposal-preview").textContent = formatWriteResult(result);
-    await loadProposals();
-    if (state.selectedName) {
-      await selectAnchor(state.selectedName, { skipLocationUpdate: true });
-    }
+    updateProposalFromMutationResult(result);
   }
 
   async function reviewActiveProposal(status) {
@@ -3410,7 +3494,7 @@ export const UI_JS = `(function () {
       expectedLedgerFileCommit: state.activeProposal.ledgerFileCommit
     });
     el("proposal-preview").textContent = formatWriteResult(result);
-    await loadProposals();
+    updateProposalFromMutationResult(result);
   }
 
   function scopeForAnchor(anchor) {
@@ -3808,10 +3892,12 @@ export const UI_JS = `(function () {
       return;
     }
     var milestone = (el("new-task-milestone").value || "").trim();
+    var notes = (el("new-task-notes").value || "").trim();
     var payload = { project: project, title: title, status: status, approved: true };
     if (owner) payload.owner = owner;
     if (priority !== "") payload.priority = priority;
     if (milestone) payload.milestone = milestone;
+    if (notes) payload.notes = notes;
     if (due) {
       payload.due = due;
       payload.dateConfidence = confidence;
@@ -3824,7 +3910,7 @@ export const UI_JS = `(function () {
     }
     resultEl.textContent = "Created " + (res.taskId || "task") + ".";
     if (owner) rememberTaskOwnerName(owner);
-    ["new-task-title", "new-task-owner", "new-task-priority", "new-task-due", "new-task-milestone"].forEach(function (id) { el(id).value = ""; });
+    ["new-task-title", "new-task-owner", "new-task-priority", "new-task-due", "new-task-milestone", "new-task-notes"].forEach(function (id) { el(id).value = ""; });
     el("tasks-add-form").hidden = true;
     state.tasks = [];
     loadTasks();
@@ -3871,7 +3957,16 @@ export const UI_JS = `(function () {
       if (tasks.length === 0) return "";
       var priority = Number.isFinite(group.projectPriority) ? priorityLabel(group.projectPriority) : "";
       var heading = priority ? priority + " · " + label : label;
-      var out = "<div class=\\"task-group-header " + (cls || "") + "\\">" + escapeHtml(heading) + " (" + tasks.length + ")</div>";
+      var groupKey = taskGroupKey(groupBy, group);
+      var canCollapse = groupBy === "project";
+      var collapsed = canCollapse && state.collapsedTaskGroups.has(groupKey);
+      var toggle = canCollapse
+        ? "<button type=\\"button\\" class=\\"task-group-toggle\\" data-task-group-key=\\"" + escapeHtml(groupKey) + "\\" aria-expanded=\\"" + (!collapsed ? "true" : "false") + "\\" title=\\"" + escapeHtml(collapsed ? "Expand project tasks" : "Collapse project tasks") + "\\"><span class=\\"task-group-triangle\\" aria-hidden=\\"true\\"></span></button>"
+        : "";
+      var out = "<div class=\\"task-group-header " + (cls || "") + "\\">" + toggle + "<span class=\\"task-group-heading\\">" + escapeHtml(heading) + " (" + tasks.length + ")</span></div>";
+      if (collapsed) {
+        return out;
+      }
       tasks.forEach(function (task) {
         out += renderTaskRow(task, today);
       });
@@ -3883,6 +3978,19 @@ export const UI_JS = `(function () {
     });
 
     list.innerHTML = html;
+
+    list.querySelectorAll(".task-group-toggle").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        var groupKey = btn.dataset.taskGroupKey;
+        if (!groupKey) return;
+        if (state.collapsedTaskGroups.has(groupKey)) {
+          state.collapsedTaskGroups.delete(groupKey);
+        } else {
+          state.collapsedTaskGroups.add(groupKey);
+        }
+        renderTasks();
+      });
+    });
 
     var total = state.tasks.length;
     var reportBits = [];
@@ -3914,6 +4022,12 @@ export const UI_JS = `(function () {
       btn.addEventListener("click", function () {
         var row = btn.closest(".task-actions");
         runTaskLifecycle("/api/ui/task-complete", row, "Completing...");
+      });
+    });
+    list.querySelectorAll(".task-reopen-btn").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        var row = btn.closest(".task-actions");
+        runTaskLifecycle("/api/ui/task-reopen", row, "Reopening...");
       });
     });
     list.querySelectorAll(".task-delete-btn").forEach(function (btn) {
@@ -4038,6 +4152,62 @@ export const UI_JS = `(function () {
       }
     });
 
+    list.querySelectorAll(".task-notes-form").forEach(function (form) {
+      form.addEventListener("submit", async function (e) {
+        e.preventDefault();
+        var taskId = form.dataset.taskId;
+        var milestoneName = form.dataset.milestoneName;
+        var notesInput = form.querySelector(".task-notes-input");
+        var resultEl = form.querySelector(".task-notes-result");
+        var notes = notesInput ? notesInput.value.trim() : "";
+        if (notes.length > 480) {
+          resultEl.textContent = "Notes must be 480 characters or fewer.";
+          return;
+        }
+        resultEl.textContent = notes ? "Saving..." : "Clearing...";
+        try {
+          var res = await apiPost("/api/ui/task-notes", {
+            name: milestoneName,
+            taskId: taskId,
+            notes: notes || null,
+            approved: true
+          });
+          if (res.warnings && res.warnings.some(function(w) { return w.severity === "BLOCK"; })) {
+            resultEl.textContent = res.warnings.map(function(w) { return w.message; }).join("; ");
+          } else {
+            resultEl.textContent = notes ? "Updated." : "Cleared.";
+            state.tasks = [];
+            loadTasks();
+          }
+        } catch (err) {
+          resultEl.textContent = err.message;
+        }
+      });
+      var clearNotesBtn = form.querySelector(".task-notes-clear");
+      if (clearNotesBtn) {
+        clearNotesBtn.addEventListener("click", async function () {
+          var taskId = form.dataset.taskId;
+          var milestoneName = form.dataset.milestoneName;
+          var notesInput = form.querySelector(".task-notes-input");
+          var resultEl = form.querySelector(".task-notes-result");
+          if (notesInput) notesInput.value = "";
+          resultEl.textContent = "Clearing...";
+          try {
+            var res = await apiPost("/api/ui/task-notes", { name: milestoneName, taskId: taskId, notes: null, approved: true });
+            if (res.warnings && res.warnings.some(function(w) { return w.severity === "BLOCK"; })) {
+              resultEl.textContent = res.warnings.map(function(w) { return w.message; }).join("; ");
+            } else {
+              resultEl.textContent = "Cleared.";
+              state.tasks = [];
+              loadTasks();
+            }
+          } catch (err) {
+            resultEl.textContent = err.message;
+          }
+        });
+      }
+    });
+
     list.querySelectorAll(".task-due-form").forEach(function (form) {
       form.addEventListener("submit", async function (e) {
         e.preventDefault();
@@ -4137,6 +4307,13 @@ export const UI_JS = `(function () {
     return dueTaskGroups(sorted, today, soon, sortMode, soonLabel);
   }
 
+  function taskGroupKey(groupBy, group) {
+    if (group && group.key) {
+      return String(group.key);
+    }
+    return String(groupBy || "group") + ":" + String((group && group.label) || "");
+  }
+
   function sortTasksForDisplay(tasks, sortMode) {
     var direction = validTasksSort(sortMode);
     return (tasks || []).slice().sort(function (left, right) {
@@ -4221,7 +4398,7 @@ export const UI_JS = `(function () {
       if (right[0] === "No project") return -1;
       return left[0].localeCompare(right[0]);
     }).map(function (entry) {
-      return { label: entry[0], tasks: entry[1], projectPriority: taskGroupPriority(entry[1]) };
+      return { key: "project:" + entry[0], label: entry[0], tasks: entry[1], projectPriority: taskGroupPriority(entry[1]) };
     });
   }
 
@@ -4441,6 +4618,7 @@ export const UI_JS = `(function () {
     var currentConf = task.dateConfidence || "estimated";
     var currentOwner = task.taskOwner || "";
     var currentPriority = Number.isFinite(taskPriority(task)) ? String(taskPriority(task)) : "";
+    var currentNotes = task.notes || "";
     var confSelected = ["committed", "internal_goal", "estimated"].map(function(c) {
       return "<option value=\\"" + c + "\\"" + (c === currentConf ? " selected" : "") + ">" + c + "</option>";
     }).join("");
@@ -4460,6 +4638,14 @@ export const UI_JS = `(function () {
       + "</div>"
       + "<div class=\\"task-priority-result\\"></div>"
       + "</form>";
+    var notesForm = "<form class=\\"task-notes-form\\" data-task-id=\\"" + escapeHtml(task.taskId) + "\\" data-milestone-name=\\"" + escapeHtml(task.milestoneName) + "\\">"
+      + "<textarea class=\\"task-notes-input\\" maxlength=\\"480\\" rows=\\"3\\" placeholder=\\"note\\" aria-label=\\"Task notes\\">" + escapeHtml(currentNotes) + "</textarea>"
+      + "<div class=\\"task-notes-controls\\">"
+      + "<button type=\\"submit\\" class=\\"compact-action\\">Save note</button>"
+      + (currentNotes ? "<button type=\\"button\\" class=\\"compact-action task-notes-clear\\">Clear</button>" : "")
+      + "</div>"
+      + "<div class=\\"task-notes-result\\"></div>"
+      + "</form>";
     var form = "<form class=\\"task-due-form\\" data-task-id=\\"" + escapeHtml(task.taskId) + "\\" data-milestone-name=\\"" + escapeHtml(task.milestoneName) + "\\">"
       + "<input class=\\"task-due-date\\" type=\\"date\\" value=\\"" + escapeHtml(currentDue) + "\\" aria-label=\\"Due date\\">"
       + "<select class=\\"task-due-confidence\\" aria-label=\\"Date confidence\\">" + confSelected + "</select>"
@@ -4472,19 +4658,21 @@ export const UI_JS = `(function () {
     var lifecycle = "<div class=\\"task-actions\\" data-task-id=\\"" + escapeHtml(task.taskId) + "\\" data-milestone-name=\\"" + escapeHtml(task.milestoneName) + "\\">"
       + (task.taskStatus !== "done" && task.taskStatus !== "cancelled"
         ? "<button type=\\"button\\" class=\\"compact-action task-complete-btn\\">Complete</button>" : "")
+      + (task.taskStatus === "done" ? "<button type=\\"button\\" class=\\"compact-action task-reopen-btn\\">Reopen</button>" : "")
       + "<button type=\\"button\\" class=\\"compact-action task-delete-btn\\">Delete</button>"
       + "<span class=\\"task-action-result\\"></span>"
       + "</div>";
     return "<div class=\\"task-row" + (stateClass ? " " + stateClass : "") + "\\" data-task-id=\\"" + escapeHtml(task.taskId) + "\\">"
       + "<div>"
       + "<div class=\\"task-title-line\\">" + projectPriorityBadge + taskPriorityBadge + "<span>" + escapeHtml(task.taskId) + " — " + escapeHtml(task.taskTitle) + "</span></div>"
+      + (currentNotes ? "<div class=\\"task-notes-preview\\">" + escapeHtml(currentNotes) + "</div>" : "")
       + "<div class=\\"task-meta\\">" + statusBadge + ownerBadge + projectBadge + milestoneBtn
       + (task.due ? "<span class=\\"badge\\">due " + escapeHtml(task.due) + "</span>" : "")
       + (task.completedOn ? "<span class=\\"badge\\">completed " + escapeHtml(task.completedOn) + "</span>" : "")
       + "</div>"
       + lifecycle
       + "</div>"
-      + "<div class=\\"task-edit-forms\\">" + ownerForm + priorityForm + form + "</div>"
+      + "<div class=\\"task-edit-forms\\">" + ownerForm + priorityForm + form + notesForm + "</div>"
       + "</div>";
   }
 
@@ -5344,9 +5532,11 @@ export const UI_JS = `(function () {
         + (id ? " data-task-id=\\"" + escapeHtml(id) + "\\"" : "")
         + " title=\\"Edit this task on the Tasks page\\">Edit in tasks →</a>";
       var stateClass = taskStateClass(task, today);
+      var notes = task && task.notes ? String(task.notes) : "";
       return "<div class=\\"detail-task" + (stateClass ? " " + stateClass : "") + (isFocus ? " focus" : "") + "\\"" + (id ? " data-task-id=\\"" + escapeHtml(id) + "\\"" : "") + ">"
         + "<div class=\\"detail-task-title\\">" + escapeHtml(id ? id + " — " + title : title) + "</div>"
         + "<div class=\\"detail-task-meta\\">" + badges + editLink + "</div>"
+        + (notes ? "<div class=\\"detail-task-notes\\">" + escapeHtml(notes) + "</div>" : "")
         + "</div>";
     }).join("");
     container.innerHTML = "<h3 class=\\"detail-tasks-heading\\">Tasks</h3>" + rows;
@@ -5904,6 +6094,7 @@ export const UI_JS = `(function () {
     };
     window.__ANCHOR_MCP_UI_TEST_HOOKS__.renderPlannerItem = renderPlannerItem;
     window.__ANCHOR_MCP_UI_TEST_HOOKS__.comparePlannerRuns = comparePlannerRuns;
+    window.__ANCHOR_MCP_UI_TEST_HOOKS__.proposalListWithUpdatedProposal = proposalListWithUpdatedProposal;
     window.__ANCHOR_MCP_UI_TEST_HOOKS__.sortTasksForDisplay = sortTasksForDisplay;
     window.__ANCHOR_MCP_UI_TEST_HOOKS__.taskGroupsForDisplay = taskGroupsForDisplay;
     window.__ANCHOR_MCP_UI_TEST_HOOKS__.taskGroupPriority = taskGroupPriority;

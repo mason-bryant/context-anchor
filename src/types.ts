@@ -189,6 +189,19 @@ export type UpdateTaskPriorityInput = {
   expectedFileCommit?: string;
 };
 
+export type UpdateTaskNotesInput = {
+  /** Milestone anchor name containing the task. */
+  name: string;
+  /** Task id to update. */
+  taskId: string;
+  /** Notes text to set, or null/empty to clear notes. */
+  notes: string | null;
+  message?: string;
+  approved?: boolean;
+  coAuthor?: string;
+  expectedFileCommit?: string;
+};
+
 export type PersonSearchMatch = {
   id: string;
   displayName: string;
@@ -259,6 +272,19 @@ export type CompleteTaskInput = {
   project?: string;
   /** Completion date (YYYY-MM-DD); defaults to today. */
   completedOn?: string;
+  message?: string;
+  approved?: boolean;
+  coAuthor?: string;
+  expectedFileCommit?: string;
+};
+
+export type ReopenTaskInput = {
+  /** Task id to reopen. */
+  taskId: string;
+  /** Milestone anchor containing the task. When omitted, the task is located by id within `project`. */
+  name?: string;
+  /** Project slug used to locate the task when `name` is omitted. */
+  project?: string;
   message?: string;
   approved?: boolean;
   coAuthor?: string;
