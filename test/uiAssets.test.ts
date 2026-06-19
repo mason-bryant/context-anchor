@@ -62,6 +62,7 @@ type UiAssetHooks = {
     dueBefore: string;
   };
   taskStateClass(task: Record<string, unknown>, today: string): string;
+  renderTaskRow(task: Record<string, unknown>, today: string): string;
   rememberTaskOwnerMatches(matches: Array<Record<string, unknown>>): void;
   taskOwnerCachedMatches(query: string): Array<{ id: string; displayName: string; aliases: string[]; matched: string; value: string }>;
   taskOwnerAssignmentValue(value: string): string;
@@ -206,6 +207,7 @@ describe("UI browser assets", () => {
     expect(UI_JS).toContain("collapsedTaskGroups");
     expect(UI_JS).toContain("task-owner-form");
     expect(UI_JS).toContain("task-owner-suggestions");
+    expect(UI_JS).toContain("task-edit-details");
     expect(UI_HTML).toContain('id="project-slug-suggestions"');
     expect(UI_HTML).toContain('id="milestone-anchor-suggestions"');
     expect(UI_HTML).toContain('id="team-id-suggestions"');
@@ -230,8 +232,44 @@ describe("UI browser assets", () => {
     expect(UI_CSS).toContain(".task-owner-form");
     expect(UI_CSS).toContain(".task-priority-form");
     expect(UI_CSS).toContain(".task-notes-form");
+    expect(UI_CSS).toContain(".task-edit-details");
+    expect(UI_CSS).toContain(".task-edit-summary");
+    expect(UI_CSS).toContain(".task-edit-details:not([open]) .task-edit-forms");
     expect(UI_CSS).toContain(".task-group-toggle");
     expect(UI_CSS).toContain(".registry-search");
+  });
+
+  it("collapses task edit tools by default while keeping lifecycle actions visible", () => {
+    const hooks = loadHooks();
+    const html = hooks.renderTaskRow(
+      {
+        taskId: "T-1",
+        taskTitle: "Merge the people and teams PR",
+        taskStatus: "todo",
+        taskOwner: "alice",
+        taskPriority: 1.2,
+        projectPriority: 1.1,
+        project: "anchor-mcp",
+        milestoneName: "projects/anchor-mcp/milestones/backlog.md",
+        milestoneDisplayId: "backlog",
+        due: "2026-06-20",
+        dateConfidence: "committed",
+        notes: "Follow up after review.",
+      },
+      "2026-06-18",
+    );
+
+    expect(html).toContain('<button type="button" class="compact-action task-complete-btn">Complete</button>');
+    expect(html).toContain('<button type="button" class="compact-action task-delete-btn">Delete</button>');
+    expect(html).toContain('<details class="task-edit-details">');
+    expect(html).toContain('<summary class="task-edit-summary">Edit task</summary>');
+    expect(html).not.toContain('<details class="task-edit-details" open>');
+    expect(html.indexOf("task-complete-btn")).toBeLessThan(html.indexOf("task-edit-details"));
+    expect(html.indexOf("task-delete-btn")).toBeLessThan(html.indexOf("task-edit-details"));
+    expect(html.indexOf("task-owner-form")).toBeGreaterThan(html.indexOf("task-edit-details"));
+    expect(html.indexOf("task-priority-form")).toBeGreaterThan(html.indexOf("task-edit-details"));
+    expect(html.indexOf("task-due-form")).toBeGreaterThan(html.indexOf("task-edit-details"));
+    expect(html.indexOf("task-notes-form")).toBeGreaterThan(html.indexOf("task-edit-details"));
   });
 
   it("caches the last ten task owner person matches for quick reuse", () => {
