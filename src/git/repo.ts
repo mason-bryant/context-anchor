@@ -16,6 +16,7 @@ import type {
   ResolvedAnchorPath,
   SyncableAnchorStore,
   WritePeopleRegistryOptions,
+  WriteProjectMappingsOptions,
 } from "../storage/store.js";
 import { analyzeRoadmapFromContent } from "../roadmap/analyzeRoadmap.js";
 import { parseProjectAliases, anchorMatchesProject } from "../projectAliases.js";
@@ -89,6 +90,21 @@ export class PeopleRegistryConflictError extends Error {
       }. Re-load the registry and retry.`,
     );
     this.name = "PeopleRegistryConflictError";
+  }
+}
+
+export class ProjectMappingsConflictError extends Error {
+  readonly code = "project_mappings_conflict";
+  constructor(
+    readonly expectedFileCommit: string,
+    readonly currentFileCommit: string | undefined,
+  ) {
+    super(
+      `Project mappings commit mismatch: expected ${expectedFileCommit || "none"}, found ${
+        currentFileCommit ?? "none"
+      }. Re-load the mappings and retry.`,
+    );
+    this.name = "ProjectMappingsConflictError";
   }
 }
 
@@ -928,6 +944,71 @@ export class AnchorRepository implements AnchorStore, SyncableAnchorStore {
       }
 
       const commitMessage = options.message ?? "chore: update people registry";
+      const args: string[] = [
+        "-c", "user.name=anchor-mcp",
+        "-c", "user.email=anchor-mcp@local",
+        "commit",
+        "-m", commitMessage,
+      ];
+      if (options.coAuthor) {
+        args.push("-m", `Co-authored-by: ${options.coAuthor}`);
+      }
+      await this.git.raw(args);
+
+      if (options.push) {
+        await this.push().catch(() => undefined);
+      }
+    });
+  }
+
+  static readonly PROJECT_MAPPINGS_FILE = "project-mappings.json";
+
+  private projectMappingsRepoRelativePath(): string {
+    const filePath = path.join(this.anchorRootPath, AnchorRepository.PROJECT_MAPPINGS_FILE);
+    return toPosix(path.relative(this.repoPath, filePath));
+  }
+
+  async projectMappingsCommit(): Promise<string | undefined> {
+    return this.lastCommitForFile(this.projectMappingsRepoRelativePath());
+  }
+
+  async readProjectMappingsRaw(): Promise<unknown> {
+    const filePath = path.join(this.anchorRootPath, AnchorRepository.PROJECT_MAPPINGS_FILE);
+    try {
+      const content = await readFile(filePath, "utf8");
+      return JSON.parse(content) as unknown;
+    } catch {
+      return null;
+    }
+  }
+
+  async writeProjectMappingsRaw(
+    mappings: unknown,
+    options: WriteProjectMappingsOptions = {},
+  ): Promise<void> {
+    const filePath = path.join(this.anchorRootPath, AnchorRepository.PROJECT_MAPPINGS_FILE);
+    assertInside(this.anchorRootPath, filePath);
+    const repoRelativePath = toPosix(path.relative(this.repoPath, filePath));
+    const content = JSON.stringify(mappings, null, 2) + "\n";
+
+    await this.lock.runExclusive(async () => {
+      if (options.expectedFileCommit !== undefined) {
+        const current = await this.lastCommitForFile(repoRelativePath);
+        if ((current ?? "") !== options.expectedFileCommit) {
+          throw new ProjectMappingsConflictError(options.expectedFileCommit, current);
+        }
+      }
+      const tmpPath = `${filePath}.${process.pid}.${Date.now()}.tmp`;
+      await writeFile(tmpPath, content, "utf8");
+      await rename(tmpPath, filePath);
+
+      await this.git.add(repoRelativePath);
+      const status = await this.git.status();
+      if (!status.files.some((file) => file.path === repoRelativePath)) {
+        return;
+      }
+
+      const commitMessage = options.message ?? "chore: update project mappings";
       const args: string[] = [
         "-c", "user.name=anchor-mcp",
         "-c", "user.email=anchor-mcp@local",

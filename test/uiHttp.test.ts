@@ -206,6 +206,90 @@ describe("UI HTTP routes", () => {
     expect(plan.missingContext).toEqual([]);
   });
 
+  it("forwards an unknown repo through the planner route and flags it", async () => {
+    const plan = await fetchJson<{
+      projectResolution?: { unknownRepo?: string; candidates: Array<{ project: string }> };
+      missingContext: string[];
+    }>(
+      "/api/ui/context-plan?task=Trace%20a%20charge&repo=repo-unknown&filePaths=services%2Fpayments%2Fcharge.ts",
+    );
+
+    expect(plan.projectResolution?.unknownRepo).toBe("repo-unknown");
+    expect(plan.projectResolution?.candidates).toEqual([]);
+    expect(plan.missingContext.some((line) => line.includes("repo-unknown"))).toBe(true);
+  });
+
+  it("manages project mappings and resolves a repo to candidate projects through the routes", async () => {
+    await service.writeAnchor({
+      name: "projects/project-one/project-one.md",
+      content: projectAnchorContent("project-one"),
+      message: "test: add project-one anchor",
+      approved: true,
+    });
+    await service.writeAnchor({
+      name: "projects/project-two/project-two.md",
+      content: projectAnchorContent("project-two"),
+      message: "test: add project-two anchor",
+      approved: true,
+    });
+
+    // CRUD: an empty registry, then a write through the POST route.
+    const initial = await fetchJson<{ projects: unknown[]; fileCommit?: string }>("/api/ui/project-mappings");
+    expect(initial.projects).toEqual([]);
+
+    const writeResponse = await fetch(`${baseUrl}/api/ui/project-mappings`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${TOKEN}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        mappings: {
+          projects: [
+            {
+              project: "project-one",
+              repos: [
+                { repo: "repo-alpha", paths: [], web: { url: "https://github.com/owner/repo-alpha", branch: "main" } },
+              ],
+            },
+            { project: "project-two", repos: [{ repo: "repo-alpha", paths: [] }] },
+          ],
+        },
+        expectedFileCommit: initial.fileCommit,
+      }),
+    });
+    expect(writeResponse.ok).toBe(true);
+
+    const stored = await fetchJson<{
+      projects: Array<{ project: string; repos: Array<{ web?: { url: string; branch?: string } }> }>;
+    }>("/api/ui/project-mappings");
+    expect(stored.projects.map((p) => p.project).sort()).toEqual(["project-one", "project-two"]);
+    const projectOne = stored.projects.find((p) => p.project === "project-one");
+    expect(projectOne?.repos[0]?.web).toEqual({ url: "https://github.com/owner/repo-alpha", branch: "main" });
+
+    const plan = await fetchJson<{
+      included: Array<{ name: string }>;
+      projectResolution?: { candidates: Array<{ project: string }> };
+    }>("/api/ui/context-plan?task=Investigate%20flow&repo=repo-alpha");
+
+    const includedNames = plan.included.map((anchor) => anchor.name);
+    expect(includedNames).toContain("projects/project-one/project-one.md");
+    expect(includedNames).toContain("projects/project-two/project-two.md");
+    expect(plan.projectResolution?.candidates.map((candidate) => candidate.project).sort()).toEqual([
+      "project-one",
+      "project-two",
+    ]);
+  });
+
+  it("rejects a stale project-mappings write with a 409 conflict", async () => {
+    const stale = await fetch(`${baseUrl}/api/ui/project-mappings`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${TOKEN}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        mappings: { projects: [{ project: "demo", repos: [{ repo: "repo-alpha", paths: [] }] }] },
+        expectedFileCommit: "0000000000000000000000000000000000000000",
+      }),
+    });
+    expect(stale.status).toBe(409);
+  });
+
   it("returns anchor detail with required section status and front matter", async () => {
     const detail = await fetchJson<{
       anchor: {

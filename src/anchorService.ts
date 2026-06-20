@@ -81,6 +81,8 @@ import type {
   ApplyProposedChangeInput,
   ApplyProposedChangeResult,
   ProjectFilterResolution,
+  ProjectMappings,
+  ProjectMappingsWithCommit,
   ProjectUpdateMilestone,
   ProjectUpdateMilestoneStatus,
   ProjectUpdateSnapshot,
@@ -122,11 +124,14 @@ import type {
   PeopleRegistry,
   PeopleRegistryWithCommit,
   WritePeopleRegistryInput,
+  WriteProjectMappingsInput,
 } from "./types.js";
 import {
   buildProjectAliasIndex,
   resolveProjectFilter,
 } from "./projectAliases.js";
+import { candidateBoostMap, resolveCandidateProjects } from "./projectResolution.js";
+import { parseProjectMappings } from "./projectMappings.js";
 import { buildPeopleIndex, parsePeopleRegistry } from "./peopleRegistry.js";
 import { runValidators } from "./validators/pipeline.js";
 
@@ -152,6 +157,9 @@ export class AnchorService {
   private _peopleRegistry: PeopleRegistry | undefined;
   /** Git commit the cached registry was parsed from; used to detect out-of-band changes (e.g. AutoSync rebases). */
   private _peopleRegistryCommit: string | undefined;
+  private _projectMappings: ProjectMappings | undefined;
+  /** Git commit the cached project mappings were parsed from. */
+  private _projectMappingsCommit: string | undefined;
 
   constructor(
     private readonly repo: AnchorStore,
@@ -282,6 +290,41 @@ export class AnchorService {
     const registry = await this.loadPeopleRegistry();
     const fileCommit = await this.repo.peopleRegistryCommit();
     return { ...registry, ...(fileCommit ? { fileCommit } : {}) };
+  }
+
+  private async loadProjectMappings(): Promise<ProjectMappings> {
+    // Cache keyed on the file's last commit so out-of-band changes (e.g. an
+    // AutoSync rebase) are picked up instead of served stale.
+    const commit = await this.repo.projectMappingsCommit();
+    if (this._projectMappings !== undefined && this._projectMappingsCommit === commit) {
+      return this._projectMappings;
+    }
+    const raw = await this.repo.readProjectMappingsRaw();
+    this._projectMappings = parseProjectMappings(raw);
+    this._projectMappingsCommit = commit;
+    return this._projectMappings;
+  }
+
+  private invalidateProjectMappings(): void {
+    this._projectMappings = undefined;
+    this._projectMappingsCommit = undefined;
+  }
+
+  async getProjectMappings(): Promise<ProjectMappingsWithCommit> {
+    const mappings = await this.loadProjectMappings();
+    const fileCommit = await this.repo.projectMappingsCommit();
+    return { ...mappings, ...(fileCommit ? { fileCommit } : {}) };
+  }
+
+  async writeProjectMappings(input: WriteProjectMappingsInput): Promise<void> {
+    const normalized = parseProjectMappings(input.mappings);
+    await this.repo.writeProjectMappingsRaw(normalized, {
+      message: input.message,
+      coAuthor: input.coAuthor,
+      push: this.options.pushOnWrite,
+      expectedFileCommit: input.expectedFileCommit,
+    });
+    this.invalidateProjectMappings();
   }
 
   private async buildBM25SearchIndex(anchors: AnchorMeta[]): Promise<{
@@ -2091,6 +2134,22 @@ None.
         ? { ...input, project: projectFilter.resolved }
         : input;
 
+    // Repo/path resolution is a fallback for when the project is not named
+    // directly, so skip it when the caller passes an explicit project: an
+    // explicit filter should not be diluted by candidate-project boosts. Also
+    // skip when there is no repo/path signal at all (nothing to resolve), which
+    // avoids the registry read on the common path.
+    const hasResolutionSignal =
+      !input.project?.trim() &&
+      (Boolean(input.repo?.trim()) || (input.filePaths?.some((filePath) => filePath.trim().length > 0) ?? false));
+    const resolution = hasResolutionSignal
+      ? resolveCandidateProjects(
+          { repo: input.repo, filePaths: input.filePaths },
+          await this.loadProjectMappings(),
+        )
+      : undefined;
+    const candidateBoosts = candidateBoostMap(resolution);
+
     const { index: bm25Index, bodyCharCounts } = await this.buildBM25SearchIndex(anchors);
     const plan = buildContextBundlePlan(
       anchors,
@@ -2100,16 +2159,30 @@ None.
       projectFilter,
       bodyCharCounts,
       this.options.staleAfterDays,
+      new Date(),
+      candidateBoosts,
     );
     const names = plan.loadContext.names;
     const roadmapSignals = collectRoadmapAcceptanceMissingSignals(anchors);
     const milestoneSignals = collectMilestoneAcceptanceMissingSignals(anchors);
+    // Surface an unmapped repo as a freshness signal whether or not file paths
+    // produced fallback candidates, so the caller always learns the repo itself
+    // resolved to nothing.
+    const resolutionSignals =
+      resolution?.unknownRepo !== undefined
+        ? [
+            resolution.candidates.length === 0
+              ? `Repository "${resolution.unknownRepo}" did not resolve to any candidate projects.`
+              : `Repository "${resolution.unknownRepo}" is not mapped to any project; using file-path-derived candidate projects only.`,
+          ]
+        : [];
 
     return {
       ...plan,
-      missingContext: [...plan.missingContext, ...roadmapSignals, ...milestoneSignals],
+      missingContext: [...plan.missingContext, ...roadmapSignals, ...milestoneSignals, ...resolutionSignals],
       loadContext: { ...plan.loadContext, names },
       ...(projectFilter ? { projectFilter } : {}),
+      ...(resolution ? { projectResolution: resolution } : {}),
     };
   }
 
@@ -2118,6 +2191,8 @@ None.
     const plan = await this.planContextBundle({
       task: input.task,
       project: input.project,
+      repo: input.repo,
+      filePaths: input.filePaths,
       budgetTokens: input.budgetTokens,
       maxAnchors: input.maxAnchors,
       includeArchive: input.includeArchive,
@@ -2159,6 +2234,7 @@ None.
         excluded: plan.excluded,
         missingContext: plan.missingContext,
         ...(plan.projectFilter ? { projectFilter: plan.projectFilter } : {}),
+        ...(plan.projectResolution ? { projectResolution: plan.projectResolution } : {}),
       },
       anchors: loaded.anchors,
       truncated: loaded.truncated,

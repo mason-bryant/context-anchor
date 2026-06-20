@@ -1,7 +1,7 @@
 import type { NextFunction, Request, Response, Express } from "express";
 
 import type { AnchorService } from "../anchorService.js";
-import { PeopleRegistryConflictError } from "../git/repo.js";
+import { PeopleRegistryConflictError, ProjectMappingsConflictError } from "../git/repo.js";
 import { isDiscoveryCategory, type DiscoveryCategory } from "../taxonomy.js";
 import type {
   ContextRootFormat,
@@ -278,6 +278,35 @@ export function registerUiRoutes(
         });
       } catch (error) {
         if (error instanceof PeopleRegistryConflictError) {
+          throw new UiHttpError(409, error.message);
+        }
+        throw error;
+      }
+      return { ok: true };
+    }),
+  );
+
+  app.get(
+    "/api/ui/project-mappings",
+    ...protect,
+    jsonRoute(async (_req) => service.getProjectMappings()),
+  );
+
+  app.post(
+    "/api/ui/project-mappings",
+    ...protect,
+    jsonRoute(async (req) => {
+      const body = bodyRecord(req);
+      const mappings = bodyObject(body, "mappings");
+      try {
+        await service.writeProjectMappings({
+          mappings,
+          message: optionalBodyString(body, "message"),
+          coAuthor: optionalBodyString(body, "coAuthor"),
+          expectedFileCommit: optionalBodyString(body, "expectedFileCommit"),
+        });
+      } catch (error) {
+        if (error instanceof ProjectMappingsConflictError) {
           throw new UiHttpError(409, error.message);
         }
         throw error;
@@ -622,13 +651,30 @@ function readUiAnchorSort(req: Request): UiAnchorSort {
 
 function readPlannerInput(req: Request): PlanContextBundleInput {
   const filters = readDiscoveryFilters(req);
+  const repo = optionalQueryString(req, "repo");
+  const filePaths = readStringArrayQuery(req, "filePaths");
   return {
     task: requiredQueryString(req, "task"),
     ...filters,
+    ...(repo ? { repo } : {}),
+    ...(filePaths.length > 0 ? { filePaths } : {}),
     budgetTokens: positiveIntQuery(req, "budgetTokens", 200000),
     maxAnchors: positiveIntQuery(req, "maxAnchors", 500),
     maxExcluded: positiveIntQuery(req, "maxExcluded", 500, { allowZero: true }),
   };
+}
+
+/** Read a repeated query parameter (e.g. `?filePaths=a&filePaths=b`) as a trimmed, non-empty string array. */
+function readStringArrayQuery(req: Request, key: string): string[] {
+  const value = req.query[key];
+  const raw = Array.isArray(value) ? value : value === undefined ? [] : [value];
+  const items: string[] = [];
+  for (const item of raw) {
+    if (typeof item === "string" && item.trim().length > 0) {
+      items.push(item.trim());
+    }
+  }
+  return items;
 }
 
 function readProposedChangesInput(req: Request): ProposedChangeListInput {

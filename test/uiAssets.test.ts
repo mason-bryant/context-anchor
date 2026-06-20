@@ -80,6 +80,15 @@ type UiAssetHooks = {
   setTasksDisplayForTest(groupBy: string, sortMode: string): void;
   shouldHandleClientNavigation(event: Record<string, unknown>, link: { getAttribute(name: string): string | null }): boolean;
   parsePlannerLogPaste(text: unknown): Record<string, unknown> | null;
+  queryFromPlannerInput(input: Record<string, unknown>): string;
+  renderProjectResolution(resolution: unknown): string;
+  formatPlannerStatus(plan: Record<string, unknown>): string;
+  mappingCardHtml(project: unknown, index: number): string;
+  mappingsForDisplay(): {
+    managed: Array<{ project: string; repos: unknown[] }>;
+    orphans: Array<{ project: string; repos: unknown[] }>;
+  };
+  setMappingsTestState(anchors: unknown[], projectMappings: unknown): void;
   buildJudgePrompt(plan: Record<string, unknown>, anchorBodies: Record<string, string>): string;
   formatPreview(preview: Record<string, unknown>): string;
   priorityLabel(priority: number): string;
@@ -176,11 +185,15 @@ describe("UI browser assets", () => {
     expect(UI_HTML).toContain('id="planner-category"');
     expect(UI_HTML).toContain('id="planner-tag"');
     expect(UI_HTML).toContain('id="planner-runtime"');
+    expect(UI_HTML).toContain('id="planner-repo"');
+    expect(UI_HTML).toContain('id="planner-filepaths"');
     expect(UI_HTML).toContain('id="planner-budget"');
     expect(UI_HTML).toContain('id="planner-max-anchors"');
     expect(UI_HTML).toContain('id="planner-load-context"');
     expect(UI_HTML).toContain('id="planner-comparison"');
     expect(UI_HTML).toContain('id="planner-raw"');
+    expect(UI_HTML).toContain('id="planner-resolution-box"');
+    expect(UI_HTML).toContain('id="planner-resolution"');
   });
 
   it("includes task grouping and due-date sort controls", () => {
@@ -940,6 +953,178 @@ describe("UI browser assets", () => {
     expect(UI_JS).toContain('el("planner-task").addEventListener("paste"');
     expect(UI_JS).toContain("Loaded planner inputs from pasted log line.");
     expect(UI_HTML).toContain("Paste a request-log JSON line to auto-fill");
+  });
+
+  it("parses and trims repo and filePaths from a pasted planner-arguments object", () => {
+    const hooks = loadHooks();
+    const parsed = hooks.parsePlannerLogPaste(
+      JSON.stringify({
+        task: "Trace a failing charge",
+        repo: "  repo-alpha  ",
+        filePaths: ["  services/payments/charge.ts ", "  ", 7, "services/payments/refund.ts"],
+      }),
+    );
+
+    // Trimmed to match manual input, so pasted args don't break repo/path matches.
+    expect(parsed).toEqual({
+      task: "Trace a failing charge",
+      repo: "repo-alpha",
+      filePaths: ["services/payments/charge.ts", "services/payments/refund.ts"],
+    });
+  });
+
+  it("serializes repo and repeated filePaths params from planner input", () => {
+    const hooks = loadHooks();
+    const query = hooks.queryFromPlannerInput({
+      task: "Trace a failing charge",
+      repo: "repo-alpha",
+      filePaths: ["services/payments/charge.ts", "services/payments/refund.ts"],
+    });
+    const params = new URLSearchParams(query);
+
+    expect(params.get("task")).toBe("Trace a failing charge");
+    expect(params.get("repo")).toBe("repo-alpha");
+    expect(params.getAll("filePaths")).toEqual([
+      "services/payments/charge.ts",
+      "services/payments/refund.ts",
+    ]);
+  });
+
+  it("renders project resolution candidates, boosts, reasons, and unknown repos", () => {
+    const hooks = loadHooks();
+    const html = hooks.renderProjectResolution({
+      candidates: [
+        { project: "project-one", boost: 10, reasons: ['repo "repo-alpha" maps to project "project-one"'] },
+      ],
+      unknownRepo: undefined,
+      explanations: [],
+    });
+
+    expect(html).toContain("project-one");
+    expect(html).toContain("boost 10");
+    expect(html).toContain("maps to project");
+
+    const unknown = hooks.renderProjectResolution({ candidates: [], unknownRepo: "repo-unknown", explanations: [] });
+    expect(unknown).toContain("repo-unknown");
+    expect(unknown).toContain("not in the configured repo map");
+  });
+
+  it("summarizes candidate projects and unknown repos in the planner status", () => {
+    const hooks = loadHooks();
+    const status = hooks.formatPlannerStatus({
+      generatedAt: "2026-06-20T00:00:00.000Z",
+      totalCandidates: 5,
+      projectResolution: {
+        candidates: [
+          { project: "project-one", boost: 10, reasons: [] },
+          { project: "project-two", boost: 10, reasons: [] },
+        ],
+        explanations: [],
+      },
+    });
+    expect(status).toContain("candidate projects project-one, project-two");
+
+    const unknownStatus = hooks.formatPlannerStatus({
+      generatedAt: "2026-06-20T00:00:00.000Z",
+      totalCandidates: 5,
+      projectResolution: { candidates: [], unknownRepo: "repo-unknown", explanations: [] },
+    });
+    expect(unknownStatus).toContain("unknown repo repo-unknown");
+  });
+
+  it("includes the repo mappings tab, controls, and list region", () => {
+    expect(UI_HTML).toContain('data-tab="mappings"');
+    expect(UI_HTML).toContain('id="mappings-view"');
+    expect(UI_HTML).toContain('id="mappings-save"');
+    expect(UI_HTML).toContain('id="mappings-refresh"');
+    expect(UI_HTML).toContain('id="mappings-list"');
+    // No free-text "Add Project": the project list is derived from anchors.
+    expect(UI_HTML).not.toContain('id="mappings-add"');
+    expect(UI_JS).toContain("/api/ui/project-mappings");
+    expect(UI_JS).toContain("loadProjectMappings");
+    expect(UI_JS).toContain("saveProjectMappings");
+  });
+
+  it("renders a managed project mapping card with a fixed slug and clear action", () => {
+    const hooks = loadHooks();
+    const html = hooks.mappingCardHtml(
+      { project: "payments", repos: [{ repo: "repo-alpha", paths: ["services/payments", "libs/pay"] }] },
+      0,
+    );
+    expect(html).toContain('data-project-index="0"');
+    // The slug is fixed (data attribute + name span), not an editable input.
+    expect(html).toContain('data-project="payments"');
+    expect(html).toContain('class="mapping-project-name">payments</span>');
+    expect(html).not.toContain('class="mapping-project"');
+    expect(html).toContain('class="mapping-repo"');
+    expect(html).toContain('value="repo-alpha"');
+    expect(html).toContain("services/payments\nlibs/pay");
+    expect(html).toContain("mapping-add-repo");
+    expect(html).toContain("mapping-remove-repo");
+    // Managed project with a mapping gets "Clear mapping", not "Remove".
+    expect(html).toContain("mapping-clear");
+    expect(html).not.toContain("mapping-remove-orphan");
+  });
+
+  it("renders web (file-link) inputs with stored values", () => {
+    const hooks = loadHooks();
+    const html = hooks.mappingCardHtml(
+      {
+        project: "payments",
+        repos: [
+          {
+            repo: "repo-alpha",
+            paths: [],
+            web: { url: "https://github.com/owner/repo-alpha", branch: "main" },
+          },
+        ],
+      },
+      0,
+    );
+    expect(html).toContain("mapping-web-url");
+    expect(html).toContain('value="https://github.com/owner/repo-alpha"');
+    expect(html).toContain("mapping-web-branch");
+    expect(html).toContain('value="main"');
+    expect(html).toContain("mapping-web-template");
+  });
+
+  it("flags an orphaned mapping (no matching anchor) with a remove action", () => {
+    const hooks = loadHooks();
+    hooks.setMappingsTestState([{ projectSlug: "payments" }], { projects: [] });
+    const html = hooks.mappingCardHtml({ project: "ghost", repos: [{ repo: "repo-x", paths: [] }] }, 0);
+    expect(html).toContain('data-project="ghost"');
+    expect(html).toContain("no matching anchor");
+    expect(html).toContain("mapping-remove-orphan");
+    expect(html).not.toContain("mapping-clear");
+  });
+
+  it("lists every managed project and separates orphaned mappings", () => {
+    const hooks = loadHooks();
+    hooks.setMappingsTestState(
+      [{ projectSlug: "payments" }, { projectSlug: "reporting" }, { projectSlug: "billing" }],
+      {
+        projects: [
+          { project: "payments", repos: [{ repo: "repo-alpha", paths: [] }] },
+          { project: "ghost", repos: [{ repo: "repo-x", paths: [] }] },
+        ],
+      },
+    );
+    const display = hooks.mappingsForDisplay();
+    expect(display.managed.map((p) => p.project).sort()).toEqual(["billing", "payments", "reporting"]);
+    // The mapped project keeps its mapping; unmapped managed projects are empty.
+    expect(display.managed.find((p) => p.project === "payments")?.repos).toHaveLength(1);
+    expect(display.managed.find((p) => p.project === "reporting")?.repos).toEqual([]);
+    // The mapping with no matching anchor is an orphan, not a managed project.
+    expect(display.orphans.map((p) => p.project)).toEqual(["ghost"]);
+  });
+
+  it("renders a whole-repo mapping with empty paths", () => {
+    const hooks = loadHooks();
+    const html = hooks.mappingCardHtml({ project: "billing", repos: [{ repo: "repo-beta", paths: [] }] }, 1);
+    expect(html).toContain('data-project-index="1"');
+    expect(html).toContain('value="repo-beta"');
+    // textarea is present but empty (whole-repo entry)
+    expect(html).toContain('class="mapping-paths" rows="2" placeholder="services/payments"></textarea>');
   });
 
   it("renders the judge-prompt button in the planner UI", () => {

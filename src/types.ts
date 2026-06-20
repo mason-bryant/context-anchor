@@ -562,6 +562,73 @@ export type ProjectFilterResolution = {
   matchedAlias?: string;
 };
 
+/**
+ * Project-first mapping from a project to the repositories (and optional path
+ * prefixes within them) where it lives. Stored in `project-mappings.json` at the
+ * anchor root; empty by default so no real-world repo or project names ship with
+ * the tool.
+ */
+export type ProjectMappings = {
+  projects: ProjectMapping[];
+};
+
+export type ProjectMapping = {
+  /** Project slug this mapping applies to. */
+  project: string;
+  /** Repositories (optionally narrowed to directory prefixes) this project lives in. */
+  repos: ProjectRepoMapping[];
+};
+
+export type ProjectRepoMapping = {
+  /** Repository name this project lives in. */
+  repo: string;
+  /** Directory prefixes within the repo that belong to this project; empty means the whole repo. */
+  paths: string[];
+  /** Optional remote/web info used to build links to specific files in the repo. */
+  web?: ProjectRepoWeb;
+};
+
+export type ProjectRepoWeb = {
+  /** Repo web home, e.g. `https://github.com/owner/repo`. */
+  url: string;
+  /** Default branch/ref used in file links; defaults to `main` when omitted. */
+  branch?: string;
+  /**
+   * Optional file-URL template with `{url}`, `{branch}`, and `{path}` placeholders.
+   * Defaults to the common `{url}/blob/{branch}/{path}` (GitHub-style); override for
+   * hosts that differ (e.g. GitLab `{url}/-/blob/{branch}/{path}`).
+   */
+  fileTemplate?: string;
+};
+
+export type ProjectMappingsWithCommit = ProjectMappings & { fileCommit?: string };
+
+export type WriteProjectMappingsInput = {
+  // Accepts a raw mappings shape; the service normalizes and validates it
+  // through parseProjectMappings before persisting.
+  mappings: unknown;
+  message?: string;
+  coAuthor?: string;
+  // Optional optimistic-concurrency guard: the git commit the caller last read.
+  expectedFileCommit?: string;
+};
+
+/** One candidate project derived from a repo name and/or file paths, with its boost. */
+export type ProjectResolutionCandidate = {
+  project: string;
+  boost: number;
+  reasons: string[];
+};
+
+/** Result of resolving a repo name and file paths to ranked candidate projects. */
+export type ProjectResolution = {
+  candidates: ProjectResolutionCandidate[];
+  /** Repo name supplied but absent from the configured map; degrades gracefully. */
+  unknownRepo?: string;
+  /** Human-readable explanation of why each candidate project was included. */
+  explanations: string[];
+};
+
 export type ContextRootResult = {
   generatedAt: string;
   entries: ContextRootEntry[];
@@ -630,6 +697,10 @@ export type LoadContextResult = {
 export type PlanContextBundleInput = {
   task: string;
   project?: string;
+  /** Repository name; resolved to candidate projects via the configured repo map. */
+  repo?: string;
+  /** File paths touched by the task; resolved to candidate projects via path-prefix rules. */
+  filePaths?: string[];
   category?: DiscoveryCategory;
   tag?: string;
   runtime?: string;
@@ -667,6 +738,8 @@ export type PlanContextBundleResult = {
   excluded: PlanContextBundleItem[];
   missingContext: string[];
   projectFilter?: ProjectFilterResolution;
+  /** Candidate projects derived from a repo name and/or file paths, with explanations. */
+  projectResolution?: ProjectResolution;
   loadContext: {
     names: string[];
     includeContent: "excerpt";
@@ -679,6 +752,10 @@ export type PlanContextBundleResult = {
 export type StartTaskInput = {
   task: string;
   project?: string;
+  /** Repository name; resolved to candidate projects via the configured repo map. */
+  repo?: string;
+  /** File paths touched by the task; resolved to candidate projects via path-prefix rules. */
+  filePaths?: string[];
   budgetTokens?: number;
   maxAnchors?: number;
   includeArchive?: boolean;
@@ -700,6 +777,7 @@ export type StartTaskResult = {
     excluded: PlanContextBundleItem[];
     missingContext: string[];
     projectFilter?: ProjectFilterResolution;
+    projectResolution?: ProjectResolution;
   };
   anchors: LoadContextAnchor[];
   truncated: boolean;

@@ -4,8 +4,9 @@ Persistent project memory for AI coding agents.
 
 `anchor-mcp` helps Cursor, Codex, Claude, and other codegen tools start work with the
 right project context already in view. It serves curated Markdown anchors from a
-private git repo, plans task-specific context bundles, and validates every write so
-decisions, constraints, roadmaps, PR history, and agent rules stay durable instead of
+private git repo, plans task-specific context bundles, tracks cross-project task state
+through both MCP tools and a browser UI, and validates every write so decisions,
+constraints, roadmaps, PR history, tasks, and agent rules stay durable instead of
 disappearing into chat.
 
 Use it when you want agents to:
@@ -14,6 +15,7 @@ Use it when you want agents to:
 - pull only relevant context instead of dumping an entire docs tree
 - write durable discoveries back through validated, committed MCP tools
 - keep roadmaps, milestones, proposed changes, and stale-context warnings auditable
+- manage backlog and milestone tasks across projects from MCP or the HTTP UI
 - share the same context across multiple agent runtimes without copying files around
 
 ## Quick Start
@@ -31,6 +33,25 @@ npx -y @mason/anchor-mcp@2.1.0 --repo ~/agent-context
 ```
 
 For setup walkthroughs, see [QUICKSTART.md](QUICKSTART.md).
+
+## Key Benefits
+
+- **Right-sized context for the current job.** Agents can call `startTask` or
+  `planContextBundle` with a task description and token budget, then load only the
+  selected anchors or task-aware excerpts. That keeps long-lived context out of the
+  prompt until it is relevant.
+- **Learning that survives the chat window.** Durable facts, decisions, constraints,
+  PR history, roadmaps, and agent rules live in validated Markdown anchors. Write
+  tools commit updates to git, so discoveries from one session are available to the
+  next agent instead of being trapped in a transcript.
+- **Structured work tracking across projects.** Backlog and milestone tasks are
+  first-class data with status, owner, priority, notes, due dates, completion dates,
+  and roadmap goal links. Agents can manage them through MCP, while the `/ui` Tasks
+  view supports cross-project filtering, grouping, assignment, and lifecycle edits.
+- **People and teams as coordination data.** The people registry stores teammates,
+  teams, identities, aliases, and project roles. Task owners can resolve to people or
+  teams, and project associations can feed owner filters, coordination views, and
+  deterministic project updates.
 
 ## Core Model
 
@@ -60,16 +81,26 @@ When facts change, agents write through MCP tools such as `updateAnchorSection`,
 committed to git, and optionally pushed, which keeps context changes reviewable and
 recoverable.
 
+Structured tasks live on project milestone anchors, including a reserved backlog
+milestone for unscheduled work. Agents can list, create, complete, reopen, delete, and
+update tasks through MCP tools such as `listTasksDue`, `createTask`, `updateTaskOwner`,
+`updateTaskDue`, and `completeTask`.
+
 ## What It Keeps Organized
 
 - Project state: current facts, decisions, constraints, PR history, and roadmaps.
 - Agent rules: behavior, coding standards, review habits, and workflow conventions.
 - Invariants and conflicts: hard constraints and resolved contradictions.
 - Milestones: roadmap goal groupings with stable goal IDs and task-aware retrieval.
+- Tasks: cross-project backlog and milestone work with status, owner, priority, notes,
+  due dates, and completion dates.
 - Proposed changes: reviewable draft edits before they become durable context.
 
-The HTTP server also serves a read-only explorer UI at `/ui` for browsing the
-generated root, anchors, roadmap metadata, validation health, and planner output.
+The HTTP server also serves a browser UI at `/ui` for browsing the generated root,
+anchors, roadmap metadata, validation health, and planner output. Its Tasks view
+surfaces work across projects with filters, grouping, due and completed windows,
+assignment, priority edits, lifecycle actions, and links back to the milestone anchors
+that store the task metadata.
 
 ## Documentation
 

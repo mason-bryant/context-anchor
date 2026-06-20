@@ -3,7 +3,7 @@ import { McpServer } from "@modelcontextprotocol/server";
 import * as z from "zod/v4";
 
 import type { AnchorService } from "./anchorService.js";
-import { PeopleRegistryConflictError } from "./git/repo.js";
+import { PeopleRegistryConflictError, ProjectMappingsConflictError } from "./git/repo.js";
 import { errorMetadata, noopRequestLogger, type RequestLogger } from "./logger.js";
 import { isDiscoveryCategory, type DiscoveryCategory } from "./taxonomy.js";
 import type {
@@ -306,10 +306,13 @@ the index when your workflow checks in that file.`,
       title: "Start Task",
       description:
         "Session-start orchestration: plan a task-aware context bundle and load suggested anchor excerpts in one call. " +
-        "Returns plan rationale, anchor excerpts, staleness flags, active milestones, and suggested readAnchor follow-ups.",
+        "Returns plan rationale, anchor excerpts, staleness flags, active milestones, and suggested readAnchor follow-ups. " +
+        "Pass repo and/or filePaths to resolve candidate projects when the project is not named directly.",
       inputSchema: z.object({
         task: z.string().min(1),
         project: z.string().optional(),
+        repo: z.string().optional(),
+        filePaths: z.array(z.string()).optional(),
         budgetTokens: z.number().int().positive().optional(),
         maxAnchors: z.number().int().positive().optional(),
         includeArchive: z.boolean().default(false),
@@ -337,10 +340,13 @@ the index when your workflow checks in that file.`,
     {
       title: "Plan Context Bundle",
       description:
-        "Plan a task-aware context bundle. Returns included anchors, excluded anchors, reasons, estimated token use, missing-context signals, and a suggested loadContext call.",
+        "Plan a task-aware context bundle. Returns included anchors, excluded anchors, reasons, estimated token use, missing-context signals, and a suggested loadContext call. " +
+        "Pass repo and/or filePaths to resolve candidate projects when the project is not named directly.",
       inputSchema: z.object({
         task: z.string().min(1),
         project: z.string().optional(),
+        repo: z.string().optional(),
+        filePaths: z.array(z.string()).optional(),
         category: CategorySchema.optional(),
         tag: z.string().optional(),
         runtime: z.string().optional(),
@@ -1295,6 +1301,64 @@ the index when your workflow checks in that file.`,
       annotations: { readOnlyHint: true },
     },
     async () => jsonResult(await service.getPeopleRegistry()),
+  );
+
+  server.registerTool(
+    "getProjectMappings",
+    {
+      title: "Get Project Mappings",
+      description:
+        "Return the project-to-repository/path mappings used to resolve a repo name or file paths to candidate projects.",
+      inputSchema: z.object({}),
+      annotations: { readOnlyHint: true },
+    },
+    async () => jsonResult(await service.getProjectMappings()),
+  );
+
+  server.registerTool(
+    "writeProjectMappings",
+    {
+      title: "Write Project Mappings",
+      description:
+        "Replace the full project-to-repository/path mapping registry. Each project lists the repos it lives in; each repo may be narrowed to directory path prefixes (empty means the whole repo). Commits the change to git.",
+      inputSchema: z.object({
+        mappings: z.object({
+          projects: z.array(
+            z.object({
+              project: z.string().min(1),
+              repos: z.array(
+                z.object({
+                  repo: z.string().min(1),
+                  paths: z.array(z.string()).optional(),
+                  web: z
+                    .object({
+                      url: z.string().min(1),
+                      branch: z.string().optional(),
+                      fileTemplate: z.string().optional(),
+                    })
+                    .optional(),
+                }),
+              ),
+            }),
+          ),
+        }),
+        message: z.string().optional(),
+        coAuthor: z.string().optional(),
+        expectedFileCommit: z.string().optional(),
+      }),
+      annotations: { destructiveHint: false, idempotentHint: false },
+    },
+    async ({ mappings, message, coAuthor, expectedFileCommit }) => {
+      try {
+        await service.writeProjectMappings({ mappings, message, coAuthor, expectedFileCommit });
+      } catch (error) {
+        if (error instanceof ProjectMappingsConflictError) {
+          return jsonResult({ error: error.message, code: error.code }, true);
+        }
+        throw error;
+      }
+      return jsonResult({ ok: true });
+    },
   );
 
   server.registerPrompt(

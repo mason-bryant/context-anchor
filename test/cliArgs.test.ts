@@ -260,4 +260,5 @@ describe("CLI args — file logging", () => {
     const options = parseCliArgs([], { ANCHOR_MCP_STALE_AFTER_DAYS: "14" });
     expect(options.config.staleAfterDays).toBe(14);
   });
+
 });

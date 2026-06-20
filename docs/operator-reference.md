@@ -226,6 +226,72 @@ When `truncated` is true, call again with `nextCursor` from the previous respons
 the payload is still too large for the client, reduce `limit` or `maxBytes`, or set
 `includeContent` to `excerpt` or `none`.
 
+## Project Resolution
+
+`startTask` and `planContextBundle` accept an optional `repo` name and `filePaths`
+list. When a request is scoped to a repository or touched files rather than a named
+project, the server maps those signals to candidate project slugs and boosts their
+anchors during scoring. The server cannot observe the editor, so clients should pass
+`repo` and `filePaths` to benefit from resolution.
+
+The mappings live in a project-first registry, `project-mappings.json`, at the anchor
+root (alongside `people-registry.json`). It is not an anchor and is empty by default,
+so no real-world repo or project names ship with the tool. The service caches it keyed
+on the file's git commit, so resolution does not re-read it on every request.
+
+```json
+{
+  "projects": [
+    {
+      "project": "payments",
+      "repos": [
+        {
+          "repo": "repo-alpha",
+          "paths": ["services/payments"],
+          "web": { "url": "https://github.com/acme/repo-alpha", "branch": "main" }
+        },
+        { "repo": "repo-beta", "paths": [] }
+      ]
+    },
+    {
+      "project": "reporting",
+      "repos": [{ "repo": "repo-alpha", "paths": ["services/reporting"] }]
+    }
+  ]
+}
+```
+
+- Each project lists the repositories it lives in (0–n). Repo names match
+  case-insensitively, and one repo may host several projects.
+- Each repo entry may be narrowed to directory `paths` — plain prefixes, no globs:
+  `services/payments` matches everything under `services/payments/`. An empty `paths`
+  array means the whole repo maps to that project.
+- An optional `web` block enables building links to specific files in the repo:
+  `web.url` is the repo's web home, `web.branch` defaults to `main`, and
+  `web.fileTemplate` (default `{url}/blob/{branch}/{path}`, GitHub-style) can be
+  overridden for other hosts (e.g. GitLab `{url}/-/blob/{branch}/{path}`). The
+  `repoFileUrl(repo, path, line?)` helper substitutes `{url}`/`{branch}`/`{path}` and
+  appends `#L<line>`.
+- A repo match boosts the project; a file path that falls under a configured path
+  boosts it further, so a path-narrowed project ranks above a whole-repo match.
+- An unrecognized repo degrades gracefully: candidates derived from matching paths are
+  still returned, and the unknown repo is reported in `projectResolution.unknownRepo`
+  and `missingContext` rather than producing an empty result.
+- Results carry a `projectResolution` block explaining why each candidate project was
+  included; resolution boosts scoring only and never mutates anchors.
+
+Manage the registry through the `getProjectMappings` / `writeProjectMappings` MCP tools
+(writes use the same optimistic-concurrency `expectedFileCommit` guard as the people
+registry) or the `/ui` **Repo Mappings** tab. The tab lists every project under
+management — its project list is derived from anchors, so you map by adding repos/paths
+to existing projects rather than typing a slug, and a mapping can never be created for a
+project that has no anchor. **Clear mapping** removes a project's repos (the row stays
+listed); projects with no repos are not persisted. A mapping whose project no longer has
+an anchor (e.g. after a rename or delete) appears under **Orphaned mappings** with a
+**Remove** action so it can be cleaned up. The Planner tab also exposes `Repo` and
+`File paths` inputs and renders the resolved candidate projects, their boosts, and the
+per-candidate reasons.
+
 ## Writing Anchors
 
 The server instructions tell agents to write back durable discoveries, not only answer

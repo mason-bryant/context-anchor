@@ -117,6 +117,7 @@ export const UI_HTML = `<!doctype html>
             <button class="tab" data-tab="tasks" type="button"><span class="icon-label"><svg class="icon" aria-hidden="true"><use href="#icon-filter"></use></svg><span>Tasks</span></span></button>
             <button class="tab" data-tab="people" type="button"><span class="icon-label"><svg class="icon" aria-hidden="true"><use href="#icon-people"></use></svg><span>People</span></span></button>
             <button class="tab" data-tab="teams" type="button"><span class="icon-label"><svg class="icon" aria-hidden="true"><use href="#icon-team"></use></svg><span>Teams</span></span></button>
+            <button class="tab" data-tab="mappings" type="button"><span class="icon-label"><svg class="icon" aria-hidden="true"><use href="#icon-filter"></use></svg><span>Mappings</span></span></button>
             <button class="tab" data-tab="review" type="button"><span class="icon-label"><svg class="icon" aria-hidden="true"><use href="#icon-save"></use></svg><span>Review</span></span></button>
             <button class="tab" data-tab="detail" type="button" disabled><span class="icon-label"><svg class="icon" aria-hidden="true"><use href="#icon-anchor"></use></svg><span>Selected Anchor</span></span></button>
           </nav>
@@ -166,6 +167,14 @@ export const UI_HTML = `<!doctype html>
                   <input id="planner-runtime" type="text" placeholder="optional">
                 </label>
                 <label>
+                  Repo
+                  <input id="planner-repo" type="text" placeholder="optional, resolves candidate projects">
+                </label>
+                <label class="planner-filepaths">
+                  File paths
+                  <textarea id="planner-filepaths" rows="2" placeholder="optional, one path per line"></textarea>
+                </label>
+                <label>
                   Token budget
                   <input id="planner-budget" type="number" min="1" max="200000" value="4000">
                 </label>
@@ -188,6 +197,10 @@ export const UI_HTML = `<!doctype html>
             <div id="planner-empty" class="empty-state">Submit a task to inspect planner output.</div>
             <div id="planner-results" class="planner-results" hidden>
               <section id="planner-summary" class="planner-summary"></section>
+              <section id="planner-resolution-box" class="metadata-box" hidden>
+                <h3>Project resolution</h3>
+                <div id="planner-resolution" class="planner-list"></div>
+              </section>
               <section class="planner-grid">
                 <div class="metadata-box">
                   <h3>Included</h3>
@@ -373,6 +386,22 @@ export const UI_HTML = `<!doctype html>
             </details>
             <div id="people-empty" class="empty-state" hidden>No people in registry.</div>
             <div id="people-list" class="registry-cards"></div>
+          </section>
+
+          <section id="mappings-view" class="view">
+            <div class="view-header">
+              <div>
+                <h2>Repo Mappings</h2>
+                <p id="mappings-summary">Map each project to the repositories and paths it lives in.</p>
+              </div>
+              <div class="action-row">
+                <button id="mappings-save" type="button">Save</button>
+                <button id="mappings-refresh" type="button">Refresh</button>
+              </div>
+            </div>
+            <p class="registry-hint">Every project under management is listed below. A project can live in any number of repos; each repo can be narrowed to directory paths (one per line), or left blank to match the whole repo.</p>
+            <div id="mappings-empty" class="empty-state" hidden>No project mappings yet. Add one to map a project to its repos and paths.</div>
+            <div id="mappings-list" class="registry-cards"></div>
           </section>
 
           <section id="teams-view" class="view">
@@ -2064,6 +2093,9 @@ export const UI_JS = `(function () {
     registry: null,
     registryLoading: false,
     registryFileCommit: null,
+    projectMappings: null,
+    projectMappingsLoading: false,
+    projectMappingsFileCommit: null,
     peopleSearch: "",
     teamsSearch: "",
     selectedPersonId: null,
@@ -2146,7 +2178,7 @@ export const UI_JS = `(function () {
   }
 
   function validTab(value) {
-    return value === "root" || value === "planner" || value === "tasks" || value === "people" || value === "teams" || value === "review" || value === "detail" ? value : null;
+    return value === "root" || value === "planner" || value === "tasks" || value === "people" || value === "teams" || value === "mappings" || value === "review" || value === "detail" ? value : null;
   }
 
   function validRootMode(value) {
@@ -2226,6 +2258,8 @@ export const UI_JS = `(function () {
     setSelectValueAllowingNew("planner-category", params.get("plannerCategory") || "");
     setSelectValueAllowingNew("planner-tag", params.get("plannerTag") || "");
     setControlValue("planner-runtime", params.get("plannerRuntime") || "");
+    setControlValue("planner-repo", params.get("plannerRepo") || "");
+    setControlValue("planner-filepaths", params.get("plannerFilePaths") || "");
     setControlValue("planner-budget", params.get("plannerBudget") || controlValue("planner-budget", "4000"));
     setControlValue("planner-max-anchors", params.get("plannerMaxAnchors") || controlValue("planner-max-anchors", "12"));
     setControlValue("planner-max-excluded", params.get("plannerMaxExcluded") || controlValue("planner-max-excluded", "20"));
@@ -2312,6 +2346,8 @@ export const UI_JS = `(function () {
     setParam(params, "plannerCategory", controlValue("planner-category", sourceParams.get("plannerCategory") || ""));
     setParam(params, "plannerTag", controlValue("planner-tag", sourceParams.get("plannerTag") || ""));
     setParam(params, "plannerRuntime", controlValue("planner-runtime", sourceParams.get("plannerRuntime") || ""));
+    setParam(params, "plannerRepo", controlValue("planner-repo", sourceParams.get("plannerRepo") || ""));
+    setParam(params, "plannerFilePaths", controlValue("planner-filepaths", sourceParams.get("plannerFilePaths") || ""));
     setNonDefaultParam(params, "plannerBudget", controlValue("planner-budget", sourceParams.get("plannerBudget") || ""), "4000");
     setNonDefaultParam(params, "plannerMaxAnchors", controlValue("planner-max-anchors", sourceParams.get("plannerMaxAnchors") || ""), "12");
     setNonDefaultParam(params, "plannerMaxExcluded", controlValue("planner-max-excluded", sourceParams.get("plannerMaxExcluded") || ""), "20");
@@ -2559,6 +2595,17 @@ export const UI_JS = `(function () {
     return params.toString();
   }
 
+  function splitFilePaths(value) {
+    if (typeof value !== "string") {
+      return [];
+    }
+    return value.split(/\\r?\\n/).map(function (line) {
+      return line.trim();
+    }).filter(function (line) {
+      return line.length > 0;
+    });
+  }
+
   function currentPlannerInput() {
     return {
       task: el("planner-task").value.trim(),
@@ -2566,6 +2613,8 @@ export const UI_JS = `(function () {
       category: el("planner-category").value,
       tag: el("planner-tag").value,
       runtime: el("planner-runtime").value.trim(),
+      repo: el("planner-repo").value.trim(),
+      filePaths: splitFilePaths(el("planner-filepaths").value),
       includeArchive: el("planner-archive").checked,
       budgetTokens: el("planner-budget").value.trim(),
       maxAnchors: el("planner-max-anchors").value.trim(),
@@ -2609,6 +2658,18 @@ export const UI_JS = `(function () {
     }
     if (typeof source.runtime === "string") {
       result.runtime = source.runtime;
+    }
+    if (typeof source.repo === "string") {
+      result.repo = source.repo.trim();
+    }
+    if (Array.isArray(source.filePaths)) {
+      result.filePaths = source.filePaths
+        .filter(function (filePath) {
+          return typeof filePath === "string" && filePath.trim().length > 0;
+        })
+        .map(function (filePath) {
+          return filePath.trim();
+        });
     }
     if (typeof source.includeArchive === "boolean") {
       result.includeArchive = source.includeArchive;
@@ -2661,6 +2722,12 @@ export const UI_JS = `(function () {
     if (Object.prototype.hasOwnProperty.call(parsed, "runtime")) {
       el("planner-runtime").value = parsed.runtime;
     }
+    if (Object.prototype.hasOwnProperty.call(parsed, "repo")) {
+      el("planner-repo").value = parsed.repo;
+    }
+    if (Object.prototype.hasOwnProperty.call(parsed, "filePaths")) {
+      el("planner-filepaths").value = parsed.filePaths.join("\\n");
+    }
     if (Object.prototype.hasOwnProperty.call(parsed, "includeArchive")) {
       el("planner-archive").checked = Boolean(parsed.includeArchive);
     }
@@ -2694,11 +2761,18 @@ export const UI_JS = `(function () {
   function queryFromPlannerInput(input) {
     var params = new URLSearchParams();
     params.set("task", input.task);
-    ["project", "category", "tag", "runtime", "budgetTokens", "maxAnchors", "maxExcluded"].forEach(function (key) {
+    ["project", "category", "tag", "runtime", "repo", "budgetTokens", "maxAnchors", "maxExcluded"].forEach(function (key) {
       if (input[key]) {
         params.set(key, input[key]);
       }
     });
+    if (Array.isArray(input.filePaths)) {
+      input.filePaths.forEach(function (filePath) {
+        if (filePath) {
+          params.append("filePaths", filePath);
+        }
+      });
+    }
     if (input.includeArchive) {
       params.set("includeArchive", "true");
     }
@@ -2826,6 +2900,11 @@ export const UI_JS = `(function () {
       populateFilterOptions();
       renderAnchorList();
       openPendingAnchor();
+      // Keep the managed-project list in the Repo Mappings tab current as
+      // anchors stream in, since it lists every known project.
+      if (state.projectMappings) {
+        renderMappings();
+      }
 
       if (!response.nextOffset) {
         break;
@@ -3138,6 +3217,18 @@ export const UI_JS = `(function () {
         "Resolved project alias " + plan.projectFilter.requested + " to " + plan.projectFilter.resolved + ".",
         "info",
       );
+    } else if (plan.projectResolution && plan.projectResolution.unknownRepo && plan.projectResolution.candidates.length === 0) {
+      setBanner(
+        "Repository " + plan.projectResolution.unknownRepo + " did not resolve to any candidate projects.",
+        "warn",
+      );
+    } else if (plan.projectResolution && plan.projectResolution.candidates.length) {
+      setBanner(
+        "Resolved candidate projects: " + plan.projectResolution.candidates.map(function (candidate) {
+          return candidate.project;
+        }).join(", ") + ".",
+        "info",
+      );
     } else {
       setBanner("", "info");
     }
@@ -3149,19 +3240,63 @@ export const UI_JS = `(function () {
     if (plan.projectFilter && plan.projectFilter.via === "alias") {
       status += " · project alias " + plan.projectFilter.requested + " → " + plan.projectFilter.resolved;
     }
+    if (plan.projectResolution) {
+      var resolved = plan.projectResolution.candidates.map(function (candidate) {
+        return candidate.project;
+      });
+      if (resolved.length) {
+        status += " · candidate projects " + resolved.join(", ");
+      }
+      if (plan.projectResolution.unknownRepo) {
+        status += " · unknown repo " + plan.projectResolution.unknownRepo;
+      }
+    }
     return status;
+  }
+
+  function renderProjectResolution(resolution) {
+    if (!resolution) {
+      return "";
+    }
+    var cards = resolution.candidates.map(function (candidate) {
+      var reasons = Array.isArray(candidate.reasons) ? candidate.reasons.join("; ") : "";
+      return "<div class=\\"planner-card\\">"
+        + "<div class=\\"planner-card-title\\"><span>" + escapeHtml(candidate.project) + "</span>"
+        + "<span class=\\"badge\\">boost " + escapeHtml(candidate.boost) + "</span></div>"
+        + "<p>" + escapeHtml(reasons) + "</p>"
+        + "</div>";
+    });
+    if (resolution.unknownRepo) {
+      cards.push(
+        "<div class=\\"planner-card\\"><p>" + escapeHtml(
+          "Repository \\"" + resolution.unknownRepo + "\\" is not in the configured repo map.",
+        ) + "</p></div>",
+      );
+    }
+    if (cards.length === 0) {
+      cards.push("<div class=\\"planner-card\\"><p>No candidate projects resolved.</p></div>");
+    }
+    return cards.join("");
   }
 
   function renderPlanner(plan, previous) {
     el("planner-empty").hidden = true;
     el("planner-results").hidden = false;
     el("planner-status").textContent = formatPlannerStatus(plan);
-    el("planner-summary").innerHTML = [
+    var summaryMetrics = [
       renderMetric(plan.included.length, "included"),
       renderMetric(plan.excluded.length, "excluded shown"),
       renderMetric(plan.estimatedTokens + " / " + plan.budgetTokens, "estimated tokens"),
       renderMetric(plan.missingContext.length, "missing signals")
-    ].join("");
+    ];
+    if (plan.projectResolution) {
+      summaryMetrics.push(renderMetric(plan.projectResolution.candidates.length, "candidate projects"));
+    }
+    el("planner-summary").innerHTML = summaryMetrics.join("");
+    el("planner-resolution-box").hidden = !plan.projectResolution;
+    el("planner-resolution").innerHTML = plan.projectResolution
+      ? renderProjectResolution(plan.projectResolution)
+      : "";
     el("planner-included").innerHTML = renderPlannerItems(plan.included, "No anchors selected.");
     el("planner-excluded").innerHTML = renderPlannerItems(plan.excluded, "No excluded anchors returned.");
     el("planner-missing").innerHTML = renderMissingContext(plan.missingContext);
@@ -4889,6 +5024,247 @@ export const UI_JS = `(function () {
     return String(str || "").split(",").map(function(s) { return s.trim(); }).filter(function(s) { return s.length > 0; });
   }
 
+  function showMappingsView(options) {
+    var opts = options || {};
+    if (!opts.skipLocationUpdate) {
+      updateLocationFromState({ anchor: null, view: "mappings", history: "push" });
+    }
+    state.pendingAnchor = null;
+    showTab("mappings");
+    if (!state.projectMappings && !state.projectMappingsLoading) {
+      loadProjectMappings();
+    }
+  }
+
+  async function loadProjectMappings() {
+    state.projectMappingsLoading = true;
+    try {
+      var result = await api("/api/ui/project-mappings");
+      state.projectMappings = { projects: result.projects || [] };
+      state.projectMappingsFileCommit = result.fileCommit || null;
+      renderMappings();
+    } catch (error) {
+      setBanner(error.message, "error");
+    } finally {
+      state.projectMappingsLoading = false;
+    }
+  }
+
+  function knownProjectDisplaySlugs() {
+    var byLower = {};
+    (state.anchors || []).forEach(function (anchor) {
+      var slug = projectOf(anchor);
+      if (slug) {
+        var lower = String(slug).toLowerCase();
+        if (!byLower[lower]) { byLower[lower] = String(slug); }
+      }
+    });
+    var slugs = Object.keys(byLower).map(function (lower) { return byLower[lower]; });
+    slugs.sort(function (a, b) {
+      var al = a.toLowerCase();
+      var bl = b.toLowerCase();
+      return al < bl ? -1 : al > bl ? 1 : 0;
+    });
+    return slugs;
+  }
+
+  // Split projects into managed (anchor-backed) and orphaned (a stored mapping
+  // whose project has no matching anchor — e.g. left behind by a rename/delete).
+  // The managed list is derived from anchors so a mapping can never be created
+  // for a project that does not exist; orphans only surface for cleanup. Before
+  // anchors load (no known slugs) we cannot classify, so everything stays managed.
+  function mappingsForDisplay() {
+    var stored = state.projectMappings && state.projectMappings.projects
+      ? state.projectMappings.projects
+      : [];
+    var knownSlugs = knownProjectDisplaySlugs();
+    if (knownSlugs.length === 0) {
+      return { managed: stored.slice(), orphans: [] };
+    }
+    var storedByLower = {};
+    stored.forEach(function (project) {
+      if (project && project.project) { storedByLower[String(project.project).toLowerCase()] = project; }
+    });
+    var managed = knownSlugs.map(function (slug) {
+      return storedByLower[slug.toLowerCase()] || { project: slug, repos: [] };
+    });
+    var known = knownProjectSlugs();
+    var orphans = stored.filter(function (project) {
+      return project && project.project && !known.has(String(project.project).toLowerCase());
+    });
+    return { managed: managed, orphans: orphans };
+  }
+
+  function renderMappings() {
+    if (!state.projectMappings) {
+      return;
+    }
+    var display = mappingsForDisplay();
+    el("mappings-empty").hidden = display.managed.length + display.orphans.length > 0;
+    var html = "";
+    display.managed.forEach(function (project, i) { html += mappingCardHtml(project, i); });
+    if (display.orphans.length) {
+      html += "<h3 class=\\"mappings-orphan-heading\\">Orphaned mappings (no matching anchor)</h3>";
+      display.orphans.forEach(function (project, j) {
+        html += mappingCardHtml(project, display.managed.length + j);
+      });
+    }
+    el("mappings-list").innerHTML = html;
+    var mappedCount = display.managed.filter(function (project) {
+      return project.repos && project.repos.length > 0;
+    }).length;
+    el("mappings-summary").textContent = mappedCount + " of " + display.managed.length
+      + " projects mapped to repos and paths"
+      + (display.orphans.length ? " · " + display.orphans.length + " orphaned" : "") + ".";
+  }
+
+  function mappingCardHtml(project, pi) {
+    var slug = project && project.project ? project.project : "";
+    var repos = project && Array.isArray(project.repos) ? project.repos : [];
+    var known = knownProjectSlugs();
+    var orphan = slug && known.size > 0 && !known.has(slug.toLowerCase());
+    var repoRows = repos.map(function (repo, ri) {
+      return mappingRepoRowHtml(repo, pi, ri);
+    }).join("");
+    // The project slug is fixed (derived from an anchor, or a stale orphan): it
+    // is carried in data-project rather than an editable input, so the UI can
+    // never mint a mapping for a project that does not exist.
+    var action = orphan
+      ? "<span class=\\"badge warn\\">no matching anchor</span>"
+        + "<button class=\\"mapping-remove-orphan\\" type=\\"button\\" data-pi=\\"" + pi + "\\">Remove</button>"
+      : (repos.length > 0
+        ? "<button class=\\"mapping-clear\\" type=\\"button\\" data-pi=\\"" + pi + "\\">Clear mapping</button>"
+        : "");
+    return "<div class=\\"registry-card\\" data-project-index=\\"" + pi + "\\" data-project=\\"" + escapeHtml(slug) + "\\">"
+      + "<div class=\\"action-row\\">"
+      + "<span class=\\"mapping-project-name\\">" + escapeHtml(slug) + "</span>"
+      + action
+      + "</div>"
+      + "<div class=\\"mapping-repos\\">" + repoRows + "</div>"
+      + "<button class=\\"mapping-add-repo\\" type=\\"button\\" data-pi=\\"" + pi + "\\">+ Add repo</button>"
+      + "</div>";
+  }
+
+  function mappingRepoRowHtml(repo, pi, ri) {
+    var repoName = repo && repo.repo ? repo.repo : "";
+    var paths = repo && Array.isArray(repo.paths) ? repo.paths.join("\\n") : "";
+    var web = repo && repo.web ? repo.web : {};
+    var webUrl = web.url || "";
+    var webBranch = web.branch || "";
+    var webTemplate = web.fileTemplate || "";
+    return "<div class=\\"mapping-repo-row\\" data-pi=\\"" + pi + "\\" data-ri=\\"" + ri + "\\">"
+      + "<label>Repo<input class=\\"mapping-repo\\" type=\\"text\\" value=\\"" + escapeHtml(repoName) + "\\" placeholder=\\"repo-name\\"></label>"
+      + "<label>Paths (one per line; blank = whole repo)<textarea class=\\"mapping-paths\\" rows=\\"2\\" placeholder=\\"services/payments\\">" + escapeHtml(paths) + "</textarea></label>"
+      + "<label>Web URL (optional, for file links)<input class=\\"mapping-web-url\\" type=\\"text\\" value=\\"" + escapeHtml(webUrl) + "\\" placeholder=\\"https://github.com/owner/repo\\"></label>"
+      + "<label>Branch<input class=\\"mapping-web-branch\\" type=\\"text\\" value=\\"" + escapeHtml(webBranch) + "\\" placeholder=\\"main\\"></label>"
+      + "<label>File URL template (optional)<input class=\\"mapping-web-template\\" type=\\"text\\" value=\\"" + escapeHtml(webTemplate) + "\\" placeholder=\\"{url}/blob/{branch}/{path}\\"></label>"
+      + "<button class=\\"mapping-remove-repo\\" type=\\"button\\" data-pi=\\"" + pi + "\\" data-ri=\\"" + ri + "\\">Remove repo</button>"
+      + "</div>";
+  }
+
+  function splitLines(value) {
+    return String(value || "").split(/\\r?\\n/).map(function (line) {
+      return line.trim();
+    }).filter(function (line) {
+      return line.length > 0;
+    });
+  }
+
+  function readRowValue(row, selector) {
+    var input = row.querySelector(selector);
+    return input ? (input.value || "").trim() : "";
+  }
+
+  function readMappingsFromDom() {
+    var projects = [];
+    var cards = el("mappings-list").querySelectorAll(".registry-card");
+    for (var i = 0; i < cards.length; i += 1) {
+      var card = cards[i];
+      // The slug is fixed; read it from the card rather than an editable input.
+      var slug = (card.getAttribute("data-project") || "").trim();
+      var repos = [];
+      var rows = card.querySelectorAll(".mapping-repo-row");
+      for (var j = 0; j < rows.length; j += 1) {
+        var repoInput = rows[j].querySelector(".mapping-repo");
+        var pathsInput = rows[j].querySelector(".mapping-paths");
+        var webUrl = readRowValue(rows[j], ".mapping-web-url");
+        var entry = {
+          repo: repoInput ? (repoInput.value || "").trim() : "",
+          paths: pathsInput ? splitLines(pathsInput.value) : []
+        };
+        if (webUrl) {
+          var webBranch = readRowValue(rows[j], ".mapping-web-branch");
+          var webTemplate = readRowValue(rows[j], ".mapping-web-template");
+          entry.web = { url: webUrl };
+          if (webBranch) { entry.web.branch = webBranch; }
+          if (webTemplate) { entry.web.fileTemplate = webTemplate; }
+        }
+        repos.push(entry);
+      }
+      projects.push({ project: slug, repos: repos });
+    }
+    return { projects: projects };
+  }
+
+  function syncMappingsFromDom() {
+    state.projectMappings = readMappingsFromDom();
+  }
+
+  // Clear a managed project's mapping (repos). The row stays listed because the
+  // project still exists; on save the now repo-less project is dropped from storage.
+  function clearMapping(pi) {
+    syncMappingsFromDom();
+    var project = state.projectMappings.projects[pi];
+    if (project) {
+      project.repos = [];
+      renderMappings();
+    }
+  }
+
+  // Delete an orphaned mapping outright (its project has no anchor).
+  function removeOrphanMapping(pi) {
+    syncMappingsFromDom();
+    state.projectMappings.projects.splice(pi, 1);
+    renderMappings();
+  }
+
+  function addMappingRepo(pi) {
+    syncMappingsFromDom();
+    var project = state.projectMappings.projects[pi];
+    if (project) {
+      project.repos.push({ repo: "", paths: [] });
+      renderMappings();
+    }
+  }
+
+  function removeMappingRepo(pi, ri) {
+    syncMappingsFromDom();
+    var project = state.projectMappings.projects[pi];
+    if (project && project.repos) {
+      project.repos.splice(ri, 1);
+      renderMappings();
+    }
+  }
+
+  async function saveProjectMappings() {
+    syncMappingsFromDom();
+    try {
+      await apiPost("/api/ui/project-mappings", {
+        mappings: state.projectMappings,
+        expectedFileCommit: state.projectMappingsFileCommit || undefined
+      });
+      setBanner("Saved project mappings.", "info");
+      await loadProjectMappings();
+    } catch (error) {
+      if (error && error.status === 409) {
+        setBanner("The mappings changed since you loaded them. Reloading the latest version — please re-apply your edit.", "warn");
+      } else {
+        setBanner(error.message, "error");
+      }
+      await loadProjectMappings();
+    }
+  }
+
   // Project slugs known from loaded anchors, used for soft referential
   // validation of associations. Empty when anchors are not yet loaded, in
   // which case we suppress warnings rather than emit false positives.
@@ -6063,6 +6439,10 @@ export const UI_JS = `(function () {
           showTeamsView();
           return;
         }
+        if (button.dataset.tab === "mappings") {
+          showMappingsView();
+          return;
+        }
         if (button.dataset.tab === "review") {
           showReview();
           return;
@@ -6094,6 +6474,24 @@ export const UI_JS = `(function () {
     el("people-refresh").addEventListener("click", function () {
       state.registry = null;
       loadRegistry().catch(function (error) { setBanner(error.message, "error"); });
+    });
+    el("mappings-save").addEventListener("click", function () { saveProjectMappings(); });
+    el("mappings-refresh").addEventListener("click", function () {
+      state.projectMappings = null;
+      loadProjectMappings().catch(function (error) { setBanner(error.message, "error"); });
+    });
+    el("mappings-list").addEventListener("click", function (event) {
+      var target = event.target;
+      if (!target || !target.classList) { return; }
+      if (target.classList.contains("mapping-clear")) {
+        clearMapping(Number(target.getAttribute("data-pi")));
+      } else if (target.classList.contains("mapping-remove-orphan")) {
+        removeOrphanMapping(Number(target.getAttribute("data-pi")));
+      } else if (target.classList.contains("mapping-add-repo")) {
+        addMappingRepo(Number(target.getAttribute("data-pi")));
+      } else if (target.classList.contains("mapping-remove-repo")) {
+        removeMappingRepo(Number(target.getAttribute("data-pi")), Number(target.getAttribute("data-ri")));
+      }
     });
     el("people-search").addEventListener("input", function () {
       state.peopleSearch = el("people-search").value || "";
@@ -6226,6 +6624,15 @@ export const UI_JS = `(function () {
     };
     window.__ANCHOR_MCP_UI_TEST_HOOKS__.shouldHandleClientNavigation = shouldHandleClientNavigation;
     window.__ANCHOR_MCP_UI_TEST_HOOKS__.parsePlannerLogPaste = parsePlannerLogPaste;
+    window.__ANCHOR_MCP_UI_TEST_HOOKS__.queryFromPlannerInput = queryFromPlannerInput;
+    window.__ANCHOR_MCP_UI_TEST_HOOKS__.renderProjectResolution = renderProjectResolution;
+    window.__ANCHOR_MCP_UI_TEST_HOOKS__.formatPlannerStatus = formatPlannerStatus;
+    window.__ANCHOR_MCP_UI_TEST_HOOKS__.mappingCardHtml = mappingCardHtml;
+    window.__ANCHOR_MCP_UI_TEST_HOOKS__.mappingsForDisplay = mappingsForDisplay;
+    window.__ANCHOR_MCP_UI_TEST_HOOKS__.setMappingsTestState = function (anchors, projectMappings) {
+      state.anchors = anchors || [];
+      state.projectMappings = projectMappings || null;
+    };
     window.__ANCHOR_MCP_UI_TEST_HOOKS__.buildJudgePrompt = buildJudgePrompt;
     window.__ANCHOR_MCP_UI_TEST_HOOKS__.formatPreview = formatPreview;
     return;
@@ -6239,6 +6646,8 @@ export const UI_JS = `(function () {
     showPeopleView({ skipLocationUpdate: true });
   } else if (state.activeTab === "teams") {
     showTeamsView({ skipLocationUpdate: true });
+  } else if (state.activeTab === "mappings") {
+    showMappingsView({ skipLocationUpdate: true });
   } else {
     showTab(state.activeTab);
   }

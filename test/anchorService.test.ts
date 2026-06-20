@@ -43,6 +43,162 @@ describe("AnchorService", () => {
     expect(versions[0]?.message).toBe("test: add demo anchor");
   });
 
+  it("resolves a repo name to candidate-project anchors with explanations", async () => {
+    await service.writeAnchor({
+      name: "projects/project-one/project-one",
+      content: projectAnchorContent({ project: "project-one", summary: "Project one summary." }),
+      message: "test: add project-one anchor",
+    });
+    await service.writeAnchor({
+      name: "projects/project-two/project-two",
+      content: projectAnchorContent({ project: "project-two", summary: "Project two summary." }),
+      message: "test: add project-two anchor",
+    });
+    await service.writeAnchor({
+      name: "projects/unrelated/unrelated",
+      content: projectAnchorContent({ project: "unrelated", summary: "Unrelated summary." }),
+      message: "test: add unrelated anchor",
+    });
+    await service.writeProjectMappings({
+      mappings: {
+        projects: [
+          { project: "project-one", repos: [{ repo: "repo-alpha", paths: [] }] },
+          { project: "project-two", repos: [{ repo: "repo-alpha", paths: [] }] },
+        ],
+      },
+    });
+
+    const plan = await service.planContextBundle({ task: "investigate flow", repo: "repo-alpha" });
+
+    const includedNames = plan.included.map((anchor) => anchor.name);
+    expect(includedNames).toContain("projects/project-one/project-one.md");
+    expect(includedNames).toContain("projects/project-two/project-two.md");
+    expect(includedNames).not.toContain("projects/unrelated/unrelated.md");
+    expect(plan.projectResolution?.candidates.map((c) => c.project).sort()).toEqual(["project-one", "project-two"]);
+    expect(plan.projectResolution?.explanations.some((line) => line.includes("repo-alpha"))).toBe(true);
+  });
+
+  it("narrows by path within a repo and ranks the narrowed project first", async () => {
+    await service.writeAnchor({
+      name: "projects/payments/payments",
+      content: projectAnchorContent({ project: "payments", summary: "Payments summary." }),
+      message: "test: add payments anchor",
+    });
+    await service.writeAnchor({
+      name: "projects/reporting/reporting",
+      content: projectAnchorContent({ project: "reporting", summary: "Reporting summary." }),
+      message: "test: add reporting anchor",
+    });
+    await service.writeProjectMappings({
+      mappings: {
+        projects: [
+          { project: "payments", repos: [{ repo: "repo-alpha", paths: ["services/payments"] }] },
+          { project: "reporting", repos: [{ repo: "repo-alpha", paths: ["services/reporting"] }] },
+        ],
+      },
+    });
+
+    const plan = await service.planContextBundle({
+      task: "investigate flow",
+      repo: "repo-alpha",
+      filePaths: ["services/payments/charge.ts"],
+    });
+
+    expect(plan.included[0]?.name).toBe("projects/payments/payments.md");
+    expect(plan.projectResolution?.candidates[0]).toMatchObject({ project: "payments", boost: 18 });
+  });
+
+  it("degrades gracefully and flags an unknown repo in missing context", async () => {
+    await service.writeAnchor({
+      name: "projects/project-one/project-one",
+      content: projectAnchorContent({ project: "project-one", summary: "Project one summary." }),
+      message: "test: add project-one anchor",
+    });
+    await service.writeProjectMappings({
+      mappings: { projects: [{ project: "project-one", repos: [{ repo: "repo-alpha", paths: [] }] }] },
+    });
+
+    const plan = await service.planContextBundle({ task: "investigate flow", repo: "repo-unknown" });
+
+    expect(plan.projectResolution?.unknownRepo).toBe("repo-unknown");
+    expect(plan.projectResolution?.candidates).toEqual([]);
+    expect(plan.missingContext.some((line) => line.includes("repo-unknown"))).toBe(true);
+  });
+
+  it("flags an unknown repo in missing context even when file paths resolve candidates", async () => {
+    await service.writeAnchor({
+      name: "projects/payments/payments",
+      content: projectAnchorContent({ project: "payments", summary: "Payments summary." }),
+      message: "test: add payments anchor",
+    });
+    await service.writeProjectMappings({
+      mappings: { projects: [{ project: "payments", repos: [{ repo: "repo-alpha", paths: ["services/payments"] }] }] },
+    });
+
+    const plan = await service.planContextBundle({
+      task: "investigate flow",
+      repo: "repo-unknown",
+      filePaths: ["services/payments/charge.ts"],
+    });
+
+    expect(plan.projectResolution?.unknownRepo).toBe("repo-unknown");
+    expect(plan.projectResolution?.candidates.map((c) => c.project)).toEqual(["payments"]);
+    expect(plan.missingContext.some((line) => line.includes("repo-unknown"))).toBe(true);
+  });
+
+  it("ignores repo/path resolution when an explicit project is named", async () => {
+    await service.writeAnchor({
+      name: "projects/payments/payments",
+      content: projectAnchorContent({ project: "payments", summary: "Payments summary." }),
+      message: "test: add payments anchor",
+    });
+    await service.writeAnchor({
+      name: "projects/reporting/reporting",
+      content: projectAnchorContent({ project: "reporting", summary: "Reporting summary." }),
+      message: "test: add reporting anchor",
+    });
+    await service.writeProjectMappings({
+      mappings: {
+        projects: [
+          { project: "payments", repos: [{ repo: "repo-alpha", paths: [] }] },
+          { project: "reporting", repos: [{ repo: "repo-alpha", paths: [] }] },
+        ],
+      },
+    });
+
+    // Explicit project must win: the repo signal should not pull in reporting.
+    const plan = await service.planContextBundle({ task: "investigate flow", project: "payments", repo: "repo-alpha" });
+
+    expect(plan.projectResolution).toBeUndefined();
+    const reporting = [...plan.included, ...plan.excluded].find((a) => a.name === "projects/reporting/reporting.md");
+    expect(reporting?.reason).toContain('different project than "payments"');
+  });
+
+  it("round-trips project mappings through get/write with normalization", async () => {
+    await service.writeProjectMappings({
+      mappings: {
+        projects: [
+          {
+            project: "payments",
+            repos: [
+              { repo: "repo-alpha", paths: ["/services/payments/", "services/payments"] },
+              { repo: "repo-alpha", paths: ["libs/pay"] },
+            ],
+          },
+        ],
+      },
+    });
+
+    const stored = await service.getProjectMappings();
+    expect(stored.projects).toEqual([
+      {
+        project: "payments",
+        repos: [{ repo: "repo-alpha", paths: ["services/payments", "libs/pay"] }],
+      },
+    ]);
+    expect(stored.fileCommit).toMatch(/[a-f0-9]{40}/);
+  });
+
   it("builds planner search input without reading per-anchor file commits", async () => {
     await service.writeAnchor({
       name: "projects/demo/demo",
@@ -648,24 +804,24 @@ None.
 
   it("planContextBundle boosts anchors whose body contains the query term", async () => {
     await service.writeAnchor({
-      name: "projects/demo/cbpr-diagnostic",
+      name: "projects/demo/qrr-diagnostic",
       content: projectAnchorContent({
-        summary: "Generic benefits reporting diagnostics.",
+        summary: "Generic revenue reporting diagnostics.",
         currentState:
-          "- The company_benefit_plans_report (CBPR) model needs restructuring to support new plan types.",
+          "- The quarterly_revenue_report (QRR) model needs restructuring to support new plan types.",
       }),
-      message: "test: add CBPR diagnostic anchor",
+      message: "test: add QRR diagnostic anchor",
     });
 
     const planned = await service.planContextBundle({
-      task: "fix CBPR models",
+      task: "fix QRR models",
       project: "demo",
       budgetTokens: 4000,
     });
 
-    expect(planned.included.map((anchor) => anchor.name)).toContain("projects/demo/cbpr-diagnostic.md");
-    const cbprAnchor = planned.included.find((anchor) => anchor.name === "projects/demo/cbpr-diagnostic.md");
-    expect(cbprAnchor?.reason).toContain("bm25 body match");
+    expect(planned.included.map((anchor) => anchor.name)).toContain("projects/demo/qrr-diagnostic.md");
+    const qrrAnchor = planned.included.find((anchor) => anchor.name === "projects/demo/qrr-diagnostic.md");
+    expect(qrrAnchor?.reason).toContain("bm25 body match");
   });
 
   it("planContextBundle bounds concurrent BM25 anchor reads", async () => {

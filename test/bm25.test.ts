@@ -24,9 +24,9 @@ describe("BM25Index", () => {
     index.add({ id: "doc2", text: "status check pending" });
     index.add({ id: "doc3", text: "status report done" });
     index.add({ id: "doc4", text: "status overview summary" });
-    index.add({ id: "doc5", text: "zviews deployment pipeline" });
+    index.add({ id: "doc5", text: "quasar deployment pipeline" });
 
-    const hits = index.search("zviews");
+    const hits = index.search("quasar");
     expect(hits.length).toBeGreaterThan(0);
     expect(hits[0].id).toBe("doc5");
   });
@@ -61,19 +61,19 @@ describe("BM25Index", () => {
     expect(hits).toEqual([]);
   });
 
-  it("CBPR acronym is findable in body text", () => {
+  it("acronym is findable in body text", () => {
     index.add({
-      id: "projects/zviews-framework/milestones/M1.md",
-      text: "The company_benefit_plans_report (CBPR) model needs restructuring to support new plan types",
+      id: "projects/reporting-service/milestones/M1.md",
+      text: "The quarterly_revenue_report (QRR) model needs restructuring to support new plan types",
     });
     index.add({
       id: "projects/other/context.md",
       text: "authentication permissions access control",
     });
 
-    const hits = index.search("cbpr");
+    const hits = index.search("qrr");
     expect(hits.length).toBeGreaterThan(0);
-    expect(hits[0].id).toBe("projects/zviews-framework/milestones/M1.md");
+    expect(hits[0].id).toBe("projects/reporting-service/milestones/M1.md");
   });
 
   it("size() reflects document count", () => {
