@@ -395,12 +395,11 @@ export const UI_HTML = `<!doctype html>
                 <p id="mappings-summary">Map each project to the repositories and paths it lives in.</p>
               </div>
               <div class="action-row">
-                <button id="mappings-add" type="button">+ Add Project</button>
                 <button id="mappings-save" type="button">Save</button>
                 <button id="mappings-refresh" type="button">Refresh</button>
               </div>
             </div>
-            <p class="registry-hint">A project can live in any number of repos. Each repo can be narrowed to directory paths (one per line); leave paths blank to match the whole repo.</p>
+            <p class="registry-hint">Every project under management is listed below. A project can live in any number of repos; each repo can be narrowed to directory paths (one per line), or left blank to match the whole repo.</p>
             <div id="mappings-empty" class="empty-state" hidden>No project mappings yet. Add one to map a project to its repos and paths.</div>
             <div id="mappings-list" class="registry-cards"></div>
           </section>
@@ -5069,52 +5068,77 @@ export const UI_JS = `(function () {
     return slugs;
   }
 
-  // Every project under management is listed, even with no mapping yet: the
-  // stored mappings come first (in their saved order), then any known project
-  // that has no mapping is appended as an empty card so it can be filled in.
+  // Split projects into managed (anchor-backed) and orphaned (a stored mapping
+  // whose project has no matching anchor — e.g. left behind by a rename/delete).
+  // The managed list is derived from anchors so a mapping can never be created
+  // for a project that does not exist; orphans only surface for cleanup. Before
+  // anchors load (no known slugs) we cannot classify, so everything stays managed.
   function mappingsForDisplay() {
-    var projects = state.projectMappings && state.projectMappings.projects
-      ? state.projectMappings.projects.slice()
+    var stored = state.projectMappings && state.projectMappings.projects
+      ? state.projectMappings.projects
       : [];
-    var seen = {};
-    projects.forEach(function (project) {
-      if (project && project.project) { seen[String(project.project).toLowerCase()] = true; }
+    var knownSlugs = knownProjectDisplaySlugs();
+    if (knownSlugs.length === 0) {
+      return { managed: stored.slice(), orphans: [] };
+    }
+    var storedByLower = {};
+    stored.forEach(function (project) {
+      if (project && project.project) { storedByLower[String(project.project).toLowerCase()] = project; }
     });
-    knownProjectDisplaySlugs().forEach(function (slug) {
-      if (!seen[slug.toLowerCase()]) {
-        projects.push({ project: slug, repos: [] });
-      }
+    var managed = knownSlugs.map(function (slug) {
+      return storedByLower[slug.toLowerCase()] || { project: slug, repos: [] };
     });
-    return projects;
+    var known = knownProjectSlugs();
+    var orphans = stored.filter(function (project) {
+      return project && project.project && !known.has(String(project.project).toLowerCase());
+    });
+    return { managed: managed, orphans: orphans };
   }
 
   function renderMappings() {
     if (!state.projectMappings) {
       return;
     }
-    var projects = mappingsForDisplay();
-    var mappedCount = projects.filter(function (project) {
+    var display = mappingsForDisplay();
+    el("mappings-empty").hidden = display.managed.length + display.orphans.length > 0;
+    var html = "";
+    display.managed.forEach(function (project, i) { html += mappingCardHtml(project, i); });
+    if (display.orphans.length) {
+      html += "<h3 class=\\"mappings-orphan-heading\\">Orphaned mappings (no matching anchor)</h3>";
+      display.orphans.forEach(function (project, j) {
+        html += mappingCardHtml(project, display.managed.length + j);
+      });
+    }
+    el("mappings-list").innerHTML = html;
+    var mappedCount = display.managed.filter(function (project) {
       return project.repos && project.repos.length > 0;
     }).length;
-    el("mappings-empty").hidden = projects.length > 0;
-    el("mappings-list").innerHTML = projects.map(mappingCardHtml).join("");
-    el("mappings-summary").textContent = mappedCount + " of " + projects.length + " projects mapped to repos and paths.";
+    el("mappings-summary").textContent = mappedCount + " of " + display.managed.length
+      + " projects mapped to repos and paths"
+      + (display.orphans.length ? " · " + display.orphans.length + " orphaned" : "") + ".";
   }
 
   function mappingCardHtml(project, pi) {
     var slug = project && project.project ? project.project : "";
     var repos = project && Array.isArray(project.repos) ? project.repos : [];
     var known = knownProjectSlugs();
-    var unknown = slug && known.size > 0 && !known.has(slug.toLowerCase());
+    var orphan = slug && known.size > 0 && !known.has(slug.toLowerCase());
     var repoRows = repos.map(function (repo, ri) {
       return mappingRepoRowHtml(repo, pi, ri);
     }).join("");
-    return "<div class=\\"registry-card\\" data-project-index=\\"" + pi + "\\">"
+    // The project slug is fixed (derived from an anchor, or a stale orphan): it
+    // is carried in data-project rather than an editable input, so the UI can
+    // never mint a mapping for a project that does not exist.
+    var action = orphan
+      ? "<span class=\\"badge warn\\">no matching anchor</span>"
+        + "<button class=\\"mapping-remove-orphan\\" type=\\"button\\" data-pi=\\"" + pi + "\\">Remove</button>"
+      : (repos.length > 0
+        ? "<button class=\\"mapping-clear\\" type=\\"button\\" data-pi=\\"" + pi + "\\">Clear mapping</button>"
+        : "");
+    return "<div class=\\"registry-card\\" data-project-index=\\"" + pi + "\\" data-project=\\"" + escapeHtml(slug) + "\\">"
       + "<div class=\\"action-row\\">"
-      + "<label class=\\"mapping-project-label\\">Project"
-      + "<input class=\\"mapping-project\\" type=\\"text\\" value=\\"" + escapeHtml(slug) + "\\" placeholder=\\"project-slug\\"></label>"
-      + (unknown ? "<span class=\\"badge warn\\">no matching anchor</span>" : "")
-      + "<button class=\\"mapping-remove-project\\" type=\\"button\\" data-pi=\\"" + pi + "\\">Remove project</button>"
+      + "<span class=\\"mapping-project-name\\">" + escapeHtml(slug) + "</span>"
+      + action
       + "</div>"
       + "<div class=\\"mapping-repos\\">" + repoRows + "</div>"
       + "<button class=\\"mapping-add-repo\\" type=\\"button\\" data-pi=\\"" + pi + "\\">+ Add repo</button>"
@@ -5144,8 +5168,8 @@ export const UI_JS = `(function () {
     var cards = el("mappings-list").querySelectorAll(".registry-card");
     for (var i = 0; i < cards.length; i += 1) {
       var card = cards[i];
-      var slugInput = card.querySelector(".mapping-project");
-      var slug = slugInput ? (slugInput.value || "").trim() : "";
+      // The slug is fixed; read it from the card rather than an editable input.
+      var slug = (card.getAttribute("data-project") || "").trim();
       var repos = [];
       var rows = card.querySelectorAll(".mapping-repo-row");
       for (var j = 0; j < rows.length; j += 1) {
@@ -5165,13 +5189,19 @@ export const UI_JS = `(function () {
     state.projectMappings = readMappingsFromDom();
   }
 
-  function addMappingProject() {
+  // Clear a managed project's mapping (repos). The row stays listed because the
+  // project still exists; on save the now repo-less project is dropped from storage.
+  function clearMapping(pi) {
     syncMappingsFromDom();
-    state.projectMappings.projects.push({ project: "", repos: [] });
-    renderMappings();
+    var project = state.projectMappings.projects[pi];
+    if (project) {
+      project.repos = [];
+      renderMappings();
+    }
   }
 
-  function removeMappingProject(pi) {
+  // Delete an orphaned mapping outright (its project has no anchor).
+  function removeOrphanMapping(pi) {
     syncMappingsFromDom();
     state.projectMappings.projects.splice(pi, 1);
     renderMappings();
@@ -6424,7 +6454,6 @@ export const UI_JS = `(function () {
       state.registry = null;
       loadRegistry().catch(function (error) { setBanner(error.message, "error"); });
     });
-    el("mappings-add").addEventListener("click", addMappingProject);
     el("mappings-save").addEventListener("click", function () { saveProjectMappings(); });
     el("mappings-refresh").addEventListener("click", function () {
       state.projectMappings = null;
@@ -6433,8 +6462,10 @@ export const UI_JS = `(function () {
     el("mappings-list").addEventListener("click", function (event) {
       var target = event.target;
       if (!target || !target.classList) { return; }
-      if (target.classList.contains("mapping-remove-project")) {
-        removeMappingProject(Number(target.getAttribute("data-pi")));
+      if (target.classList.contains("mapping-clear")) {
+        clearMapping(Number(target.getAttribute("data-pi")));
+      } else if (target.classList.contains("mapping-remove-orphan")) {
+        removeOrphanMapping(Number(target.getAttribute("data-pi")));
       } else if (target.classList.contains("mapping-add-repo")) {
         addMappingRepo(Number(target.getAttribute("data-pi")));
       } else if (target.classList.contains("mapping-remove-repo")) {

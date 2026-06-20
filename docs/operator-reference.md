@@ -272,9 +272,13 @@ on the file's git commit, so resolution does not re-read it on every request.
 
 Manage the registry through the `getProjectMappings` / `writeProjectMappings` MCP tools
 (writes use the same optimistic-concurrency `expectedFileCommit` guard as the people
-registry) or the `/ui` **Repo Mappings** tab, which lists every project under management
-(even those with no mapping yet) and provides add/edit/delete for each project's repos
-and per-repo paths. Projects with no repos are not persisted to the registry. The Planner tab also exposes `Repo` and
+registry) or the `/ui` **Repo Mappings** tab. The tab lists every project under
+management — its project list is derived from anchors, so you map by adding repos/paths
+to existing projects rather than typing a slug, and a mapping can never be created for a
+project that has no anchor. **Clear mapping** removes a project's repos (the row stays
+listed); projects with no repos are not persisted. A mapping whose project no longer has
+an anchor (e.g. after a rename or delete) appears under **Orphaned mappings** with a
+**Remove** action so it can be cleaned up. The Planner tab also exposes `Repo` and
 `File paths` inputs and renders the resolved candidate projects, their boosts, and the
 per-candidate reasons.
 
