@@ -306,10 +306,13 @@ the index when your workflow checks in that file.`,
       title: "Start Task",
       description:
         "Session-start orchestration: plan a task-aware context bundle and load suggested anchor excerpts in one call. " +
-        "Returns plan rationale, anchor excerpts, staleness flags, active milestones, and suggested readAnchor follow-ups.",
+        "Returns plan rationale, anchor excerpts, staleness flags, active milestones, and suggested readAnchor follow-ups. " +
+        "Pass repo and/or filePaths to resolve candidate projects when the project is not named directly.",
       inputSchema: z.object({
         task: z.string().min(1),
         project: z.string().optional(),
+        repo: z.string().optional(),
+        filePaths: z.array(z.string()).optional(),
         budgetTokens: z.number().int().positive().optional(),
         maxAnchors: z.number().int().positive().optional(),
         includeArchive: z.boolean().default(false),
@@ -337,10 +340,13 @@ the index when your workflow checks in that file.`,
     {
       title: "Plan Context Bundle",
       description:
-        "Plan a task-aware context bundle. Returns included anchors, excluded anchors, reasons, estimated token use, missing-context signals, and a suggested loadContext call.",
+        "Plan a task-aware context bundle. Returns included anchors, excluded anchors, reasons, estimated token use, missing-context signals, and a suggested loadContext call. " +
+        "Pass repo and/or filePaths to resolve candidate projects when the project is not named directly.",
       inputSchema: z.object({
         task: z.string().min(1),
         project: z.string().optional(),
+        repo: z.string().optional(),
+        filePaths: z.array(z.string()).optional(),
         category: CategorySchema.optional(),
         tag: z.string().optional(),
         runtime: z.string().optional(),

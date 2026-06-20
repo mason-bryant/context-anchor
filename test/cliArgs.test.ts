@@ -260,4 +260,50 @@ describe("CLI args — file logging", () => {
     const options = parseCliArgs([], { ANCHOR_MCP_STALE_AFTER_DAYS: "14" });
     expect(options.config.staleAfterDays).toBe(14);
   });
+
+  it("parses project resolution repo map and path prefixes from the config file", async () => {
+    const tmpDir = await mkdtemp(path.join(os.tmpdir(), "anchor-mcp-config-"));
+    const configPath = path.join(tmpDir, "anchor-mcp.config.json");
+    await writeFile(
+      configPath,
+      JSON.stringify({
+        projectResolution: {
+          repoMap: { "repo-alpha": ["project-one", "project-two"] },
+          pathPrefixes: [
+            { prefix: "services/payments/", project: "payments", boost: 9 },
+            { prefix: "services/reporting/", project: "reporting" },
+          ],
+        },
+      }),
+      "utf8",
+    );
+
+    const options = parseCliArgs(["--config", configPath], {});
+    expect(options.config.projectResolution).toEqual({
+      repoMap: { "repo-alpha": ["project-one", "project-two"] },
+      pathPrefixes: [
+        { prefix: "services/payments/", project: "payments", boost: 9 },
+        { prefix: "services/reporting/", project: "reporting" },
+      ],
+    });
+  });
+
+  it("omits project resolution when not configured", () => {
+    const options = parseCliArgs([], {});
+    expect(options.config.projectResolution).toBeUndefined();
+  });
+
+  it("rejects a path-prefix rule missing its project", async () => {
+    const tmpDir = await mkdtemp(path.join(os.tmpdir(), "anchor-mcp-config-"));
+    const configPath = path.join(tmpDir, "anchor-mcp.config.json");
+    await writeFile(
+      configPath,
+      JSON.stringify({ projectResolution: { pathPrefixes: [{ prefix: "services/payments/" }] } }),
+      "utf8",
+    );
+
+    expect(() => parseCliArgs(["--config", configPath], {})).toThrow(
+      /Expected config field projectResolution\.pathPrefixes\[0\] to define non-empty prefix and project/,
+    );
+  });
 });

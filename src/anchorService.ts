@@ -81,6 +81,7 @@ import type {
   ApplyProposedChangeInput,
   ApplyProposedChangeResult,
   ProjectFilterResolution,
+  ProjectResolutionConfig,
   ProjectUpdateMilestone,
   ProjectUpdateMilestoneStatus,
   ProjectUpdateSnapshot,
@@ -127,6 +128,7 @@ import {
   buildProjectAliasIndex,
   resolveProjectFilter,
 } from "./projectAliases.js";
+import { candidateBoostMap, resolveCandidateProjects } from "./projectResolution.js";
 import { buildPeopleIndex, parsePeopleRegistry } from "./peopleRegistry.js";
 import { runValidators } from "./validators/pipeline.js";
 
@@ -159,6 +161,7 @@ export class AnchorService {
       pushOnWrite: boolean;
       migrationWarnOnly: boolean;
       staleAfterDays: number;
+      projectResolution?: ProjectResolutionConfig;
     },
   ) {}
 
@@ -2091,6 +2094,12 @@ None.
         ? { ...input, project: projectFilter.resolved }
         : input;
 
+    const resolution = resolveCandidateProjects(
+      { repo: input.repo, filePaths: input.filePaths },
+      this.options.projectResolution,
+    );
+    const candidateBoosts = candidateBoostMap(resolution);
+
     const { index: bm25Index, bodyCharCounts } = await this.buildBM25SearchIndex(anchors);
     const plan = buildContextBundlePlan(
       anchors,
@@ -2100,16 +2109,23 @@ None.
       projectFilter,
       bodyCharCounts,
       this.options.staleAfterDays,
+      new Date(),
+      candidateBoosts,
     );
     const names = plan.loadContext.names;
     const roadmapSignals = collectRoadmapAcceptanceMissingSignals(anchors);
     const milestoneSignals = collectMilestoneAcceptanceMissingSignals(anchors);
+    const resolutionSignals =
+      resolution?.unknownRepo !== undefined && resolution.candidates.length === 0
+        ? [`Repository "${resolution.unknownRepo}" did not resolve to any candidate projects.`]
+        : [];
 
     return {
       ...plan,
-      missingContext: [...plan.missingContext, ...roadmapSignals, ...milestoneSignals],
+      missingContext: [...plan.missingContext, ...roadmapSignals, ...milestoneSignals, ...resolutionSignals],
       loadContext: { ...plan.loadContext, names },
       ...(projectFilter ? { projectFilter } : {}),
+      ...(resolution ? { projectResolution: resolution } : {}),
     };
   }
 
@@ -2118,6 +2134,8 @@ None.
     const plan = await this.planContextBundle({
       task: input.task,
       project: input.project,
+      repo: input.repo,
+      filePaths: input.filePaths,
       budgetTokens: input.budgetTokens,
       maxAnchors: input.maxAnchors,
       includeArchive: input.includeArchive,
@@ -2159,6 +2177,7 @@ None.
         excluded: plan.excluded,
         missingContext: plan.missingContext,
         ...(plan.projectFilter ? { projectFilter: plan.projectFilter } : {}),
+        ...(plan.projectResolution ? { projectResolution: plan.projectResolution } : {}),
       },
       anchors: loaded.anchors,
       truncated: loaded.truncated,

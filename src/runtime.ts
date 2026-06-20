@@ -40,6 +40,7 @@ export async function createAnchorRuntime(
     pushOnWrite: config.pushOnWrite,
     migrationWarnOnly: config.migrationWarnOnly,
     staleAfterDays: config.staleAfterDays,
+    projectResolution: config.projectResolution,
   });
   const mcpServer = createAnchorMcpServer(service, { requestLogger });
   const autoSync = new AutoSync(repo, config.syncIntervalMs, logger);

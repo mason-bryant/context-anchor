@@ -80,6 +80,9 @@ type UiAssetHooks = {
   setTasksDisplayForTest(groupBy: string, sortMode: string): void;
   shouldHandleClientNavigation(event: Record<string, unknown>, link: { getAttribute(name: string): string | null }): boolean;
   parsePlannerLogPaste(text: unknown): Record<string, unknown> | null;
+  queryFromPlannerInput(input: Record<string, unknown>): string;
+  renderProjectResolution(resolution: unknown): string;
+  formatPlannerStatus(plan: Record<string, unknown>): string;
   buildJudgePrompt(plan: Record<string, unknown>, anchorBodies: Record<string, string>): string;
   formatPreview(preview: Record<string, unknown>): string;
   priorityLabel(priority: number): string;
@@ -176,11 +179,15 @@ describe("UI browser assets", () => {
     expect(UI_HTML).toContain('id="planner-category"');
     expect(UI_HTML).toContain('id="planner-tag"');
     expect(UI_HTML).toContain('id="planner-runtime"');
+    expect(UI_HTML).toContain('id="planner-repo"');
+    expect(UI_HTML).toContain('id="planner-filepaths"');
     expect(UI_HTML).toContain('id="planner-budget"');
     expect(UI_HTML).toContain('id="planner-max-anchors"');
     expect(UI_HTML).toContain('id="planner-load-context"');
     expect(UI_HTML).toContain('id="planner-comparison"');
     expect(UI_HTML).toContain('id="planner-raw"');
+    expect(UI_HTML).toContain('id="planner-resolution-box"');
+    expect(UI_HTML).toContain('id="planner-resolution"');
   });
 
   it("includes task grouping and due-date sort controls", () => {
@@ -940,6 +947,82 @@ describe("UI browser assets", () => {
     expect(UI_JS).toContain('el("planner-task").addEventListener("paste"');
     expect(UI_JS).toContain("Loaded planner inputs from pasted log line.");
     expect(UI_HTML).toContain("Paste a request-log JSON line to auto-fill");
+  });
+
+  it("parses repo and filePaths from a pasted planner-arguments object", () => {
+    const hooks = loadHooks();
+    const parsed = hooks.parsePlannerLogPaste(
+      JSON.stringify({
+        task: "Trace a failing charge",
+        repo: "repo-alpha",
+        filePaths: ["services/payments/charge.ts", "  ", 7, "services/payments/refund.ts"],
+      }),
+    );
+
+    expect(parsed).toEqual({
+      task: "Trace a failing charge",
+      repo: "repo-alpha",
+      filePaths: ["services/payments/charge.ts", "services/payments/refund.ts"],
+    });
+  });
+
+  it("serializes repo and repeated filePaths params from planner input", () => {
+    const hooks = loadHooks();
+    const query = hooks.queryFromPlannerInput({
+      task: "Trace a failing charge",
+      repo: "repo-alpha",
+      filePaths: ["services/payments/charge.ts", "services/payments/refund.ts"],
+    });
+    const params = new URLSearchParams(query);
+
+    expect(params.get("task")).toBe("Trace a failing charge");
+    expect(params.get("repo")).toBe("repo-alpha");
+    expect(params.getAll("filePaths")).toEqual([
+      "services/payments/charge.ts",
+      "services/payments/refund.ts",
+    ]);
+  });
+
+  it("renders project resolution candidates, boosts, reasons, and unknown repos", () => {
+    const hooks = loadHooks();
+    const html = hooks.renderProjectResolution({
+      candidates: [
+        { project: "project-one", boost: 10, reasons: ['repo "repo-alpha" maps to project "project-one"'] },
+      ],
+      unknownRepo: undefined,
+      explanations: [],
+    });
+
+    expect(html).toContain("project-one");
+    expect(html).toContain("boost 10");
+    expect(html).toContain("maps to project");
+
+    const unknown = hooks.renderProjectResolution({ candidates: [], unknownRepo: "repo-unknown", explanations: [] });
+    expect(unknown).toContain("repo-unknown");
+    expect(unknown).toContain("not in the configured repo map");
+  });
+
+  it("summarizes candidate projects and unknown repos in the planner status", () => {
+    const hooks = loadHooks();
+    const status = hooks.formatPlannerStatus({
+      generatedAt: "2026-06-20T00:00:00.000Z",
+      totalCandidates: 5,
+      projectResolution: {
+        candidates: [
+          { project: "project-one", boost: 10, reasons: [] },
+          { project: "project-two", boost: 10, reasons: [] },
+        ],
+        explanations: [],
+      },
+    });
+    expect(status).toContain("candidate projects project-one, project-two");
+
+    const unknownStatus = hooks.formatPlannerStatus({
+      generatedAt: "2026-06-20T00:00:00.000Z",
+      totalCandidates: 5,
+      projectResolution: { candidates: [], unknownRepo: "repo-unknown", explanations: [] },
+    });
+    expect(unknownStatus).toContain("unknown repo repo-unknown");
   });
 
   it("renders the judge-prompt button in the planner UI", () => {

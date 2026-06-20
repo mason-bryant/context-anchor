@@ -206,6 +206,76 @@ describe("UI HTTP routes", () => {
     expect(plan.missingContext).toEqual([]);
   });
 
+  it("forwards an unknown repo through the planner route and flags it", async () => {
+    const plan = await fetchJson<{
+      projectResolution?: { unknownRepo?: string; candidates: Array<{ project: string }> };
+      missingContext: string[];
+    }>(
+      "/api/ui/context-plan?task=Trace%20a%20charge&repo=repo-unknown&filePaths=services%2Fpayments%2Fcharge.ts",
+    );
+
+    expect(plan.projectResolution?.unknownRepo).toBe("repo-unknown");
+    expect(plan.projectResolution?.candidates).toEqual([]);
+    expect(plan.missingContext.some((line) => line.includes("repo-unknown"))).toBe(true);
+  });
+
+  it("resolves a configured repo to candidate-project anchors through the planner route", async () => {
+    await service.writeAnchor({
+      name: "projects/project-one/project-one.md",
+      content: projectAnchorContent("project-one"),
+      message: "test: add project-one anchor",
+      approved: true,
+    });
+    await service.writeAnchor({
+      name: "projects/project-two/project-two.md",
+      content: projectAnchorContent("project-two"),
+      message: "test: add project-two anchor",
+      approved: true,
+    });
+
+    const configuredServer = await startHttpServer(
+      {
+        repoPath: tmpDir,
+        anchorRoot: ".",
+        autoSync: false,
+        pushOnWrite: false,
+        syncIntervalMs: 0,
+        migrationWarnOnly: false,
+        staleAfterDays: 45,
+        projectResolution: { repoMap: { "repo-alpha": ["project-one", "project-two"] } },
+      },
+      { host: "127.0.0.1", port: 0, authToken: TOKEN, stateless: true },
+    );
+
+    try {
+      const address = configuredServer.address();
+      if (!address || typeof address === "string") {
+        throw new Error("Expected HTTP server to listen on a TCP port");
+      }
+      const response = await fetch(
+        `http://127.0.0.1:${address.port}/api/ui/context-plan?task=Investigate%20flow&repo=repo-alpha`,
+        { headers: { Authorization: `Bearer ${TOKEN}` } },
+      );
+      expect(response.ok).toBe(true);
+      const plan = (await response.json()) as {
+        included: Array<{ name: string }>;
+        projectResolution?: { candidates: Array<{ project: string }> };
+      };
+
+      const includedNames = plan.included.map((anchor) => anchor.name);
+      expect(includedNames).toContain("projects/project-one/project-one.md");
+      expect(includedNames).toContain("projects/project-two/project-two.md");
+      expect(plan.projectResolution?.candidates.map((candidate) => candidate.project)).toEqual([
+        "project-one",
+        "project-two",
+      ]);
+    } finally {
+      await new Promise<void>((resolve, reject) => {
+        configuredServer.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
+  });
+
   it("returns anchor detail with required section status and front matter", async () => {
     const detail = await fetchJson<{
       anchor: {

@@ -622,13 +622,30 @@ function readUiAnchorSort(req: Request): UiAnchorSort {
 
 function readPlannerInput(req: Request): PlanContextBundleInput {
   const filters = readDiscoveryFilters(req);
+  const repo = optionalQueryString(req, "repo");
+  const filePaths = readStringArrayQuery(req, "filePaths");
   return {
     task: requiredQueryString(req, "task"),
     ...filters,
+    ...(repo ? { repo } : {}),
+    ...(filePaths.length > 0 ? { filePaths } : {}),
     budgetTokens: positiveIntQuery(req, "budgetTokens", 200000),
     maxAnchors: positiveIntQuery(req, "maxAnchors", 500),
     maxExcluded: positiveIntQuery(req, "maxExcluded", 500, { allowZero: true }),
   };
+}
+
+/** Read a repeated query parameter (e.g. `?filePaths=a&filePaths=b`) as a trimmed, non-empty string array. */
+function readStringArrayQuery(req: Request, key: string): string[] {
+  const value = req.query[key];
+  const raw = Array.isArray(value) ? value : value === undefined ? [] : [value];
+  const items: string[] = [];
+  for (const item of raw) {
+    if (typeof item === "string" && item.trim().length > 0) {
+      items.push(item.trim());
+    }
+  }
+  return items;
 }
 
 function readProposedChangesInput(req: Request): ProposedChangeListInput {

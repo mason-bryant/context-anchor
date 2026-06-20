@@ -8,6 +8,7 @@ import type {
 import type { BM25Index } from "./bm25.js";
 import { discoveryCategoryIndex, SERVER_RULES_DISCOVERY_CATEGORY } from "./taxonomy.js";
 import { anchorMatchesProject } from "./projectAliases.js";
+import { anchorCandidateBoost } from "./projectResolution.js";
 
 const DEFAULT_BUDGET_TOKENS = 4000;
 const DEFAULT_MAX_ANCHORS = 12;
@@ -123,6 +124,7 @@ export function buildContextBundlePlan(
   bodyCharCounts?: Map<string, number>,
   staleAfterDays = DEFAULT_STALE_AFTER_DAYS,
   now = new Date(),
+  candidateBoosts?: Map<string, number>,
 ): PlanContextBundleResult {
   const budgetTokens = Math.max(1, Math.floor(input.budgetTokens ?? DEFAULT_BUDGET_TOKENS));
   const maxAnchors = Math.max(1, Math.floor(input.maxAnchors ?? DEFAULT_MAX_ANCHORS));
@@ -134,7 +136,7 @@ export function buildContextBundlePlan(
     : undefined;
 
   const scored = anchors
-    .map((anchor) => scoreAnchor(anchor, input, taskTerms, activeGoalIdsBySlug, bm25HitsById, bodyCharCounts, staleAfterDays, now))
+    .map((anchor) => scoreAnchor(anchor, input, taskTerms, activeGoalIdsBySlug, bm25HitsById, bodyCharCounts, staleAfterDays, now, candidateBoosts))
     .sort((left, right) => compareScoredAnchors(left, right, taskTerms, activeGoalIdsBySlug));
 
   const included: ScoredAnchor[] = [];
@@ -217,6 +219,7 @@ function scoreAnchor(
   bodyCharCounts?: Map<string, number>,
   staleAfterDays = DEFAULT_STALE_AFTER_DAYS,
   now = new Date(),
+  candidateBoosts?: Map<string, number>,
 ): ScoredAnchor {
   let score = 0;
   const matchedTerms = new Set<string>();
@@ -226,9 +229,17 @@ function scoreAnchor(
   if (projectMatches) {
     score += 16;
     reasons.push(`project matches "${input.project}"`);
-  } else if (input.project && anchor.category === "projects") {
-    score -= 12;
-    reasons.push(`different project than "${input.project}"`);
+  } else {
+    // Repo/path-derived candidate projects boost their anchors and suppress the
+    // cross-project penalty, so a repo name resolves to its candidates' anchors.
+    const candidateBoost = candidateBoosts ? anchorCandidateBoost(anchor, candidateBoosts) : undefined;
+    if (candidateBoost) {
+      score += candidateBoost.boost;
+      reasons.push(`candidate project "${candidateBoost.project}" (boost ${candidateBoost.boost})`);
+    } else if (input.project && anchor.category === "projects") {
+      score -= 12;
+      reasons.push(`different project than "${input.project}"`);
+    }
   }
 
   if (input.category && anchor.category === input.category) {

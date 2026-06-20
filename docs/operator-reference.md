@@ -226,6 +226,44 @@ When `truncated` is true, call again with `nextCursor` from the previous respons
 the payload is still too large for the client, reduce `limit` or `maxBytes`, or set
 `includeContent` to `excerpt` or `none`.
 
+## Project Resolution
+
+`startTask` and `planContextBundle` accept an optional `repo` name and `filePaths`
+list. When a request is scoped to a repository or touched files rather than a named
+project, the server maps those signals to candidate project slugs and boosts their
+anchors during scoring. The mapping is operator-supplied config; no repo or project
+names ship with the tool.
+
+```json
+{
+  "authToken": "your-generated-token",
+  "projectResolution": {
+    "repoMap": {
+      "repo-alpha": ["project-one", "project-two"]
+    },
+    "pathPrefixes": [
+      { "prefix": "services/payments/", "project": "payments", "boost": 9 },
+      { "prefix": "services/reporting/", "project": "reporting" }
+    ]
+  }
+}
+```
+
+- `repoMap` maps a repository name to the candidate project slugs it most likely
+  concerns. Lookups are case-insensitive.
+- `pathPrefixes` boost a project when a client-supplied file path starts with the
+  prefix (matched case-insensitively); `boost` is optional and defaults when omitted.
+- The server cannot observe the editor, so clients should pass `repo` and `filePaths`
+  to benefit from resolution.
+- An unrecognized repo degrades gracefully: candidates from matching path prefixes are
+  still returned, and the unknown repo is reported in `projectResolution.unknownRepo`
+  and `missingContext` rather than producing an empty result.
+- Results carry a `projectResolution` block explaining why each candidate project was
+  included; resolution boosts scoring only and never mutates anchors.
+- The `/ui` Planner tab exposes `Repo` and `File paths` inputs (one path per line),
+  forwards them to `planContextBundle`, and renders the resulting candidate projects,
+  their boosts, and the per-candidate reasons (including an unknown-repo notice).
+
 ## Writing Anchors
 
 The server instructions tell agents to write back durable discoveries, not only answer

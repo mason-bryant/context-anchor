@@ -166,6 +166,14 @@ export const UI_HTML = `<!doctype html>
                   <input id="planner-runtime" type="text" placeholder="optional">
                 </label>
                 <label>
+                  Repo
+                  <input id="planner-repo" type="text" placeholder="optional, resolves candidate projects">
+                </label>
+                <label class="planner-filepaths">
+                  File paths
+                  <textarea id="planner-filepaths" rows="2" placeholder="optional, one path per line"></textarea>
+                </label>
+                <label>
                   Token budget
                   <input id="planner-budget" type="number" min="1" max="200000" value="4000">
                 </label>
@@ -188,6 +196,10 @@ export const UI_HTML = `<!doctype html>
             <div id="planner-empty" class="empty-state">Submit a task to inspect planner output.</div>
             <div id="planner-results" class="planner-results" hidden>
               <section id="planner-summary" class="planner-summary"></section>
+              <section id="planner-resolution-box" class="metadata-box" hidden>
+                <h3>Project resolution</h3>
+                <div id="planner-resolution" class="planner-list"></div>
+              </section>
               <section class="planner-grid">
                 <div class="metadata-box">
                   <h3>Included</h3>
@@ -2226,6 +2238,8 @@ export const UI_JS = `(function () {
     setSelectValueAllowingNew("planner-category", params.get("plannerCategory") || "");
     setSelectValueAllowingNew("planner-tag", params.get("plannerTag") || "");
     setControlValue("planner-runtime", params.get("plannerRuntime") || "");
+    setControlValue("planner-repo", params.get("plannerRepo") || "");
+    setControlValue("planner-filepaths", params.get("plannerFilePaths") || "");
     setControlValue("planner-budget", params.get("plannerBudget") || controlValue("planner-budget", "4000"));
     setControlValue("planner-max-anchors", params.get("plannerMaxAnchors") || controlValue("planner-max-anchors", "12"));
     setControlValue("planner-max-excluded", params.get("plannerMaxExcluded") || controlValue("planner-max-excluded", "20"));
@@ -2312,6 +2326,8 @@ export const UI_JS = `(function () {
     setParam(params, "plannerCategory", controlValue("planner-category", sourceParams.get("plannerCategory") || ""));
     setParam(params, "plannerTag", controlValue("planner-tag", sourceParams.get("plannerTag") || ""));
     setParam(params, "plannerRuntime", controlValue("planner-runtime", sourceParams.get("plannerRuntime") || ""));
+    setParam(params, "plannerRepo", controlValue("planner-repo", sourceParams.get("plannerRepo") || ""));
+    setParam(params, "plannerFilePaths", controlValue("planner-filepaths", sourceParams.get("plannerFilePaths") || ""));
     setNonDefaultParam(params, "plannerBudget", controlValue("planner-budget", sourceParams.get("plannerBudget") || ""), "4000");
     setNonDefaultParam(params, "plannerMaxAnchors", controlValue("planner-max-anchors", sourceParams.get("plannerMaxAnchors") || ""), "12");
     setNonDefaultParam(params, "plannerMaxExcluded", controlValue("planner-max-excluded", sourceParams.get("plannerMaxExcluded") || ""), "20");
@@ -2559,6 +2575,17 @@ export const UI_JS = `(function () {
     return params.toString();
   }
 
+  function splitFilePaths(value) {
+    if (typeof value !== "string") {
+      return [];
+    }
+    return value.split(/\\r?\\n/).map(function (line) {
+      return line.trim();
+    }).filter(function (line) {
+      return line.length > 0;
+    });
+  }
+
   function currentPlannerInput() {
     return {
       task: el("planner-task").value.trim(),
@@ -2566,6 +2593,8 @@ export const UI_JS = `(function () {
       category: el("planner-category").value,
       tag: el("planner-tag").value,
       runtime: el("planner-runtime").value.trim(),
+      repo: el("planner-repo").value.trim(),
+      filePaths: splitFilePaths(el("planner-filepaths").value),
       includeArchive: el("planner-archive").checked,
       budgetTokens: el("planner-budget").value.trim(),
       maxAnchors: el("planner-max-anchors").value.trim(),
@@ -2609,6 +2638,14 @@ export const UI_JS = `(function () {
     }
     if (typeof source.runtime === "string") {
       result.runtime = source.runtime;
+    }
+    if (typeof source.repo === "string") {
+      result.repo = source.repo;
+    }
+    if (Array.isArray(source.filePaths)) {
+      result.filePaths = source.filePaths.filter(function (filePath) {
+        return typeof filePath === "string" && filePath.trim().length > 0;
+      });
     }
     if (typeof source.includeArchive === "boolean") {
       result.includeArchive = source.includeArchive;
@@ -2661,6 +2698,12 @@ export const UI_JS = `(function () {
     if (Object.prototype.hasOwnProperty.call(parsed, "runtime")) {
       el("planner-runtime").value = parsed.runtime;
     }
+    if (Object.prototype.hasOwnProperty.call(parsed, "repo")) {
+      el("planner-repo").value = parsed.repo;
+    }
+    if (Object.prototype.hasOwnProperty.call(parsed, "filePaths")) {
+      el("planner-filepaths").value = parsed.filePaths.join("\\n");
+    }
     if (Object.prototype.hasOwnProperty.call(parsed, "includeArchive")) {
       el("planner-archive").checked = Boolean(parsed.includeArchive);
     }
@@ -2694,11 +2737,18 @@ export const UI_JS = `(function () {
   function queryFromPlannerInput(input) {
     var params = new URLSearchParams();
     params.set("task", input.task);
-    ["project", "category", "tag", "runtime", "budgetTokens", "maxAnchors", "maxExcluded"].forEach(function (key) {
+    ["project", "category", "tag", "runtime", "repo", "budgetTokens", "maxAnchors", "maxExcluded"].forEach(function (key) {
       if (input[key]) {
         params.set(key, input[key]);
       }
     });
+    if (Array.isArray(input.filePaths)) {
+      input.filePaths.forEach(function (filePath) {
+        if (filePath) {
+          params.append("filePaths", filePath);
+        }
+      });
+    }
     if (input.includeArchive) {
       params.set("includeArchive", "true");
     }
@@ -3138,6 +3188,18 @@ export const UI_JS = `(function () {
         "Resolved project alias " + plan.projectFilter.requested + " to " + plan.projectFilter.resolved + ".",
         "info",
       );
+    } else if (plan.projectResolution && plan.projectResolution.unknownRepo && plan.projectResolution.candidates.length === 0) {
+      setBanner(
+        "Repository " + plan.projectResolution.unknownRepo + " did not resolve to any candidate projects.",
+        "warn",
+      );
+    } else if (plan.projectResolution && plan.projectResolution.candidates.length) {
+      setBanner(
+        "Resolved candidate projects: " + plan.projectResolution.candidates.map(function (candidate) {
+          return candidate.project;
+        }).join(", ") + ".",
+        "info",
+      );
     } else {
       setBanner("", "info");
     }
@@ -3149,19 +3211,63 @@ export const UI_JS = `(function () {
     if (plan.projectFilter && plan.projectFilter.via === "alias") {
       status += " · project alias " + plan.projectFilter.requested + " → " + plan.projectFilter.resolved;
     }
+    if (plan.projectResolution) {
+      var resolved = plan.projectResolution.candidates.map(function (candidate) {
+        return candidate.project;
+      });
+      if (resolved.length) {
+        status += " · candidate projects " + resolved.join(", ");
+      }
+      if (plan.projectResolution.unknownRepo) {
+        status += " · unknown repo " + plan.projectResolution.unknownRepo;
+      }
+    }
     return status;
+  }
+
+  function renderProjectResolution(resolution) {
+    if (!resolution) {
+      return "";
+    }
+    var cards = resolution.candidates.map(function (candidate) {
+      var reasons = Array.isArray(candidate.reasons) ? candidate.reasons.join("; ") : "";
+      return "<div class=\\"planner-card\\">"
+        + "<div class=\\"planner-card-title\\"><span>" + escapeHtml(candidate.project) + "</span>"
+        + "<span class=\\"badge\\">boost " + escapeHtml(candidate.boost) + "</span></div>"
+        + "<p>" + escapeHtml(reasons) + "</p>"
+        + "</div>";
+    });
+    if (resolution.unknownRepo) {
+      cards.push(
+        "<div class=\\"planner-card\\"><p>" + escapeHtml(
+          "Repository \\"" + resolution.unknownRepo + "\\" is not in the configured repo map.",
+        ) + "</p></div>",
+      );
+    }
+    if (cards.length === 0) {
+      cards.push("<div class=\\"planner-card\\"><p>No candidate projects resolved.</p></div>");
+    }
+    return cards.join("");
   }
 
   function renderPlanner(plan, previous) {
     el("planner-empty").hidden = true;
     el("planner-results").hidden = false;
     el("planner-status").textContent = formatPlannerStatus(plan);
-    el("planner-summary").innerHTML = [
+    var summaryMetrics = [
       renderMetric(plan.included.length, "included"),
       renderMetric(plan.excluded.length, "excluded shown"),
       renderMetric(plan.estimatedTokens + " / " + plan.budgetTokens, "estimated tokens"),
       renderMetric(plan.missingContext.length, "missing signals")
-    ].join("");
+    ];
+    if (plan.projectResolution) {
+      summaryMetrics.push(renderMetric(plan.projectResolution.candidates.length, "candidate projects"));
+    }
+    el("planner-summary").innerHTML = summaryMetrics.join("");
+    el("planner-resolution-box").hidden = !plan.projectResolution;
+    el("planner-resolution").innerHTML = plan.projectResolution
+      ? renderProjectResolution(plan.projectResolution)
+      : "";
     el("planner-included").innerHTML = renderPlannerItems(plan.included, "No anchors selected.");
     el("planner-excluded").innerHTML = renderPlannerItems(plan.excluded, "No excluded anchors returned.");
     el("planner-missing").innerHTML = renderMissingContext(plan.missingContext);
@@ -6226,6 +6332,9 @@ export const UI_JS = `(function () {
     };
     window.__ANCHOR_MCP_UI_TEST_HOOKS__.shouldHandleClientNavigation = shouldHandleClientNavigation;
     window.__ANCHOR_MCP_UI_TEST_HOOKS__.parsePlannerLogPaste = parsePlannerLogPaste;
+    window.__ANCHOR_MCP_UI_TEST_HOOKS__.queryFromPlannerInput = queryFromPlannerInput;
+    window.__ANCHOR_MCP_UI_TEST_HOOKS__.renderProjectResolution = renderProjectResolution;
+    window.__ANCHOR_MCP_UI_TEST_HOOKS__.formatPlannerStatus = formatPlannerStatus;
     window.__ANCHOR_MCP_UI_TEST_HOOKS__.buildJudgePrompt = buildJudgePrompt;
     window.__ANCHOR_MCP_UI_TEST_HOOKS__.formatPreview = formatPreview;
     return;

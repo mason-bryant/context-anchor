@@ -562,6 +562,43 @@ export type ProjectFilterResolution = {
   matchedAlias?: string;
 };
 
+/**
+ * Operator-supplied mapping from repository names and file-path prefixes to
+ * candidate project slugs. Empty by default; the data is injected via server
+ * config so no real-world repo or project names ship with the tool.
+ */
+export type ProjectResolutionConfig = {
+  /** Map a repository name to candidate project slugs (e.g. `repo-alpha -> [project-one, project-two]`). */
+  repoMap?: Record<string, string[]>;
+  /** Raise candidate-project scores when a touched file path starts with a prefix. */
+  pathPrefixes?: ProjectPathPrefixRule[];
+};
+
+export type ProjectPathPrefixRule = {
+  /** Path prefix matched case-insensitively against client-supplied file paths. */
+  prefix: string;
+  /** Candidate project slug boosted when a file path matches the prefix. */
+  project: string;
+  /** Score boost applied on match; defaults when omitted. */
+  boost?: number;
+};
+
+/** One candidate project derived from a repo name and/or file paths, with its boost. */
+export type ProjectResolutionCandidate = {
+  project: string;
+  boost: number;
+  reasons: string[];
+};
+
+/** Result of resolving a repo name and file paths to ranked candidate projects. */
+export type ProjectResolution = {
+  candidates: ProjectResolutionCandidate[];
+  /** Repo name supplied but absent from the configured map; degrades gracefully. */
+  unknownRepo?: string;
+  /** Human-readable explanation of why each candidate project was included. */
+  explanations: string[];
+};
+
 export type ContextRootResult = {
   generatedAt: string;
   entries: ContextRootEntry[];
@@ -630,6 +667,10 @@ export type LoadContextResult = {
 export type PlanContextBundleInput = {
   task: string;
   project?: string;
+  /** Repository name; resolved to candidate projects via the configured repo map. */
+  repo?: string;
+  /** File paths touched by the task; resolved to candidate projects via path-prefix rules. */
+  filePaths?: string[];
   category?: DiscoveryCategory;
   tag?: string;
   runtime?: string;
@@ -667,6 +708,8 @@ export type PlanContextBundleResult = {
   excluded: PlanContextBundleItem[];
   missingContext: string[];
   projectFilter?: ProjectFilterResolution;
+  /** Candidate projects derived from a repo name and/or file paths, with explanations. */
+  projectResolution?: ProjectResolution;
   loadContext: {
     names: string[];
     includeContent: "excerpt";
@@ -679,6 +722,10 @@ export type PlanContextBundleResult = {
 export type StartTaskInput = {
   task: string;
   project?: string;
+  /** Repository name; resolved to candidate projects via the configured repo map. */
+  repo?: string;
+  /** File paths touched by the task; resolved to candidate projects via path-prefix rules. */
+  filePaths?: string[];
   budgetTokens?: number;
   maxAnchors?: number;
   includeArchive?: boolean;
@@ -700,6 +747,7 @@ export type StartTaskResult = {
     excluded: PlanContextBundleItem[];
     missingContext: string[];
     projectFilter?: ProjectFilterResolution;
+    projectResolution?: ProjectResolution;
   };
   anchors: LoadContextAnchor[];
   truncated: boolean;
@@ -803,6 +851,8 @@ export type ServerConfig = {
   /** Flag included planner anchors when last_validated is older than this many days. */
   staleAfterDays: number;
   logging?: LoggingConfig;
+  /** Operator-supplied repo/path-prefix to candidate-project resolution map. */
+  projectResolution?: ProjectResolutionConfig;
 };
 
 export type LoggingConfig = {
