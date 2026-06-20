@@ -584,6 +584,21 @@ export type ProjectRepoMapping = {
   repo: string;
   /** Directory prefixes within the repo that belong to this project; empty means the whole repo. */
   paths: string[];
+  /** Optional remote/web info used to build links to specific files in the repo. */
+  web?: ProjectRepoWeb;
+};
+
+export type ProjectRepoWeb = {
+  /** Repo web home, e.g. `https://github.com/owner/repo`. */
+  url: string;
+  /** Default branch/ref used in file links; defaults to `main` when omitted. */
+  branch?: string;
+  /**
+   * Optional file-URL template with `{url}`, `{branch}`, and `{path}` placeholders.
+   * Defaults to the common `{url}/blob/{branch}/{path}` (GitHub-style); override for
+   * hosts that differ (e.g. GitLab `{url}/-/blob/{branch}/{path}`).
+   */
+  fileTemplate?: string;
 };
 
 export type ProjectMappingsWithCommit = ProjectMappings & { fileCommit?: string };

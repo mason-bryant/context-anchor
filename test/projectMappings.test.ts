@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { normalizePathForStorage, parseProjectMappings } from "../src/projectMappings.js";
+import { normalizePathForStorage, parseProjectMappings, repoFileUrl } from "../src/projectMappings.js";
 
 describe("parseProjectMappings", () => {
   it("returns an empty registry for non-object input", () => {
@@ -83,6 +83,82 @@ describe("parseProjectMappings", () => {
     expect(parsed.projects[0]?.repos).toEqual([
       { repo: "Repo-Alpha", paths: ["services/payments", "libs/pay"] },
     ]);
+  });
+});
+
+describe("parseProjectMappings web info", () => {
+  it("keeps web url, branch, and template", () => {
+    const parsed = parseProjectMappings({
+      projects: [
+        {
+          project: "payments",
+          repos: [
+            {
+              repo: "repo-alpha",
+              paths: [],
+              web: { url: "https://github.com/owner/repo-alpha", branch: "main", fileTemplate: "{url}/blob/{branch}/{path}" },
+            },
+          ],
+        },
+      ],
+    });
+    expect(parsed.projects[0]?.repos[0]?.web).toEqual({
+      url: "https://github.com/owner/repo-alpha",
+      branch: "main",
+      fileTemplate: "{url}/blob/{branch}/{path}",
+    });
+  });
+
+  it("drops a web block with no url and unmodeled web fields", () => {
+    const parsed = parseProjectMappings({
+      projects: [
+        {
+          project: "payments",
+          repos: [
+            { repo: "a", paths: [], web: { branch: "main" } },
+            { repo: "b", paths: [], web: { url: "https://example.com/b", token: "secret" } },
+          ],
+        },
+      ],
+    });
+    const repos = parsed.projects[0]?.repos ?? [];
+    expect(repos.find((r) => r.repo === "a")?.web).toBeUndefined();
+    expect(repos.find((r) => r.repo === "b")?.web).toEqual({ url: "https://example.com/b" });
+  });
+});
+
+describe("repoFileUrl", () => {
+  it("builds a GitHub-style file URL by default", () => {
+    const repo = { web: { url: "https://github.com/owner/repo" } };
+    expect(repoFileUrl(repo, "src/anchorService.ts")).toBe(
+      "https://github.com/owner/repo/blob/main/src/anchorService.ts",
+    );
+  });
+
+  it("honors a custom branch and appends a line anchor", () => {
+    const repo = { web: { url: "https://github.com/owner/repo/", branch: "develop" } };
+    expect(repoFileUrl(repo, "/src/x.ts", 42)).toBe(
+      "https://github.com/owner/repo/blob/develop/src/x.ts#L42",
+    );
+  });
+
+  it("applies a custom template for other hosts", () => {
+    const repo = { web: { url: "https://gitlab.com/acme/api", fileTemplate: "{url}/-/blob/{branch}/{path}" } };
+    expect(repoFileUrl(repo, "app/models/user.rb")).toBe(
+      "https://gitlab.com/acme/api/-/blob/main/app/models/user.rb",
+    );
+  });
+
+  it("encodes segments while preserving path and branch slashes", () => {
+    const repo = { web: { url: "https://github.com/owner/repo", branch: "feature/new ui" } };
+    expect(repoFileUrl(repo, "src/a b/c.ts")).toBe(
+      "https://github.com/owner/repo/blob/feature/new%20ui/src/a%20b/c.ts",
+    );
+  });
+
+  it("returns undefined without web url or path", () => {
+    expect(repoFileUrl({ web: undefined }, "src/x.ts")).toBeUndefined();
+    expect(repoFileUrl({ web: { url: "https://github.com/o/r" } }, "  ")).toBeUndefined();
   });
 });
 

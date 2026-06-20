@@ -1066,6 +1066,28 @@ describe("UI browser assets", () => {
     expect(html).not.toContain("mapping-remove-orphan");
   });
 
+  it("renders web (file-link) inputs with stored values", () => {
+    const hooks = loadHooks();
+    const html = hooks.mappingCardHtml(
+      {
+        project: "payments",
+        repos: [
+          {
+            repo: "repo-alpha",
+            paths: [],
+            web: { url: "https://github.com/owner/repo-alpha", branch: "main" },
+          },
+        ],
+      },
+      0,
+    );
+    expect(html).toContain("mapping-web-url");
+    expect(html).toContain('value="https://github.com/owner/repo-alpha"');
+    expect(html).toContain("mapping-web-branch");
+    expect(html).toContain('value="main"');
+    expect(html).toContain("mapping-web-template");
+  });
+
   it("flags an orphaned mapping (no matching anchor) with a remove action", () => {
     const hooks = loadHooks();
     hooks.setMappingsTestState([{ projectSlug: "payments" }], { projects: [] });

@@ -1,4 +1,4 @@
-import type { ProjectMapping, ProjectMappings, ProjectRepoMapping } from "./types.js";
+import type { ProjectMapping, ProjectMappings, ProjectRepoMapping, ProjectRepoWeb } from "./types.js";
 
 /**
  * Normalize and validate a raw project-mappings shape. Mirrors parsePeopleRegistry:
@@ -58,15 +58,38 @@ function parseReposArray(raw: unknown): ProjectRepoMapping[] {
       continue;
     }
     const paths = parsePaths(obj.paths);
+    const web = parseWeb(obj.web);
     const key = repo.toLowerCase();
     const existing = byRepo.get(key);
     if (existing) {
       existing.paths = dedupePaths([...existing.paths, ...paths]);
+      if (!existing.web && web) {
+        existing.web = web;
+      }
     } else {
-      byRepo.set(key, { repo, paths });
+      byRepo.set(key, { repo, paths, ...(web ? { web } : {}) });
     }
   }
   return [...byRepo.values()];
+}
+
+function parseWeb(raw: unknown): ProjectRepoWeb | undefined {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    return undefined;
+  }
+  const obj = raw as Record<string, unknown>;
+  const url = stringValue(obj.url);
+  if (!url) {
+    // A web block with no url cannot build a link, so drop it entirely.
+    return undefined;
+  }
+  const branch = stringValue(obj.branch);
+  const fileTemplate = stringValue(obj.fileTemplate);
+  return {
+    url,
+    ...(branch ? { branch } : {}),
+    ...(fileTemplate ? { fileTemplate } : {}),
+  };
 }
 
 function parsePaths(raw: unknown): string[] {
@@ -87,11 +110,58 @@ function mergeRepos(left: ProjectRepoMapping[], right: ProjectRepoMapping[]): Pr
     const existing = byRepo.get(key);
     if (existing) {
       existing.paths = dedupePaths([...existing.paths, ...entry.paths]);
+      if (!existing.web && entry.web) {
+        existing.web = entry.web;
+      }
     } else {
-      byRepo.set(key, { repo: entry.repo, paths: [...entry.paths] });
+      byRepo.set(key, { repo: entry.repo, paths: [...entry.paths], ...(entry.web ? { web: entry.web } : {}) });
     }
   }
   return [...byRepo.values()];
+}
+
+const DEFAULT_FILE_URL_TEMPLATE = "{url}/blob/{branch}/{path}";
+const DEFAULT_BRANCH = "main";
+
+/**
+ * Build a web URL to a specific repo-relative file from a repo mapping's `web`
+ * info, e.g. `https://github.com/owner/repo/blob/main/src/index.ts`. Returns
+ * `undefined` when the repo has no `web.url` or the path is empty. Substitutes
+ * `{url}`, `{branch}`, and `{path}` in `web.fileTemplate` (default GitHub-style),
+ * and appends `#L<line>` when a line is given.
+ */
+export function repoFileUrl(
+  repo: Pick<ProjectRepoMapping, "web">,
+  filePath: string,
+  line?: number,
+): string | undefined {
+  const web = repo.web;
+  if (!web?.url) {
+    return undefined;
+  }
+  const cleanPath = filePath.trim().replace(/^\.\/+/, "").replace(/^\/+/, "");
+  if (!cleanPath) {
+    return undefined;
+  }
+  const base = web.url.trim().replace(/\/+$/, "");
+  const branch = web.branch?.trim() || DEFAULT_BRANCH;
+  const template = web.fileTemplate?.trim() || DEFAULT_FILE_URL_TEMPLATE;
+  let url = template
+    .replace(/\{url\}/g, base)
+    .replace(/\{branch\}/g, encodeRefOrPath(branch))
+    .replace(/\{path\}/g, encodeRefOrPath(cleanPath));
+  if (line !== undefined && Number.isFinite(line) && line > 0) {
+    url += `#L${Math.floor(line)}`;
+  }
+  return url;
+}
+
+/** Encode each path/ref segment while preserving the slashes between them. */
+function encodeRefOrPath(value: string): string {
+  return value
+    .split("/")
+    .map((segment) => encodeURIComponent(segment))
+    .join("/");
 }
 
 /** Strip leading `./` and surrounding slashes so paths are stored as bare directory prefixes. */

@@ -243,7 +243,12 @@ describe("UI HTTP routes", () => {
       body: JSON.stringify({
         mappings: {
           projects: [
-            { project: "project-one", repos: [{ repo: "repo-alpha", paths: [] }] },
+            {
+              project: "project-one",
+              repos: [
+                { repo: "repo-alpha", paths: [], web: { url: "https://github.com/owner/repo-alpha", branch: "main" } },
+              ],
+            },
             { project: "project-two", repos: [{ repo: "repo-alpha", paths: [] }] },
           ],
         },
@@ -252,8 +257,12 @@ describe("UI HTTP routes", () => {
     });
     expect(writeResponse.ok).toBe(true);
 
-    const stored = await fetchJson<{ projects: Array<{ project: string }> }>("/api/ui/project-mappings");
+    const stored = await fetchJson<{
+      projects: Array<{ project: string; repos: Array<{ web?: { url: string; branch?: string } }> }>;
+    }>("/api/ui/project-mappings");
     expect(stored.projects.map((p) => p.project).sort()).toEqual(["project-one", "project-two"]);
+    const projectOne = stored.projects.find((p) => p.project === "project-one");
+    expect(projectOne?.repos[0]?.web).toEqual({ url: "https://github.com/owner/repo-alpha", branch: "main" });
 
     const plan = await fetchJson<{
       included: Array<{ name: string }>;

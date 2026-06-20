@@ -5148,9 +5148,16 @@ export const UI_JS = `(function () {
   function mappingRepoRowHtml(repo, pi, ri) {
     var repoName = repo && repo.repo ? repo.repo : "";
     var paths = repo && Array.isArray(repo.paths) ? repo.paths.join("\\n") : "";
+    var web = repo && repo.web ? repo.web : {};
+    var webUrl = web.url || "";
+    var webBranch = web.branch || "";
+    var webTemplate = web.fileTemplate || "";
     return "<div class=\\"mapping-repo-row\\" data-pi=\\"" + pi + "\\" data-ri=\\"" + ri + "\\">"
       + "<label>Repo<input class=\\"mapping-repo\\" type=\\"text\\" value=\\"" + escapeHtml(repoName) + "\\" placeholder=\\"repo-name\\"></label>"
       + "<label>Paths (one per line; blank = whole repo)<textarea class=\\"mapping-paths\\" rows=\\"2\\" placeholder=\\"services/payments\\">" + escapeHtml(paths) + "</textarea></label>"
+      + "<label>Web URL (optional, for file links)<input class=\\"mapping-web-url\\" type=\\"text\\" value=\\"" + escapeHtml(webUrl) + "\\" placeholder=\\"https://github.com/owner/repo\\"></label>"
+      + "<label>Branch<input class=\\"mapping-web-branch\\" type=\\"text\\" value=\\"" + escapeHtml(webBranch) + "\\" placeholder=\\"main\\"></label>"
+      + "<label>File URL template (optional)<input class=\\"mapping-web-template\\" type=\\"text\\" value=\\"" + escapeHtml(webTemplate) + "\\" placeholder=\\"{url}/blob/{branch}/{path}\\"></label>"
       + "<button class=\\"mapping-remove-repo\\" type=\\"button\\" data-pi=\\"" + pi + "\\" data-ri=\\"" + ri + "\\">Remove repo</button>"
       + "</div>";
   }
@@ -5161,6 +5168,11 @@ export const UI_JS = `(function () {
     }).filter(function (line) {
       return line.length > 0;
     });
+  }
+
+  function readRowValue(row, selector) {
+    var input = row.querySelector(selector);
+    return input ? (input.value || "").trim() : "";
   }
 
   function readMappingsFromDom() {
@@ -5175,10 +5187,19 @@ export const UI_JS = `(function () {
       for (var j = 0; j < rows.length; j += 1) {
         var repoInput = rows[j].querySelector(".mapping-repo");
         var pathsInput = rows[j].querySelector(".mapping-paths");
-        repos.push({
+        var webUrl = readRowValue(rows[j], ".mapping-web-url");
+        var entry = {
           repo: repoInput ? (repoInput.value || "").trim() : "",
           paths: pathsInput ? splitLines(pathsInput.value) : []
-        });
+        };
+        if (webUrl) {
+          var webBranch = readRowValue(rows[j], ".mapping-web-branch");
+          var webTemplate = readRowValue(rows[j], ".mapping-web-template");
+          entry.web = { url: webUrl };
+          if (webBranch) { entry.web.branch = webBranch; }
+          if (webTemplate) { entry.web.fileTemplate = webTemplate; }
+        }
+        repos.push(entry);
       }
       projects.push({ project: slug, repos: repos });
     }

@@ -1330,6 +1330,13 @@ the index when your workflow checks in that file.`,
                 z.object({
                   repo: z.string().min(1),
                   paths: z.array(z.string()).optional(),
+                  web: z
+                    .object({
+                      url: z.string().min(1),
+                      branch: z.string().optional(),
+                      fileTemplate: z.string().optional(),
+                    })
+                    .optional(),
                 }),
               ),
             }),

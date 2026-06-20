@@ -245,7 +245,11 @@ on the file's git commit, so resolution does not re-read it on every request.
     {
       "project": "payments",
       "repos": [
-        { "repo": "repo-alpha", "paths": ["services/payments"] },
+        {
+          "repo": "repo-alpha",
+          "paths": ["services/payments"],
+          "web": { "url": "https://github.com/acme/repo-alpha", "branch": "main" }
+        },
         { "repo": "repo-beta", "paths": [] }
       ]
     },
@@ -262,6 +266,12 @@ on the file's git commit, so resolution does not re-read it on every request.
 - Each repo entry may be narrowed to directory `paths` — plain prefixes, no globs:
   `services/payments` matches everything under `services/payments/`. An empty `paths`
   array means the whole repo maps to that project.
+- An optional `web` block enables building links to specific files in the repo:
+  `web.url` is the repo's web home, `web.branch` defaults to `main`, and
+  `web.fileTemplate` (default `{url}/blob/{branch}/{path}`, GitHub-style) can be
+  overridden for other hosts (e.g. GitLab `{url}/-/blob/{branch}/{path}`). The
+  `repoFileUrl(repo, path, line?)` helper substitutes `{url}`/`{branch}`/`{path}` and
+  appends `#L<line>`.
 - A repo match boosts the project; a file path that falls under a configured path
   boosts it further, so a path-narrowed project ranks above a whole-repo match.
 - An unrecognized repo degrades gracefully: candidates derived from matching paths are
