@@ -219,7 +219,7 @@ describe("UI HTTP routes", () => {
     expect(plan.missingContext.some((line) => line.includes("repo-unknown"))).toBe(true);
   });
 
-  it("resolves a configured repo to candidate-project anchors through the planner route", async () => {
+  it("manages project mappings and resolves a repo to candidate projects through the routes", async () => {
     await service.writeAnchor({
       name: "projects/project-one/project-one.md",
       content: projectAnchorContent("project-one"),
@@ -233,47 +233,52 @@ describe("UI HTTP routes", () => {
       approved: true,
     });
 
-    const configuredServer = await startHttpServer(
-      {
-        repoPath: tmpDir,
-        anchorRoot: ".",
-        autoSync: false,
-        pushOnWrite: false,
-        syncIntervalMs: 0,
-        migrationWarnOnly: false,
-        staleAfterDays: 45,
-        projectResolution: { repoMap: { "repo-alpha": ["project-one", "project-two"] } },
-      },
-      { host: "127.0.0.1", port: 0, authToken: TOKEN, stateless: true },
-    );
+    // CRUD: an empty registry, then a write through the POST route.
+    const initial = await fetchJson<{ projects: unknown[]; fileCommit?: string }>("/api/ui/project-mappings");
+    expect(initial.projects).toEqual([]);
 
-    try {
-      const address = configuredServer.address();
-      if (!address || typeof address === "string") {
-        throw new Error("Expected HTTP server to listen on a TCP port");
-      }
-      const response = await fetch(
-        `http://127.0.0.1:${address.port}/api/ui/context-plan?task=Investigate%20flow&repo=repo-alpha`,
-        { headers: { Authorization: `Bearer ${TOKEN}` } },
-      );
-      expect(response.ok).toBe(true);
-      const plan = (await response.json()) as {
-        included: Array<{ name: string }>;
-        projectResolution?: { candidates: Array<{ project: string }> };
-      };
+    const writeResponse = await fetch(`${baseUrl}/api/ui/project-mappings`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${TOKEN}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        mappings: {
+          projects: [
+            { project: "project-one", repos: [{ repo: "repo-alpha", paths: [] }] },
+            { project: "project-two", repos: [{ repo: "repo-alpha", paths: [] }] },
+          ],
+        },
+        expectedFileCommit: initial.fileCommit,
+      }),
+    });
+    expect(writeResponse.ok).toBe(true);
 
-      const includedNames = plan.included.map((anchor) => anchor.name);
-      expect(includedNames).toContain("projects/project-one/project-one.md");
-      expect(includedNames).toContain("projects/project-two/project-two.md");
-      expect(plan.projectResolution?.candidates.map((candidate) => candidate.project)).toEqual([
-        "project-one",
-        "project-two",
-      ]);
-    } finally {
-      await new Promise<void>((resolve, reject) => {
-        configuredServer.close((error) => (error ? reject(error) : resolve()));
-      });
-    }
+    const stored = await fetchJson<{ projects: Array<{ project: string }> }>("/api/ui/project-mappings");
+    expect(stored.projects.map((p) => p.project).sort()).toEqual(["project-one", "project-two"]);
+
+    const plan = await fetchJson<{
+      included: Array<{ name: string }>;
+      projectResolution?: { candidates: Array<{ project: string }> };
+    }>("/api/ui/context-plan?task=Investigate%20flow&repo=repo-alpha");
+
+    const includedNames = plan.included.map((anchor) => anchor.name);
+    expect(includedNames).toContain("projects/project-one/project-one.md");
+    expect(includedNames).toContain("projects/project-two/project-two.md");
+    expect(plan.projectResolution?.candidates.map((candidate) => candidate.project).sort()).toEqual([
+      "project-one",
+      "project-two",
+    ]);
+  });
+
+  it("rejects a stale project-mappings write with a 409 conflict", async () => {
+    const stale = await fetch(`${baseUrl}/api/ui/project-mappings`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${TOKEN}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        mappings: { projects: [{ project: "demo", repos: [{ repo: "repo-alpha", paths: [] }] }] },
+        expectedFileCommit: "0000000000000000000000000000000000000000",
+      }),
+    });
+    expect(stale.status).toBe(409);
   });
 
   it("returns anchor detail with required section status and front matter", async () => {

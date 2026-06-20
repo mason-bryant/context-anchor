@@ -1,7 +1,7 @@
 import type { NextFunction, Request, Response, Express } from "express";
 
 import type { AnchorService } from "../anchorService.js";
-import { PeopleRegistryConflictError } from "../git/repo.js";
+import { PeopleRegistryConflictError, ProjectMappingsConflictError } from "../git/repo.js";
 import { isDiscoveryCategory, type DiscoveryCategory } from "../taxonomy.js";
 import type {
   ContextRootFormat,
@@ -278,6 +278,35 @@ export function registerUiRoutes(
         });
       } catch (error) {
         if (error instanceof PeopleRegistryConflictError) {
+          throw new UiHttpError(409, error.message);
+        }
+        throw error;
+      }
+      return { ok: true };
+    }),
+  );
+
+  app.get(
+    "/api/ui/project-mappings",
+    ...protect,
+    jsonRoute(async (_req) => service.getProjectMappings()),
+  );
+
+  app.post(
+    "/api/ui/project-mappings",
+    ...protect,
+    jsonRoute(async (req) => {
+      const body = bodyRecord(req);
+      const mappings = bodyObject(body, "mappings");
+      try {
+        await service.writeProjectMappings({
+          mappings,
+          message: optionalBodyString(body, "message"),
+          coAuthor: optionalBodyString(body, "coAuthor"),
+          expectedFileCommit: optionalBodyString(body, "expectedFileCommit"),
+        });
+      } catch (error) {
+        if (error instanceof ProjectMappingsConflictError) {
           throw new UiHttpError(409, error.message);
         }
         throw error;

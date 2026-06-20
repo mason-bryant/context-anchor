@@ -231,38 +231,51 @@ the payload is still too large for the client, reduce `limit` or `maxBytes`, or 
 `startTask` and `planContextBundle` accept an optional `repo` name and `filePaths`
 list. When a request is scoped to a repository or touched files rather than a named
 project, the server maps those signals to candidate project slugs and boosts their
-anchors during scoring. The mapping is operator-supplied config; no repo or project
-names ship with the tool.
+anchors during scoring. The server cannot observe the editor, so clients should pass
+`repo` and `filePaths` to benefit from resolution.
+
+The mappings live in a project-first registry, `project-mappings.json`, at the anchor
+root (alongside `people-registry.json`). It is not an anchor and is empty by default,
+so no real-world repo or project names ship with the tool. The service caches it keyed
+on the file's git commit, so resolution does not re-read it on every request.
 
 ```json
 {
-  "authToken": "your-generated-token",
-  "projectResolution": {
-    "repoMap": {
-      "repo-alpha": ["project-one", "project-two"]
+  "projects": [
+    {
+      "project": "payments",
+      "repos": [
+        { "repo": "repo-alpha", "paths": ["services/payments"] },
+        { "repo": "repo-beta", "paths": [] }
+      ]
     },
-    "pathPrefixes": [
-      { "prefix": "services/payments/", "project": "payments", "boost": 9 },
-      { "prefix": "services/reporting/", "project": "reporting" }
-    ]
-  }
+    {
+      "project": "reporting",
+      "repos": [{ "repo": "repo-alpha", "paths": ["services/reporting"] }]
+    }
+  ]
 }
 ```
 
-- `repoMap` maps a repository name to the candidate project slugs it most likely
-  concerns. Lookups are case-insensitive.
-- `pathPrefixes` boost a project when a client-supplied file path starts with the
-  prefix (matched case-insensitively); `boost` is optional and defaults when omitted.
-- The server cannot observe the editor, so clients should pass `repo` and `filePaths`
-  to benefit from resolution.
-- An unrecognized repo degrades gracefully: candidates from matching path prefixes are
+- Each project lists the repositories it lives in (0–n). Repo names match
+  case-insensitively, and one repo may host several projects.
+- Each repo entry may be narrowed to directory `paths` — plain prefixes, no globs:
+  `services/payments` matches everything under `services/payments/`. An empty `paths`
+  array means the whole repo maps to that project.
+- A repo match boosts the project; a file path that falls under a configured path
+  boosts it further, so a path-narrowed project ranks above a whole-repo match.
+- An unrecognized repo degrades gracefully: candidates derived from matching paths are
   still returned, and the unknown repo is reported in `projectResolution.unknownRepo`
   and `missingContext` rather than producing an empty result.
 - Results carry a `projectResolution` block explaining why each candidate project was
   included; resolution boosts scoring only and never mutates anchors.
-- The `/ui` Planner tab exposes `Repo` and `File paths` inputs (one path per line),
-  forwards them to `planContextBundle`, and renders the resulting candidate projects,
-  their boosts, and the per-candidate reasons (including an unknown-repo notice).
+
+Manage the registry through the `getProjectMappings` / `writeProjectMappings` MCP tools
+(writes use the same optimistic-concurrency `expectedFileCommit` guard as the people
+registry) or the `/ui` **Repo Mappings** tab, which provides add/edit/delete for
+projects, their repos, and per-repo paths. The Planner tab also exposes `Repo` and
+`File paths` inputs and renders the resolved candidate projects, their boosts, and the
+per-candidate reasons.
 
 ## Writing Anchors
 

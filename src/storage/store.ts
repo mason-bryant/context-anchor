@@ -67,6 +67,13 @@ export type WritePeopleRegistryOptions = {
   expectedFileCommit?: string;
 };
 
+export type WriteProjectMappingsOptions = {
+  message?: string;
+  coAuthor?: string;
+  push?: boolean;
+  expectedFileCommit?: string;
+};
+
 export interface AnchorStore {
   readonly repoPath: string;
   readonly anchorRoot: string;
@@ -102,6 +109,10 @@ export interface AnchorStore {
   peopleRegistryCommit(): Promise<string | undefined>;
   readPeopleRegistryRaw(): Promise<unknown>;
   writePeopleRegistryRaw(registry: unknown, options?: WritePeopleRegistryOptions): Promise<void>;
+
+  projectMappingsCommit(): Promise<string | undefined>;
+  readProjectMappingsRaw(): Promise<unknown>;
+  writeProjectMappingsRaw(mappings: unknown, options?: WriteProjectMappingsOptions): Promise<void>;
 }
 
 export interface SyncableAnchorStore {

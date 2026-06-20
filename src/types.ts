@@ -563,24 +563,39 @@ export type ProjectFilterResolution = {
 };
 
 /**
- * Operator-supplied mapping from repository names and file-path prefixes to
- * candidate project slugs. Empty by default; the data is injected via server
- * config so no real-world repo or project names ship with the tool.
+ * Project-first mapping from a project to the repositories (and optional path
+ * prefixes within them) where it lives. Stored in `project-mappings.json` at the
+ * anchor root; empty by default so no real-world repo or project names ship with
+ * the tool.
  */
-export type ProjectResolutionConfig = {
-  /** Map a repository name to candidate project slugs (e.g. `repo-alpha -> [project-one, project-two]`). */
-  repoMap?: Record<string, string[]>;
-  /** Raise candidate-project scores when a touched file path starts with a prefix. */
-  pathPrefixes?: ProjectPathPrefixRule[];
+export type ProjectMappings = {
+  projects: ProjectMapping[];
 };
 
-export type ProjectPathPrefixRule = {
-  /** Path prefix matched case-insensitively against client-supplied file paths. */
-  prefix: string;
-  /** Candidate project slug boosted when a file path matches the prefix. */
+export type ProjectMapping = {
+  /** Project slug this mapping applies to. */
   project: string;
-  /** Score boost applied on match; defaults when omitted. */
-  boost?: number;
+  /** Repositories (optionally narrowed to directory prefixes) this project lives in. */
+  repos: ProjectRepoMapping[];
+};
+
+export type ProjectRepoMapping = {
+  /** Repository name this project lives in. */
+  repo: string;
+  /** Directory prefixes within the repo that belong to this project; empty means the whole repo. */
+  paths: string[];
+};
+
+export type ProjectMappingsWithCommit = ProjectMappings & { fileCommit?: string };
+
+export type WriteProjectMappingsInput = {
+  // Accepts a raw mappings shape; the service normalizes and validates it
+  // through parseProjectMappings before persisting.
+  mappings: unknown;
+  message?: string;
+  coAuthor?: string;
+  // Optional optimistic-concurrency guard: the git commit the caller last read.
+  expectedFileCommit?: string;
 };
 
 /** One candidate project derived from a repo name and/or file paths, with its boost. */
@@ -851,8 +866,6 @@ export type ServerConfig = {
   /** Flag included planner anchors when last_validated is older than this many days. */
   staleAfterDays: number;
   logging?: LoggingConfig;
-  /** Operator-supplied repo/path-prefix to candidate-project resolution map. */
-  projectResolution?: ProjectResolutionConfig;
 };
 
 export type LoggingConfig = {

@@ -1,14 +1,7 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
-import type {
-  FileLoggingConfig,
-  LoggingConfig,
-  ProjectPathPrefixRule,
-  ProjectResolutionConfig,
-  RequestLoggingConfig,
-  ServerConfig,
-} from "../types.js";
+import type { FileLoggingConfig, LoggingConfig, RequestLoggingConfig, ServerConfig } from "../types.js";
 import { expandHome } from "../utils/path.js";
 
 export type CliOptions = {
@@ -77,7 +70,6 @@ export function parseCliArgs(argv: string[], env: NodeJS.ProcessEnv = process.en
       migrationWarnOnly: booleanFlag(flags, "migration-warn-only"),
       staleAfterDays: numberFlag(flags, "stale-after-days") ?? numberEnv(env.ANCHOR_MCP_STALE_AFTER_DAYS) ?? 45,
       logging: loggingConfigValue(fileConfig.logging, "logging"),
-      projectResolution: projectResolutionConfigValue(fileConfig.projectResolution, "projectResolution"),
     },
   };
 }
@@ -86,7 +78,6 @@ type CliConfigFile = {
   allowedHosts?: unknown;
   authToken?: unknown;
   logging?: unknown;
-  projectResolution?: unknown;
 };
 
 function readConfigFile(flags: Map<string, string | boolean>, env: NodeJS.ProcessEnv): CliConfigFile {
@@ -272,97 +263,6 @@ function requestLoggingConfigValue(value: unknown, key: string): RequestLoggingC
     includeArguments: booleanConfigValue(value.includeArguments, `${key}.includeArguments`),
     redactArguments: booleanConfigValue(value.redactArguments, `${key}.redactArguments`),
   };
-}
-
-function numberConfigValue(value: unknown, key: string): number | undefined {
-  if (value === undefined) {
-    return undefined;
-  }
-
-  if (typeof value !== "number" || !Number.isFinite(value)) {
-    throw new Error(`Expected config field ${key} to be a finite number`);
-  }
-
-  return value;
-}
-
-function projectResolutionConfigValue(value: unknown, key: string): ProjectResolutionConfig | undefined {
-  if (value === undefined) {
-    return undefined;
-  }
-
-  if (!isRecord(value)) {
-    throw new Error(`Expected config field ${key} to be an object`);
-  }
-
-  const repoMap = repoMapConfigValue(value.repoMap, `${key}.repoMap`);
-  const pathPrefixes = pathPrefixesConfigValue(value.pathPrefixes, `${key}.pathPrefixes`);
-  if (!repoMap && !pathPrefixes) {
-    return undefined;
-  }
-
-  return {
-    ...(repoMap ? { repoMap } : {}),
-    ...(pathPrefixes ? { pathPrefixes } : {}),
-  };
-}
-
-function repoMapConfigValue(value: unknown, key: string): Record<string, string[]> | undefined {
-  if (value === undefined) {
-    return undefined;
-  }
-
-  if (!isRecord(value)) {
-    throw new Error(`Expected config field ${key} to be an object`);
-  }
-
-  const out: Record<string, string[]> = {};
-  for (const [repo, projects] of Object.entries(value)) {
-    if (!Array.isArray(projects)) {
-      throw new Error(`Expected config field ${key}.${repo} to be a string array`);
-    }
-    const slugs: string[] = [];
-    for (const project of projects) {
-      if (typeof project !== "string") {
-        throw new Error(`Expected every config field ${key}.${repo} item to be a string`);
-      }
-      const trimmed = project.trim();
-      if (trimmed.length > 0) {
-        slugs.push(trimmed);
-      }
-    }
-    if (slugs.length > 0) {
-      out[repo] = slugs;
-    }
-  }
-
-  return Object.keys(out).length > 0 ? out : undefined;
-}
-
-function pathPrefixesConfigValue(value: unknown, key: string): ProjectPathPrefixRule[] | undefined {
-  if (value === undefined) {
-    return undefined;
-  }
-
-  if (!Array.isArray(value)) {
-    throw new Error(`Expected config field ${key} to be an array`);
-  }
-
-  const rules: ProjectPathPrefixRule[] = [];
-  value.forEach((item, index) => {
-    if (!isRecord(item)) {
-      throw new Error(`Expected config field ${key}[${index}] to be an object`);
-    }
-    const prefix = stringConfigValue(item.prefix, `${key}[${index}].prefix`);
-    const project = stringConfigValue(item.project, `${key}[${index}].project`);
-    if (!prefix || !project) {
-      throw new Error(`Expected config field ${key}[${index}] to define non-empty prefix and project`);
-    }
-    const boost = numberConfigValue(item.boost, `${key}[${index}].boost`);
-    rules.push({ prefix, project, ...(boost !== undefined ? { boost } : {}) });
-  });
-
-  return rules.length > 0 ? rules : undefined;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

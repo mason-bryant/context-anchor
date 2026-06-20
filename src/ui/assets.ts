@@ -117,6 +117,7 @@ export const UI_HTML = `<!doctype html>
             <button class="tab" data-tab="tasks" type="button"><span class="icon-label"><svg class="icon" aria-hidden="true"><use href="#icon-filter"></use></svg><span>Tasks</span></span></button>
             <button class="tab" data-tab="people" type="button"><span class="icon-label"><svg class="icon" aria-hidden="true"><use href="#icon-people"></use></svg><span>People</span></span></button>
             <button class="tab" data-tab="teams" type="button"><span class="icon-label"><svg class="icon" aria-hidden="true"><use href="#icon-team"></use></svg><span>Teams</span></span></button>
+            <button class="tab" data-tab="mappings" type="button"><span class="icon-label"><svg class="icon" aria-hidden="true"><use href="#icon-filter"></use></svg><span>Mappings</span></span></button>
             <button class="tab" data-tab="review" type="button"><span class="icon-label"><svg class="icon" aria-hidden="true"><use href="#icon-save"></use></svg><span>Review</span></span></button>
             <button class="tab" data-tab="detail" type="button" disabled><span class="icon-label"><svg class="icon" aria-hidden="true"><use href="#icon-anchor"></use></svg><span>Selected Anchor</span></span></button>
           </nav>
@@ -385,6 +386,23 @@ export const UI_HTML = `<!doctype html>
             </details>
             <div id="people-empty" class="empty-state" hidden>No people in registry.</div>
             <div id="people-list" class="registry-cards"></div>
+          </section>
+
+          <section id="mappings-view" class="view">
+            <div class="view-header">
+              <div>
+                <h2>Repo Mappings</h2>
+                <p id="mappings-summary">Map each project to the repositories and paths it lives in.</p>
+              </div>
+              <div class="action-row">
+                <button id="mappings-add" type="button">+ Add Project</button>
+                <button id="mappings-save" type="button">Save</button>
+                <button id="mappings-refresh" type="button">Refresh</button>
+              </div>
+            </div>
+            <p class="registry-hint">A project can live in any number of repos. Each repo can be narrowed to directory paths (one per line); leave paths blank to match the whole repo.</p>
+            <div id="mappings-empty" class="empty-state" hidden>No project mappings yet. Add one to map a project to its repos and paths.</div>
+            <div id="mappings-list" class="registry-cards"></div>
           </section>
 
           <section id="teams-view" class="view">
@@ -2076,6 +2094,9 @@ export const UI_JS = `(function () {
     registry: null,
     registryLoading: false,
     registryFileCommit: null,
+    projectMappings: null,
+    projectMappingsLoading: false,
+    projectMappingsFileCommit: null,
     peopleSearch: "",
     teamsSearch: "",
     selectedPersonId: null,
@@ -2158,7 +2179,7 @@ export const UI_JS = `(function () {
   }
 
   function validTab(value) {
-    return value === "root" || value === "planner" || value === "tasks" || value === "people" || value === "teams" || value === "review" || value === "detail" ? value : null;
+    return value === "root" || value === "planner" || value === "tasks" || value === "people" || value === "teams" || value === "mappings" || value === "review" || value === "detail" ? value : null;
   }
 
   function validRootMode(value) {
@@ -4995,6 +5016,157 @@ export const UI_JS = `(function () {
     return String(str || "").split(",").map(function(s) { return s.trim(); }).filter(function(s) { return s.length > 0; });
   }
 
+  function showMappingsView(options) {
+    var opts = options || {};
+    if (!opts.skipLocationUpdate) {
+      updateLocationFromState({ anchor: null, view: "mappings", history: "push" });
+    }
+    state.pendingAnchor = null;
+    showTab("mappings");
+    if (!state.projectMappings && !state.projectMappingsLoading) {
+      loadProjectMappings();
+    }
+  }
+
+  async function loadProjectMappings() {
+    state.projectMappingsLoading = true;
+    try {
+      var result = await api("/api/ui/project-mappings");
+      state.projectMappings = { projects: result.projects || [] };
+      state.projectMappingsFileCommit = result.fileCommit || null;
+      renderMappings();
+    } catch (error) {
+      setBanner(error.message, "error");
+    } finally {
+      state.projectMappingsLoading = false;
+    }
+  }
+
+  function renderMappings() {
+    if (!state.projectMappings) {
+      return;
+    }
+    var projects = state.projectMappings.projects || [];
+    el("mappings-empty").hidden = projects.length > 0;
+    el("mappings-list").innerHTML = projects.map(mappingCardHtml).join("");
+    el("mappings-summary").textContent = projects.length === 1
+      ? "1 project mapped to its repos and paths."
+      : projects.length + " projects mapped to their repos and paths.";
+  }
+
+  function mappingCardHtml(project, pi) {
+    var slug = project && project.project ? project.project : "";
+    var repos = project && Array.isArray(project.repos) ? project.repos : [];
+    var known = knownProjectSlugs();
+    var unknown = slug && known.size > 0 && !known.has(slug.toLowerCase());
+    var repoRows = repos.map(function (repo, ri) {
+      return mappingRepoRowHtml(repo, pi, ri);
+    }).join("");
+    return "<div class=\\"registry-card\\" data-project-index=\\"" + pi + "\\">"
+      + "<div class=\\"action-row\\">"
+      + "<label class=\\"mapping-project-label\\">Project"
+      + "<input class=\\"mapping-project\\" type=\\"text\\" value=\\"" + escapeHtml(slug) + "\\" placeholder=\\"project-slug\\"></label>"
+      + (unknown ? "<span class=\\"badge warn\\">no matching anchor</span>" : "")
+      + "<button class=\\"mapping-remove-project\\" type=\\"button\\" data-pi=\\"" + pi + "\\">Remove project</button>"
+      + "</div>"
+      + "<div class=\\"mapping-repos\\">" + repoRows + "</div>"
+      + "<button class=\\"mapping-add-repo\\" type=\\"button\\" data-pi=\\"" + pi + "\\">+ Add repo</button>"
+      + "</div>";
+  }
+
+  function mappingRepoRowHtml(repo, pi, ri) {
+    var repoName = repo && repo.repo ? repo.repo : "";
+    var paths = repo && Array.isArray(repo.paths) ? repo.paths.join("\\n") : "";
+    return "<div class=\\"mapping-repo-row\\" data-pi=\\"" + pi + "\\" data-ri=\\"" + ri + "\\">"
+      + "<label>Repo<input class=\\"mapping-repo\\" type=\\"text\\" value=\\"" + escapeHtml(repoName) + "\\" placeholder=\\"repo-name\\"></label>"
+      + "<label>Paths (one per line; blank = whole repo)<textarea class=\\"mapping-paths\\" rows=\\"2\\" placeholder=\\"services/payments\\">" + escapeHtml(paths) + "</textarea></label>"
+      + "<button class=\\"mapping-remove-repo\\" type=\\"button\\" data-pi=\\"" + pi + "\\" data-ri=\\"" + ri + "\\">Remove repo</button>"
+      + "</div>";
+  }
+
+  function splitLines(value) {
+    return String(value || "").split(/\\r?\\n/).map(function (line) {
+      return line.trim();
+    }).filter(function (line) {
+      return line.length > 0;
+    });
+  }
+
+  function readMappingsFromDom() {
+    var projects = [];
+    var cards = el("mappings-list").querySelectorAll(".registry-card");
+    for (var i = 0; i < cards.length; i += 1) {
+      var card = cards[i];
+      var slugInput = card.querySelector(".mapping-project");
+      var slug = slugInput ? (slugInput.value || "").trim() : "";
+      var repos = [];
+      var rows = card.querySelectorAll(".mapping-repo-row");
+      for (var j = 0; j < rows.length; j += 1) {
+        var repoInput = rows[j].querySelector(".mapping-repo");
+        var pathsInput = rows[j].querySelector(".mapping-paths");
+        repos.push({
+          repo: repoInput ? (repoInput.value || "").trim() : "",
+          paths: pathsInput ? splitLines(pathsInput.value) : []
+        });
+      }
+      projects.push({ project: slug, repos: repos });
+    }
+    return { projects: projects };
+  }
+
+  function syncMappingsFromDom() {
+    state.projectMappings = readMappingsFromDom();
+  }
+
+  function addMappingProject() {
+    syncMappingsFromDom();
+    state.projectMappings.projects.push({ project: "", repos: [] });
+    renderMappings();
+  }
+
+  function removeMappingProject(pi) {
+    syncMappingsFromDom();
+    state.projectMappings.projects.splice(pi, 1);
+    renderMappings();
+  }
+
+  function addMappingRepo(pi) {
+    syncMappingsFromDom();
+    var project = state.projectMappings.projects[pi];
+    if (project) {
+      project.repos.push({ repo: "", paths: [] });
+      renderMappings();
+    }
+  }
+
+  function removeMappingRepo(pi, ri) {
+    syncMappingsFromDom();
+    var project = state.projectMappings.projects[pi];
+    if (project && project.repos) {
+      project.repos.splice(ri, 1);
+      renderMappings();
+    }
+  }
+
+  async function saveProjectMappings() {
+    syncMappingsFromDom();
+    try {
+      await apiPost("/api/ui/project-mappings", {
+        mappings: state.projectMappings,
+        expectedFileCommit: state.projectMappingsFileCommit || undefined
+      });
+      setBanner("Saved project mappings.", "info");
+      await loadProjectMappings();
+    } catch (error) {
+      if (error && error.status === 409) {
+        setBanner("The mappings changed since you loaded them. Reloading the latest version — please re-apply your edit.", "warn");
+      } else {
+        setBanner(error.message, "error");
+      }
+      await loadProjectMappings();
+    }
+  }
+
   // Project slugs known from loaded anchors, used for soft referential
   // validation of associations. Empty when anchors are not yet loaded, in
   // which case we suppress warnings rather than emit false positives.
@@ -6169,6 +6341,10 @@ export const UI_JS = `(function () {
           showTeamsView();
           return;
         }
+        if (button.dataset.tab === "mappings") {
+          showMappingsView();
+          return;
+        }
         if (button.dataset.tab === "review") {
           showReview();
           return;
@@ -6200,6 +6376,23 @@ export const UI_JS = `(function () {
     el("people-refresh").addEventListener("click", function () {
       state.registry = null;
       loadRegistry().catch(function (error) { setBanner(error.message, "error"); });
+    });
+    el("mappings-add").addEventListener("click", addMappingProject);
+    el("mappings-save").addEventListener("click", function () { saveProjectMappings(); });
+    el("mappings-refresh").addEventListener("click", function () {
+      state.projectMappings = null;
+      loadProjectMappings().catch(function (error) { setBanner(error.message, "error"); });
+    });
+    el("mappings-list").addEventListener("click", function (event) {
+      var target = event.target;
+      if (!target || !target.classList) { return; }
+      if (target.classList.contains("mapping-remove-project")) {
+        removeMappingProject(Number(target.getAttribute("data-pi")));
+      } else if (target.classList.contains("mapping-add-repo")) {
+        addMappingRepo(Number(target.getAttribute("data-pi")));
+      } else if (target.classList.contains("mapping-remove-repo")) {
+        removeMappingRepo(Number(target.getAttribute("data-pi")), Number(target.getAttribute("data-ri")));
+      }
     });
     el("people-search").addEventListener("input", function () {
       state.peopleSearch = el("people-search").value || "";
@@ -6335,6 +6528,7 @@ export const UI_JS = `(function () {
     window.__ANCHOR_MCP_UI_TEST_HOOKS__.queryFromPlannerInput = queryFromPlannerInput;
     window.__ANCHOR_MCP_UI_TEST_HOOKS__.renderProjectResolution = renderProjectResolution;
     window.__ANCHOR_MCP_UI_TEST_HOOKS__.formatPlannerStatus = formatPlannerStatus;
+    window.__ANCHOR_MCP_UI_TEST_HOOKS__.mappingCardHtml = mappingCardHtml;
     window.__ANCHOR_MCP_UI_TEST_HOOKS__.buildJudgePrompt = buildJudgePrompt;
     window.__ANCHOR_MCP_UI_TEST_HOOKS__.formatPreview = formatPreview;
     return;
@@ -6348,6 +6542,8 @@ export const UI_JS = `(function () {
     showPeopleView({ skipLocationUpdate: true });
   } else if (state.activeTab === "teams") {
     showTeamsView({ skipLocationUpdate: true });
+  } else if (state.activeTab === "mappings") {
+    showMappingsView({ skipLocationUpdate: true });
   } else {
     showTab(state.activeTab);
   }

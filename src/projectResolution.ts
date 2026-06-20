@@ -1,15 +1,15 @@
 import { anchorMatchesProject } from "./projectAliases.js";
 import type {
   AnchorMeta,
+  ProjectMappings,
   ProjectResolution,
   ProjectResolutionCandidate,
-  ProjectResolutionConfig,
 } from "./types.js";
 
-/** Default boost applied to projects mapped from a repository name. */
-export const DEFAULT_REPO_BOOST = 10;
-/** Default boost applied to projects matched by a file-path prefix. */
-export const DEFAULT_PATH_PREFIX_BOOST = 8;
+/** Boost applied when a project is mapped to the supplied repository. */
+export const REPO_MATCH_BOOST = 10;
+/** Boost applied when a supplied file path falls under a project's configured path. */
+export const PATH_MATCH_BOOST = 8;
 
 export type ProjectResolutionInput = {
   repo?: string;
@@ -18,14 +18,16 @@ export type ProjectResolutionInput = {
 
 /**
  * Resolve a repository name and/or touched file paths to ranked candidate
- * projects using operator-supplied config. Returns `undefined` when there is no
- * repo or path signal to act on. An unrecognized repo degrades gracefully:
- * candidates from matching path prefixes are still returned, and the unknown
- * repo is surfaced for explanation rather than producing an empty result.
+ * projects using the project-first `project-mappings.json` registry. Returns
+ * `undefined` when there is no repo or path signal to act on.
+ *
+ * A repo with no matching project degrades gracefully: candidates derived from
+ * path matches are still returned, the unknown repo is surfaced for explanation,
+ * and resolution never produces an empty result for a known signal.
  */
 export function resolveCandidateProjects(
   input: ProjectResolutionInput,
-  config: ProjectResolutionConfig | undefined,
+  mappings: ProjectMappings,
 ): ProjectResolution | undefined {
   const repo = input.repo?.trim();
   const filePaths = (input.filePaths ?? [])
@@ -37,52 +39,61 @@ export function resolveCandidateProjects(
   }
 
   const candidates = new Map<string, ProjectResolutionCandidate>();
-  let unknownRepo: string | undefined;
-
   const add = (project: string, boost: number, reason: string): void => {
-    const slug = project.trim();
-    if (!slug) {
-      return;
-    }
-    const key = slug.toLowerCase();
+    const key = project.toLowerCase();
     const existing = candidates.get(key);
     if (existing) {
       existing.boost += boost;
       existing.reasons.push(reason);
     } else {
-      candidates.set(key, { project: slug, boost, reasons: [reason] });
+      candidates.set(key, { project, boost, reasons: [reason] });
     }
   };
 
+  const repoMatchedProjects = new Set<string>();
+  let repoMatchedAny = false;
+
   if (repo) {
-    const mapped = lookupRepo(repo, config?.repoMap);
-    if (mapped && mapped.length > 0) {
-      for (const project of mapped) {
-        add(project, DEFAULT_REPO_BOOST, `repo "${repo}" maps to project "${project}"`);
+    const needle = repo.toLowerCase();
+    for (const mapping of mappings.projects) {
+      const entry = mapping.repos.find((repoMapping) => repoMapping.repo.toLowerCase() === needle);
+      if (!entry) {
+        continue;
       }
-    } else {
-      unknownRepo = repo;
+      repoMatchedAny = true;
+      repoMatchedProjects.add(mapping.project.toLowerCase());
+      add(mapping.project, REPO_MATCH_BOOST, `repo "${repo}" is mapped to project "${mapping.project}"`);
+      // Narrow within the matched repo's configured paths.
+      for (const path of entry.paths) {
+        for (const filePath of filePaths) {
+          if (isWithinPath(filePath, path)) {
+            add(mapping.project, PATH_MATCH_BOOST, `file "${filePath}" is under "${path}" in repo "${repo}"`);
+          }
+        }
+      }
     }
   }
 
-  const rules = config?.pathPrefixes ?? [];
-  for (const filePath of filePaths) {
-    const normalizedPath = normalizePath(filePath);
-    if (!normalizedPath) {
-      continue;
-    }
-    for (const rule of rules) {
-      const prefix = normalizePath(rule.prefix);
-      if (prefix.length > 0 && normalizedPath.startsWith(prefix)) {
-        const boost = normalizeBoost(rule.boost, DEFAULT_PATH_PREFIX_BOOST);
-        add(
-          rule.project,
-          boost,
-          `path "${filePath}" matches prefix "${rule.prefix}" for project "${rule.project}"`,
-        );
+  // Path-only matching for projects not already matched by repo. Covers the
+  // no-repo case and the unknown-repo fallback (still derive path candidates).
+  if (filePaths.length > 0) {
+    for (const mapping of mappings.projects) {
+      if (repoMatchedProjects.has(mapping.project.toLowerCase())) {
+        continue;
+      }
+      for (const entry of mapping.repos) {
+        for (const path of entry.paths) {
+          for (const filePath of filePaths) {
+            if (isWithinPath(filePath, path)) {
+              add(mapping.project, PATH_MATCH_BOOST, `file "${filePath}" is under "${path}"`);
+            }
+          }
+        }
       }
     }
   }
+
+  const unknownRepo = repo && !repoMatchedAny ? repo : undefined;
 
   if (candidates.size === 0 && unknownRepo === undefined) {
     return undefined;
@@ -98,8 +109,8 @@ export function resolveCandidateProjects(
   if (unknownRepo !== undefined) {
     explanations.push(
       sorted.length > 0
-        ? `Repository "${unknownRepo}" is not in the configured repo map; using path-derived candidate projects only.`
-        : `Repository "${unknownRepo}" is not in the configured repo map and no path prefixes matched; no candidate projects were derived.`,
+        ? `Repository "${unknownRepo}" is not mapped to any project; using path-derived candidate projects only.`
+        : `Repository "${unknownRepo}" is not mapped to any project and no file paths matched; no candidate projects were derived.`,
     );
   }
 
@@ -108,6 +119,24 @@ export function resolveCandidateProjects(
     ...(unknownRepo !== undefined ? { unknownRepo } : {}),
     explanations,
   };
+}
+
+/**
+ * True when `filePath` is the directory `dirPath` or sits inside it. Plain prefix
+ * matching at a directory boundary (no globs): `services/payments` matches
+ * `services/payments/charge.ts` but not `services/payments-v2/x.ts`.
+ */
+export function isWithinPath(filePath: string, dirPath: string): boolean {
+  const file = normalizeForMatch(filePath);
+  const dir = normalizeForMatch(dirPath);
+  if (!dir) {
+    return false;
+  }
+  return file === dir || file.startsWith(`${dir}/`);
+}
+
+function normalizeForMatch(value: string): string {
+  return value.trim().replace(/^\.\/+/, "").replace(/^\/+/, "").replace(/\/+$/, "").toLowerCase();
 }
 
 /** Build a lowercase-slug to boost map for scoring from a resolution. */
@@ -140,32 +169,4 @@ export function anchorCandidateBoost(
     }
   }
   return best;
-}
-
-function lookupRepo(repo: string, repoMap: Record<string, string[]> | undefined): string[] | undefined {
-  if (!repoMap) {
-    return undefined;
-  }
-  const direct = repoMap[repo];
-  if (direct) {
-    return direct;
-  }
-  const needle = repo.toLowerCase();
-  for (const [key, value] of Object.entries(repoMap)) {
-    if (key.toLowerCase() === needle) {
-      return value;
-    }
-  }
-  return undefined;
-}
-
-function normalizePath(value: string): string {
-  return value.trim().replace(/^\.?\/+/, "").toLowerCase();
-}
-
-function normalizeBoost(value: number | undefined, fallback: number): number {
-  if (typeof value !== "number" || !Number.isFinite(value)) {
-    return fallback;
-  }
-  return value;
 }

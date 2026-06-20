@@ -3,7 +3,7 @@ import { McpServer } from "@modelcontextprotocol/server";
 import * as z from "zod/v4";
 
 import type { AnchorService } from "./anchorService.js";
-import { PeopleRegistryConflictError } from "./git/repo.js";
+import { PeopleRegistryConflictError, ProjectMappingsConflictError } from "./git/repo.js";
 import { errorMetadata, noopRequestLogger, type RequestLogger } from "./logger.js";
 import { isDiscoveryCategory, type DiscoveryCategory } from "./taxonomy.js";
 import type {
@@ -1301,6 +1301,57 @@ the index when your workflow checks in that file.`,
       annotations: { readOnlyHint: true },
     },
     async () => jsonResult(await service.getPeopleRegistry()),
+  );
+
+  server.registerTool(
+    "getProjectMappings",
+    {
+      title: "Get Project Mappings",
+      description:
+        "Return the project-to-repository/path mappings used to resolve a repo name or file paths to candidate projects.",
+      inputSchema: z.object({}),
+      annotations: { readOnlyHint: true },
+    },
+    async () => jsonResult(await service.getProjectMappings()),
+  );
+
+  server.registerTool(
+    "writeProjectMappings",
+    {
+      title: "Write Project Mappings",
+      description:
+        "Replace the full project-to-repository/path mapping registry. Each project lists the repos it lives in; each repo may be narrowed to directory path prefixes (empty means the whole repo). Commits the change to git.",
+      inputSchema: z.object({
+        mappings: z.object({
+          projects: z.array(
+            z.object({
+              project: z.string().min(1),
+              repos: z.array(
+                z.object({
+                  repo: z.string().min(1),
+                  paths: z.array(z.string()).optional(),
+                }),
+              ),
+            }),
+          ),
+        }),
+        message: z.string().optional(),
+        coAuthor: z.string().optional(),
+        expectedFileCommit: z.string().optional(),
+      }),
+      annotations: { destructiveHint: false, idempotentHint: false },
+    },
+    async ({ mappings, message, coAuthor, expectedFileCommit }) => {
+      try {
+        await service.writeProjectMappings({ mappings, message, coAuthor, expectedFileCommit });
+      } catch (error) {
+        if (error instanceof ProjectMappingsConflictError) {
+          return jsonResult({ error: error.message, code: error.code }, true);
+        }
+        throw error;
+      }
+      return jsonResult({ ok: true });
+    },
   );
 
   server.registerPrompt(

@@ -44,60 +44,110 @@ describe("AnchorService", () => {
   });
 
   it("resolves a repo name to candidate-project anchors with explanations", async () => {
-    const resolvingService = new AnchorService(repo, {
-      pushOnWrite: false,
-      migrationWarnOnly: false,
-      staleAfterDays: 45,
-      projectResolution: {
-        repoMap: { "repo-alpha": ["project-one", "project-two"] },
-      },
-    });
-
-    await resolvingService.writeAnchor({
+    await service.writeAnchor({
       name: "projects/project-one/project-one",
       content: projectAnchorContent({ project: "project-one", summary: "Project one summary." }),
       message: "test: add project-one anchor",
     });
-    await resolvingService.writeAnchor({
+    await service.writeAnchor({
       name: "projects/project-two/project-two",
       content: projectAnchorContent({ project: "project-two", summary: "Project two summary." }),
       message: "test: add project-two anchor",
     });
-    await resolvingService.writeAnchor({
+    await service.writeAnchor({
       name: "projects/unrelated/unrelated",
       content: projectAnchorContent({ project: "unrelated", summary: "Unrelated summary." }),
       message: "test: add unrelated anchor",
     });
+    await service.writeProjectMappings({
+      mappings: {
+        projects: [
+          { project: "project-one", repos: [{ repo: "repo-alpha", paths: [] }] },
+          { project: "project-two", repos: [{ repo: "repo-alpha", paths: [] }] },
+        ],
+      },
+    });
 
-    const plan = await resolvingService.planContextBundle({ task: "investigate flow", repo: "repo-alpha" });
+    const plan = await service.planContextBundle({ task: "investigate flow", repo: "repo-alpha" });
 
     const includedNames = plan.included.map((anchor) => anchor.name);
     expect(includedNames).toContain("projects/project-one/project-one.md");
     expect(includedNames).toContain("projects/project-two/project-two.md");
     expect(includedNames).not.toContain("projects/unrelated/unrelated.md");
-    expect(plan.projectResolution?.candidates.map((c) => c.project)).toEqual(["project-one", "project-two"]);
+    expect(plan.projectResolution?.candidates.map((c) => c.project).sort()).toEqual(["project-one", "project-two"]);
     expect(plan.projectResolution?.explanations.some((line) => line.includes("repo-alpha"))).toBe(true);
   });
 
-  it("degrades gracefully and flags an unknown repo in missing context", async () => {
-    const resolvingService = new AnchorService(repo, {
-      pushOnWrite: false,
-      migrationWarnOnly: false,
-      staleAfterDays: 45,
-      projectResolution: { repoMap: { "repo-alpha": ["project-one"] } },
+  it("narrows by path within a repo and ranks the narrowed project first", async () => {
+    await service.writeAnchor({
+      name: "projects/payments/payments",
+      content: projectAnchorContent({ project: "payments", summary: "Payments summary." }),
+      message: "test: add payments anchor",
+    });
+    await service.writeAnchor({
+      name: "projects/reporting/reporting",
+      content: projectAnchorContent({ project: "reporting", summary: "Reporting summary." }),
+      message: "test: add reporting anchor",
+    });
+    await service.writeProjectMappings({
+      mappings: {
+        projects: [
+          { project: "payments", repos: [{ repo: "repo-alpha", paths: ["services/payments"] }] },
+          { project: "reporting", repos: [{ repo: "repo-alpha", paths: ["services/reporting"] }] },
+        ],
+      },
     });
 
-    await resolvingService.writeAnchor({
+    const plan = await service.planContextBundle({
+      task: "investigate flow",
+      repo: "repo-alpha",
+      filePaths: ["services/payments/charge.ts"],
+    });
+
+    expect(plan.included[0]?.name).toBe("projects/payments/payments.md");
+    expect(plan.projectResolution?.candidates[0]).toMatchObject({ project: "payments", boost: 18 });
+  });
+
+  it("degrades gracefully and flags an unknown repo in missing context", async () => {
+    await service.writeAnchor({
       name: "projects/project-one/project-one",
       content: projectAnchorContent({ project: "project-one", summary: "Project one summary." }),
       message: "test: add project-one anchor",
     });
+    await service.writeProjectMappings({
+      mappings: { projects: [{ project: "project-one", repos: [{ repo: "repo-alpha", paths: [] }] }] },
+    });
 
-    const plan = await resolvingService.planContextBundle({ task: "investigate flow", repo: "repo-unknown" });
+    const plan = await service.planContextBundle({ task: "investigate flow", repo: "repo-unknown" });
 
     expect(plan.projectResolution?.unknownRepo).toBe("repo-unknown");
     expect(plan.projectResolution?.candidates).toEqual([]);
     expect(plan.missingContext.some((line) => line.includes("repo-unknown"))).toBe(true);
+  });
+
+  it("round-trips project mappings through get/write with normalization", async () => {
+    await service.writeProjectMappings({
+      mappings: {
+        projects: [
+          {
+            project: "payments",
+            repos: [
+              { repo: "repo-alpha", paths: ["/services/payments/", "services/payments"] },
+              { repo: "repo-alpha", paths: ["libs/pay"] },
+            ],
+          },
+        ],
+      },
+    });
+
+    const stored = await service.getProjectMappings();
+    expect(stored.projects).toEqual([
+      {
+        project: "payments",
+        repos: [{ repo: "repo-alpha", paths: ["services/payments", "libs/pay"] }],
+      },
+    ]);
+    expect(stored.fileCommit).toMatch(/[a-f0-9]{40}/);
   });
 
   it("builds planner search input without reading per-anchor file commits", async () => {

@@ -83,6 +83,7 @@ type UiAssetHooks = {
   queryFromPlannerInput(input: Record<string, unknown>): string;
   renderProjectResolution(resolution: unknown): string;
   formatPlannerStatus(plan: Record<string, unknown>): string;
+  mappingCardHtml(project: unknown, index: number): string;
   buildJudgePrompt(plan: Record<string, unknown>, anchorBodies: Record<string, string>): string;
   formatPreview(preview: Record<string, unknown>): string;
   priorityLabel(priority: number): string;
@@ -1023,6 +1024,45 @@ describe("UI browser assets", () => {
       projectResolution: { candidates: [], unknownRepo: "repo-unknown", explanations: [] },
     });
     expect(unknownStatus).toContain("unknown repo repo-unknown");
+  });
+
+  it("includes the repo mappings tab, controls, and list region", () => {
+    expect(UI_HTML).toContain('data-tab="mappings"');
+    expect(UI_HTML).toContain('id="mappings-view"');
+    expect(UI_HTML).toContain('id="mappings-add"');
+    expect(UI_HTML).toContain('id="mappings-save"');
+    expect(UI_HTML).toContain('id="mappings-refresh"');
+    expect(UI_HTML).toContain('id="mappings-list"');
+    expect(UI_JS).toContain("/api/ui/project-mappings");
+    expect(UI_JS).toContain("loadProjectMappings");
+    expect(UI_JS).toContain("saveProjectMappings");
+  });
+
+  it("renders a project mapping card with project, repo, and path controls", () => {
+    const hooks = loadHooks();
+    const html = hooks.mappingCardHtml(
+      { project: "payments", repos: [{ repo: "repo-alpha", paths: ["services/payments", "libs/pay"] }] },
+      0,
+    );
+    expect(html).toContain('data-project-index="0"');
+    expect(html).toContain('class="mapping-project"');
+    expect(html).toContain('value="payments"');
+    expect(html).toContain('class="mapping-repo"');
+    expect(html).toContain('value="repo-alpha"');
+    expect(html).toContain('class="mapping-paths"');
+    expect(html).toContain("services/payments\nlibs/pay");
+    expect(html).toContain("mapping-add-repo");
+    expect(html).toContain("mapping-remove-repo");
+    expect(html).toContain("mapping-remove-project");
+  });
+
+  it("renders a whole-repo mapping with empty paths", () => {
+    const hooks = loadHooks();
+    const html = hooks.mappingCardHtml({ project: "billing", repos: [{ repo: "repo-beta", paths: [] }] }, 1);
+    expect(html).toContain('data-project-index="1"');
+    expect(html).toContain('value="repo-beta"');
+    // textarea is present but empty (whole-repo entry)
+    expect(html).toContain('class="mapping-paths" rows="2" placeholder="services/payments"></textarea>');
   });
 
   it("renders the judge-prompt button in the planner UI", () => {

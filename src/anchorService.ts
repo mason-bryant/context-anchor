@@ -81,7 +81,8 @@ import type {
   ApplyProposedChangeInput,
   ApplyProposedChangeResult,
   ProjectFilterResolution,
-  ProjectResolutionConfig,
+  ProjectMappings,
+  ProjectMappingsWithCommit,
   ProjectUpdateMilestone,
   ProjectUpdateMilestoneStatus,
   ProjectUpdateSnapshot,
@@ -123,12 +124,14 @@ import type {
   PeopleRegistry,
   PeopleRegistryWithCommit,
   WritePeopleRegistryInput,
+  WriteProjectMappingsInput,
 } from "./types.js";
 import {
   buildProjectAliasIndex,
   resolveProjectFilter,
 } from "./projectAliases.js";
 import { candidateBoostMap, resolveCandidateProjects } from "./projectResolution.js";
+import { parseProjectMappings } from "./projectMappings.js";
 import { buildPeopleIndex, parsePeopleRegistry } from "./peopleRegistry.js";
 import { runValidators } from "./validators/pipeline.js";
 
@@ -154,6 +157,9 @@ export class AnchorService {
   private _peopleRegistry: PeopleRegistry | undefined;
   /** Git commit the cached registry was parsed from; used to detect out-of-band changes (e.g. AutoSync rebases). */
   private _peopleRegistryCommit: string | undefined;
+  private _projectMappings: ProjectMappings | undefined;
+  /** Git commit the cached project mappings were parsed from. */
+  private _projectMappingsCommit: string | undefined;
 
   constructor(
     private readonly repo: AnchorStore,
@@ -161,7 +167,6 @@ export class AnchorService {
       pushOnWrite: boolean;
       migrationWarnOnly: boolean;
       staleAfterDays: number;
-      projectResolution?: ProjectResolutionConfig;
     },
   ) {}
 
@@ -285,6 +290,41 @@ export class AnchorService {
     const registry = await this.loadPeopleRegistry();
     const fileCommit = await this.repo.peopleRegistryCommit();
     return { ...registry, ...(fileCommit ? { fileCommit } : {}) };
+  }
+
+  private async loadProjectMappings(): Promise<ProjectMappings> {
+    // Cache keyed on the file's last commit so out-of-band changes (e.g. an
+    // AutoSync rebase) are picked up instead of served stale.
+    const commit = await this.repo.projectMappingsCommit();
+    if (this._projectMappings !== undefined && this._projectMappingsCommit === commit) {
+      return this._projectMappings;
+    }
+    const raw = await this.repo.readProjectMappingsRaw();
+    this._projectMappings = parseProjectMappings(raw);
+    this._projectMappingsCommit = commit;
+    return this._projectMappings;
+  }
+
+  private invalidateProjectMappings(): void {
+    this._projectMappings = undefined;
+    this._projectMappingsCommit = undefined;
+  }
+
+  async getProjectMappings(): Promise<ProjectMappingsWithCommit> {
+    const mappings = await this.loadProjectMappings();
+    const fileCommit = await this.repo.projectMappingsCommit();
+    return { ...mappings, ...(fileCommit ? { fileCommit } : {}) };
+  }
+
+  async writeProjectMappings(input: WriteProjectMappingsInput): Promise<void> {
+    const normalized = parseProjectMappings(input.mappings);
+    await this.repo.writeProjectMappingsRaw(normalized, {
+      message: input.message,
+      coAuthor: input.coAuthor,
+      push: this.options.pushOnWrite,
+      expectedFileCommit: input.expectedFileCommit,
+    });
+    this.invalidateProjectMappings();
   }
 
   private async buildBM25SearchIndex(anchors: AnchorMeta[]): Promise<{
@@ -2094,10 +2134,17 @@ None.
         ? { ...input, project: projectFilter.resolved }
         : input;
 
-    const resolution = resolveCandidateProjects(
-      { repo: input.repo, filePaths: input.filePaths },
-      this.options.projectResolution,
-    );
+    // Only consult the project mappings when the caller passes a repo or file
+    // paths; without a resolution signal there is nothing to resolve, so we skip
+    // the registry read entirely.
+    const hasResolutionSignal =
+      Boolean(input.repo?.trim()) || (input.filePaths?.some((filePath) => filePath.trim().length > 0) ?? false);
+    const resolution = hasResolutionSignal
+      ? resolveCandidateProjects(
+          { repo: input.repo, filePaths: input.filePaths },
+          await this.loadProjectMappings(),
+        )
+      : undefined;
     const candidateBoosts = candidateBoostMap(resolution);
 
     const { index: bm25Index, bodyCharCounts } = await this.buildBM25SearchIndex(anchors);
