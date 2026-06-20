@@ -329,7 +329,6 @@ Blocking validation covers:
 - required sections: `## Current State`, `## Decisions`, `## Constraints`, `## PRs`
 - PR link text that does not match `PR <title> - #<number>`
 - stale `last_validated` on substantive section changes
-- missing sibling `AGENTS.md` references for `CLAUDE.md`
 - built-in `server-rules/*` policy anchor edits
 - acceptance-criteria subtree changes without approval
 - roadmap acceptance criteria missing stable ids or evidence hints

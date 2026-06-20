@@ -20,7 +20,6 @@ import { validateMilestoneProjectUniqueness } from "./milestoneProjectUniqueness
 import { validateRelationsShape } from "./relations.js";
 import { validateRoadmapGoalIdsForMilestones } from "./roadmapGoalIdsForMilestones.js";
 import { validateSectionShape } from "./sectionShape.js";
-import { validateTrackedLinkLeak } from "./trackedLinkLeak.js";
 import type { ValidationContext, Validator } from "./types.js";
 
 const VALIDATORS: Validator[] = [
@@ -30,7 +29,6 @@ const VALIDATORS: Validator[] = [
   validatePolicyWeakeningDeclaration,
   validateSectionShape,
   validatePrFormat,
-  validateTrackedLinkLeak,
   validateLastValidatedBump,
   validatePriorityApproval,
   validateApprovalGate,
