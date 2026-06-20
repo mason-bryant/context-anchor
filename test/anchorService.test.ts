@@ -125,6 +125,55 @@ describe("AnchorService", () => {
     expect(plan.missingContext.some((line) => line.includes("repo-unknown"))).toBe(true);
   });
 
+  it("flags an unknown repo in missing context even when file paths resolve candidates", async () => {
+    await service.writeAnchor({
+      name: "projects/payments/payments",
+      content: projectAnchorContent({ project: "payments", summary: "Payments summary." }),
+      message: "test: add payments anchor",
+    });
+    await service.writeProjectMappings({
+      mappings: { projects: [{ project: "payments", repos: [{ repo: "repo-alpha", paths: ["services/payments"] }] }] },
+    });
+
+    const plan = await service.planContextBundle({
+      task: "investigate flow",
+      repo: "repo-unknown",
+      filePaths: ["services/payments/charge.ts"],
+    });
+
+    expect(plan.projectResolution?.unknownRepo).toBe("repo-unknown");
+    expect(plan.projectResolution?.candidates.map((c) => c.project)).toEqual(["payments"]);
+    expect(plan.missingContext.some((line) => line.includes("repo-unknown"))).toBe(true);
+  });
+
+  it("ignores repo/path resolution when an explicit project is named", async () => {
+    await service.writeAnchor({
+      name: "projects/payments/payments",
+      content: projectAnchorContent({ project: "payments", summary: "Payments summary." }),
+      message: "test: add payments anchor",
+    });
+    await service.writeAnchor({
+      name: "projects/reporting/reporting",
+      content: projectAnchorContent({ project: "reporting", summary: "Reporting summary." }),
+      message: "test: add reporting anchor",
+    });
+    await service.writeProjectMappings({
+      mappings: {
+        projects: [
+          { project: "payments", repos: [{ repo: "repo-alpha", paths: [] }] },
+          { project: "reporting", repos: [{ repo: "repo-alpha", paths: [] }] },
+        ],
+      },
+    });
+
+    // Explicit project must win: the repo signal should not pull in reporting.
+    const plan = await service.planContextBundle({ task: "investigate flow", project: "payments", repo: "repo-alpha" });
+
+    expect(plan.projectResolution).toBeUndefined();
+    const reporting = [...plan.included, ...plan.excluded].find((a) => a.name === "projects/reporting/reporting.md");
+    expect(reporting?.reason).toContain('different project than "payments"');
+  });
+
   it("round-trips project mappings through get/write with normalization", async () => {
     await service.writeProjectMappings({
       mappings: {

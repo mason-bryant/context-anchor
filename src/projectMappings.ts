@@ -38,7 +38,9 @@ function parseProjectsArray(raw: unknown): ProjectMapping[] {
       byProject.set(key, { project, repos });
     }
   }
-  return [...byProject.values()];
+  // A project with no repos is not a mapping; drop it so the stored registry only
+  // ever holds real mappings (the UI lists unmapped projects separately).
+  return [...byProject.values()].filter((mapping) => mapping.repos.length > 0);
 }
 
 function parseReposArray(raw: unknown): ProjectRepoMapping[] {

@@ -272,8 +272,9 @@ on the file's git commit, so resolution does not re-read it on every request.
 
 Manage the registry through the `getProjectMappings` / `writeProjectMappings` MCP tools
 (writes use the same optimistic-concurrency `expectedFileCommit` guard as the people
-registry) or the `/ui` **Repo Mappings** tab, which provides add/edit/delete for
-projects, their repos, and per-repo paths. The Planner tab also exposes `Repo` and
+registry) or the `/ui` **Repo Mappings** tab, which lists every project under management
+(even those with no mapping yet) and provides add/edit/delete for each project's repos
+and per-repo paths. Projects with no repos are not persisted to the registry. The Planner tab also exposes `Repo` and
 `File paths` inputs and renders the resolved candidate projects, their boosts, and the
 per-candidate reasons.
 

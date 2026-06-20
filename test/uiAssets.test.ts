@@ -84,6 +84,8 @@ type UiAssetHooks = {
   renderProjectResolution(resolution: unknown): string;
   formatPlannerStatus(plan: Record<string, unknown>): string;
   mappingCardHtml(project: unknown, index: number): string;
+  mappingsForDisplay(): Array<{ project: string; repos: unknown[] }>;
+  setMappingsTestState(anchors: unknown[], projectMappings: unknown): void;
   buildJudgePrompt(plan: Record<string, unknown>, anchorBodies: Record<string, string>): string;
   formatPreview(preview: Record<string, unknown>): string;
   priorityLabel(priority: number): string;
@@ -950,16 +952,17 @@ describe("UI browser assets", () => {
     expect(UI_HTML).toContain("Paste a request-log JSON line to auto-fill");
   });
 
-  it("parses repo and filePaths from a pasted planner-arguments object", () => {
+  it("parses and trims repo and filePaths from a pasted planner-arguments object", () => {
     const hooks = loadHooks();
     const parsed = hooks.parsePlannerLogPaste(
       JSON.stringify({
         task: "Trace a failing charge",
-        repo: "repo-alpha",
-        filePaths: ["services/payments/charge.ts", "  ", 7, "services/payments/refund.ts"],
+        repo: "  repo-alpha  ",
+        filePaths: ["  services/payments/charge.ts ", "  ", 7, "services/payments/refund.ts"],
       }),
     );
 
+    // Trimmed to match manual input, so pasted args don't break repo/path matches.
     expect(parsed).toEqual({
       task: "Trace a failing charge",
       repo: "repo-alpha",
@@ -1054,6 +1057,23 @@ describe("UI browser assets", () => {
     expect(html).toContain("mapping-add-repo");
     expect(html).toContain("mapping-remove-repo");
     expect(html).toContain("mapping-remove-project");
+  });
+
+  it("lists every managed project, appending unmapped ones as empty cards", () => {
+    const hooks = loadHooks();
+    hooks.setMappingsTestState(
+      [{ projectSlug: "payments" }, { projectSlug: "reporting" }, { projectSlug: "billing" }],
+      { projects: [{ project: "payments", repos: [{ repo: "repo-alpha", paths: [] }] }] },
+    );
+    const display = hooks.mappingsForDisplay();
+    const slugs = display.map((p) => p.project);
+    expect(slugs).toContain("payments");
+    expect(slugs).toContain("reporting");
+    expect(slugs).toContain("billing");
+    // The mapped project keeps its mapping; unmapped managed projects are empty.
+    expect(display.find((p) => p.project === "payments")?.repos).toHaveLength(1);
+    expect(display.find((p) => p.project === "reporting")?.repos).toEqual([]);
+    expect(display.find((p) => p.project === "billing")?.repos).toEqual([]);
   });
 
   it("renders a whole-repo mapping with empty paths", () => {

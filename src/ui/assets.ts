@@ -2661,12 +2661,16 @@ export const UI_JS = `(function () {
       result.runtime = source.runtime;
     }
     if (typeof source.repo === "string") {
-      result.repo = source.repo;
+      result.repo = source.repo.trim();
     }
     if (Array.isArray(source.filePaths)) {
-      result.filePaths = source.filePaths.filter(function (filePath) {
-        return typeof filePath === "string" && filePath.trim().length > 0;
-      });
+      result.filePaths = source.filePaths
+        .filter(function (filePath) {
+          return typeof filePath === "string" && filePath.trim().length > 0;
+        })
+        .map(function (filePath) {
+          return filePath.trim();
+        });
     }
     if (typeof source.includeArchive === "boolean") {
       result.includeArchive = source.includeArchive;
@@ -2897,6 +2901,11 @@ export const UI_JS = `(function () {
       populateFilterOptions();
       renderAnchorList();
       openPendingAnchor();
+      // Keep the managed-project list in the Repo Mappings tab current as
+      // anchors stream in, since it lists every known project.
+      if (state.projectMappings) {
+        renderMappings();
+      }
 
       if (!response.nextOffset) {
         break;
@@ -5042,16 +5051,54 @@ export const UI_JS = `(function () {
     }
   }
 
+  function knownProjectDisplaySlugs() {
+    var byLower = {};
+    (state.anchors || []).forEach(function (anchor) {
+      var slug = projectOf(anchor);
+      if (slug) {
+        var lower = String(slug).toLowerCase();
+        if (!byLower[lower]) { byLower[lower] = String(slug); }
+      }
+    });
+    var slugs = Object.keys(byLower).map(function (lower) { return byLower[lower]; });
+    slugs.sort(function (a, b) {
+      var al = a.toLowerCase();
+      var bl = b.toLowerCase();
+      return al < bl ? -1 : al > bl ? 1 : 0;
+    });
+    return slugs;
+  }
+
+  // Every project under management is listed, even with no mapping yet: the
+  // stored mappings come first (in their saved order), then any known project
+  // that has no mapping is appended as an empty card so it can be filled in.
+  function mappingsForDisplay() {
+    var projects = state.projectMappings && state.projectMappings.projects
+      ? state.projectMappings.projects.slice()
+      : [];
+    var seen = {};
+    projects.forEach(function (project) {
+      if (project && project.project) { seen[String(project.project).toLowerCase()] = true; }
+    });
+    knownProjectDisplaySlugs().forEach(function (slug) {
+      if (!seen[slug.toLowerCase()]) {
+        projects.push({ project: slug, repos: [] });
+      }
+    });
+    return projects;
+  }
+
   function renderMappings() {
     if (!state.projectMappings) {
       return;
     }
-    var projects = state.projectMappings.projects || [];
+    var projects = mappingsForDisplay();
+    var mappedCount = projects.filter(function (project) {
+      return project.repos && project.repos.length > 0;
+    }).length;
     el("mappings-empty").hidden = projects.length > 0;
     el("mappings-list").innerHTML = projects.map(mappingCardHtml).join("");
-    el("mappings-summary").textContent = projects.length === 1
-      ? "1 project mapped to its repos and paths."
-      : projects.length + " projects mapped to their repos and paths.";
+    el("mappings-summary").textContent = mappedCount + " of " + projects.length + " projects mapped to repos and paths.";
   }
 
   function mappingCardHtml(project, pi) {
@@ -6529,6 +6576,11 @@ export const UI_JS = `(function () {
     window.__ANCHOR_MCP_UI_TEST_HOOKS__.renderProjectResolution = renderProjectResolution;
     window.__ANCHOR_MCP_UI_TEST_HOOKS__.formatPlannerStatus = formatPlannerStatus;
     window.__ANCHOR_MCP_UI_TEST_HOOKS__.mappingCardHtml = mappingCardHtml;
+    window.__ANCHOR_MCP_UI_TEST_HOOKS__.mappingsForDisplay = mappingsForDisplay;
+    window.__ANCHOR_MCP_UI_TEST_HOOKS__.setMappingsTestState = function (anchors, projectMappings) {
+      state.anchors = anchors || [];
+      state.projectMappings = projectMappings || null;
+    };
     window.__ANCHOR_MCP_UI_TEST_HOOKS__.buildJudgePrompt = buildJudgePrompt;
     window.__ANCHOR_MCP_UI_TEST_HOOKS__.formatPreview = formatPreview;
     return;

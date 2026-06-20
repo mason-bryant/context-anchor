@@ -60,6 +60,17 @@ describe("parseProjectMappings", () => {
     });
   });
 
+  it("drops projects that have no repos (not a mapping)", () => {
+    const parsed = parseProjectMappings({
+      projects: [
+        { project: "unmapped", repos: [] },
+        { project: "alsounmapped" },
+        { project: "payments", repos: [{ repo: "repo-alpha", paths: [] }] },
+      ],
+    });
+    expect(parsed.projects.map((p) => p.project)).toEqual(["payments"]);
+  });
+
   it("dedupes projects and repos case-insensitively, unioning paths", () => {
     const parsed = parseProjectMappings({
       projects: [

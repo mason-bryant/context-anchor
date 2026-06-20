@@ -22,8 +22,10 @@ export type ProjectResolutionInput = {
  * `undefined` when there is no repo or path signal to act on.
  *
  * A repo with no matching project degrades gracefully: candidates derived from
- * path matches are still returned, the unknown repo is surfaced for explanation,
- * and resolution never produces an empty result for a known signal.
+ * path matches are still returned and the unknown repo is surfaced for
+ * explanation rather than silently yielding nothing. When neither the repo nor
+ * any file path matches a mapping, resolution returns `undefined` (no candidates,
+ * and — for a no-repo request — nothing to explain).
  */
 export function resolveCandidateProjects(
   input: ProjectResolutionInput,

@@ -2134,11 +2134,14 @@ None.
         ? { ...input, project: projectFilter.resolved }
         : input;
 
-    // Only consult the project mappings when the caller passes a repo or file
-    // paths; without a resolution signal there is nothing to resolve, so we skip
-    // the registry read entirely.
+    // Repo/path resolution is a fallback for when the project is not named
+    // directly, so skip it when the caller passes an explicit project: an
+    // explicit filter should not be diluted by candidate-project boosts. Also
+    // skip when there is no repo/path signal at all (nothing to resolve), which
+    // avoids the registry read on the common path.
     const hasResolutionSignal =
-      Boolean(input.repo?.trim()) || (input.filePaths?.some((filePath) => filePath.trim().length > 0) ?? false);
+      !input.project?.trim() &&
+      (Boolean(input.repo?.trim()) || (input.filePaths?.some((filePath) => filePath.trim().length > 0) ?? false));
     const resolution = hasResolutionSignal
       ? resolveCandidateProjects(
           { repo: input.repo, filePaths: input.filePaths },
@@ -2162,9 +2165,16 @@ None.
     const names = plan.loadContext.names;
     const roadmapSignals = collectRoadmapAcceptanceMissingSignals(anchors);
     const milestoneSignals = collectMilestoneAcceptanceMissingSignals(anchors);
+    // Surface an unmapped repo as a freshness signal whether or not file paths
+    // produced fallback candidates, so the caller always learns the repo itself
+    // resolved to nothing.
     const resolutionSignals =
-      resolution?.unknownRepo !== undefined && resolution.candidates.length === 0
-        ? [`Repository "${resolution.unknownRepo}" did not resolve to any candidate projects.`]
+      resolution?.unknownRepo !== undefined
+        ? [
+            resolution.candidates.length === 0
+              ? `Repository "${resolution.unknownRepo}" did not resolve to any candidate projects.`
+              : `Repository "${resolution.unknownRepo}" is not mapped to any project; using file-path-derived candidate projects only.`,
+          ]
         : [];
 
     return {
