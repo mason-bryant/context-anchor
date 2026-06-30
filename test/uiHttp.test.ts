@@ -799,6 +799,32 @@ describe("UI HTTP routes", () => {
     expect(report.tasks.every((task) => task.projectPriority !== undefined && task.projectPriority <= 2)).toBe(true);
   });
 
+  it("filters tasks by task priority and modified date through the tasks-due route", async () => {
+    await postJson("/api/ui/task-create", {
+      project: "demo",
+      title: "high priority",
+      priority: 1.5,
+      approved: true,
+    });
+    await postJson("/api/ui/task-create", {
+      project: "demo",
+      title: "low priority",
+      priority: 4,
+      approved: true,
+    });
+
+    const filtered = await fetchJson<{
+      tasks: Array<{ taskTitle: string; taskPriority?: number; milestoneUpdatedAt?: string }>;
+    }>("/api/ui/tasks-due?project=demo&maxTaskPriority=2&modifiedAfter=2000-01-01");
+
+    expect(filtered.tasks.map((task) => task.taskTitle)).toEqual(["high priority"]);
+    expect(filtered.tasks[0]?.taskPriority).toBe(1.5);
+    expect(filtered.tasks[0]?.milestoneUpdatedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+
+    const future = await fetchJson<{ tasks: unknown[] }>("/api/ui/tasks-due?project=demo&modifiedAfter=2999-01-01");
+    expect(future.tasks).toEqual([]);
+  });
+
   it("updates task assignment through the UI routes", async () => {
     type TaskWrite = { taskId?: string; milestoneName?: string; warnings: { severity: string }[] };
     type TasksDue = { tasks: Array<{ taskId: string; taskOwner?: string }> };

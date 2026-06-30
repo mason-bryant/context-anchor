@@ -230,6 +230,10 @@ export type ListTasksDueInput = {
   unassigned?: boolean;
   /** Include only tasks from projects whose numeric priority is at or below this value (e.g. 2 keeps P1/P2; lower numbers are higher priority). */
   maxProjectPriority?: number;
+  /** Include only tasks whose task-level priority is at or below this value. Tasks without a priority are excluded. */
+  maxTaskPriority?: number;
+  /** Include only tasks whose containing milestone anchor was modified on or after this ISO date (YYYY-MM-DD). The milestone's modified timestamp is compared by date. */
+  modifiedAfter?: string;
 };
 
 export type CreateTaskInput = {
@@ -318,6 +322,10 @@ export type TaskDueRow = {
   milestoneName: string;
   milestoneDisplayId?: string;
   milestoneStatus: string;
+  /** Last modified time for the milestone anchor that stores this task, as an ISO 8601 timestamp (from git metadata). */
+  milestoneUpdatedAt?: string;
+  /** Created time for the milestone anchor that stores this task, as an ISO 8601 timestamp (from git metadata). */
+  milestoneCreatedAt?: string;
   project?: string;
   /** Project-level priority inherited from the task's project anchor, when set. */
   projectPriority?: number;

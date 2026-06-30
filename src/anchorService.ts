@@ -149,6 +149,8 @@ type MilestoneListRow = {
   milestoneId?: string;
   sequence?: number;
   displayId?: string;
+  updatedAt?: string;
+  createdAt?: string;
   schedule?: MilestoneScheduleMeta;
   tasks?: MilestoneTaskMeta[];
 };
@@ -1387,11 +1389,19 @@ None.
           continue;
         }
       }
+      if (input.modifiedAfter !== undefined) {
+        if (!milestone.updatedAt || milestone.updatedAt.slice(0, 10) < input.modifiedAfter) {
+          continue;
+        }
+      }
 
       for (const task of milestone.tasks) {
         if (!statusFilter.has(task.status)) continue;
 
         if (input.unassigned && task.owner && task.owner.trim().length > 0) continue;
+        if (input.maxTaskPriority !== undefined) {
+          if (task.priority === undefined || task.priority > input.maxTaskPriority) continue;
+        }
 
         const matchesDueWindow = taskMatchesDueWindow(task, input);
         const matchesCompletedWindow = taskMatchesCompletedWindow(task, input);
@@ -1431,6 +1441,8 @@ None.
           milestoneName: milestone.name,
           ...(milestone.displayId ? { milestoneDisplayId: milestone.displayId } : {}),
           milestoneStatus: milestone.status,
+          ...(milestone.updatedAt ? { milestoneUpdatedAt: milestone.updatedAt } : {}),
+          ...(milestone.createdAt ? { milestoneCreatedAt: milestone.createdAt } : {}),
           ...(projectSlug ? { project: projectSlug } : {}),
           ...(milestone.projectPriority !== undefined ? { projectPriority: milestone.projectPriority } : {}),
           ...(taskOwnerResolved?.kind === "person"
@@ -2284,6 +2296,8 @@ None.
           ...(m.milestoneId !== undefined ? { milestoneId: m.milestoneId } : {}),
           ...(m.sequence !== undefined ? { sequence: m.sequence } : {}),
           ...(displayId !== undefined ? { displayId } : {}),
+          ...(anchor.updatedAt !== undefined ? { updatedAt: anchor.updatedAt } : {}),
+          ...(anchor.createdAt !== undefined ? { createdAt: anchor.createdAt } : {}),
           ...(m.schedule !== undefined ? { schedule: m.schedule } : {}),
           ...(m.tasks !== undefined ? { tasks: m.tasks } : {}),
         };
