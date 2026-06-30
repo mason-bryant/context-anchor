@@ -657,7 +657,7 @@ None.
   it("planContextBundle ranks anchors by task and project", async () => {
     await service.writeAnchor({
       name: "projects/demo/demo",
-      content: projectAnchorContent({ summary: "Demo storage decisions and constraints." }),
+      content: projectAnchorContent({ summary: "Demo storage decisions and constraints.", lastValidated: todayDateKey() }),
       message: "test: add demo project",
     });
     await service.writeAnchor({
@@ -696,7 +696,7 @@ None.
   it("planContextBundle explains relevant anchors left out by limits", async () => {
     await service.writeAnchor({
       name: "projects/demo/demo",
-      content: projectAnchorContent({ summary: "Demo storage decisions and constraints." }),
+      content: projectAnchorContent({ summary: "Demo storage decisions and constraints.", lastValidated: todayDateKey() }),
       message: "test: add demo project",
     });
     await service.writeAnchor({
@@ -1551,6 +1551,26 @@ describe("AnchorService task write APIs", () => {
     expect(noBlocks(created)).toEqual([]);
     const { tasks } = await service.listTasksDue({ project: "demo" });
     expect(tasks.find((task) => task.taskId === created.taskId)?.taskPriority).toBe(2.5);
+  });
+
+  it("listTasksDue includes milestone modified metadata and filters by task priority and modified date", async () => {
+    await service.writeAnchor({ name: "projects/demo/demo", content: projectAnchorContent() });
+    const prioritized = await service.createTask({ project: "demo", title: "high priority", priority: 1.5 });
+    await service.createTask({ project: "demo", title: "low priority", priority: 4 });
+    await service.createTask({ project: "demo", title: "unprioritized" });
+
+    const filtered = await service.listTasksDue({
+      project: "demo",
+      maxTaskPriority: 2,
+      modifiedAfter: "2000-01-01",
+    });
+    expect(filtered.tasks.map((task) => task.taskTitle)).toEqual(["high priority"]);
+    expect(filtered.tasks.find((task) => task.taskId === prioritized.taskId)?.milestoneUpdatedAt).toMatch(
+      /^\d{4}-\d{2}-\d{2}T/,
+    );
+
+    const future = await service.listTasksDue({ project: "demo", modifiedAfter: "2999-01-01" });
+    expect(future.tasks).toEqual([]);
   });
 
   it("updateTaskNotes assigns and clears task notes", async () => {

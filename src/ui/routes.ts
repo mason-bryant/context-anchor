@@ -210,16 +210,20 @@ export function registerUiRoutes(
       const status = statusRaw ? statusRaw.split(",") : undefined;
       const owner = optionalQueryString(req, "owner");
       const maxProjectPriority = finiteNumberQuery(req, "maxProjectPriority");
+      const maxTaskPriority = finiteNumberQuery(req, "maxTaskPriority");
+      const modifiedAfter = optionalQueryString(req, "modifiedAfter");
       return service.listTasksDue({
         ...(project ? { project } : {}),
         ...(dueBefore ? { dueBefore } : {}),
         ...(dueAfter ? { dueAfter } : {}),
         ...(completedBefore ? { completedBefore } : {}),
         ...(completedAfter ? { completedAfter } : {}),
+        ...(modifiedAfter ? { modifiedAfter } : {}),
         ...(noDue ? { noDue } : {}),
         ...(unassigned ? { unassigned } : {}),
         ...(owner ? { owner } : {}),
         ...(maxProjectPriority !== undefined ? { maxProjectPriority } : {}),
+        ...(maxTaskPriority !== undefined ? { maxTaskPriority } : {}),
         status: status as ("todo" | "active" | "blocked" | "done" | "cancelled")[] | undefined,
       });
     }),

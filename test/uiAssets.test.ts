@@ -202,6 +202,12 @@ describe("UI browser assets", () => {
     expect(UI_HTML).toContain('id="tasks-completed-days" type="number"');
     expect(UI_HTML).toContain('id="tasks-due-days" type="number"');
     expect(UI_HTML).toContain('id="tasks-project-priority-max" type="number"');
+    expect(UI_HTML).toContain('id="tasks-task-priority-max" type="number"');
+    expect(UI_HTML).toContain('id="tasks-modified-after" type="date"');
+    expect(UI_HTML).toContain("Project priority");
+    expect(UI_HTML).toContain("Task priority");
+    expect(UI_HTML).toContain("Project name");
+    expect(UI_HTML).toContain("Last modified");
     expect(UI_HTML).toContain("Group: Project");
     expect(UI_HTML).toContain("Due date ascending");
     expect(UI_HTML).toContain("Active / Todo / Blocked / Done");
@@ -210,6 +216,8 @@ describe("UI browser assets", () => {
     expect(UI_JS).toContain('"tasksCompletedDays"');
     expect(UI_JS).toContain('"tasksDueDays"');
     expect(UI_JS).toContain('"tasksProjectPriorityMax"');
+    expect(UI_JS).toContain('"tasksTaskPriorityMax"');
+    expect(UI_JS).toContain('"tasksModifiedAfter"');
     expect(UI_JS).toContain('"tasksPriorityMax"');
     expect(UI_JS).toContain("project-priority-badge");
     expect(UI_JS).toContain("task-priority-badge");
@@ -217,6 +225,7 @@ describe("UI browser assets", () => {
     expect(UI_JS).toContain("task-notes-form");
     expect(UI_JS).toContain("task-reopen-btn");
     expect(UI_JS).toContain("task-group-toggle");
+    expect(UI_JS).toContain("milestoneUpdatedAt");
     expect(UI_JS).toContain("collapsedTaskGroups");
     expect(UI_JS).toContain("task-owner-form");
     expect(UI_JS).toContain("task-owner-suggestions");
@@ -249,6 +258,7 @@ describe("UI browser assets", () => {
     expect(UI_CSS).toContain(".task-edit-summary");
     expect(UI_CSS).toContain(".task-edit-details:not([open]) .task-edit-forms");
     expect(UI_CSS).toContain(".task-group-toggle");
+    expect(UI_CSS).toContain('input[type="date"]');
     expect(UI_CSS).toContain(".registry-search");
   });
 
@@ -267,6 +277,7 @@ describe("UI browser assets", () => {
         milestoneDisplayId: "backlog",
         due: "2026-06-20",
         dateConfidence: "committed",
+        milestoneUpdatedAt: "2026-06-19T12:00:00.000Z",
         notes: "Follow up after review.",
       },
       "2026-06-18",
@@ -274,6 +285,7 @@ describe("UI browser assets", () => {
 
     expect(html).toContain('<button type="button" class="compact-action task-complete-btn">Complete</button>');
     expect(html).toContain('<button type="button" class="compact-action task-delete-btn">Delete</button>');
+    expect(html).toContain("modified 2026-06-19");
     expect(html).toContain('<details class="task-edit-details">');
     expect(html).toContain('<summary class="task-edit-summary">Edit task</summary>');
     expect(html).not.toContain('<details class="task-edit-details" open>');
@@ -424,6 +436,59 @@ describe("UI browser assets", () => {
     expect(hooks.taskPriority({ taskPriority: 3 })).toBe(3);
     expect(hooks.taskPriority({ priority: 4 })).toBe(4);
     expect(Number.isNaN(hooks.taskPriority({}))).toBe(true);
+  });
+
+  it("sorts tasks by project priority, task priority, project name, and last modified date", () => {
+    const hooks = loadHooks();
+    const tasks = [
+      {
+        taskId: "T-1",
+        taskTitle: "Beta older",
+        project: "beta",
+        milestoneName: "projects/beta/milestones/backlog.md",
+        projectPriority: 2,
+        taskPriority: 4,
+        milestoneUpdatedAt: "2026-06-10T10:00:00.000Z",
+      },
+      {
+        taskId: "T-2",
+        taskTitle: "Alpha newest",
+        project: "alpha",
+        milestoneName: "projects/alpha/milestones/backlog.md",
+        projectPriority: 1,
+        taskPriority: 3,
+        milestoneUpdatedAt: "2026-06-20T10:00:00.000Z",
+      },
+      {
+        taskId: "T-3",
+        taskTitle: "Gamma urgent",
+        project: "gamma",
+        milestoneName: "projects/gamma/milestones/backlog.md",
+        taskPriority: 1,
+        milestoneUpdatedAt: "2026-06-15T10:00:00.000Z",
+      },
+    ];
+
+    expect(hooks.sortTasksForDisplay(tasks, "projectPriority").map((task) => task.taskId)).toEqual([
+      "T-2",
+      "T-1",
+      "T-3",
+    ]);
+    expect(hooks.sortTasksForDisplay(tasks, "taskPriority").map((task) => task.taskId)).toEqual([
+      "T-3",
+      "T-2",
+      "T-1",
+    ]);
+    expect(hooks.sortTasksForDisplay(tasks, "projectName").map((task) => task.taskId)).toEqual([
+      "T-2",
+      "T-1",
+      "T-3",
+    ]);
+    expect(hooks.sortTasksForDisplay(tasks, "modifiedDesc").map((task) => task.taskId)).toEqual([
+      "T-2",
+      "T-3",
+      "T-1",
+    ]);
   });
 
   it("computes task report windows and color state classes", () => {
