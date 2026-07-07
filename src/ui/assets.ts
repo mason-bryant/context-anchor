@@ -1591,6 +1591,9 @@ textarea {
 .claims-anchor-heading {
   margin: 18px 0 6px;
   font-size: 0.95rem;
+  display: flex;
+  align-items: center;
+  gap: 6px;
 }
 .claim-row {
   border: 1px solid var(--border, #d0d7de);
@@ -2215,6 +2218,7 @@ export const UI_JS = `(function () {
     tasksNoDue: false,
     tasksUnassigned: false,
     collapsedTaskGroups: new Set(),
+    collapsedClaimGroups: new Set(),
     taskOwnerMatchCache: [],
     taskOwnerSearchTimer: null,
     taskOwnerSearchSeq: 0,
@@ -4287,15 +4291,44 @@ export const UI_JS = `(function () {
     claimGroupsForDisplay(claims, groupBy, sortMode).forEach(function (group) {
       var heading = document.createElement("h3");
       heading.className = "claims-anchor-heading";
+
+      // Collapse state is keyed per group mode so switching modes never
+      // misapplies a collapsed key from another grouping.
+      var collapseKey = groupBy + "\\u0000" + group.key;
+      var collapsed = state.collapsedClaimGroups.has(collapseKey);
+      var toggle = document.createElement("button");
+      toggle.type = "button";
+      toggle.className = "task-group-toggle";
+      toggle.setAttribute("aria-expanded", collapsed ? "false" : "true");
+      toggle.title = collapsed ? "Expand group claims" : "Collapse group claims";
+      var triangle = document.createElement("span");
+      triangle.className = "task-group-triangle";
+      triangle.setAttribute("aria-hidden", "true");
+      toggle.appendChild(triangle);
+      toggle.addEventListener("click", function () {
+        if (state.collapsedClaimGroups.has(collapseKey)) {
+          state.collapsedClaimGroups.delete(collapseKey);
+        } else {
+          state.collapsedClaimGroups.add(collapseKey);
+        }
+        renderClaims();
+      });
+      heading.appendChild(toggle);
+
       if (groupBy === "anchor") {
         var link = document.createElement("a");
         link.href = "?anchor=" + encodeURIComponent(group.key);
         link.textContent = group.key + " (" + group.claims.length + ")";
         heading.appendChild(link);
       } else {
-        heading.textContent = group.key + " (" + group.claims.length + ")";
+        var label = document.createElement("span");
+        label.textContent = group.key + " (" + group.claims.length + ")";
+        heading.appendChild(label);
       }
       list.appendChild(heading);
+      if (collapsed) {
+        return;
+      }
       group.claims.forEach(function (claim) {
         list.appendChild(renderClaimRow(claim));
       });
