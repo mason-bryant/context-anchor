@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { AnchorService } from "../src/anchorService.js";
 import { AnchorRepository } from "../src/git/repo.js";
 import {
+  carryClaimAnnotations,
   extractClaims,
   formatAnnotationBody,
   locateClaim,
@@ -186,6 +187,88 @@ describe("locateClaim / upsertClaimAnnotation", () => {
   });
 });
 
+describe("carryClaimAnnotations", () => {
+  const OLD = `## Current State
+
+- Stable claim.
+  {src: PR #1; observed: 2026-01-01; conf: high}
+- Reworded claim, original wording.
+  {src: PR #2; observed: 2026-02-01; conf: medium}
+- Broken annotation claim.
+  {src: ; observed: nope; conf: wat}
+`;
+
+  it("carries annotations onto byte-identical unannotated bullets", () => {
+    const NEW = `## Current State
+
+- New unrelated claim.
+- Stable claim.
+`;
+    const result = carryClaimAnnotations(OLD, NEW);
+    expect(result.carried.map((entry) => entry.text)).toEqual(["Stable claim."]);
+    expect(result.content).toContain("- Stable claim.\n  {src: PR #1; observed: 2026-01-01; conf: high}");
+    expect(result.content).not.toContain("New unrelated claim.\n  {src:");
+  });
+
+  it("reports reworded or removed annotated claims as lost, ignoring malformed ones", () => {
+    const NEW = `## Current State
+
+- Stable claim.
+- Reworded claim, new wording.
+`;
+    const result = carryClaimAnnotations(OLD, NEW);
+    expect(result.lost).toEqual([
+      { text: "Reworded claim, original wording.", annotation: { src: "PR #2", observed: "2026-02-01", conf: "medium" } },
+    ]);
+  });
+
+  it("never overwrites an annotation the writer supplied", () => {
+    const NEW = `## Current State
+
+- Stable claim.
+  {src: PR #99; observed: 2026-07-07; conf: medium}
+`;
+    const result = carryClaimAnnotations(OLD, NEW);
+    expect(result.carried).toEqual([]);
+    expect(result.content).toContain("PR #99");
+    expect(result.content).not.toContain("PR #1");
+  });
+
+  it("pairs duplicate bullet texts in document order and inserts bottom-up correctly", () => {
+    const oldDoc = `## Current State
+
+- Same text.
+  {src: PR #1; observed: 2026-01-01; conf: high}
+- Same text.
+  {src: PR #2; observed: 2026-02-01; conf: low}
+`;
+    const newDoc = `## Current State
+
+- Same text.
+- Same text.
+`;
+    const result = carryClaimAnnotations(oldDoc, newDoc);
+    expect(result.carried).toHaveLength(2);
+    const claims = extractClaims(result.content);
+    expect(claims.map((entry) => entry.annotation?.src)).toEqual(["PR #1", "PR #2"]);
+  });
+
+  it("does not match identical text across different sections", () => {
+    const oldDoc = `## Current State
+
+- Shared wording.
+  {src: PR #1; observed: 2026-01-01; conf: high}
+`;
+    const newDoc = `## Decisions
+
+- Shared wording.
+`;
+    const result = carryClaimAnnotations(oldDoc, newDoc);
+    expect(result.carried).toEqual([]);
+    expect(result.lost).toHaveLength(1);
+  });
+});
+
 describe("AnchorService claims", () => {
   let tmpDir: string;
   let repo: AnchorRepository;
@@ -353,6 +436,77 @@ None.
       conf: "low",
     });
     expect(ambiguous.warnings[0]?.code).toBe("claim_ambiguous");
+  });
+
+  it("carries annotations through section rewrites that omit them", async () => {
+    await service.writeAnchor({
+      name: "projects/demo/claims-demo",
+      content: anchorContent(),
+      message: "test: add claims demo",
+    });
+
+    // Agent-style rewrite: same bullets, annotations not reproduced.
+    const rewrite = await service.updateAnchorSection({
+      name: "projects/demo/claims-demo",
+      heading: "Current State",
+      content: "- Annotated claim about the system.\n- Legacy claim with no provenance.",
+      message: "test: routine section rewrite",
+    });
+    expect(rewrite.warnings.filter((warning) => warning.severity === "BLOCK")).toEqual([]);
+    expect(rewrite.warnings.some((warning) => warning.code === "claim_annotation_carried")).toBe(true);
+    expect(rewrite.version).toBeTruthy();
+
+    const after = await service.listClaims({ name: "projects/demo/claims-demo", status: "annotated" });
+    expect(after.claims.map((claim) => claim.annotation?.src)).toEqual(["PR #54"]);
+  });
+
+  it("blocks rewrites that drop provenance from reworded claims unless approved", async () => {
+    await service.writeAnchor({
+      name: "projects/demo/claims-demo",
+      content: anchorContent(),
+      message: "test: add claims demo",
+    });
+
+    const reword = await service.updateAnchorSection({
+      name: "projects/demo/claims-demo",
+      heading: "Current State",
+      content: "- Annotated claim about the system, now reworded.\n- Legacy claim with no provenance.",
+      message: "test: reworded claim",
+    });
+    expect(reword.version).toBeUndefined();
+    expect(reword.requiresApproval).toBe(true);
+    expect(reword.warnings[0]?.code).toBe("claim_annotation_lost");
+
+    const approved = await service.updateAnchorSection({
+      name: "projects/demo/claims-demo",
+      heading: "Current State",
+      content: "- Annotated claim about the system, now reworded.\n- Legacy claim with no provenance.",
+      message: "test: reworded claim (approved)",
+      approved: true,
+    });
+    expect(approved.version).toBeTruthy();
+    expect(
+      approved.warnings.some((warning) => warning.severity === "WARN" && warning.code === "claim_annotation_lost"),
+    ).toBe(true);
+  });
+
+  it("annotateClaim clear is not resurrected by carry and is not blocked as a loss", async () => {
+    await service.writeAnchor({
+      name: "projects/demo/claims-demo",
+      content: anchorContent(),
+      message: "test: add claims demo",
+    });
+
+    const cleared = await service.annotateClaim({
+      name: "projects/demo/claims-demo",
+      claim: "Annotated claim",
+      clear: true,
+    });
+    expect(cleared.warnings.filter((warning) => warning.severity === "BLOCK")).toEqual([]);
+    expect(cleared.version).toBeTruthy();
+
+    const after = await service.listClaims({ name: "projects/demo/claims-demo" });
+    expect(after.summary.annotated).toBe(0);
   });
 
   it("blocks writes containing malformed annotations but allows unannotated claims", async () => {

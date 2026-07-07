@@ -136,6 +136,12 @@ export type WriteAnchorInput = {
   coAuthor?: string;
   /** When set, must match `readAnchor(...).fileCommit` or the write is rejected with `stale_base`. */
   expectedFileCommit?: string;
+  /**
+   * Internal: when false, skip claim-annotation carry-over and loss guarding
+   * for this write. Set by annotateClaim, which is the sanctioned path for
+   * explicitly changing or clearing a single annotation.
+   */
+  carryClaimAnnotations?: boolean;
 };
 
 export type UpdateProjectPriorityInput = {
