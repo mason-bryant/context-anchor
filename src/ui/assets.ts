@@ -4284,10 +4284,28 @@ export const UI_JS = `(function () {
     var groupBy = el("claims-group-by").value || "anchor";
     var sortMode = el("claims-sort").value || "document";
 
+    claimGroupsForDisplay(claims, groupBy, sortMode).forEach(function (group) {
+      var heading = document.createElement("h3");
+      heading.className = "claims-anchor-heading";
+      if (groupBy === "anchor") {
+        var link = document.createElement("a");
+        link.href = "?anchor=" + encodeURIComponent(group.key);
+        link.textContent = group.key + " (" + group.claims.length + ")";
+        heading.appendChild(link);
+      } else {
+        heading.textContent = group.key + " (" + group.claims.length + ")";
+      }
+      list.appendChild(heading);
+      group.claims.forEach(function (claim) {
+        list.appendChild(renderClaimRow(claim));
+      });
+    });
+  }
+
+  function claimGroupsForDisplay(claims, groupBy, sortMode) {
     var sorted = claims.slice().sort(function (left, right) {
       return compareClaims(left, right, sortMode);
     });
-
     var byGroup = {};
     var groupOrder = [];
     sorted.forEach(function (claim) {
@@ -4301,22 +4319,8 @@ export const UI_JS = `(function () {
     if (groupBy !== "anchor") {
       groupOrder.sort();
     }
-
-    groupOrder.forEach(function (key) {
-      var heading = document.createElement("h3");
-      heading.className = "claims-anchor-heading";
-      if (groupBy === "anchor") {
-        var link = document.createElement("a");
-        link.href = "?anchor=" + encodeURIComponent(key);
-        link.textContent = key + " (" + byGroup[key].length + ")";
-        heading.appendChild(link);
-      } else {
-        heading.textContent = key + " (" + byGroup[key].length + ")";
-      }
-      list.appendChild(heading);
-      byGroup[key].forEach(function (claim) {
-        list.appendChild(renderClaimRow(claim));
-      });
+    return groupOrder.map(function (key) {
+      return { key: key, claims: byGroup[key] };
     });
   }
 
@@ -7114,6 +7118,11 @@ export const UI_JS = `(function () {
   }
 
   if (window.__ANCHOR_MCP_UI_TEST_HOOKS__) {
+    window.__ANCHOR_MCP_UI_TEST_HOOKS__.claimGroupsForDisplay = claimGroupsForDisplay;
+    window.__ANCHOR_MCP_UI_TEST_HOOKS__.compareClaims = compareClaims;
+    window.__ANCHOR_MCP_UI_TEST_HOOKS__.claimTrustRank = claimTrustRank;
+    window.__ANCHOR_MCP_UI_TEST_HOOKS__.claimGroupKey = claimGroupKey;
+    window.__ANCHOR_MCP_UI_TEST_HOOKS__.claimProjectSlug = claimProjectSlug;
     window.__ANCHOR_MCP_UI_TEST_HOOKS__.renderMarkdown = renderMarkdown;
     window.__ANCHOR_MCP_UI_TEST_HOOKS__.sanitizeLinkHref = sanitizeLinkHref;
     window.__ANCHOR_MCP_UI_TEST_HOOKS__.anchorHref = anchorHref;
