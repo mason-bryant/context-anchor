@@ -864,7 +864,7 @@ the index when your workflow checks in that file.`,
     {
       title: "List Claim Provenance",
       description:
-        "List claims (top-level bullets in Current State, Decisions, and Constraints sections) with their provenance annotations across one anchor or a project. Use status: unannotated to find legacy claims with no provenance, status: malformed to find broken annotations, conf/observedBefore to build re-verification queues (e.g. low-confidence claims observed before a cutoff), section to scope to one section kind, and q for text search over claim text and src. The coverage summary always reflects the full scope; filters narrow only the returned list.",
+        "List claims (top-level bullets in Current State, Decisions, and Constraints sections) with their provenance annotations across one anchor or a project. Use status: unannotated to find legacy claims with no provenance, status: malformed to find broken annotations, conf plus observedBefore/observedAfter to build re-verification queues (e.g. low-confidence claims observed before a cutoff, or claims verified since a date), section to scope to one section kind, and q for text search over claim text and src. The coverage summary always reflects the full scope; filters narrow only the returned list.",
       inputSchema: z.object({
         name: z.string().optional().describe("Limit to one anchor by name."),
         project: z.string().optional().describe("Limit to a project slug (alias-aware)."),

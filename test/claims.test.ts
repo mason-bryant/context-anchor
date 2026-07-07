@@ -260,11 +260,13 @@ None.
   });
 
   it("filters claims by section, confidence, text search, and observed window", async () => {
-    await service.writeAnchor({
+    const write = await service.writeAnchor({
       name: "projects/demo/claims-demo",
       content: anchorContent("\n- Another dated claim.\n  {src: docs/spec.md; observed: 2026-01-15; conf: low}"),
       message: "test: add claims demo",
     });
+    expect(write.warnings).toEqual([]);
+    expect(write.version).toBeTruthy();
 
     const section = await service.listClaims({ project: "demo", section: "Decisions" });
     expect(section.claims.map((claim) => claim.text)).toEqual(["A decision claim."]);
