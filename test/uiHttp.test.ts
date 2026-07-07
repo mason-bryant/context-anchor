@@ -856,6 +856,54 @@ describe("UI HTTP routes", () => {
     expect(listed.tasks.find((task) => task.taskId === created.taskId)?.taskOwner).toBeUndefined();
   });
 
+  it("lists and annotates claims through the UI routes", async () => {
+    type ClaimsResult = {
+      claims: Array<{ anchor: string; text: string; status: string; annotation?: { src: string; conf: string } }>;
+      summary: { total: number; annotated: number; unannotated: number; malformed: number };
+    };
+    type ClaimWrite = { version?: string; warnings: { severity: string; code: string; message: string }[] };
+
+    const initial = await fetchJson<ClaimsResult>("/api/ui/claims?project=demo&status=unannotated");
+    expect(initial.summary.total).toBeGreaterThan(0);
+    const target = initial.claims[0];
+    expect(target?.status).toBe("unannotated");
+
+    const saved = await postJson<ClaimWrite>("/api/ui/claim-annotation", {
+      name: target.anchor,
+      claim: target.text,
+      src: "PR #54",
+      observed: "2026-07-07",
+      conf: "medium",
+      approved: true,
+    });
+    expect(saved.warnings.filter((warning) => warning.severity === "BLOCK")).toEqual([]);
+    expect(saved.version).toBeTruthy();
+
+    const annotated = await fetchJson<ClaimsResult>(
+      `/api/ui/claims?name=${encodeURIComponent(target.anchor)}&status=annotated`,
+    );
+    expect(annotated.claims.map((claim) => claim.text)).toContain(target.text);
+    expect(annotated.claims.find((claim) => claim.text === target.text)?.annotation?.src).toBe("PR #54");
+
+    const cleared = await postJson<ClaimWrite>("/api/ui/claim-annotation", {
+      name: target.anchor,
+      claim: target.text,
+      clear: true,
+      approved: true,
+    });
+    expect(cleared.warnings.filter((warning) => warning.severity === "BLOCK")).toEqual([]);
+
+    const rejected = await postJson<ClaimWrite>("/api/ui/claim-annotation", {
+      name: target.anchor,
+      claim: target.text,
+      src: "person:alice",
+      observed: "2026-07-07",
+      conf: "high",
+      approved: true,
+    });
+    expect(rejected.warnings.some((warning) => warning.code === "claim_annotation_invalid")).toBe(true);
+  });
+
   it("updates task priority through the UI routes", async () => {
     type TaskWrite = { taskId?: string; milestoneName?: string; warnings: { severity: string }[] };
     type TasksDue = { tasks: Array<{ taskId: string; taskPriority?: number }> };

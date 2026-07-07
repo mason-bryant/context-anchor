@@ -857,6 +857,66 @@ the index when your workflow checks in that file.`,
     },
   );
 
+  const ClaimConfidenceSchema = z.enum(["high", "medium", "low"]);
+
+  server.registerTool(
+    "listClaims",
+    {
+      title: "List Claim Provenance",
+      description:
+        "List claims (top-level bullets in Current State, Decisions, and Constraints sections) with their provenance annotations across one anchor or a project. Use status: unannotated to find legacy claims with no provenance, or status: malformed to find broken annotations. Returns per-claim src/observed/conf plus a coverage summary.",
+      inputSchema: z.object({
+        name: z.string().optional().describe("Limit to one anchor by name."),
+        project: z.string().optional().describe("Limit to a project slug (alias-aware)."),
+        status: z.enum(["annotated", "unannotated", "malformed"]).optional().describe("Filter by provenance status."),
+      }),
+      annotations: { destructiveHint: false, idempotentHint: true },
+    },
+    async ({ name, project, status }) => {
+      const result = await service.listClaims({ name, project, status });
+      return jsonResult(result, false);
+    },
+  );
+
+  server.registerTool(
+    "annotateClaim",
+    {
+      title: "Annotate Claim Provenance",
+      description:
+        "Set or clear the provenance annotation ({src; observed; conf[; id]}) on one claim without rewriting the anchor. Locate the claim with a unique substring of its bullet text. src may be a PR reference, repo file path, anchor name, URL, or person:<id> (person-sourced claims cap at conf: medium). Pass clear: true to remove an annotation.",
+      inputSchema: z.object({
+        name: z.string().describe("Anchor containing the claim."),
+        claim: z.string().min(1).describe("Unique substring of the claim's bullet text."),
+        src: z.string().optional().describe("Provenance source: PR #N, file path, anchor name, URL, or person:<id>."),
+        observed: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().describe("Date the fact was observed/verified (YYYY-MM-DD)."),
+        conf: ClaimConfidenceSchema.optional().describe("Stated confidence: high (observed directly), medium (read in doc/PR), low (inferred)."),
+        id: z.string().optional().describe("Optional stable kebab-case id for cross-references."),
+        clear: z.boolean().optional().describe("When true, remove the claim's annotation."),
+        message: z.string().optional(),
+        approved: z.boolean().default(false),
+        coAuthor: z.string().optional(),
+        expectedFileCommit: z.string().optional(),
+      }),
+      annotations: { destructiveHint: false, idempotentHint: false },
+    },
+    async ({ name, claim, src, observed, conf, id, clear, message, approved, coAuthor, expectedFileCommit }) => {
+      const result = await service.annotateClaim({
+        name,
+        claim,
+        src,
+        observed,
+        conf,
+        id,
+        clear,
+        message,
+        approved,
+        coAuthor,
+        expectedFileCommit,
+      });
+      return jsonResult(result, result.version ? false : true);
+    },
+  );
+
   server.registerTool(
     "createTask",
     {

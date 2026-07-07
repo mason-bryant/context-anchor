@@ -319,6 +319,44 @@ export function registerUiRoutes(
     }),
   );
 
+  app.get(
+    "/api/ui/claims",
+    ...protect,
+    jsonRoute(async (req) => {
+      const name = optionalQueryString(req, "name");
+      const project = optionalQueryString(req, "project");
+      const statusRaw = optionalQueryString(req, "status");
+      const status =
+        statusRaw === "annotated" || statusRaw === "unannotated" || statusRaw === "malformed" ? statusRaw : undefined;
+      return service.listClaims({
+        ...(name ? { name } : {}),
+        ...(project ? { project } : {}),
+        ...(status ? { status } : {}),
+      });
+    }),
+  );
+
+  app.post(
+    "/api/ui/claim-annotation",
+    ...protect,
+    jsonRoute(async (req) => {
+      const body = bodyRecord(req);
+      return service.annotateClaim({
+        name: requiredBodyString(body, "name"),
+        claim: requiredBodyString(body, "claim"),
+        src: optionalBodyString(body, "src"),
+        observed: optionalBodyString(body, "observed"),
+        conf: optionalBodyString(body, "conf"),
+        id: optionalBodyString(body, "id"),
+        clear: booleanBody(body, "clear"),
+        message: optionalBodyString(body, "message"),
+        approved: booleanBody(body, "approved"),
+        coAuthor: optionalBodyString(body, "coAuthor"),
+        expectedFileCommit: optionalBodyString(body, "expectedFileCommit"),
+      });
+    }),
+  );
+
   app.post(
     "/api/ui/task-due",
     ...protect,

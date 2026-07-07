@@ -115,6 +115,7 @@ export const UI_HTML = `<!doctype html>
             <button class="tab active" data-tab="root" type="button"><span class="icon-label"><svg class="icon" aria-hidden="true"><use href="#icon-home"></use></svg><span>Context Root</span></span></button>
             <button class="tab" data-tab="planner" type="button"><span class="icon-label"><svg class="icon" aria-hidden="true"><use href="#icon-plan"></use></svg><span>Planner</span></span></button>
             <button class="tab" data-tab="tasks" type="button"><span class="icon-label"><svg class="icon" aria-hidden="true"><use href="#icon-filter"></use></svg><span>Tasks</span></span></button>
+            <button class="tab" data-tab="claims" type="button"><span class="icon-label"><svg class="icon" aria-hidden="true"><use href="#icon-anchor"></use></svg><span>Claims</span></span></button>
             <button class="tab" data-tab="people" type="button"><span class="icon-label"><svg class="icon" aria-hidden="true"><use href="#icon-people"></use></svg><span>People</span></span></button>
             <button class="tab" data-tab="teams" type="button"><span class="icon-label"><svg class="icon" aria-hidden="true"><use href="#icon-team"></use></svg><span>Teams</span></span></button>
             <button class="tab" data-tab="mappings" type="button"><span class="icon-label"><svg class="icon" aria-hidden="true"><use href="#icon-filter"></use></svg><span>Mappings</span></span></button>
@@ -355,6 +356,29 @@ export const UI_HTML = `<!doctype html>
             <datalist id="milestone-anchor-suggestions"></datalist>
             <datalist id="team-id-suggestions"></datalist>
             <div id="tasks-list" hidden></div>
+          </section>
+
+          <section id="claims-view" class="view">
+            <div class="view-header">
+              <div>
+                <h2>Claims</h2>
+                <p id="claims-summary">Claim provenance across Current State, Decisions, and Constraints bullets.</p>
+              </div>
+              <div class="tasks-filters">
+                <select id="claims-project-filter" aria-label="Filter claims by project">
+                  <option value="">All projects</option>
+                </select>
+                <select id="claims-status-filter" aria-label="Filter claims by provenance status">
+                  <option value="">All claims</option>
+                  <option value="unannotated">Unannotated only</option>
+                  <option value="annotated">Annotated only</option>
+                  <option value="malformed">Malformed only</option>
+                </select>
+                <button id="claims-refresh" type="button">Refresh</button>
+              </div>
+            </div>
+            <div id="claims-empty" class="empty-state">No claims match the current filters.</div>
+            <div id="claims-list" hidden></div>
           </section>
 
           <section id="people-view" class="view">
@@ -1536,6 +1560,67 @@ textarea {
   font-weight: 600;
 }
 
+.claims-anchor-heading {
+  margin: 18px 0 6px;
+  font-size: 0.95rem;
+}
+.claim-row {
+  border: 1px solid var(--border, #d0d7de);
+  border-radius: 6px;
+  padding: 8px 10px;
+  margin-bottom: 8px;
+}
+.claim-row-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.claim-text {
+  flex: 1;
+  min-width: 200px;
+}
+.claim-meta {
+  margin-top: 6px;
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.claim-chip {
+  display: inline-block;
+  border-radius: 10px;
+  padding: 1px 8px;
+  font-size: 0.78rem;
+  background: rgba(110, 118, 129, 0.15);
+}
+.claim-chip-annotated,
+.claim-chip-conf-high {
+  background: rgba(46, 160, 67, 0.2);
+}
+.claim-chip-unannotated,
+.claim-chip-missing,
+.claim-chip-conf-medium {
+  background: rgba(210, 153, 34, 0.25);
+}
+.claim-chip-malformed,
+.claim-chip-error,
+.claim-chip-conf-low {
+  background: rgba(248, 81, 73, 0.25);
+}
+.claim-editor {
+  margin-top: 8px;
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+.claim-editor input[type="text"] {
+  flex: 1;
+  min-width: 240px;
+}
+.claim-editor-result {
+  font-size: 0.85rem;
+}
 .detail-tasks {
   margin: 0 0 16px;
   padding: 12px 14px;
@@ -2085,6 +2170,10 @@ export const UI_JS = `(function () {
     anchorGroupSort: DEFAULT_ANCHOR_SORT,
     tasks: [],
     tasksLoading: false,
+    claims: [],
+    claimsSummary: null,
+    claimsLoading: false,
+    claimsLoaded: false,
     pendingTaskFocus: null,
     tasksProject: "",
     tasksStatus: "active,todo,blocked",
@@ -2189,7 +2278,7 @@ export const UI_JS = `(function () {
   }
 
   function validTab(value) {
-    return value === "root" || value === "planner" || value === "tasks" || value === "people" || value === "teams" || value === "mappings" || value === "review" || value === "detail" ? value : null;
+    return value === "root" || value === "planner" || value === "tasks" || value === "claims" || value === "people" || value === "teams" || value === "mappings" || value === "review" || value === "detail" ? value : null;
   }
 
   function validRootMode(value) {
@@ -2991,7 +3080,9 @@ export const UI_JS = `(function () {
     var currentPlannerCategory = plannerCategorySelect.value;
     var tasksProjectSelect = el("tasks-project-filter");
     var currentTasksProject = tasksProjectSelect.value;
-    projects = uniqueSorted(projects.concat([currentProject, currentPlannerProject, currentTasksProject]));
+    var claimsProjectSelect = el("claims-project-filter");
+    var currentClaimsProject = claimsProjectSelect.value;
+    projects = uniqueSorted(projects.concat([currentProject, currentPlannerProject, currentTasksProject, currentClaimsProject]));
     tags = uniqueSorted(tags.concat([currentTag, currentPlannerTag]));
     projectSelect.innerHTML = optionList(projects, "All projects");
     tagSelect.innerHTML = optionList(tags, "All tags");
@@ -3000,6 +3091,8 @@ export const UI_JS = `(function () {
     plannerTagSelect.innerHTML = optionList(tags, "All tags");
     plannerCategorySelect.innerHTML = optionList(categories.slice(1), "All categories");
     tasksProjectSelect.innerHTML = optionList(projects, "All projects");
+    claimsProjectSelect.innerHTML = optionList(projects, "All projects");
+    claimsProjectSelect.value = currentClaimsProject && projects.includes(currentClaimsProject) ? currentClaimsProject : "";
     projectSelect.value = currentProject && projects.includes(currentProject) ? currentProject : "";
     tagSelect.value = currentTag && tags.includes(currentTag) ? currentTag : "";
     categorySelect.value = categories.includes(currentCategory) ? currentCategory : "";
@@ -4091,6 +4184,229 @@ export const UI_JS = `(function () {
     showTasksView();
     if (alreadyLoaded) {
       applyPendingTaskFocus();
+    }
+  }
+
+  function showClaimsView(options) {
+    var opts = options || {};
+    if (!opts.skipLocationUpdate) {
+      updateLocationFromState({ anchor: null, view: "claims", history: "push" });
+    }
+    state.pendingAnchor = null;
+    showTab("claims");
+    if (!state.claimsLoaded && !state.claimsLoading) {
+      loadClaims();
+    }
+  }
+
+  async function loadClaims() {
+    state.claimsLoading = true;
+    var project = el("claims-project-filter").value || "";
+    var status = el("claims-status-filter").value || "";
+    var qs = [];
+    if (project) qs.push("project=" + encodeURIComponent(project));
+    if (status) qs.push("status=" + encodeURIComponent(status));
+    var url = "/api/ui/claims" + (qs.length ? "?" + qs.join("&") : "");
+    try {
+      var result = await api(url);
+      state.claims = result.claims || [];
+      state.claimsSummary = result.summary || null;
+      state.claimsLoaded = true;
+      renderClaims();
+    } catch (error) {
+      setBanner(error.message, "error");
+    } finally {
+      state.claimsLoading = false;
+    }
+  }
+
+  function claimChip(text, kind) {
+    var chip = document.createElement("span");
+    chip.className = "claim-chip" + (kind ? " claim-chip-" + kind : "");
+    chip.textContent = text;
+    return chip;
+  }
+
+  function renderClaims() {
+    var list = el("claims-list");
+    var emptyEl = el("claims-empty");
+    var summaryEl = el("claims-summary");
+    list.innerHTML = "";
+    var claims = state.claims || [];
+    var summary = state.claimsSummary;
+    summaryEl.textContent = summary
+      ? summary.total + " claims: " + summary.annotated + " annotated, " + summary.unannotated + " unannotated, " + summary.malformed + " malformed."
+      : "Claim provenance across Current State, Decisions, and Constraints bullets.";
+    if (claims.length === 0) {
+      list.hidden = true;
+      emptyEl.hidden = false;
+      return;
+    }
+    emptyEl.hidden = true;
+    list.hidden = false;
+
+    var byAnchor = {};
+    var anchorOrder = [];
+    claims.forEach(function (claim) {
+      if (!byAnchor[claim.anchor]) {
+        byAnchor[claim.anchor] = [];
+        anchorOrder.push(claim.anchor);
+      }
+      byAnchor[claim.anchor].push(claim);
+    });
+
+    anchorOrder.forEach(function (anchor) {
+      var heading = document.createElement("h3");
+      heading.className = "claims-anchor-heading";
+      var link = document.createElement("a");
+      link.href = "?anchor=" + encodeURIComponent(anchor);
+      link.textContent = anchor;
+      heading.appendChild(link);
+      list.appendChild(heading);
+      byAnchor[anchor].forEach(function (claim) {
+        list.appendChild(renderClaimRow(claim));
+      });
+    });
+  }
+
+  function renderClaimRow(claim) {
+    var row = document.createElement("div");
+    row.className = "claim-row claim-row-" + claim.status;
+
+    var header = document.createElement("div");
+    header.className = "claim-row-header";
+    header.appendChild(claimChip(claim.status, claim.status));
+    header.appendChild(claimChip(claim.section, "section"));
+
+    var text = document.createElement("span");
+    text.className = "claim-text";
+    text.textContent = claim.text;
+    header.appendChild(text);
+
+    var editButton = document.createElement("button");
+    editButton.type = "button";
+    editButton.className = "claim-edit-toggle";
+    editButton.textContent = claim.status === "unannotated" ? "Annotate" : "Edit";
+    header.appendChild(editButton);
+    row.appendChild(header);
+
+    var meta = document.createElement("div");
+    meta.className = "claim-meta";
+    if (claim.annotation) {
+      meta.appendChild(claimChip("src: " + claim.annotation.src, "src"));
+      meta.appendChild(claimChip("observed: " + claim.annotation.observed, "observed"));
+      meta.appendChild(claimChip("conf: " + claim.annotation.conf, "conf-" + claim.annotation.conf));
+      if (claim.annotation.id) {
+        meta.appendChild(claimChip("id: " + claim.annotation.id, "id"));
+      }
+    } else if (claim.status === "malformed") {
+      meta.appendChild(claimChip((claim.annotationErrors || []).join(" "), "error"));
+    } else {
+      meta.appendChild(claimChip("no provenance", "missing"));
+    }
+    row.appendChild(meta);
+
+    var editor = document.createElement("div");
+    editor.className = "claim-editor";
+    editor.hidden = true;
+
+    var srcInput = document.createElement("input");
+    srcInput.type = "text";
+    srcInput.placeholder = "src: PR #54, path, anchor, URL, or person:<id>";
+    srcInput.value = claim.annotation ? claim.annotation.src : "";
+    srcInput.setAttribute("aria-label", "Provenance source");
+
+    var observedInput = document.createElement("input");
+    observedInput.type = "date";
+    observedInput.value = claim.annotation ? claim.annotation.observed : todayIso();
+    observedInput.setAttribute("aria-label", "Observed date");
+
+    var confSelect = document.createElement("select");
+    confSelect.setAttribute("aria-label", "Confidence");
+    ["high", "medium", "low"].forEach(function (value) {
+      var option = document.createElement("option");
+      option.value = value;
+      option.textContent = value;
+      confSelect.appendChild(option);
+    });
+    confSelect.value = claim.annotation ? claim.annotation.conf : "medium";
+
+    var saveButton = document.createElement("button");
+    saveButton.type = "button";
+    saveButton.textContent = "Save";
+
+    var clearButton = document.createElement("button");
+    clearButton.type = "button";
+    clearButton.textContent = "Clear";
+    clearButton.hidden = claim.status === "unannotated";
+
+    var cancelButton = document.createElement("button");
+    cancelButton.type = "button";
+    cancelButton.textContent = "Cancel";
+
+    var resultEl = document.createElement("span");
+    resultEl.className = "claim-editor-result";
+
+    editor.appendChild(srcInput);
+    editor.appendChild(observedInput);
+    editor.appendChild(confSelect);
+    editor.appendChild(saveButton);
+    editor.appendChild(clearButton);
+    editor.appendChild(cancelButton);
+    editor.appendChild(resultEl);
+    row.appendChild(editor);
+
+    editButton.addEventListener("click", function () {
+      editor.hidden = !editor.hidden;
+      if (!editor.hidden) {
+        srcInput.focus();
+      }
+    });
+    cancelButton.addEventListener("click", function () {
+      editor.hidden = true;
+    });
+    saveButton.addEventListener("click", function () {
+      saveClaimAnnotation(claim, {
+        src: srcInput.value.trim(),
+        observed: observedInput.value,
+        conf: confSelect.value,
+      }, resultEl);
+    });
+    clearButton.addEventListener("click", function () {
+      saveClaimAnnotation(claim, { clear: true }, resultEl);
+    });
+
+    return row;
+  }
+
+  async function saveClaimAnnotation(claim, fields, resultEl) {
+    var payload = { name: claim.anchor, claim: claim.text, approved: true };
+    if (fields.clear) {
+      payload.clear = true;
+    } else {
+      if (!fields.src) {
+        resultEl.textContent = "src is required.";
+        return;
+      }
+      if (!fields.observed) {
+        resultEl.textContent = "observed date is required.";
+        return;
+      }
+      payload.src = fields.src;
+      payload.observed = fields.observed;
+      payload.conf = fields.conf;
+    }
+    resultEl.textContent = "Saving...";
+    try {
+      var res = await apiPost("/api/ui/claim-annotation", payload);
+      if (res.warnings && res.warnings.some(function (warning) { return warning.severity === "BLOCK"; })) {
+        resultEl.textContent = res.warnings.map(function (warning) { return warning.message; }).join("; ");
+        return;
+      }
+      resultEl.textContent = "Saved.";
+      loadClaims();
+    } catch (error) {
+      resultEl.textContent = error.message;
     }
   }
 
@@ -6337,6 +6653,8 @@ export const UI_JS = `(function () {
       showPlanner({ skipLocationUpdate: true });
     } else if (state.activeTab === "tasks") {
       showTasksView({ skipLocationUpdate: true });
+    } else if (state.activeTab === "claims") {
+      showClaimsView({ skipLocationUpdate: true });
     } else if (state.activeTab === "people") {
       showPeopleView({ skipLocationUpdate: true });
     } else if (state.activeTab === "teams") {
@@ -6392,6 +6710,14 @@ export const UI_JS = `(function () {
       el(id).addEventListener("change", function () {
         updateLocationFromState({ anchor: null, view: "review", history: "push" });
         loadProposals().catch(function (error) { setBanner(error.message, "error"); });
+      });
+    });
+    el("claims-refresh").addEventListener("click", function () {
+      loadClaims();
+    });
+    ["claims-project-filter", "claims-status-filter"].forEach(function (id) {
+      el(id).addEventListener("change", function () {
+        loadClaims();
       });
     });
     el("tasks-refresh").addEventListener("click", function () {
@@ -6532,6 +6858,10 @@ export const UI_JS = `(function () {
         }
         if (button.dataset.tab === "tasks") {
           showTasksView();
+          return;
+        }
+        if (button.dataset.tab === "claims") {
+          showClaimsView();
           return;
         }
         if (button.dataset.tab === "people") {
