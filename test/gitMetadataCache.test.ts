@@ -167,6 +167,65 @@ describe("GitMetadataCache", () => {
     await expect(cache.lastCommitForPath("a.md")).resolves.toBeUndefined();
   });
 
+  it("follows renames even when rename detection is disabled in git config", async () => {
+    const repo = new AnchorRepository({ repoPath: tmpDir });
+    await repo.ensureReady();
+    await repo.git.raw(["config", "diff.renames", "false"]);
+    await commitFile(repo, "a.md", "same body either way", "add a", "2026-01-02T03:04:05Z");
+    await repo.git.raw(["mv", "--", "a.md", "b.md"]);
+    await repo.git.raw(["-c", "user.name=test", "-c", "user.email=test@local", "commit", "-m", "rename a to b"]);
+
+    const cache = new GitMetadataCache(repo.git, tmpDir);
+
+    await expect(cache.firstCommitDateForPath("b.md")).resolves.toBe(new Date("2026-01-02T03:04:05Z").toISOString());
+  });
+
+  it("discards a rebuild that raced an invalidate instead of clobbering newer state", async () => {
+    const repo = new AnchorRepository({ repoPath: tmpDir });
+    await repo.ensureReady();
+    await commitFile(repo, "a.md", "one", "add a");
+
+    const cache = new GitMetadataCache(repo.git, tmpDir);
+
+    const realRaw = repo.git.raw.bind(repo.git);
+    let releaseGate!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      releaseGate = resolve;
+    });
+    let reachedGate!: () => void;
+    const gateReached = new Promise<void>((resolve) => {
+      reachedGate = resolve;
+    });
+    let gated = false;
+    const rawSpy = vi.spyOn(repo.git, "raw").mockImplementation(async (...args: unknown[]) => {
+      const first = args[0];
+      if (!gated && Array.isArray(first) && first.includes("--name-status")) {
+        gated = true;
+        reachedGate();
+        await gate;
+      }
+      return realRaw(...(args as Parameters<typeof realRaw>));
+    });
+
+    try {
+      // First access starts a rebuild that blocks inside the history walk.
+      const pending = cache.currentHead();
+      await gateReached;
+
+      // While the walk is in flight, the cache is invalidated and HEAD moves.
+      cache.invalidate();
+      const c2 = await commitFile(repo, "a.md", "two", "edit during rebuild");
+      releaseGate();
+
+      // The blocked rebuild must be discarded and re-run against the new HEAD,
+      // not published over the invalidation.
+      await expect(pending).resolves.toBe(c2);
+      await expect(cache.lastCommitForPath("a.md")).resolves.toBe(c2);
+    } finally {
+      rawSpy.mockRestore();
+    }
+  });
+
   it("folds in-process commits in via recordCommit without rebuilding", async () => {
     const repo = new AnchorRepository({ repoPath: tmpDir });
     await repo.ensureReady();

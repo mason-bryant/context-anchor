@@ -34,6 +34,10 @@ export class GitMetadataCache {
   private buildFailed = false;
   private byPath = new Map<string, PathCommitMetadata>();
   private refreshing: Promise<void> | undefined;
+  // Bumped whenever cache state changes outside a rebuild (invalidate,
+  // recordCommit/recordRename) so an in-flight rebuild that raced the change
+  // discards its result instead of clobbering the newer state.
+  private generation = 0;
 
   constructor(
     private readonly git: SimpleGit,
@@ -76,6 +80,7 @@ export class GitMetadataCache {
     if (!this.built || this.buildFailed) {
       return;
     }
+    this.generation += 1;
     this.head = commit;
     for (const repoRelativePath of repoRelativePaths) {
       const existing = this.byPath.get(repoRelativePath);
@@ -92,6 +97,7 @@ export class GitMetadataCache {
     if (!this.built || this.buildFailed) {
       return;
     }
+    this.generation += 1;
     this.head = commit;
     const existing = this.byPath.get(fromRepoRelativePath);
     this.byPath.delete(fromRepoRelativePath);
@@ -103,6 +109,7 @@ export class GitMetadataCache {
 
   /** Drop everything; the next access rebuilds from the current HEAD. */
   invalidate(): void {
+    this.generation += 1;
     this.head = undefined;
     this.built = false;
     this.buildFailed = false;
@@ -110,45 +117,56 @@ export class GitMetadataCache {
   }
 
   private async ensureFresh(): Promise<void> {
-    while (this.refreshing) {
+    for (;;) {
+      while (this.refreshing) {
+        await this.refreshing;
+      }
+
+      const head = await this.resolveHead();
+      if (this.built && head === this.head) {
+        return;
+      }
+
+      if (!this.refreshing) {
+        this.refreshing = this.rebuild(head, this.generation).finally(() => {
+          this.refreshing = undefined;
+        });
+      }
       await this.refreshing;
+      // Loop to re-verify: the rebuild may have been discarded because an
+      // invalidate or recordCommit raced it, or HEAD may have moved again.
     }
-
-    const head = await this.resolveHead();
-    if (this.built && head === this.head) {
-      return;
-    }
-
-    if (!this.refreshing) {
-      this.refreshing = this.rebuild(head).finally(() => {
-        this.refreshing = undefined;
-      });
-    }
-    await this.refreshing;
   }
 
-  private async rebuild(head: string | undefined): Promise<void> {
-    this.head = head;
-    this.built = true;
-    this.buildFailed = false;
-    this.byPath = new Map();
+  private async rebuild(head: string | undefined, generation: number): Promise<void> {
+    let byPath = new Map<string, PathCommitMetadata>();
+    let buildFailed = false;
 
-    if (!head) {
+    if (head) {
+      try {
+        const output = await this.git.raw([
+          "-c",
+          "core.quotepath=false",
+          "log",
+          "--name-status",
+          "--find-renames",
+          `--format=${COMMIT_MARKER}%H%x09%aI`,
+        ]);
+        byPath = parseNameStatusLog(output);
+      } catch {
+        buildFailed = true;
+      }
+    }
+
+    if (generation !== this.generation) {
+      // State changed while the walk ran; discard so the caller re-checks.
       return;
     }
 
-    try {
-      const output = await this.git.raw([
-        "-c",
-        "core.quotepath=false",
-        "log",
-        "--name-status",
-        `--format=${COMMIT_MARKER}%H%x09%aI`,
-      ]);
-      this.byPath = parseNameStatusLog(output);
-    } catch {
-      this.buildFailed = true;
-    }
+    this.head = head;
+    this.built = true;
+    this.buildFailed = buildFailed;
+    this.byPath = byPath;
   }
 
   private async resolveHead(): Promise<string | undefined> {
