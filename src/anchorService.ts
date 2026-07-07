@@ -684,8 +684,8 @@ export class AnchorService {
       name: input.name,
       content,
       message: input.message,
-      sectionsChanged: oldContent ? changedSections(oldContent, content) : undefined,
-      lastValidatedChanged: oldContent ? lastValidatedChanged(oldContent, content) : undefined,
+      sectionsChanged: oldContent !== undefined ? changedSections(oldContent, content) : undefined,
+      lastValidatedChanged: oldContent !== undefined ? lastValidatedChanged(oldContent, content) : undefined,
       coAuthor: input.coAuthor,
       push: this.options.pushOnWrite,
     });
