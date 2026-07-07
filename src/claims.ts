@@ -243,6 +243,74 @@ function findStandaloneAnnotationIndex(lines: string[], bulletIndex: number): nu
   return undefined;
 }
 
+export type CarryResult = {
+  content: string;
+  /** Annotations re-attached to byte-identical bullets that arrived unannotated. */
+  carried: { text: string; annotation: ClaimAnnotation }[];
+  /** Valid annotations whose claim text no longer exists in the new content. */
+  lost: { text: string; annotation: ClaimAnnotation }[];
+};
+
+/**
+ * Carry valid annotations from oldContent onto newContent claims whose bullet
+ * text is byte-identical and unannotated (the "agent rewrote the section and
+ * regenerated the bullets" case). Annotations whose claim text disappeared or
+ * was reworded are reported as lost so the caller can gate the write.
+ *
+ * A new claim that already carries its own (valid or malformed) annotation is
+ * never touched: the writer supplied provenance deliberately. Malformed old
+ * annotations are neither carried nor protected — dropping them is cleanup.
+ */
+export function carryClaimAnnotations(oldContent: string, newContent: string): CarryResult {
+  const oldAnnotated = extractClaims(oldContent).filter(
+    (claim): claim is AnchorClaim & { annotation: ClaimAnnotation } =>
+      claim.status === "annotated" && claim.annotation !== undefined,
+  );
+  if (oldAnnotated.length === 0) {
+    return { content: newContent, carried: [], lost: [] };
+  }
+
+  const newClaims = extractClaims(newContent);
+  const consumed = new Set<number>();
+  const carried: CarryResult["carried"] = [];
+  const lost: CarryResult["lost"] = [];
+  const insertions: { afterLine: number; annotation: ClaimAnnotation }[] = [];
+
+  for (const oldClaim of oldAnnotated) {
+    // Pair duplicates in document order: first unconsumed new claim with the
+    // same section kind and byte-identical text.
+    const matchIndex = newClaims.findIndex(
+      (candidate, index) =>
+        !consumed.has(index) && candidate.section === oldClaim.section && candidate.text === oldClaim.text,
+    );
+    if (matchIndex === -1) {
+      lost.push({ text: oldClaim.text, annotation: oldClaim.annotation });
+      continue;
+    }
+    consumed.add(matchIndex);
+    const match = newClaims[matchIndex];
+    if (match.status !== "unannotated") {
+      continue;
+    }
+    insertions.push({ afterLine: match.line, annotation: oldClaim.annotation });
+    carried.push({ text: match.text, annotation: oldClaim.annotation });
+  }
+
+  if (insertions.length === 0) {
+    return { content: newContent, carried, lost };
+  }
+
+  const lines = newContent.split(/\r?\n/);
+  // Insert bottom-up so earlier insertions do not shift later line numbers.
+  insertions
+    .sort((left, right) => right.afterLine - left.afterLine)
+    .forEach((insertion) => {
+      lines.splice(insertion.afterLine, 0, `  ${formatAnnotationBody(insertion.annotation)}`);
+    });
+
+  return { content: lines.join("\n"), carried, lost };
+}
+
 export type ClaimLocation =
   | { ok: true; claim: AnchorClaim }
   | { ok: false; code: "claim_not_found" | "claim_ambiguous"; candidates: string[] };

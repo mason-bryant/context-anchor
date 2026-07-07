@@ -135,7 +135,9 @@ import { parseProjectMappings } from "./projectMappings.js";
 import { buildPeopleIndex, parsePeopleRegistry } from "./peopleRegistry.js";
 import { runValidators } from "./validators/pipeline.js";
 import {
+  carryClaimAnnotations,
   extractClaims,
+  formatAnnotationBody,
   locateClaim,
   parseAnnotationBody,
   upsertClaimAnnotation,
@@ -615,17 +617,60 @@ export class AnchorService {
       }
     }
     const oldContent = await this.repo.readRaw(input.name);
+
+    // Provenance annotations are indented lines under claim bullets, so a
+    // section rewrite that regenerates bullets silently drops them. Carry
+    // valid annotations onto byte-identical unannotated bullets, and gate
+    // writes that would lose annotations behind explicit approval.
+    // annotateClaim opts out: it is the sanctioned single-annotation editor.
+    let content = input.content;
+    const carryWarnings: ValidationViolation[] = [];
+    if (oldContent !== undefined && input.carryClaimAnnotations !== false) {
+      const carry = carryClaimAnnotations(oldContent, content);
+      content = carry.content;
+      for (const entry of carry.carried) {
+        carryWarnings.push({
+          severity: "WARN",
+          code: "claim_annotation_carried",
+          message: `Carried provenance ${formatAnnotationBody(entry.annotation)} onto unchanged claim "${entry.text}"; include annotations in rewrites to avoid relying on carry-over.`,
+        });
+      }
+      if (carry.lost.length > 0) {
+        const lostList = carry.lost
+          .map((entry) => `"${entry.text}" ${formatAnnotationBody(entry.annotation)}`)
+          .join("; ");
+        if (!input.approved) {
+          return {
+            warnings: [
+              {
+                severity: "BLOCK",
+                code: "claim_annotation_lost",
+                message: `This write drops provenance from ${carry.lost.length} claim(s) whose text changed or was removed: ${lostList}. Carry the annotation onto the reworded claim (re-verify if the meaning changed), use annotateClaim with clear: true, or retry with approved: true to drop it deliberately.`,
+              },
+              ...carryWarnings,
+            ],
+            requiresApproval: true,
+          };
+        }
+        carryWarnings.push({
+          severity: "WARN",
+          code: "claim_annotation_lost",
+          message: `Dropped provenance (approved) from: ${lostList}.`,
+        });
+      }
+    }
+
     const violations = await runValidators({
       name: resolved.name,
       path: resolved.path,
       oldContent,
-      newContent: input.content,
+      newContent: content,
       repo: this.repo,
       migrationWarnOnly: this.options.migrationWarnOnly,
       approved: input.approved ?? false,
     });
     const blocks = violations.filter((violation) => violation.severity === "BLOCK");
-    const warnings = violations.filter((violation) => violation.severity === "WARN");
+    const warnings = [...violations.filter((violation) => violation.severity === "WARN"), ...carryWarnings];
 
     if (blocks.length > 0) {
       const approvalBlock = blocks.some((violation) => violation.code === "requires_approval");
@@ -637,10 +682,10 @@ export class AnchorService {
 
     const version = await this.repo.commitAnchor({
       name: input.name,
-      content: input.content,
+      content,
       message: input.message,
-      sectionsChanged: oldContent ? changedSections(oldContent, input.content) : undefined,
-      lastValidatedChanged: oldContent ? lastValidatedChanged(oldContent, input.content) : undefined,
+      sectionsChanged: oldContent !== undefined ? changedSections(oldContent, content) : undefined,
+      lastValidatedChanged: oldContent !== undefined ? lastValidatedChanged(oldContent, content) : undefined,
       coAuthor: input.coAuthor,
       push: this.options.pushOnWrite,
     });
@@ -1620,6 +1665,9 @@ None.
       approved: input.approved,
       coAuthor: input.coAuthor,
       expectedFileCommit: input.expectedFileCommit,
+      // This is the sanctioned single-annotation editor: carry/loss guarding
+      // would resurrect cleared annotations or block intentional edits.
+      carryClaimAnnotations: false,
       mutate: (old) => upsertClaimAnnotation(old, claimMatch, annotation),
     });
   }
@@ -1946,6 +1994,7 @@ None.
     approved?: boolean;
     coAuthor?: string;
     expectedFileCommit?: string;
+    carryClaimAnnotations?: boolean;
     mutate: (oldContent: string) => string;
   }): Promise<WriteAnchorResult> {
     if (isBuiltInAnchorName(input.name)) {
@@ -1998,6 +2047,9 @@ None.
       approved: input.approved,
       coAuthor: input.coAuthor,
       expectedFileCommit: input.expectedFileCommit,
+      ...(input.carryClaimAnnotations !== undefined
+        ? { carryClaimAnnotations: input.carryClaimAnnotations }
+        : {}),
     });
   }
 
