@@ -134,6 +134,14 @@ import { candidateBoostMap, resolveCandidateProjects } from "./projectResolution
 import { parseProjectMappings } from "./projectMappings.js";
 import { buildPeopleIndex, parsePeopleRegistry } from "./peopleRegistry.js";
 import { runValidators } from "./validators/pipeline.js";
+import {
+  extractClaims,
+  locateClaim,
+  parseAnnotationBody,
+  upsertClaimAnnotation,
+  type AnchorClaim,
+  type ClaimStatus,
+} from "./claims.js";
 
 const BM25_INDEX_READ_CONCURRENCY = 8;
 
@@ -1463,6 +1471,127 @@ None.
     });
 
     return { tasks: rows };
+  }
+
+  async listClaims(input: {
+    name?: string;
+    project?: string;
+    status?: ClaimStatus;
+  } = {}): Promise<{
+    claims: (AnchorClaim & { anchor: string })[];
+    summary: { total: number; annotated: number; unannotated: number; malformed: number };
+    projectFilter?: ProjectFilterResolution;
+  }> {
+    let names: string[];
+    let projectFilter: ProjectFilterResolution | undefined;
+
+    if (input.name) {
+      names = [this.repo.resolveAnchor(input.name).name];
+    } else {
+      const resolved = await this.resolveProjectFilter(input.project);
+      projectFilter = resolved.projectFilter;
+      const metas = await this.repo.listAnchors(
+        resolved.effectiveProject ? { project: resolved.effectiveProject } : {},
+      );
+      names = metas.map((meta) => meta.name);
+    }
+
+    const claims: (AnchorClaim & { anchor: string })[] = [];
+    for (const name of names) {
+      if (isBuiltInAnchorName(name)) {
+        continue;
+      }
+      const content = await this.repo.readRaw(name);
+      if (content === undefined) {
+        continue;
+      }
+      for (const claim of extractClaims(content)) {
+        if (input.status && claim.status !== input.status) {
+          continue;
+        }
+        claims.push({ anchor: name, ...claim });
+      }
+    }
+
+    const summary = {
+      total: claims.length,
+      annotated: claims.filter((claim) => claim.status === "annotated").length,
+      unannotated: claims.filter((claim) => claim.status === "unannotated").length,
+      malformed: claims.filter((claim) => claim.status === "malformed").length,
+    };
+
+    return { claims, summary, ...(projectFilter ? { projectFilter } : {}) };
+  }
+
+  async annotateClaim(input: {
+    name: string;
+    claim: string;
+    src?: string;
+    observed?: string;
+    conf?: string;
+    id?: string;
+    clear?: boolean;
+    message?: string;
+    approved?: boolean;
+    coAuthor?: string;
+    expectedFileCommit?: string;
+  }): Promise<WriteAnchorResult> {
+    const annotationBody = input.clear
+      ? null
+      : `src: ${input.src ?? ""}; observed: ${input.observed ?? ""}; conf: ${input.conf ?? ""}${
+          input.id ? `; id: ${input.id}` : ""
+        }`;
+
+    let parsedAnnotation = null;
+    if (annotationBody !== null) {
+      const parsed = parseAnnotationBody(annotationBody);
+      if (!parsed.ok) {
+        return {
+          warnings: parsed.errors.map((error) => ({
+            severity: "BLOCK" as const,
+            code: "claim_annotation_invalid",
+            message: error,
+          })),
+        };
+      }
+      parsedAnnotation = parsed.annotation;
+    }
+
+    const content = await this.repo.readRaw(input.name);
+    if (content !== undefined) {
+      const location = locateClaim(content, input.claim);
+      if (!location.ok) {
+        return {
+          warnings: [
+            {
+              severity: "BLOCK",
+              code: location.code,
+              message:
+                location.code === "claim_not_found"
+                  ? `No claim in ${input.name} matches "${input.claim}". Claims are top-level bullets in Current State, Decisions, or Constraints.`
+                  : `Claim match "${input.claim}" is ambiguous in ${input.name}. Matches: ${location.candidates
+                      .map((candidate) => `"${candidate}"`)
+                      .join(", ")}. Use a longer unique fragment.`,
+            },
+          ],
+        };
+      }
+    }
+
+    const claimMatch = input.claim;
+    const annotation = parsedAnnotation;
+    return this.applyAnchorContentPatch({
+      name: input.name,
+      message:
+        input.message ??
+        (annotation === null
+          ? `chore: clear claim provenance in ${input.name}`
+          : `chore: annotate claim provenance in ${input.name}`),
+      approved: input.approved,
+      coAuthor: input.coAuthor,
+      expectedFileCommit: input.expectedFileCommit,
+      mutate: (old) => upsertClaimAnnotation(old, claimMatch, annotation),
+    });
   }
 
   async updateAnchorSection(input: {
