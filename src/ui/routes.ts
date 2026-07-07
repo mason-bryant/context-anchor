@@ -328,10 +328,29 @@ export function registerUiRoutes(
       const statusRaw = optionalQueryString(req, "status");
       const status =
         statusRaw === "annotated" || statusRaw === "unannotated" || statusRaw === "malformed" ? statusRaw : undefined;
+      const sectionRaw = optionalQueryString(req, "section");
+      const section =
+        sectionRaw === "Current State" || sectionRaw === "Decisions" || sectionRaw === "Constraints"
+          ? sectionRaw
+          : undefined;
+      const confRaw = optionalQueryString(req, "conf");
+      const conf = confRaw === "high" || confRaw === "medium" || confRaw === "low" ? confRaw : undefined;
+      const q = optionalQueryString(req, "q");
+      // These feed lexicographic ISO-date comparisons; drop malformed values.
+      const isoDate = /^\d{4}-\d{2}-\d{2}$/;
+      const observedBeforeRaw = optionalQueryString(req, "observedBefore");
+      const observedBefore = observedBeforeRaw && isoDate.test(observedBeforeRaw) ? observedBeforeRaw : undefined;
+      const observedAfterRaw = optionalQueryString(req, "observedAfter");
+      const observedAfter = observedAfterRaw && isoDate.test(observedAfterRaw) ? observedAfterRaw : undefined;
       return service.listClaims({
         ...(name ? { name } : {}),
         ...(project ? { project } : {}),
         ...(status ? { status } : {}),
+        ...(section ? { section } : {}),
+        ...(conf ? { conf } : {}),
+        ...(q ? { q } : {}),
+        ...(observedBefore ? { observedBefore } : {}),
+        ...(observedAfter ? { observedAfter } : {}),
       });
     }),
   );
