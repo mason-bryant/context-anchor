@@ -328,10 +328,25 @@ export function registerUiRoutes(
       const statusRaw = optionalQueryString(req, "status");
       const status =
         statusRaw === "annotated" || statusRaw === "unannotated" || statusRaw === "malformed" ? statusRaw : undefined;
+      const sectionRaw = optionalQueryString(req, "section");
+      const section =
+        sectionRaw === "Current State" || sectionRaw === "Decisions" || sectionRaw === "Constraints"
+          ? sectionRaw
+          : undefined;
+      const confRaw = optionalQueryString(req, "conf");
+      const conf = confRaw === "high" || confRaw === "medium" || confRaw === "low" ? confRaw : undefined;
+      const q = optionalQueryString(req, "q");
+      const observedBefore = optionalQueryString(req, "observedBefore");
+      const observedAfter = optionalQueryString(req, "observedAfter");
       return service.listClaims({
         ...(name ? { name } : {}),
         ...(project ? { project } : {}),
         ...(status ? { status } : {}),
+        ...(section ? { section } : {}),
+        ...(conf ? { conf } : {}),
+        ...(q ? { q } : {}),
+        ...(observedBefore ? { observedBefore } : {}),
+        ...(observedAfter ? { observedAfter } : {}),
       });
     }),
   );

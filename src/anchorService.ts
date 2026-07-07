@@ -1477,6 +1477,11 @@ None.
     name?: string;
     project?: string;
     status?: ClaimStatus;
+    section?: string;
+    conf?: string;
+    q?: string;
+    observedBefore?: string;
+    observedAfter?: string;
   } = {}): Promise<{
     claims: (AnchorClaim & { anchor: string })[];
     summary: { total: number; annotated: number; unannotated: number; malformed: number };
@@ -1510,7 +1515,7 @@ None.
       }
     }
 
-    // Coverage summary always reflects the full scope; status filters only the returned list.
+    // Coverage summary always reflects the full scope; filters apply only to the returned list.
     const summary = {
       total: allClaims.length,
       annotated: allClaims.filter((claim) => claim.status === "annotated").length,
@@ -1518,7 +1523,32 @@ None.
       malformed: allClaims.filter((claim) => claim.status === "malformed").length,
     };
 
-    const claims = input.status ? allClaims.filter((claim) => claim.status === input.status) : allClaims;
+    const needle = input.q?.trim().toLowerCase();
+    const claims = allClaims.filter((claim) => {
+      if (input.status && claim.status !== input.status) {
+        return false;
+      }
+      if (input.section && claim.section !== input.section) {
+        return false;
+      }
+      if (input.conf && claim.annotation?.conf !== input.conf) {
+        return false;
+      }
+      if (
+        needle &&
+        !claim.text.toLowerCase().includes(needle) &&
+        !(claim.annotation && claim.annotation.src.toLowerCase().includes(needle))
+      ) {
+        return false;
+      }
+      if (input.observedBefore && (!claim.annotation || claim.annotation.observed >= input.observedBefore)) {
+        return false;
+      }
+      if (input.observedAfter && (!claim.annotation || claim.annotation.observed < input.observedAfter)) {
+        return false;
+      }
+      return true;
+    });
 
     return { claims, summary, ...(projectFilter ? { projectFilter } : {}) };
   }

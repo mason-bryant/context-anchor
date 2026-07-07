@@ -374,6 +374,34 @@ export const UI_HTML = `<!doctype html>
                   <option value="annotated">Annotated only</option>
                   <option value="malformed">Malformed only</option>
                 </select>
+                <select id="claims-section-filter" aria-label="Filter claims by section">
+                  <option value="">All sections</option>
+                  <option value="Current State">Current State</option>
+                  <option value="Decisions">Decisions</option>
+                  <option value="Constraints">Constraints</option>
+                </select>
+                <select id="claims-conf-filter" aria-label="Filter claims by confidence">
+                  <option value="">Any confidence</option>
+                  <option value="high">high</option>
+                  <option value="medium">medium</option>
+                  <option value="low">low</option>
+                </select>
+                <input id="claims-search" type="search" placeholder="Search text or src" aria-label="Search claims">
+                <label class="task-report-field">Observed before<input id="claims-observed-before" type="date" aria-label="Only claims observed before this date"></label>
+                <select id="claims-group-by" aria-label="Group claims">
+                  <option value="anchor">Group: anchor</option>
+                  <option value="section">Group: section</option>
+                  <option value="status">Group: status</option>
+                  <option value="conf">Group: confidence</option>
+                  <option value="project">Group: project</option>
+                </select>
+                <select id="claims-sort" aria-label="Sort claims">
+                  <option value="document">Sort: document order</option>
+                  <option value="least-trusted">Sort: least trusted first</option>
+                  <option value="oldest-observed">Sort: oldest observed</option>
+                  <option value="newest-observed">Sort: newest observed</option>
+                  <option value="text">Sort: text A-Z</option>
+                </select>
                 <button id="claims-refresh" type="button">Refresh</button>
               </div>
             </div>
@@ -4203,9 +4231,17 @@ export const UI_JS = `(function () {
     state.claimsLoading = true;
     var project = el("claims-project-filter").value || "";
     var status = el("claims-status-filter").value || "";
+    var section = el("claims-section-filter").value || "";
+    var conf = el("claims-conf-filter").value || "";
+    var search = (el("claims-search").value || "").trim();
+    var observedBefore = el("claims-observed-before").value || "";
     var qs = [];
     if (project) qs.push("project=" + encodeURIComponent(project));
     if (status) qs.push("status=" + encodeURIComponent(status));
+    if (section) qs.push("section=" + encodeURIComponent(section));
+    if (conf) qs.push("conf=" + encodeURIComponent(conf));
+    if (search) qs.push("q=" + encodeURIComponent(search));
+    if (observedBefore) qs.push("observedBefore=" + encodeURIComponent(observedBefore));
     var url = "/api/ui/claims" + (qs.length ? "?" + qs.join("&") : "");
     try {
       var result = await api(url);
@@ -4245,28 +4281,89 @@ export const UI_JS = `(function () {
     emptyEl.hidden = true;
     list.hidden = false;
 
-    var byAnchor = {};
-    var anchorOrder = [];
-    claims.forEach(function (claim) {
-      if (!byAnchor[claim.anchor]) {
-        byAnchor[claim.anchor] = [];
-        anchorOrder.push(claim.anchor);
-      }
-      byAnchor[claim.anchor].push(claim);
+    var groupBy = el("claims-group-by").value || "anchor";
+    var sortMode = el("claims-sort").value || "document";
+
+    var sorted = claims.slice().sort(function (left, right) {
+      return compareClaims(left, right, sortMode);
     });
 
-    anchorOrder.forEach(function (anchor) {
+    var byGroup = {};
+    var groupOrder = [];
+    sorted.forEach(function (claim) {
+      var key = claimGroupKey(claim, groupBy);
+      if (!byGroup[key]) {
+        byGroup[key] = [];
+        groupOrder.push(key);
+      }
+      byGroup[key].push(claim);
+    });
+    if (groupBy !== "anchor") {
+      groupOrder.sort();
+    }
+
+    groupOrder.forEach(function (key) {
       var heading = document.createElement("h3");
       heading.className = "claims-anchor-heading";
-      var link = document.createElement("a");
-      link.href = "?anchor=" + encodeURIComponent(anchor);
-      link.textContent = anchor;
-      heading.appendChild(link);
+      if (groupBy === "anchor") {
+        var link = document.createElement("a");
+        link.href = "?anchor=" + encodeURIComponent(key);
+        link.textContent = key + " (" + byGroup[key].length + ")";
+        heading.appendChild(link);
+      } else {
+        heading.textContent = key + " (" + byGroup[key].length + ")";
+      }
       list.appendChild(heading);
-      byAnchor[anchor].forEach(function (claim) {
+      byGroup[key].forEach(function (claim) {
         list.appendChild(renderClaimRow(claim));
       });
     });
+  }
+
+  function claimProjectSlug(claim) {
+    var match = /^projects\\/([^/]+)\\//.exec(claim.anchor);
+    return match ? match[1] : claim.anchor.split("/")[0];
+  }
+
+  function claimGroupKey(claim, groupBy) {
+    if (groupBy === "section") return claim.section;
+    if (groupBy === "status") return claim.status;
+    if (groupBy === "conf") return claim.annotation ? "conf: " + claim.annotation.conf : "no annotation";
+    if (groupBy === "project") return claimProjectSlug(claim);
+    return claim.anchor;
+  }
+
+  var CLAIM_TRUST_ORDER = { malformed: 0, unannotated: 1, low: 2, medium: 3, high: 4 };
+
+  function claimTrustRank(claim) {
+    if (claim.status === "annotated" && claim.annotation) {
+      return CLAIM_TRUST_ORDER[claim.annotation.conf];
+    }
+    return CLAIM_TRUST_ORDER[claim.status] || 0;
+  }
+
+  function documentOrderCompare(left, right) {
+    return left.anchor === right.anchor ? left.line - right.line : left.anchor.localeCompare(right.anchor);
+  }
+
+  function compareClaims(left, right, sortMode) {
+    if (sortMode === "least-trusted") {
+      return claimTrustRank(left) - claimTrustRank(right) || documentOrderCompare(left, right);
+    }
+    if (sortMode === "oldest-observed" || sortMode === "newest-observed") {
+      // Claims without an observed date sort after dated claims in both directions.
+      var leftDate = left.annotation ? left.annotation.observed : "";
+      var rightDate = right.annotation ? right.annotation.observed : "";
+      if (!leftDate && !rightDate) return documentOrderCompare(left, right);
+      if (!leftDate) return 1;
+      if (!rightDate) return -1;
+      var cmp = sortMode === "oldest-observed" ? leftDate.localeCompare(rightDate) : rightDate.localeCompare(leftDate);
+      return cmp || documentOrderCompare(left, right);
+    }
+    if (sortMode === "text") {
+      return left.text.localeCompare(right.text) || documentOrderCompare(left, right);
+    }
+    return documentOrderCompare(left, right);
   }
 
   function renderClaimRow(claim) {
@@ -6715,11 +6812,19 @@ export const UI_JS = `(function () {
     el("claims-refresh").addEventListener("click", function () {
       loadClaims();
     });
-    ["claims-project-filter", "claims-status-filter"].forEach(function (id) {
+    ["claims-project-filter", "claims-status-filter", "claims-section-filter", "claims-conf-filter", "claims-observed-before"].forEach(function (id) {
       el(id).addEventListener("change", function () {
         loadClaims();
       });
     });
+    ["claims-group-by", "claims-sort"].forEach(function (id) {
+      el(id).addEventListener("change", function () {
+        renderClaims();
+      });
+    });
+    el("claims-search").addEventListener("input", debounce(function () {
+      loadClaims();
+    }, 300));
     el("tasks-refresh").addEventListener("click", function () {
       state.tasks = [];
       loadTasks().catch(function (error) { setBanner(error.message, "error"); });

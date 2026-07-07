@@ -864,16 +864,21 @@ the index when your workflow checks in that file.`,
     {
       title: "List Claim Provenance",
       description:
-        "List claims (top-level bullets in Current State, Decisions, and Constraints sections) with their provenance annotations across one anchor or a project. Use status: unannotated to find legacy claims with no provenance, or status: malformed to find broken annotations. Returns per-claim src/observed/conf plus a coverage summary.",
+        "List claims (top-level bullets in Current State, Decisions, and Constraints sections) with their provenance annotations across one anchor or a project. Use status: unannotated to find legacy claims with no provenance, status: malformed to find broken annotations, conf/observedBefore to build re-verification queues (e.g. low-confidence claims observed before a cutoff), section to scope to one section kind, and q for text search over claim text and src. The coverage summary always reflects the full scope; filters narrow only the returned list.",
       inputSchema: z.object({
         name: z.string().optional().describe("Limit to one anchor by name."),
         project: z.string().optional().describe("Limit to a project slug (alias-aware)."),
         status: z.enum(["annotated", "unannotated", "malformed"]).optional().describe("Filter by provenance status."),
+        section: z.enum(["Current State", "Decisions", "Constraints"]).optional().describe("Filter by claim section."),
+        conf: ClaimConfidenceSchema.optional().describe("Filter annotated claims by stated confidence."),
+        q: z.string().optional().describe("Case-insensitive text search over claim text and annotation src."),
+        observedBefore: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().describe("Only annotated claims observed before this date (exclusive) — a re-verification queue."),
+        observedAfter: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().describe("Only annotated claims observed on or after this date."),
       }),
       annotations: { destructiveHint: false, idempotentHint: true },
     },
-    async ({ name, project, status }) => {
-      const result = await service.listClaims({ name, project, status });
+    async ({ name, project, status, section, conf, q, observedBefore, observedAfter }) => {
+      const result = await service.listClaims({ name, project, status, section, conf, q, observedBefore, observedAfter });
       return jsonResult(result, false);
     },
   );

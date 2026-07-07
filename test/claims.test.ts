@@ -259,6 +259,33 @@ None.
     expect(unannotated.summary).toEqual({ total: 4, annotated: 1, unannotated: 3, malformed: 0 });
   });
 
+  it("filters claims by section, confidence, text search, and observed window", async () => {
+    await service.writeAnchor({
+      name: "projects/demo/claims-demo",
+      content: anchorContent("\n- Another dated claim.\n  {src: docs/spec.md; observed: 2026-01-15; conf: low}"),
+      message: "test: add claims demo",
+    });
+
+    const section = await service.listClaims({ project: "demo", section: "Decisions" });
+    expect(section.claims.map((claim) => claim.text)).toEqual(["A decision claim."]);
+    expect(section.summary.total).toBe(5);
+
+    const lowConf = await service.listClaims({ project: "demo", conf: "low" });
+    expect(lowConf.claims.map((claim) => claim.text)).toEqual(["Another dated claim."]);
+
+    const byText = await service.listClaims({ project: "demo", q: "ANNOTATED CLAIM" });
+    expect(byText.claims.map((claim) => claim.text)).toEqual(["Annotated claim about the system."]);
+
+    const bySrc = await service.listClaims({ project: "demo", q: "docs/spec" });
+    expect(bySrc.claims.map((claim) => claim.text)).toEqual(["Another dated claim."]);
+
+    const reverify = await service.listClaims({ project: "demo", observedBefore: "2026-06-01" });
+    expect(reverify.claims.map((claim) => claim.text)).toEqual(["Another dated claim."]);
+
+    const recent = await service.listClaims({ project: "demo", observedAfter: "2026-06-01" });
+    expect(recent.claims.map((claim) => claim.text)).toEqual(["Annotated claim about the system."]);
+  });
+
   it("annotates and clears a claim through annotateClaim", async () => {
     await service.writeAnchor({
       name: "projects/demo/claims-demo",
