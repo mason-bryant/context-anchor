@@ -101,7 +101,9 @@ None.
     await repo.listAnchors();
     await repo.listAnchors();
 
-    expect(gitLogFollowCalls(rawSpy)).toHaveLength(1);
+    // createdAt comes from a single batched history walk, never per-path --follow calls.
+    expect(gitLogFollowCalls(rawSpy)).toHaveLength(0);
+    expect(batchedHistoryWalkCalls(rawSpy)).toHaveLength(1);
 
     rawSpy.mockClear();
     await repo.commitAnchor({
@@ -109,9 +111,12 @@ None.
       content: anchorContent("Cache Test Updated"),
       message: "test: update cache test",
     });
-    await repo.listAnchors();
+    const listed = await repo.listAnchors();
 
-    expect(gitLogFollowCalls(rawSpy)).toHaveLength(1);
+    // The in-process commit is folded in incrementally: no rebuild, still no per-path calls.
+    expect(gitLogFollowCalls(rawSpy)).toHaveLength(0);
+    expect(batchedHistoryWalkCalls(rawSpy)).toHaveLength(0);
+    expect(listed.find((meta) => meta.name === "shared/cache-test.md")?.createdAt).toBeTruthy();
   });
 
   it("does not cache oversized file bodies", async () => {
@@ -234,5 +239,12 @@ function gitLogFollowCalls(spy: { mock: { calls: unknown[][] } }): unknown[][] {
   return spy.mock.calls.filter((call) => {
     const args = call[0];
     return Array.isArray(args) && args[0] === "log" && args.includes("--follow");
+  });
+}
+
+function batchedHistoryWalkCalls(spy: { mock: { calls: unknown[][] } }): unknown[][] {
+  return spy.mock.calls.filter((call) => {
+    const args = call[0];
+    return Array.isArray(args) && args.includes("log") && args.includes("--name-status");
   });
 }
