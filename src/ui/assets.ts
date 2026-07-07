@@ -1595,6 +1595,10 @@ textarea {
   align-items: center;
   gap: 6px;
 }
+.claims-group-label {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
 .claim-row {
   border: 1px solid var(--border, #d0d7de);
   border-radius: 6px;
@@ -4317,11 +4321,13 @@ export const UI_JS = `(function () {
 
       if (groupBy === "anchor") {
         var link = document.createElement("a");
+        link.className = "claims-group-label";
         link.href = "?anchor=" + encodeURIComponent(group.key);
         link.textContent = group.key + " (" + group.claims.length + ")";
         heading.appendChild(link);
       } else {
         var label = document.createElement("span");
+        label.className = "claims-group-label";
         label.textContent = group.key + " (" + group.claims.length + ")";
         heading.appendChild(label);
       }
