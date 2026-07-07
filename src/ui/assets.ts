@@ -2179,7 +2179,15 @@ export const UI_JS = `(function () {
     "tasksPriorityMax",
     "tasksModifiedAfter",
     "tasksNoDue",
-    "tasksUnassigned"
+    "tasksUnassigned",
+    "claimsProject",
+    "claimsStatus",
+    "claimsSection",
+    "claimsConf",
+    "claimsSearch",
+    "claimsObservedBefore",
+    "claimsGroup",
+    "claimsSort"
   ];
 
   var state = {
@@ -2437,6 +2445,15 @@ export const UI_JS = `(function () {
     setControlValue("tasks-modified-after", state.tasksModifiedAfter);
     setControlChecked("tasks-no-due", state.tasksNoDue);
     setControlChecked("tasks-unassigned", state.tasksUnassigned);
+
+    setSelectValueAllowingNew("claims-project-filter", params.get("claimsProject") || "");
+    setControlValue("claims-status-filter", params.get("claimsStatus") || "");
+    setControlValue("claims-section-filter", params.get("claimsSection") || "");
+    setControlValue("claims-conf-filter", params.get("claimsConf") || "");
+    setControlValue("claims-search", params.get("claimsSearch") || "");
+    setControlValue("claims-observed-before", params.get("claimsObservedBefore") || "");
+    setControlValue("claims-group-by", params.get("claimsGroup") || "anchor");
+    setControlValue("claims-sort", params.get("claimsSort") || "document");
   }
 
   function urlForState(overrides) {
@@ -2531,6 +2548,15 @@ export const UI_JS = `(function () {
     if (controlChecked("tasks-unassigned", state.tasksUnassigned)) {
       params.set("tasksUnassigned", "true");
     }
+
+    setParam(params, "claimsProject", controlValue("claims-project-filter", sourceParams.get("claimsProject") || ""));
+    setParam(params, "claimsStatus", controlValue("claims-status-filter", sourceParams.get("claimsStatus") || ""));
+    setParam(params, "claimsSection", controlValue("claims-section-filter", sourceParams.get("claimsSection") || ""));
+    setParam(params, "claimsConf", controlValue("claims-conf-filter", sourceParams.get("claimsConf") || ""));
+    setParam(params, "claimsSearch", controlValue("claims-search", sourceParams.get("claimsSearch") || ""));
+    setParam(params, "claimsObservedBefore", controlValue("claims-observed-before", sourceParams.get("claimsObservedBefore") || ""));
+    setNonDefaultParam(params, "claimsGroup", controlValue("claims-group-by", sourceParams.get("claimsGroup") || "anchor"), "anchor");
+    setNonDefaultParam(params, "claimsSort", controlValue("claims-sort", sourceParams.get("claimsSort") || "document"), "document");
 
     return params;
   }
@@ -2976,6 +3002,9 @@ export const UI_JS = `(function () {
     }
     if (state.activeTab === "tasks") {
       await loadTasks();
+    }
+    if (state.activeTab === "claims") {
+      await loadClaims();
     }
     // Anchors are now loaded; re-render the registry views so soft project-slug
     // validation (which reads state.anchors) runs even when the user landed
@@ -6857,15 +6886,18 @@ export const UI_JS = `(function () {
     });
     ["claims-project-filter", "claims-status-filter", "claims-section-filter", "claims-conf-filter", "claims-observed-before"].forEach(function (id) {
       el(id).addEventListener("change", function () {
+        updateLocationFromState({ anchor: null, view: "claims", history: "push" });
         loadClaims();
       });
     });
     ["claims-group-by", "claims-sort"].forEach(function (id) {
       el(id).addEventListener("change", function () {
+        updateLocationFromState({ anchor: null, view: "claims", history: "push" });
         renderClaims();
       });
     });
     el("claims-search").addEventListener("input", debounce(function () {
+      updateLocationFromState({ anchor: null, view: "claims", history: "replace" });
       loadClaims();
     }, 300));
     el("tasks-refresh").addEventListener("click", function () {

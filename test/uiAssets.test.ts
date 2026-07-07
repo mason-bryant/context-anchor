@@ -1388,3 +1388,23 @@ describe("claims grouping and sorting", () => {
     expect(hooks.claimProjectSlug(claim({ anchor: "agent-rules/rules.md" }))).toBe("agent-rules");
   });
 });
+
+describe("claims URL state", () => {
+  it("preserves claims filters when regenerating URLs", () => {
+    const hooks = loadHooks({
+      search: "?view=claims&claimsProject=demo&claimsStatus=unannotated&claimsSearch=auth&claimsSort=least-trusted",
+    });
+    const href = hooks.anchorHref("projects/demo/demo.md");
+    expect(href).toContain("claimsProject=demo");
+    expect(href).toContain("claimsStatus=unannotated");
+    expect(href).toContain("claimsSearch=auth");
+    expect(href).toContain("claimsSort=least-trusted");
+  });
+
+  it("omits default claims group and sort from URLs", () => {
+    const hooks = loadHooks({ search: "?view=claims&claimsGroup=anchor&claimsSort=document" });
+    const href = hooks.anchorHref("projects/demo/demo.md");
+    expect(href).not.toContain("claimsGroup");
+    expect(href).not.toContain("claimsSort");
+  });
+});
