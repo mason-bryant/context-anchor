@@ -1591,6 +1591,13 @@ textarea {
 .claims-anchor-heading {
   margin: 18px 0 6px;
   font-size: 0.95rem;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.claims-group-label {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 .claim-row {
   border: 1px solid var(--border, #d0d7de);
@@ -2172,7 +2179,15 @@ export const UI_JS = `(function () {
     "tasksPriorityMax",
     "tasksModifiedAfter",
     "tasksNoDue",
-    "tasksUnassigned"
+    "tasksUnassigned",
+    "claimsProject",
+    "claimsStatus",
+    "claimsSection",
+    "claimsConf",
+    "claimsSearch",
+    "claimsObservedBefore",
+    "claimsGroup",
+    "claimsSort"
   ];
 
   var state = {
@@ -2215,6 +2230,7 @@ export const UI_JS = `(function () {
     tasksNoDue: false,
     tasksUnassigned: false,
     collapsedTaskGroups: new Set(),
+    collapsedClaimGroups: new Set(),
     taskOwnerMatchCache: [],
     taskOwnerSearchTimer: null,
     taskOwnerSearchSeq: 0,
@@ -2429,6 +2445,15 @@ export const UI_JS = `(function () {
     setControlValue("tasks-modified-after", state.tasksModifiedAfter);
     setControlChecked("tasks-no-due", state.tasksNoDue);
     setControlChecked("tasks-unassigned", state.tasksUnassigned);
+
+    setSelectValueAllowingNew("claims-project-filter", params.get("claimsProject") || "");
+    setControlValue("claims-status-filter", params.get("claimsStatus") || "");
+    setControlValue("claims-section-filter", params.get("claimsSection") || "");
+    setControlValue("claims-conf-filter", params.get("claimsConf") || "");
+    setControlValue("claims-search", params.get("claimsSearch") || "");
+    setControlValue("claims-observed-before", params.get("claimsObservedBefore") || "");
+    setControlValue("claims-group-by", params.get("claimsGroup") || "anchor");
+    setControlValue("claims-sort", params.get("claimsSort") || "document");
   }
 
   function urlForState(overrides) {
@@ -2523,6 +2548,15 @@ export const UI_JS = `(function () {
     if (controlChecked("tasks-unassigned", state.tasksUnassigned)) {
       params.set("tasksUnassigned", "true");
     }
+
+    setParam(params, "claimsProject", controlValue("claims-project-filter", sourceParams.get("claimsProject") || ""));
+    setParam(params, "claimsStatus", controlValue("claims-status-filter", sourceParams.get("claimsStatus") || ""));
+    setParam(params, "claimsSection", controlValue("claims-section-filter", sourceParams.get("claimsSection") || ""));
+    setParam(params, "claimsConf", controlValue("claims-conf-filter", sourceParams.get("claimsConf") || ""));
+    setParam(params, "claimsSearch", controlValue("claims-search", sourceParams.get("claimsSearch") || ""));
+    setParam(params, "claimsObservedBefore", controlValue("claims-observed-before", sourceParams.get("claimsObservedBefore") || ""));
+    setNonDefaultParam(params, "claimsGroup", controlValue("claims-group-by", sourceParams.get("claimsGroup") || "anchor"), "anchor");
+    setNonDefaultParam(params, "claimsSort", controlValue("claims-sort", sourceParams.get("claimsSort") || "document"), "document");
 
     return params;
   }
@@ -2968,6 +3002,9 @@ export const UI_JS = `(function () {
     }
     if (state.activeTab === "tasks") {
       await loadTasks();
+    }
+    if (state.activeTab === "claims") {
+      await loadClaims();
     }
     // Anchors are now loaded; re-render the registry views so soft project-slug
     // validation (which reads state.anchors) runs even when the user landed
@@ -4287,15 +4324,46 @@ export const UI_JS = `(function () {
     claimGroupsForDisplay(claims, groupBy, sortMode).forEach(function (group) {
       var heading = document.createElement("h3");
       heading.className = "claims-anchor-heading";
+
+      // Collapse state is keyed per group mode so switching modes never
+      // misapplies a collapsed key from another grouping.
+      var collapseKey = groupBy + "\\u0000" + group.key;
+      var collapsed = state.collapsedClaimGroups.has(collapseKey);
+      var toggle = document.createElement("button");
+      toggle.type = "button";
+      toggle.className = "task-group-toggle";
+      toggle.setAttribute("aria-expanded", collapsed ? "false" : "true");
+      toggle.title = collapsed ? "Expand group claims" : "Collapse group claims";
+      var triangle = document.createElement("span");
+      triangle.className = "task-group-triangle";
+      triangle.setAttribute("aria-hidden", "true");
+      toggle.appendChild(triangle);
+      toggle.addEventListener("click", function () {
+        if (state.collapsedClaimGroups.has(collapseKey)) {
+          state.collapsedClaimGroups.delete(collapseKey);
+        } else {
+          state.collapsedClaimGroups.add(collapseKey);
+        }
+        renderClaims();
+      });
+      heading.appendChild(toggle);
+
       if (groupBy === "anchor") {
         var link = document.createElement("a");
+        link.className = "claims-group-label";
         link.href = "?anchor=" + encodeURIComponent(group.key);
         link.textContent = group.key + " (" + group.claims.length + ")";
         heading.appendChild(link);
       } else {
-        heading.textContent = group.key + " (" + group.claims.length + ")";
+        var label = document.createElement("span");
+        label.className = "claims-group-label";
+        label.textContent = group.key + " (" + group.claims.length + ")";
+        heading.appendChild(label);
       }
       list.appendChild(heading);
+      if (collapsed) {
+        return;
+      }
       group.claims.forEach(function (claim) {
         list.appendChild(renderClaimRow(claim));
       });
@@ -6818,15 +6886,18 @@ export const UI_JS = `(function () {
     });
     ["claims-project-filter", "claims-status-filter", "claims-section-filter", "claims-conf-filter", "claims-observed-before"].forEach(function (id) {
       el(id).addEventListener("change", function () {
+        updateLocationFromState({ anchor: null, view: "claims", history: "push" });
         loadClaims();
       });
     });
     ["claims-group-by", "claims-sort"].forEach(function (id) {
       el(id).addEventListener("change", function () {
+        updateLocationFromState({ anchor: null, view: "claims", history: "push" });
         renderClaims();
       });
     });
     el("claims-search").addEventListener("input", debounce(function () {
+      updateLocationFromState({ anchor: null, view: "claims", history: "replace" });
       loadClaims();
     }, 300));
     el("tasks-refresh").addEventListener("click", function () {
