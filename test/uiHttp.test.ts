@@ -1090,6 +1090,8 @@ async function postJson<T = unknown>(pathSuffix: string, body: unknown): Promise
 }
 
 function projectAnchorContent(project = "demo"): string {
+  // Computed so the fixture never ages past the staleAfterDays window.
+  const recentLastValidated = new Date().toISOString().slice(0, 10);
   return `---
 project:
   - ${project}
@@ -1099,7 +1101,7 @@ tags:
 summary: "Demo anchor summary."
 read_this_if:
   - "You need demo context."
-last_validated: 2026-05-20
+last_validated: ${recentLastValidated}
 ---
 
 # Demo Anchor

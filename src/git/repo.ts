@@ -40,6 +40,7 @@ import type {
 import { assertInside, normalizeRelative, toPosix } from "../utils/path.js";
 import { buildAnchorCommitMessage } from "./commit.js";
 import { AsyncLock } from "./lock.js";
+import { GitMetadataCache } from "./metadataCache.js";
 
 type AnchorFileCandidate = {
   absolutePath: string;
@@ -118,7 +119,7 @@ export class AnchorRepository implements AnchorStore, SyncableAnchorStore {
   private readonly fileContentCache = new Map<string, CachedFileContent>();
   private fileContentCacheBytes = 0;
   private readonly metaCache = new Map<string, CachedAnchorMeta>();
-  private readonly createdAtCache = new Map<string, string | undefined>();
+  private readonly gitMetadata: GitMetadataCache;
   private readonly lock = new AsyncLock();
 
   constructor(options: { repoPath: string; anchorRoot?: string }) {
@@ -127,6 +128,7 @@ export class AnchorRepository implements AnchorStore, SyncableAnchorStore {
     this.anchorRootPath = path.resolve(this.repoPath, this.anchorRoot || ".");
     assertInside(this.repoPath, this.anchorRootPath);
     this.git = simpleGit({ baseDir: this.repoPath, binary: "git", maxConcurrentProcesses: 1 });
+    this.gitMetadata = new GitMetadataCache(this.git, this.repoPath);
   }
 
   async ensureReady(): Promise<void> {
@@ -287,7 +289,7 @@ export class AnchorRepository implements AnchorStore, SyncableAnchorStore {
       path: resolved.repoRelativePath,
       content,
       frontmatter: parsed.frontmatter,
-      version: isLatest ? await this.currentVersion().catch(() => undefined) : version,
+      version: isLatest ? await this.gitMetadata.currentHead() : version,
       fileCommit,
     };
   }
@@ -305,12 +307,7 @@ export class AnchorRepository implements AnchorStore, SyncableAnchorStore {
 
   /** Latest backend revision that touched this repo-relative path (git commit hash for this store). */
   async lastRevisionForPath(repoRelativePath: string): Promise<string | undefined> {
-    try {
-      const log = await this.git.log({ file: repoRelativePath, maxCount: 1 });
-      return log.latest?.hash;
-    } catch {
-      return undefined;
-    }
+    return this.gitMetadata.lastCommitForPath(repoRelativePath);
   }
 
   async readAnchorBatch(names: string[]): Promise<AnchorRead[]> {
@@ -352,7 +349,7 @@ export class AnchorRepository implements AnchorStore, SyncableAnchorStore {
       const tmpPath = `${resolved.absolutePath}.${process.pid}.${Date.now()}.tmp`;
       await writeFile(tmpPath, input.content, "utf8");
       await rename(tmpPath, resolved.absolutePath);
-      this.invalidateReadIndex(resolved.absolutePath, resolved.repoRelativePath);
+      this.invalidateReadIndex(resolved.absolutePath);
 
       await this.git.add(resolved.repoRelativePath);
 
@@ -377,12 +374,14 @@ export class AnchorRepository implements AnchorStore, SyncableAnchorStore {
         }),
       ];
       await this.git.raw(args);
+      const version = await this.currentVersion();
+      this.gitMetadata.recordCommit(version, new Date().toISOString(), [resolved.repoRelativePath]);
 
       if (input.push) {
         await this.push().catch(() => undefined);
       }
 
-      return this.currentVersion();
+      return version;
     });
   }
 
@@ -415,12 +414,14 @@ export class AnchorRepository implements AnchorStore, SyncableAnchorStore {
         "-m",
         "Generated from anchor front matter.",
       ]);
+      const version = await this.currentVersion();
+      this.gitMetadata.recordCommit(version, new Date().toISOString(), [repoRelativePath]);
 
       if (push) {
         await this.push().catch(() => undefined);
       }
 
-      return this.currentVersion();
+      return version;
     });
   }
 
@@ -499,7 +500,7 @@ export class AnchorRepository implements AnchorStore, SyncableAnchorStore {
       }
 
       await unlink(resolved.absolutePath);
-      this.invalidateReadIndex(resolved.absolutePath, resolved.repoRelativePath);
+      this.invalidateReadIndex(resolved.absolutePath);
 
       await this.git.add(resolved.repoRelativePath);
 
@@ -522,12 +523,14 @@ export class AnchorRepository implements AnchorStore, SyncableAnchorStore {
         }),
       ];
       await this.git.raw(args);
+      const version = await this.currentVersion();
+      this.gitMetadata.recordCommit(version, new Date().toISOString(), [resolved.repoRelativePath]);
 
       if (input.push) {
         await this.push().catch(() => undefined);
       }
 
-      return this.currentVersion();
+      return version;
     });
   }
 
@@ -572,8 +575,8 @@ export class AnchorRepository implements AnchorStore, SyncableAnchorStore {
 
       await this.git.raw(["mv", "--", fromResolved.repoRelativePath, toResolved.repoRelativePath]);
 
-      this.invalidateReadIndex(fromResolved.absolutePath, fromResolved.repoRelativePath);
-      this.invalidateReadIndex(toResolved.absolutePath, toResolved.repoRelativePath);
+      this.invalidateReadIndex(fromResolved.absolutePath);
+      this.invalidateReadIndex(toResolved.absolutePath);
 
       const args = [
         "-c",
@@ -590,12 +593,19 @@ export class AnchorRepository implements AnchorStore, SyncableAnchorStore {
         }),
       ];
       await this.git.raw(args);
+      const version = await this.currentVersion();
+      this.gitMetadata.recordRename(
+        version,
+        new Date().toISOString(),
+        fromResolved.repoRelativePath,
+        toResolved.repoRelativePath,
+      );
 
       if (input.push) {
         await this.push().catch(() => undefined);
       }
 
-      return this.currentVersion();
+      return version;
     });
   }
 
@@ -831,14 +841,14 @@ export class AnchorRepository implements AnchorStore, SyncableAnchorStore {
     }
   }
 
-  private invalidateReadIndex(absolutePath?: string, repoRelativePath?: string): void {
+  private invalidateReadIndex(absolutePath?: string): void {
     if (absolutePath) {
       this.cache.invalidate(absolutePath);
       this.deleteFileContentCacheEntry(absolutePath);
       this.metaCache.delete(absolutePath);
-      if (repoRelativePath) {
-        this.createdAtCache.delete(repoRelativePath);
-      }
+      // Git metadata is HEAD-keyed: per-path invalidation is unnecessary here
+      // because the pending commit is folded in via recordCommit/recordRename,
+      // and any out-of-band HEAD change is caught by the freshness check.
       return;
     }
 
@@ -846,7 +856,7 @@ export class AnchorRepository implements AnchorStore, SyncableAnchorStore {
     this.fileContentCache.clear();
     this.fileContentCacheBytes = 0;
     this.metaCache.clear();
-    this.createdAtCache.clear();
+    this.gitMetadata.invalidate();
   }
 
   private async listMarkdownFiles(root: string): Promise<string[]> {
@@ -870,30 +880,7 @@ export class AnchorRepository implements AnchorStore, SyncableAnchorStore {
   }
 
   private async firstCommitDateForFileCached(repoRelativePath: string): Promise<string | undefined> {
-    if (this.createdAtCache.has(repoRelativePath)) {
-      return this.createdAtCache.get(repoRelativePath);
-    }
-    const createdAt = await this.firstCommitDateForFile(repoRelativePath);
-    this.createdAtCache.set(repoRelativePath, createdAt);
-    return createdAt;
-  }
-
-  private async firstCommitDateForFile(repoRelativePath: string): Promise<string | undefined> {
-    try {
-      const output = await this.git.raw(["log", "--follow", "--format=%aI", "--reverse", "--", repoRelativePath]);
-      const firstDate = output
-        .split(/\r?\n/)
-        .map((line) => line.trim())
-        .find((line) => line.length > 0);
-      if (!firstDate) {
-        return undefined;
-      }
-
-      const timestamp = Date.parse(firstDate);
-      return Number.isNaN(timestamp) ? undefined : new Date(timestamp).toISOString();
-    } catch {
-      return undefined;
-    }
+    return this.gitMetadata.firstCommitDateForPath(repoRelativePath);
   }
 
   static readonly PEOPLE_REGISTRY_FILE = "people-registry.json";
@@ -954,6 +941,10 @@ export class AnchorRepository implements AnchorStore, SyncableAnchorStore {
         args.push("-m", `Co-authored-by: ${options.coAuthor}`);
       }
       await this.git.raw(args);
+      const version = await this.currentVersion().catch(() => undefined);
+      if (version) {
+        this.gitMetadata.recordCommit(version, new Date().toISOString(), [repoRelativePath]);
+      }
 
       if (options.push) {
         await this.push().catch(() => undefined);
@@ -1019,6 +1010,10 @@ export class AnchorRepository implements AnchorStore, SyncableAnchorStore {
         args.push("-m", `Co-authored-by: ${options.coAuthor}`);
       }
       await this.git.raw(args);
+      const version = await this.currentVersion().catch(() => undefined);
+      if (version) {
+        this.gitMetadata.recordCommit(version, new Date().toISOString(), [repoRelativePath]);
+      }
 
       if (options.push) {
         await this.push().catch(() => undefined);
