@@ -98,7 +98,7 @@ export function parseAnnotationBody(inner: string): AnnotationParseResult {
   }
   if (!observed) {
     errors.push("Annotation requires an observed date (YYYY-MM-DD).");
-  } else if (!OBSERVED_PATTERN.test(observed) || Number.isNaN(Date.parse(observed))) {
+  } else if (!isRealCalendarDate(observed)) {
     errors.push(`observed must be a valid YYYY-MM-DD date, got "${observed}".`);
   }
   if (!conf) {
@@ -122,6 +122,15 @@ export function parseAnnotationBody(inner: string): AnnotationParseResult {
     ok: true,
     annotation: { src, observed, conf: conf as ClaimConfidence, ...(id !== undefined ? { id } : {}) },
   };
+}
+
+/** True only for dates that survive a round-trip, so overflow like 2026-02-30 is rejected. */
+function isRealCalendarDate(value: string): boolean {
+  if (!OBSERVED_PATTERN.test(value)) {
+    return false;
+  }
+  const parsed = new Date(`${value}T00:00:00Z`);
+  return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
 }
 
 export function formatAnnotationBody(annotation: ClaimAnnotation): string {

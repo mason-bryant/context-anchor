@@ -53,6 +53,15 @@ describe("parseAnnotationBody", () => {
     }
   });
 
+  it("rejects overflow dates that Date.parse would silently roll over", () => {
+    const result = parseAnnotationBody("src: a.md; observed: 2026-02-30; conf: low");
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.errors.join(" ")).toContain("valid YYYY-MM-DD");
+    }
+    expect(parseAnnotationBody("src: a.md; observed: 2028-02-29; conf: low").ok).toBe(true);
+  });
+
   it("caps person-sourced claims at medium confidence", () => {
     const result = parseAnnotationBody("src: person:alice; observed: 2026-06-17; conf: high");
     expect(result.ok).toBe(false);
@@ -246,6 +255,8 @@ None.
       "A constraint claim.",
     ]);
     expect(unannotated.claims[0]?.anchor).toBe("projects/demo/claims-demo.md");
+    // The coverage summary reflects the full scope even when the list is filtered.
+    expect(unannotated.summary).toEqual({ total: 4, annotated: 1, unannotated: 3, malformed: 0 });
   });
 
   it("annotates and clears a claim through annotateClaim", async () => {

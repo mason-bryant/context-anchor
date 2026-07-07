@@ -1496,7 +1496,7 @@ None.
       names = metas.map((meta) => meta.name);
     }
 
-    const claims: (AnchorClaim & { anchor: string })[] = [];
+    const allClaims: (AnchorClaim & { anchor: string })[] = [];
     for (const name of names) {
       if (isBuiltInAnchorName(name)) {
         continue;
@@ -1506,19 +1506,19 @@ None.
         continue;
       }
       for (const claim of extractClaims(content)) {
-        if (input.status && claim.status !== input.status) {
-          continue;
-        }
-        claims.push({ anchor: name, ...claim });
+        allClaims.push({ anchor: name, ...claim });
       }
     }
 
+    // Coverage summary always reflects the full scope; status filters only the returned list.
     const summary = {
-      total: claims.length,
-      annotated: claims.filter((claim) => claim.status === "annotated").length,
-      unannotated: claims.filter((claim) => claim.status === "unannotated").length,
-      malformed: claims.filter((claim) => claim.status === "malformed").length,
+      total: allClaims.length,
+      annotated: allClaims.filter((claim) => claim.status === "annotated").length,
+      unannotated: allClaims.filter((claim) => claim.status === "unannotated").length,
+      malformed: allClaims.filter((claim) => claim.status === "malformed").length,
     };
+
+    const claims = input.status ? allClaims.filter((claim) => claim.status === input.status) : allClaims;
 
     return { claims, summary, ...(projectFilter ? { projectFilter } : {}) };
   }
