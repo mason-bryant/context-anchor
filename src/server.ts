@@ -19,6 +19,8 @@ const CategorySchema = z
   .refine((value): value is DiscoveryCategory => isDiscoveryCategory(value), { message: "Invalid anchor category" });
 const ContextRootFormatSchema = z.enum(["json", "markdown", "both"]);
 const AnchorContentModeSchema = z.enum(["full", "excerpt", "none"]);
+const ClaimProvenanceModeSchema = z.enum(["none", "summary", "relevant", "full"]);
+const CompactClaimProvenanceModeSchema = z.enum(["none", "summary"]);
 const ProjectUpdateStatusSchema = z.enum(["proposed", "active", "shipped", "cancelled"]);
 const ProjectUpdateFormatSchema = z.enum(["markdown", "slack", "email"]);
 const ProposedChangeStatusSchema = z.enum(["pending", "applied", "rejected", "changes_requested", "superseded"]);
@@ -126,6 +128,7 @@ const LoadContextInputSchema = z.object({
   cursor: z.string().optional(),
   task: z.string().optional(),
   format: ContextRootFormatSchema.optional(),
+  includeProvenance: ClaimProvenanceModeSchema.optional(),
 });
 const ProjectUpdateSnapshotInputSchema = z.object({
   project: z.string().min(1),
@@ -225,9 +228,9 @@ Set last_validated (YYYY-MM-DD) to today's date whenever you materially edit Cur
 same-day substantive edits may reuse today's date.
 
 Cite provenance on the claims you add, while you still have the source in context: under the new bullet, append an \
-indented annotation line \`  {src: <PR #N | repo path | anchor name | URL | person:<id>>; observed: <YYYY-MM-DD>; \
-conf: high|medium|low}\`. conf semantics: high = observed directly (code you read, tests you ran), medium = read in a \
-doc or PR (all person:<id> told-by sources cap at medium), low = inferred. Writes that add claims without provenance \
+indented annotation line \`  {src: <PR #N | repo path | anchor name | URL | person:<id>>; kind: <source|design-doc|adr|configured>; observed: <YYYY-MM-DD>; \
+conf: high|medium|low}\`. Omit \`kind\` for ordinary source evidence. Trust-me-bro developer assertions use \`{src: trust me bro; kind: trust-me-bro; person: <id>; observed: <YYYY-MM-DD>; conf: high}\`. conf semantics: high = observed directly (code you read, tests you ran) or a named trust-me-bro developer assertion, medium = read in a \
+doc or PR (all plain person:<id> told-by sources cap at medium), low = inferred. Writes that add claims without provenance \
 return a claim_annotation_missing WARN. Use annotateClaim to add or fix a single annotation afterwards, and \
 listClaims({ status: "unannotated" }) to find the legacy backlog.
 
@@ -284,27 +287,40 @@ the index when your workflow checks in that file.`,
     "readAnchor",
     {
       title: "Read Anchor",
-      description: "Read one context anchor, optionally at a git version. Latest reads include `fileCommit` (last git commit touching the file) for optional `expectedFileCommit` on writes.",
+      description:
+        "Read one context anchor, optionally at a git version. Latest reads include `fileCommit` (last git commit touching the file) for optional `expectedFileCommit` on writes. Pass includeProvenance to add parsed claim provenance: summary, relevant, or full.",
       inputSchema: z.object({
         name: z.string(),
         version: z.string().optional(),
+        includeProvenance: ClaimProvenanceModeSchema.optional(),
+        task: z.string().optional().describe("Optional task text used when includeProvenance is relevant."),
       }),
       annotations: { readOnlyHint: true },
     },
-    async ({ name, version }) => jsonResult(await service.readAnchor(name, version)),
+    async ({ name, version, includeProvenance, task }) =>
+      jsonResult(await service.readAnchor(name, version, { includeProvenance, task })),
   );
 
   server.registerTool(
     "readAnchorBatch",
     {
       title: "Read Anchor Batch",
-      description: "Read multiple latest context anchors in one call.",
+      description: "Read multiple latest context anchors in one call. Pass includeProvenance to add parsed claim provenance sidecars.",
       inputSchema: z.object({
         names: NonEmptyStringArraySchema,
+        includeProvenance: ClaimProvenanceModeSchema.optional(),
+        task: z.string().optional().describe("Optional task text used when includeProvenance is relevant."),
       }),
       annotations: { readOnlyHint: true },
     },
-    async ({ names }) => jsonResult({ anchors: await service.readAnchorBatch(normalizeStringArray(names, "names", 1)) }),
+    async ({ names, includeProvenance, task }) => {
+      const normalizedNames = normalizeStringArray(names, "names", 1);
+      const anchors =
+        includeProvenance || task
+          ? await service.readAnchorBatch(normalizedNames, { includeProvenance, task })
+          : await service.readAnchorBatch(normalizedNames);
+      return jsonResult({ anchors });
+    },
   );
 
   server.registerTool(
@@ -313,7 +329,7 @@ the index when your workflow checks in that file.`,
       title: "Start Task",
       description:
         "Session-start orchestration: plan a task-aware context bundle and load suggested anchor excerpts in one call. " +
-        "Returns plan rationale, anchor excerpts, staleness flags, active milestones, and suggested readAnchor follow-ups. " +
+        "Returns plan rationale, anchor excerpts, staleness flags, compact claim-provenance health, active milestones, and suggested readAnchor follow-ups. " +
         "Pass repo and/or filePaths to resolve candidate projects when the project is not named directly.",
       inputSchema: z.object({
         task: z.string().min(1),
@@ -323,6 +339,7 @@ the index when your workflow checks in that file.`,
         budgetTokens: z.number().int().positive().optional(),
         maxAnchors: z.number().int().positive().optional(),
         includeArchive: z.boolean().default(false),
+        includeProvenance: CompactClaimProvenanceModeSchema.optional(),
       }),
       annotations: { readOnlyHint: true },
     },
@@ -335,7 +352,7 @@ the index when your workflow checks in that file.`,
       title: "Load Context",
       description:
         "One-call context load: context-root style index (entries + optional markdown) plus multiple anchor bodies. " +
-        "Supports filters, explicit names, excerpt/full/none content modes, byte and count limits, and nextCursor continuation.",
+        "Supports filters, explicit names, excerpt/full/none content modes, byte and count limits, nextCursor continuation, and optional claim provenance sidecars via includeProvenance.",
       inputSchema: LoadContextInputSchema,
       annotations: { readOnlyHint: true },
     },
@@ -348,7 +365,7 @@ the index when your workflow checks in that file.`,
       title: "Plan Context Bundle",
       description:
         "Plan a task-aware context bundle. Returns included anchors, excluded anchors, reasons, estimated token use, missing-context signals, and a suggested loadContext call. " +
-        "Pass repo and/or filePaths to resolve candidate projects when the project is not named directly.",
+        "Pass repo and/or filePaths to resolve candidate projects when the project is not named directly. Includes compact claim-provenance health by default; pass includeProvenance: \"none\" to omit it.",
       inputSchema: z.object({
         task: z.string().min(1),
         project: z.string().optional(),
@@ -361,6 +378,7 @@ the index when your workflow checks in that file.`,
         budgetTokens: z.number().int().positive().max(200000).optional(),
         maxAnchors: z.number().int().positive().max(500).optional(),
         maxExcluded: z.number().int().min(0).max(500).optional(),
+        includeProvenance: CompactClaimProvenanceModeSchema.optional(),
       }),
       annotations: { readOnlyHint: true },
     },
@@ -882,20 +900,28 @@ the index when your workflow checks in that file.`,
   );
 
   const ClaimConfidenceSchema = z.enum(["high", "medium", "low"]);
+  const ClaimSourceSchema = z.object({
+    src: z.string().min(1),
+    observed: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+    conf: ClaimConfidenceSchema,
+    id: z.string().optional(),
+    kind: z.string().optional(),
+    person: z.string().optional(),
+  });
 
   server.registerTool(
     "listClaims",
     {
       title: "List Claim Provenance",
       description:
-        "List claims (top-level bullets in Current State, Decisions, and Constraints sections) with their provenance annotations across one anchor or a project. Use status: unannotated to find legacy claims with no provenance, status: malformed to find broken annotations, conf plus observedBefore/observedAfter to build re-verification queues (e.g. low-confidence claims observed before a cutoff, or claims verified since a date), section to scope to one section kind, and q for text search over claim text and src. The coverage summary always reflects the full scope; filters narrow only the returned list.",
+        "List claims (top-level bullets in Current State, Decisions, and Constraints sections) with their provenance annotations across one anchor or a project. Use status: unannotated to find legacy claims with no provenance, status: malformed to find broken annotations, conf plus observedBefore/observedAfter to build re-verification queues (e.g. low-confidence claims observed before a cutoff, or claims verified since a date), section to scope to one section kind, and q for text search over claim text, src, source kind, or person. The coverage summary always reflects the full scope; filters narrow only the returned list.",
       inputSchema: z.object({
         name: z.string().optional().describe("Limit to one anchor by name."),
         project: z.string().optional().describe("Limit to a project slug (alias-aware)."),
         status: z.enum(["annotated", "unannotated", "malformed"]).optional().describe("Filter by provenance status."),
         section: z.enum(["Current State", "Decisions", "Constraints"]).optional().describe("Filter by claim section."),
         conf: ClaimConfidenceSchema.optional().describe("Filter annotated claims by stated confidence."),
-        q: z.string().optional().describe("Case-insensitive text search over claim text and annotation src."),
+        q: z.string().optional().describe("Case-insensitive text search over claim text, annotation src, source kind, or person."),
         observedBefore: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().describe("Only annotated claims observed before this date (exclusive) — a re-verification queue."),
         observedAfter: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().describe("Only annotated claims observed on or after this date."),
       }),
@@ -912,14 +938,16 @@ the index when your workflow checks in that file.`,
     {
       title: "Annotate Claim Provenance",
       description:
-        "Set or clear the provenance annotation ({src; observed; conf[; id]}) on one claim without rewriting the anchor. Locate the claim with a unique substring of its bullet text. src may be a PR reference, repo file path, anchor name, URL, or person:<id> (person-sourced claims cap at conf: medium). Pass clear: true to remove an annotation.",
+        "Set or clear the provenance annotation ({src; observed; conf[; id; kind; person]}) on one claim without rewriting the anchor. Locate the claim with a unique substring of its bullet text. src may be a PR reference, repo file path, anchor name, URL, or person:<id> (plain person-sourced claims cap at conf: medium). kind is an optional claim source type configured in project-mappings.json; defaults include source, design-doc, adr, and trust-me-bro. For a high-confidence named developer assertion, pass src: \"trust me bro\", kind: \"trust-me-bro\", person: <person id/name>, observed, and conf: high. Pass clear: true to remove an annotation.",
       inputSchema: z.object({
         name: z.string().describe("Anchor containing the claim."),
         claim: z.string().min(1).describe("Unique substring of the claim's bullet text."),
-        src: z.string().optional().describe("Provenance source: PR #N, file path, anchor name, URL, or person:<id>."),
+        src: z.string().optional().describe("Provenance source: PR #N, file path, anchor name, URL, person:<id>, or trust me bro."),
         observed: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().describe("Date the fact was observed/verified (YYYY-MM-DD)."),
         conf: ClaimConfidenceSchema.optional().describe("Stated confidence: high (observed directly), medium (read in doc/PR), low (inferred)."),
         id: z.string().optional().describe("Optional stable kebab-case id for cross-references."),
+        kind: z.string().optional().describe("Optional configured source kind, such as source, design-doc, adr, or trust-me-bro."),
+        person: z.string().optional().describe("Person id, display name, or alias for a person-backed source kind."),
         clear: z.boolean().optional().describe("When true, remove the claim's annotation."),
         message: z.string().optional(),
         approved: z.boolean().default(false),
@@ -928,7 +956,7 @@ the index when your workflow checks in that file.`,
       }),
       annotations: { destructiveHint: false, idempotentHint: false },
     },
-    async ({ name, claim, src, observed, conf, id, clear, message, approved, coAuthor, expectedFileCommit }) => {
+    async ({ name, claim, src, observed, conf, id, kind, person, clear, message, approved, coAuthor, expectedFileCommit }) => {
       const result = await service.annotateClaim({
         name,
         claim,
@@ -936,6 +964,8 @@ the index when your workflow checks in that file.`,
         observed,
         conf,
         id,
+        kind,
+        person,
         clear,
         message,
         approved,
@@ -943,6 +973,39 @@ the index when your workflow checks in that file.`,
         expectedFileCommit,
       });
       return jsonResult(result, result.version ? false : true);
+    },
+  );
+
+  server.registerTool(
+    "setClaimSources",
+    {
+      title: "Set Claim Provenance Sources",
+      description:
+        "Replace all provenance sources on one claim. Locate the claim by a 1-based bullet line or by a unique substring of its bullet text. Each source is {src, observed, conf[, id, kind, person]}; kind is a configurable claim source type in project-mappings.json with built-in defaults source, design-doc, adr, and trust-me-bro. Use {src:\"trust me bro\", kind:\"trust-me-bro\", person:\"<person>\", observed, conf:\"high\"} for a named developer assertion. Pass an empty sources array to clear provenance.",
+      inputSchema: z.object({
+        name: z.string().describe("Anchor containing the claim."),
+        claim: z.string().min(1).optional().describe("Unique substring of the claim's bullet text."),
+        line: z.number().int().positive().optional().describe("1-based line number of the claim bullet."),
+        sources: z.array(ClaimSourceSchema),
+        message: z.string().optional(),
+        approved: z.boolean().default(false),
+        coAuthor: z.string().optional(),
+        expectedFileCommit: z.string().optional(),
+      }),
+      annotations: { destructiveHint: false, idempotentHint: false },
+    },
+    async ({ name, claim, line, sources, message, approved, coAuthor, expectedFileCommit }) => {
+      const result = await service.setClaimSources({
+        name,
+        claim,
+        line,
+        sources,
+        message,
+        approved,
+        coAuthor,
+        expectedFileCommit,
+      });
+      return jsonResult(result, false);
     },
   );
 
@@ -1413,9 +1476,19 @@ the index when your workflow checks in that file.`,
     {
       title: "Write Project Mappings",
       description:
-        "Replace the full project-to-repository/path mapping registry. Each project lists the repos it lives in; each repo may be narrowed to directory path prefixes (empty means the whole repo). Commits the change to git.",
+        "Replace the full project-to-repository/path mapping registry. Each project lists the repos it lives in; each repo may be narrowed to directory path prefixes (empty means the whole repo). The optional claimSourceTypes list configures provenance evidence kinds shown in claim editors. Commits the change to git.",
       inputSchema: z.object({
         mappings: z.object({
+          claimSourceTypes: z
+            .array(
+              z.object({
+                id: z.string().min(1),
+                label: z.string().min(1),
+                requiresPerson: z.boolean().optional(),
+                lockedConfidence: ClaimConfidenceSchema.optional(),
+              }),
+            )
+            .optional(),
           projects: z.array(
             z.object({
               project: z.string().min(1),
@@ -1428,6 +1501,7 @@ the index when your workflow checks in that file.`,
                       url: z.string().min(1),
                       branch: z.string().optional(),
                       fileTemplate: z.string().optional(),
+                      pullRequestTemplate: z.string().optional(),
                     })
                     .optional(),
                 }),
@@ -1515,6 +1589,7 @@ function normalizeLoadContextInput(input: z.infer<typeof LoadContextInputSchema>
     cursor: input.cursor,
     task: input.task,
     format: input.format,
+    includeProvenance: input.includeProvenance,
   };
 }
 

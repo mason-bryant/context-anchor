@@ -75,6 +75,10 @@ import type {
   ContextRootFormat,
   ContextRootResult,
   ConflictStatus,
+  ClaimSourceType,
+  ClaimProvenanceMode,
+  AnchorClaimProvenance,
+  ContextProvenanceSummary,
   LoadContextAnchor,
   LoadContextInput,
   LoadContextResult,
@@ -88,6 +92,7 @@ import type {
   ProjectFilterResolution,
   ProjectMappings,
   ProjectMappingsWithCommit,
+  ProjectRepoMapping,
   ProjectUpdateMilestone,
   ProjectUpdateMilestoneStatus,
   ProjectUpdateSnapshot,
@@ -135,19 +140,26 @@ import {
   buildProjectAliasIndex,
   resolveProjectFilter,
 } from "./projectAliases.js";
-import { candidateBoostMap, resolveCandidateProjects } from "./projectResolution.js";
-import { parseProjectMappings } from "./projectMappings.js";
-import { buildPeopleIndex, parsePeopleRegistry } from "./peopleRegistry.js";
+import { candidateBoostMap, isWithinPath, resolveCandidateProjects } from "./projectResolution.js";
+import { parseProjectMappings, repoFileUrl, repoPullRequestUrl } from "./projectMappings.js";
+import { buildPeopleIndex, parsePeopleRegistry, type PeopleIndex } from "./peopleRegistry.js";
 import { runValidators } from "./validators/pipeline.js";
 import {
   carryClaimAnnotations,
   extractClaims,
   formatAnnotationBody,
   locateClaim,
+  locateClaimByLine,
+  mergeClaimProvenanceSummaries,
   newlyAddedUnannotatedClaims,
   parseAnnotationBody,
-  upsertClaimAnnotation,
+  summarizeClaimProvenance,
+  TRUST_ME_BRO_KIND,
+  TRUST_ME_BRO_SOURCE,
+  upsertClaimSources,
   type AnchorClaim,
+  type ClaimAnnotation,
+  type ClaimSource,
   type ClaimStatus,
 } from "./claims.js";
 
@@ -560,19 +572,29 @@ export class AnchorService {
     return this.mergeDiscoveryAnchors(filter);
   }
 
-  async readAnchor(name: string, version?: string): Promise<AnchorRead> {
+  async readAnchor(
+    name: string,
+    version?: string,
+    options: { includeProvenance?: ClaimProvenanceMode; task?: string } = {},
+  ): Promise<AnchorRead> {
     const built = readBuiltInAnchor(name);
+    let read: AnchorRead;
     if (built) {
       if (version && version !== "latest") {
         throw new Error("Built-in policy anchors only support the latest revision.");
       }
-      return built;
+      read = built;
+    } else {
+      read = await this.repo.readAnchor(name, version);
     }
-    return this.repo.readAnchor(name, version);
+    return await this.withOptionalClaimProvenance(read, options.includeProvenance ?? "none", options.task);
   }
 
-  readAnchorBatch(names: string[]): Promise<AnchorRead[]> {
-    return Promise.all(names.map((name) => this.readAnchor(name)));
+  readAnchorBatch(
+    names: string[],
+    options: { includeProvenance?: ClaimProvenanceMode; task?: string } = {},
+  ): Promise<AnchorRead[]> {
+    return Promise.all(names.map((name) => this.readAnchor(name, undefined, options)));
   }
 
   searchAnchors(query: string, scope?: string): Promise<SearchHit[]> {
@@ -681,7 +703,7 @@ export class AnchorService {
         carryWarnings.push({
           severity: "WARN",
           code: "claim_annotation_missing",
-          message: `This write adds ${missing.length} claim(s) without provenance: ${shown}${more}. Record where each fact came from while you still have the source: append "  {src: <PR #N | repo path | anchor name | URL | person:<id>>; observed: <YYYY-MM-DD>; conf: high|medium|low}" under the bullet, or use annotateClaim afterwards.`,
+          message: `This write adds ${missing.length} claim(s) without provenance: ${shown}${more}. Record where each fact came from while you still have the source: append "  {src: <PR #N | repo path | anchor name | URL | person:<id>>; observed: <YYYY-MM-DD>; conf: high|medium|low}" or "  {src: trust me bro; kind: trust-me-bro; person: <id>; observed: <YYYY-MM-DD>; conf: high}" under the bullet, or use annotateClaim afterwards.`,
         });
       }
     }
@@ -1573,6 +1595,9 @@ None.
     }
 
     const allClaims: (AnchorClaim & { anchor: string })[] = [];
+    const mappings = await this.loadProjectMappings();
+    const anchorNames = new Set((await this.repo.listAnchors()).map((meta) => meta.name));
+    const peopleIndex = buildPeopleIndex(await this.loadPeopleRegistry());
     for (const name of names) {
       if (isBuiltInAnchorName(name)) {
         continue;
@@ -1582,7 +1607,7 @@ None.
         continue;
       }
       for (const claim of extractClaims(content)) {
-        allClaims.push({ anchor: name, ...claim });
+        allClaims.push({ anchor: name, ...this.withResolvedSourceLinks(name, claim, mappings, anchorNames, peopleIndex) });
       }
     }
 
@@ -1602,26 +1627,216 @@ None.
       if (input.section && claim.section !== input.section) {
         return false;
       }
-      if (input.conf && claim.annotation?.conf !== input.conf) {
+      if (input.conf && !claim.sources.some((source) => source.conf === input.conf)) {
         return false;
       }
       if (
         needle &&
         !claim.text.toLowerCase().includes(needle) &&
-        !(claim.annotation && claim.annotation.src.toLowerCase().includes(needle))
+        !claim.sources.some((source) => claimSourceSearchText(source).includes(needle))
       ) {
         return false;
       }
-      if (input.observedBefore && (!claim.annotation || claim.annotation.observed >= input.observedBefore)) {
-        return false;
+      if (input.observedBefore) {
+        const cutoff = input.observedBefore;
+        if (!claim.sources.some((source) => source.observed < cutoff)) {
+          return false;
+        }
       }
-      if (input.observedAfter && (!claim.annotation || claim.annotation.observed < input.observedAfter)) {
-        return false;
+      if (input.observedAfter) {
+        const cutoff = input.observedAfter;
+        if (!claim.sources.some((source) => source.observed >= cutoff)) {
+          return false;
+        }
       }
       return true;
     });
 
     return { claims, summary, ...(projectFilter ? { projectFilter } : {}) };
+  }
+
+  private withResolvedSourceLinks(
+    anchorName: string,
+    claim: AnchorClaim,
+    mappings: ProjectMappings,
+    anchorNames: Set<string>,
+    peopleIndex: PeopleIndex,
+  ): AnchorClaim {
+    const sources = claim.sources.map((source) => {
+      const person = source.person
+        ? peopleIndex.getPersonById(source.person) ?? peopleIndex.getPerson(source.person)
+        : undefined;
+      const href =
+        source.kind === TRUST_ME_BRO_KIND
+          ? undefined
+          : this.resolveClaimSourceHref(anchorName, source.src, mappings, anchorNames);
+      return {
+        ...source,
+        ...(person ? { person: person.id, personName: person.displayName } : {}),
+        ...(href ? { href } : {}),
+      };
+    });
+    return {
+      ...claim,
+      sources,
+      ...(sources[0] ? { annotation: sources[0] } : {}),
+    };
+  }
+
+  private async withOptionalClaimProvenance(
+    read: AnchorRead,
+    mode: ClaimProvenanceMode,
+    task?: string,
+  ): Promise<AnchorRead> {
+    if (mode === "none") {
+      return read;
+    }
+    return {
+      ...read,
+      claimProvenance: await this.buildAnchorClaimProvenance(read.name, read.content, mode, task),
+    };
+  }
+
+  private async withLoadContextProvenance(
+    row: LoadContextAnchor,
+    read: AnchorRead,
+    mode: ClaimProvenanceMode,
+    task?: string,
+  ): Promise<LoadContextAnchor> {
+    if (mode === "none") {
+      return row;
+    }
+    return {
+      ...row,
+      claimProvenance: await this.buildAnchorClaimProvenance(read.name, read.content, mode, task),
+    };
+  }
+
+  private async buildAnchorClaimProvenance(
+    anchorName: string,
+    content: string,
+    mode: Exclude<ClaimProvenanceMode, "none">,
+    task?: string,
+  ): Promise<AnchorClaimProvenance> {
+    const claims = await this.extractResolvedClaims(anchorName, content);
+    const summary = summarizeClaimProvenance(claims);
+    if (mode === "summary") {
+      return { mode, summary };
+    }
+
+    const selectedClaims = mode === "full" ? claims : selectRelevantProvenanceClaims(claims, task);
+    return {
+      mode,
+      summary,
+      claims: selectedClaims,
+      ...(mode === "relevant" && selectedClaims.length < claims.length ? { claimsTruncated: true } : {}),
+    };
+  }
+
+  private async extractResolvedClaims(anchorName: string, content: string): Promise<AnchorClaim[]> {
+    const mappings = await this.loadProjectMappings();
+    const anchorNames = new Set((await this.repo.listAnchors()).map((meta) => meta.name));
+    const peopleIndex = buildPeopleIndex(await this.loadPeopleRegistry());
+    return extractClaims(content).map((claim) =>
+      this.withResolvedSourceLinks(anchorName, claim, mappings, anchorNames, peopleIndex),
+    );
+  }
+
+  private async buildContextProvenanceSummary(names: string[]): Promise<ContextProvenanceSummary> {
+    const anchors: ContextProvenanceSummary["anchors"] = [];
+    for (const name of names) {
+      if (isBuiltInAnchorName(name)) {
+        continue;
+      }
+      const content = await this.repo.readRaw(name);
+      if (content === undefined) {
+        continue;
+      }
+      const summary = summarizeClaimProvenance(await this.extractResolvedClaims(name, content));
+      anchors.push({ name, summary });
+    }
+    return {
+      mode: "summary",
+      summary: mergeClaimProvenanceSummaries(anchors.map((anchor) => anchor.summary)),
+      anchors,
+    };
+  }
+
+  private resolveClaimSourceHref(
+    anchorName: string,
+    src: string,
+    mappings: ProjectMappings,
+    anchorNames: Set<string>,
+  ): string | undefined {
+    const value = src.trim();
+    if (!value) {
+      return undefined;
+    }
+    if (isHttpUrl(value)) {
+      return value;
+    }
+
+    const resolvedAnchor = this.resolveSourceAnchorName(value, anchorNames);
+    if (resolvedAnchor) {
+      return `/ui?anchor=${encodeURIComponent(resolvedAnchor)}`;
+    }
+
+    const anchorClassification = classifyAnchorPath(anchorName);
+    const anchorProject = anchorClassification.kind === "anchor" ? anchorClassification.projectSlug : undefined;
+    const projectMapping = anchorProject
+      ? mappings.projects.find((mapping) => mapping.project.toLowerCase() === anchorProject.toLowerCase())
+      : undefined;
+    if (!projectMapping) {
+      return undefined;
+    }
+
+    const prefixed = parseRepoPrefixedSource(value);
+    const prNumber = parsePullRequestSource(prefixed.path);
+    if (prNumber !== undefined) {
+      const repo = this.selectMappedRepo(projectMapping.repos, prefixed.repo, undefined);
+      return repo ? repoPullRequestUrl(repo, prNumber) : undefined;
+    }
+
+    const parsedFile = parseFileSource(prefixed.path);
+    if (!parsedFile) {
+      return undefined;
+    }
+    const repo = this.selectMappedRepo(projectMapping.repos, prefixed.repo, parsedFile.path);
+    return repo ? repoFileUrl(repo, parsedFile.path, parsedFile.line) : undefined;
+  }
+
+  private resolveSourceAnchorName(value: string, anchorNames: Set<string>): string | undefined {
+    try {
+      const resolved = this.repo.resolveAnchor(value).name;
+      return anchorNames.has(resolved) ? resolved : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
+  private selectMappedRepo(
+    repos: ProjectRepoMapping[],
+    requestedRepo: string | undefined,
+    filePath: string | undefined,
+  ): ProjectRepoMapping | undefined {
+    const webRepos = requestedRepo
+      ? repos.filter((repo) => repo.repo.toLowerCase() === requestedRepo.toLowerCase() && repo.web?.url)
+      : repos.filter((repo) => repo.web?.url);
+    if (webRepos.length === 0) {
+      return undefined;
+    }
+    if (requestedRepo) {
+      return webRepos.length === 1 ? webRepos[0] : undefined;
+    }
+    if (filePath) {
+      const pathMatches = webRepos.filter((repo) =>
+        repo.paths.length > 0 && repo.paths.some((dirPath) => isWithinPath(filePath, dirPath)),
+      );
+      if (pathMatches.length === 1) {
+        return pathMatches[0];
+      }
+    }
+    return webRepos.length === 1 ? webRepos[0] : undefined;
   }
 
   async annotateClaim(input: {
@@ -1631,36 +1846,88 @@ None.
     observed?: string;
     conf?: string;
     id?: string;
+    kind?: string;
+    person?: string;
     clear?: boolean;
     message?: string;
     approved?: boolean;
     coAuthor?: string;
     expectedFileCommit?: string;
   }): Promise<WriteAnchorResult> {
-    const annotationBody = input.clear
-      ? null
-      : `src: ${input.src ?? ""}; observed: ${input.observed ?? ""}; conf: ${input.conf ?? ""}${
-          input.id ? `; id: ${input.id}` : ""
-        }`;
+    return this.setClaimSources({
+      name: input.name,
+      claim: input.claim,
+      sources: input.clear
+        ? []
+        : [
+            {
+              src: input.src ?? "",
+              observed: input.observed ?? "",
+              conf: input.conf ?? "",
+              ...(input.id ? { id: input.id } : {}),
+              ...(input.kind ? { kind: input.kind } : {}),
+              ...(input.person ? { person: input.person } : {}),
+            },
+          ],
+      message: input.message,
+      approved: input.approved,
+      coAuthor: input.coAuthor,
+      expectedFileCommit: input.expectedFileCommit,
+    });
+  }
 
-    let parsedAnnotation = null;
-    if (annotationBody !== null) {
-      const parsed = parseAnnotationBody(annotationBody);
-      if (!parsed.ok) {
-        return {
-          warnings: parsed.errors.map((error) => ({
-            severity: "BLOCK" as const,
-            code: "claim_annotation_invalid",
-            message: error,
-          })),
-        };
-      }
-      parsedAnnotation = parsed.annotation;
+  async setClaimSources(input: {
+    name: string;
+    claim?: string;
+    line?: number;
+    sources: Array<{ src?: string; observed?: string; conf?: string; id?: string; kind?: string; person?: string }>;
+    message?: string;
+    approved?: boolean;
+    coAuthor?: string;
+    expectedFileCommit?: string;
+  }): Promise<WriteAnchorResult> {
+    const parsedSources = parseClaimSourceInputs(input.sources);
+    if (!parsedSources.ok) {
+      return {
+        warnings: parsedSources.errors.map((error) => ({
+          severity: "BLOCK" as const,
+          code: "claim_annotation_invalid",
+          message: error,
+        })),
+      };
+    }
+    const normalizedSources = await this.normalizeClaimSources(parsedSources.sources);
+    if (!normalizedSources.ok) {
+      return {
+        warnings: normalizedSources.errors.map((error) => ({
+          severity: "BLOCK" as const,
+          code: "claim_annotation_invalid",
+          message: error,
+        })),
+      };
+    }
+
+    let target: { line: number } | { claim: string } | undefined;
+    if (input.line !== undefined) {
+      target = { line: input.line };
+    } else if (input.claim) {
+      target = { claim: input.claim };
+    }
+    if (!target) {
+      return {
+        warnings: [
+          {
+            severity: "BLOCK",
+            code: "claim_target_missing",
+            message: "setClaimSources requires either a claim text fragment or a line number.",
+          },
+        ],
+      };
     }
 
     const content = await this.repo.readRaw(input.name);
     if (content !== undefined) {
-      const location = locateClaim(content, input.claim);
+      const location = "line" in target ? locateClaimByLine(content, target.line) : locateClaim(content, target.claim);
       if (!location.ok) {
         return {
           warnings: [
@@ -1669,8 +1936,10 @@ None.
               code: location.code,
               message:
                 location.code === "claim_not_found"
-                  ? `No claim in ${input.name} matches "${input.claim}". Claims are top-level bullets in Current State, Decisions, or Constraints.`
-                  : `Claim match "${input.claim}" is ambiguous in ${input.name}. Matches: ${location.candidates
+                  ? `No claim in ${input.name} matches ${
+                      "line" in target ? `line ${target.line}` : `"${target.claim}"`
+                    }. Claims are top-level bullets in Current State, Decisions, or Constraints.`
+                  : `Claim match "${"claim" in target ? target.claim : `line ${target.line}`}" is ambiguous in ${input.name}. Matches: ${location.candidates
                       .map((candidate) => `"${candidate}"`)
                       .join(", ")}. Use a longer unique fragment.`,
             },
@@ -1679,23 +1948,64 @@ None.
       }
     }
 
-    const claimMatch = input.claim;
-    const annotation = parsedAnnotation;
     return this.applyAnchorContentPatch({
       name: input.name,
       message:
         input.message ??
-        (annotation === null
+        (normalizedSources.sources.length === 0
           ? `chore: clear claim provenance in ${input.name}`
-          : `chore: annotate claim provenance in ${input.name}`),
+          : `chore: set claim provenance in ${input.name}`),
       approved: input.approved,
       coAuthor: input.coAuthor,
       expectedFileCommit: input.expectedFileCommit,
-      // This is the sanctioned single-annotation editor: carry/loss guarding
-      // would resurrect cleared annotations or block intentional edits.
+      // This is the sanctioned source editor: carry/loss guarding would
+      // resurrect cleared annotations or block intentional source changes.
       carryClaimAnnotations: false,
-      mutate: (old) => upsertClaimAnnotation(old, claimMatch, annotation),
+      mutate: (old) => upsertClaimSources(old, target, normalizedSources.sources),
     });
+  }
+
+  private async normalizeClaimSources(
+    sources: ClaimAnnotation[],
+  ): Promise<{ ok: true; sources: ClaimAnnotation[] } | { ok: false; errors: string[] }> {
+    const mappings = await this.loadProjectMappings();
+    const sourceTypes = claimSourceTypesById(mappings.claimSourceTypes);
+    const needsPeople = sources.some((source) => {
+      const type = sourceTypes.get(claimSourceKindId(source));
+      return Boolean(source.person || type?.requiresPerson);
+    });
+    const peopleIndex = needsPeople ? buildPeopleIndex(await this.loadPeopleRegistry()) : undefined;
+    const errors: string[] = [];
+    const normalized = sources.map((source, index) => {
+      const kind = claimSourceKindId(source);
+      const type = sourceTypes.get(kind);
+      if (!type) {
+        errors.push(`sources[${index}]: unknown claim source type "${kind}". Configure it in project-mappings.json first.`);
+        return source;
+      }
+      if (type.lockedConfidence && source.conf !== type.lockedConfidence) {
+        errors.push(`sources[${index}]: ${kind} sources require conf: ${type.lockedConfidence}.`);
+        return source;
+      }
+      let personId = source.person;
+      if (source.person || type.requiresPerson) {
+        const personKey = source.person ?? "";
+        const person = peopleIndex?.getPersonById(personKey) ?? peopleIndex?.getPerson(personKey);
+        if (!person) {
+          errors.push(`sources[${index}]: ${kind} person "${personKey}" was not found in the people registry.`);
+          return source;
+        }
+        personId = person.id;
+      }
+      return {
+        ...source,
+        ...(kind === "source" && !source.kind ? {} : { kind }),
+        ...(kind === TRUST_ME_BRO_KIND ? { src: TRUST_ME_BRO_SOURCE } : {}),
+        ...(personId ? { person: personId } : {}),
+      };
+    });
+
+    return errors.length > 0 ? { ok: false, errors } : { ok: true, sources: normalized };
   }
 
   async updateAnchorSection(input: {
@@ -2250,6 +2560,7 @@ None.
     const excerptChars = Math.max(100, decoded?.excerptChars ?? input.excerptChars ?? LOAD_CONTEXT_DEFAULT_EXCERPT_CHARS);
     const task = decoded?.task ?? input.task;
     const format = decoded?.format ?? input.format ?? "both";
+    const includeProvenance = decoded?.includeProvenance ?? input.includeProvenance ?? (task ? "relevant" : "none");
 
     const filter = {
       project: decoded?.filter.project ?? input.project,
@@ -2312,7 +2623,12 @@ None.
       }
 
       const read = await this.readAnchor(orderedNames[index]);
-      let row = buildLoadContextAnchor(read, includeContent, excerptChars, task);
+      let row = await this.withLoadContextProvenance(
+        buildLoadContextAnchor(read, includeContent, excerptChars, task),
+        read,
+        includeProvenance,
+        task,
+      );
       const trial = [...anchors, row];
       const bytes = jsonByteLength(trial);
 
@@ -2323,6 +2639,12 @@ None.
 
       if (bytes > maxBytes && anchors.length === 0) {
         row = shrinkLoadContextAnchorToFit(read, includeContent, excerptChars, maxBytes, task);
+        row = await this.withLoadContextProvenance(row, read, includeProvenance === "full" ? "summary" : includeProvenance, task);
+        if (jsonByteLength(row) > maxBytes) {
+          const withoutProvenance = { ...row };
+          delete withoutProvenance.claimProvenance;
+          row = withoutProvenance;
+        }
       }
 
       anchors.push(row);
@@ -2346,6 +2668,7 @@ None.
             excerptChars,
             task,
             format,
+            includeProvenance,
           }),
         )
       : undefined;
@@ -2361,6 +2684,9 @@ None.
       totalMatching,
       returnedCount,
       ...(projectFilter ? { projectFilter } : {}),
+      ...(includeProvenance !== "none"
+        ? { provenance: await this.buildContextProvenanceSummary(anchors.map((anchor) => anchor.name)) }
+        : {}),
     };
   }
 
@@ -2412,6 +2738,8 @@ None.
       candidateBoosts,
     );
     const names = plan.loadContext.names;
+    const includeProvenance = input.includeProvenance ?? "summary";
+    const provenance = includeProvenance === "none" ? undefined : await this.buildContextProvenanceSummary(names);
     const roadmapSignals = collectRoadmapAcceptanceMissingSignals(anchors);
     const milestoneSignals = collectMilestoneAcceptanceMissingSignals(anchors);
     // Surface an unmapped repo as a freshness signal whether or not file paths
@@ -2428,10 +2756,17 @@ None.
 
     return {
       ...plan,
-      missingContext: [...plan.missingContext, ...roadmapSignals, ...milestoneSignals, ...resolutionSignals],
-      loadContext: { ...plan.loadContext, names },
+      missingContext: [
+        ...plan.missingContext,
+        ...roadmapSignals,
+        ...milestoneSignals,
+        ...resolutionSignals,
+        ...provenanceMissingContextSignals(provenance),
+      ],
+      loadContext: { ...plan.loadContext, names, includeProvenance: includeProvenance === "none" ? "none" : "summary" },
       ...(projectFilter ? { projectFilter } : {}),
       ...(resolution ? { projectResolution: resolution } : {}),
+      ...(provenance ? { provenance } : {}),
     };
   }
 
@@ -2445,12 +2780,14 @@ None.
       budgetTokens: input.budgetTokens,
       maxAnchors: input.maxAnchors,
       includeArchive: input.includeArchive,
+      includeProvenance: input.includeProvenance,
     });
 
     const loaded = await this.loadContext({
       names: plan.loadContext.names,
       includeContent: plan.loadContext.includeContent,
       maxBytes: plan.loadContext.maxBytes,
+      includeProvenance: plan.loadContext.includeProvenance ?? "summary",
       task: input.task,
       ...(plan.loadContext.project ? { project: plan.loadContext.project } : {}),
     });
@@ -2484,6 +2821,7 @@ None.
         missingContext: plan.missingContext,
         ...(plan.projectFilter ? { projectFilter: plan.projectFilter } : {}),
         ...(plan.projectResolution ? { projectResolution: plan.projectResolution } : {}),
+        ...(plan.provenance ? { provenance: plan.provenance } : {}),
       },
       anchors: loaded.anchors,
       truncated: loaded.truncated,
@@ -3330,6 +3668,168 @@ function dedupePreserveOrder(names: string[]): string[] {
   }
 
   return result;
+}
+
+function isHttpUrl(value: string): boolean {
+  try {
+    const parsed = new URL(value);
+    return parsed.protocol === "http:" || parsed.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+function parseRepoPrefixedSource(value: string): { repo?: string; path: string } {
+  const trimmed = value.trim();
+  if (trimmed.toLowerCase().startsWith("person:")) {
+    return { path: trimmed };
+  }
+  const match = /^([A-Za-z0-9_.-]+):(.+)$/.exec(trimmed);
+  if (!match) {
+    return { path: trimmed };
+  }
+  return { repo: match[1], path: match[2].trim() };
+}
+
+function parsePullRequestSource(value: string): number | undefined {
+  const match = /^PR\s+#?(\d+)$/i.exec(value.trim());
+  return match ? Number(match[1]) : undefined;
+}
+
+function parseFileSource(value: string): { path: string; line?: number } | undefined {
+  const trimmed = value.trim();
+  if (!trimmed || trimmed.includes("://") || trimmed.startsWith("person:")) {
+    return undefined;
+  }
+  const lineMatch = /^(.*)#L(\d+)$/i.exec(trimmed);
+  const path = (lineMatch ? lineMatch[1] : trimmed).trim();
+  if (!path || /\s/.test(path) || path.startsWith("#")) {
+    return undefined;
+  }
+  const line = lineMatch ? Number(lineMatch[2]) : undefined;
+  return { path, ...(line !== undefined ? { line } : {}) };
+}
+
+function parseClaimSourceInputs(
+  sources: Array<{ src?: string; observed?: string; conf?: string; id?: string; kind?: string; person?: string }>,
+): { ok: true; sources: ClaimAnnotation[] } | { ok: false; errors: string[] } {
+  const parsedSources: ClaimAnnotation[] = [];
+  const errors: string[] = [];
+
+  sources.forEach((source, index) => {
+    const body = [
+      `src: ${source.src ?? ""}`,
+      source.kind ? `kind: ${source.kind}` : undefined,
+      source.person ? `person: ${source.person}` : undefined,
+      `observed: ${source.observed ?? ""}`,
+      `conf: ${source.conf ?? ""}`,
+      source.id ? `id: ${source.id}` : undefined,
+    ]
+      .filter(Boolean)
+      .join("; ");
+    const parsed = parseAnnotationBody(body);
+    if (parsed.ok) {
+      parsedSources.push(parsed.annotation);
+    } else {
+      errors.push(...parsed.errors.map((error) => `sources[${index}]: ${error}`));
+    }
+  });
+
+  return errors.length > 0 ? { ok: false, errors } : { ok: true, sources: parsedSources };
+}
+
+const RELEVANT_PROVENANCE_CLAIM_LIMIT = 12;
+
+function selectRelevantProvenanceClaims(claims: AnchorClaim[], task?: string): AnchorClaim[] {
+  const terms = provenanceTaskTerms(task);
+  const selected: AnchorClaim[] = [];
+
+  for (const claim of claims) {
+    const isWeak = claim.status !== "annotated" || claim.strength !== "high";
+    const matchesTask = terms.length > 0 && terms.some((term) => claimProvenanceSearchText(claim).includes(term));
+    if (isWeak || matchesTask) {
+      selected.push(claim);
+    }
+    if (selected.length >= RELEVANT_PROVENANCE_CLAIM_LIMIT) {
+      break;
+    }
+  }
+
+  return selected;
+}
+
+function provenanceTaskTerms(task?: string): string[] {
+  return Array.from(
+    new Set(
+      String(task || "")
+        .toLowerCase()
+        .split(/[^a-z0-9_.#/-]+/)
+        .map((term) => term.trim())
+        .filter((term) => term.length >= 3),
+    ),
+  );
+}
+
+function claimProvenanceSearchText(claim: AnchorClaim): string {
+  return [
+    claim.text,
+    claim.section,
+    ...claim.sources.flatMap((source) => [source.src, source.kind, source.person, source.personName]),
+  ]
+    .filter((value): value is string => typeof value === "string" && value.length > 0)
+    .join(" ")
+    .toLowerCase();
+}
+
+function provenanceMissingContextSignals(provenance?: ContextProvenanceSummary): string[] {
+  if (!provenance || provenance.summary.totalClaims === 0) {
+    return [];
+  }
+  const summary = provenance.summary;
+  const parts: string[] = [];
+  if (summary.malformedClaims > 0) {
+    parts.push(`${summary.malformedClaims} malformed`);
+  }
+  if (summary.unannotatedClaims > 0) {
+    parts.push(`${summary.unannotatedClaims} unannotated`);
+  }
+  if (summary.claimStrengths.low > 0) {
+    parts.push(`${summary.claimStrengths.low} low-strength`);
+  }
+  if (summary.claimStrengths.medium > 0) {
+    parts.push(`${summary.claimStrengths.medium} medium-strength`);
+  }
+  if (parts.length === 0) {
+    return [];
+  }
+  const observed = summary.oldestObserved ? ` Oldest checked source: ${summary.oldestObserved}.` : "";
+  return [`Claim provenance health for included anchors: ${parts.join(", ")} claim(s).${observed}`];
+}
+
+function claimSourceSearchText(source: ClaimSource): string {
+  return [source.src, source.kind, source.person, source.personName]
+    .filter((value): value is string => typeof value === "string" && value.length > 0)
+    .join(" ")
+    .toLowerCase();
+}
+
+function claimSourceTypesById(sourceTypes: ClaimSourceType[]): Map<string, ClaimSourceType> {
+  const map = new Map<string, ClaimSourceType>();
+  for (const type of sourceTypes) {
+    map.set(type.id, type);
+  }
+  return map;
+}
+
+function claimSourceKindId(source: Pick<ClaimAnnotation, "kind" | "src">): string {
+  const kind = source.kind?.trim().toLowerCase();
+  if (kind === "evidence") {
+    return "source";
+  }
+  if (kind) {
+    return kind;
+  }
+  return source.src.trim().toLowerCase() === TRUST_ME_BRO_SOURCE ? TRUST_ME_BRO_KIND : "source";
 }
 
 function truncateClaimText(text: string): string {

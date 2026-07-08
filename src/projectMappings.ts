@@ -1,4 +1,11 @@
-import type { ProjectMapping, ProjectMappings, ProjectRepoMapping, ProjectRepoWeb } from "./types.js";
+import type { ClaimSourceType, ProjectMapping, ProjectMappings, ProjectRepoMapping, ProjectRepoWeb } from "./types.js";
+
+export const DEFAULT_CLAIM_SOURCE_TYPES: ClaimSourceType[] = [
+  { id: "source", label: "Source" },
+  { id: "design-doc", label: "Design Doc" },
+  { id: "adr", label: "ADR" },
+  { id: "trust-me-bro", label: "trust me bro", requiresPerson: true, lockedConfidence: "high" },
+];
 
 /**
  * Normalize and validate a raw project-mappings shape. Mirrors parsePeopleRegistry:
@@ -9,10 +16,57 @@ import type { ProjectMapping, ProjectMappings, ProjectRepoMapping, ProjectRepoWe
  */
 export function parseProjectMappings(raw: unknown): ProjectMappings {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
-    return { projects: [] };
+    return { projects: [], claimSourceTypes: defaultClaimSourceTypes() };
   }
   const obj = raw as Record<string, unknown>;
-  return { projects: parseProjectsArray(obj.projects) };
+  return {
+    projects: parseProjectsArray(obj.projects),
+    claimSourceTypes: parseClaimSourceTypes(obj.claimSourceTypes),
+  };
+}
+
+function defaultClaimSourceTypes(): ClaimSourceType[] {
+  return DEFAULT_CLAIM_SOURCE_TYPES.map((entry) => ({ ...entry }));
+}
+
+function parseClaimSourceTypes(raw: unknown): ClaimSourceType[] {
+  const byId = new Map<string, ClaimSourceType>();
+  for (const entry of defaultClaimSourceTypes()) {
+    byId.set(entry.id, entry);
+  }
+
+  if (Array.isArray(raw)) {
+    for (const item of raw) {
+      if (!item || typeof item !== "object" || Array.isArray(item)) {
+        continue;
+      }
+      const obj = item as Record<string, unknown>;
+      const id = normalizeSourceTypeId(stringValue(obj.id) ?? "");
+      const label = stringValue(obj.label);
+      if (!id || !label) {
+        continue;
+      }
+      const lockedConfidence = claimConfidenceValue(obj.lockedConfidence);
+      byId.set(id, {
+        id,
+        label,
+        ...(booleanValue(obj.requiresPerson) ? { requiresPerson: true } : {}),
+        ...(lockedConfidence ? { lockedConfidence } : {}),
+      });
+    }
+  }
+
+  // Trust-me-bro is a product-owned source type; preserve its safety semantics
+  // even when the registry tries to redefine it.
+  const trust = byId.get("trust-me-bro");
+  byId.set("trust-me-bro", {
+    id: "trust-me-bro",
+    label: trust?.label || "trust me bro",
+    requiresPerson: true,
+    lockedConfidence: "high",
+  });
+
+  return [...byId.values()];
 }
 
 function parseProjectsArray(raw: unknown): ProjectMapping[] {
@@ -85,10 +139,12 @@ function parseWeb(raw: unknown): ProjectRepoWeb | undefined {
   }
   const branch = stringValue(obj.branch);
   const fileTemplate = stringValue(obj.fileTemplate);
+  const pullRequestTemplate = stringValue(obj.pullRequestTemplate);
   return {
     url,
     ...(branch ? { branch } : {}),
     ...(fileTemplate ? { fileTemplate } : {}),
+    ...(pullRequestTemplate ? { pullRequestTemplate } : {}),
   };
 }
 
@@ -121,6 +177,7 @@ function mergeRepos(left: ProjectRepoMapping[], right: ProjectRepoMapping[]): Pr
 }
 
 const DEFAULT_FILE_URL_TEMPLATE = "{url}/blob/{branch}/{path}";
+const DEFAULT_PULL_REQUEST_URL_TEMPLATE = "{url}/pull/{number}";
 const DEFAULT_BRANCH = "main";
 
 /**
@@ -156,6 +213,16 @@ export function repoFileUrl(
   return url;
 }
 
+export function repoPullRequestUrl(repo: Pick<ProjectRepoMapping, "web">, number: number): string | undefined {
+  const web = repo.web;
+  if (!web?.url || !Number.isFinite(number) || number <= 0) {
+    return undefined;
+  }
+  const base = web.url.trim().replace(/\/+$/, "");
+  const template = web.pullRequestTemplate?.trim() || DEFAULT_PULL_REQUEST_URL_TEMPLATE;
+  return template.replace(/\{url\}/g, base).replace(/\{number\}/g, String(Math.floor(number)));
+}
+
 /** Encode each path/ref segment while preserving the slashes between them. */
 function encodeRefOrPath(value: string): string {
   return value
@@ -184,4 +251,16 @@ function dedupePaths(paths: string[]): string[] {
 
 function stringValue(raw: unknown): string | undefined {
   return typeof raw === "string" && raw.trim().length > 0 ? raw.trim() : undefined;
+}
+
+function booleanValue(raw: unknown): boolean {
+  return raw === true;
+}
+
+function claimConfidenceValue(raw: unknown): ClaimSourceType["lockedConfidence"] | undefined {
+  return raw === "high" || raw === "medium" || raw === "low" ? raw : undefined;
+}
+
+export function normalizeSourceTypeId(value: string): string {
+  return value.toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
 }

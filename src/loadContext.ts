@@ -1,7 +1,14 @@
 import { isDiscoveryCategory } from "./taxonomy.js";
 import type { DiscoveryCategory } from "./taxonomy.js";
 import { tokenize } from "./contextPlanner.js";
-import type { AnchorContentMode, AnchorRead, ContextRootFormat, LoadContextAnchor, LoadContextSelectionReason } from "./types.js";
+import type {
+  AnchorContentMode,
+  AnchorRead,
+  ClaimProvenanceMode,
+  ContextRootFormat,
+  LoadContextAnchor,
+  LoadContextSelectionReason,
+} from "./types.js";
 
 /** Defaults aligned with the orchestration tool contract. */
 export const LOAD_CONTEXT_DEFAULT_LIMIT = 12;
@@ -26,6 +33,7 @@ export type LoadContextCursorV1 = {
   excerptChars: number;
   task?: string;
   format?: ContextRootFormat;
+  includeProvenance?: ClaimProvenanceMode;
 };
 
 export function encodeLoadContextCursor(payload: LoadContextCursorV1): string {
@@ -70,6 +78,7 @@ export function decodeLoadContextCursor(cursor: string): LoadContextCursorV1 {
   const format =
     parsed.format === "json" || parsed.format === "markdown" || parsed.format === "both" ? parsed.format : undefined;
   const task = typeof parsed.task === "string" && parsed.task.trim().length > 0 ? parsed.task : undefined;
+  const includeProvenance = normalizeIncludeProvenance(parsed.includeProvenance);
 
   return {
     v: 1,
@@ -89,6 +98,7 @@ export function decodeLoadContextCursor(cursor: string): LoadContextCursorV1 {
     excerptChars,
     task,
     format,
+    includeProvenance,
   };
 }
 
@@ -318,6 +328,14 @@ function normalizeIncludeContent(value: unknown): AnchorContentMode {
   return "excerpt";
 }
 
+function normalizeIncludeProvenance(value: unknown): ClaimProvenanceMode | undefined {
+  if (value === "none" || value === "summary" || value === "relevant" || value === "full") {
+    return value;
+  }
+
+  return undefined;
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -334,6 +352,7 @@ export function toNextCursorPayload(params: {
   excerptChars: number;
   task?: string;
   format?: ContextRootFormat;
+  includeProvenance?: ClaimProvenanceMode;
 }): LoadContextCursorV1 {
   return {
     v: 1,
@@ -347,6 +366,7 @@ export function toNextCursorPayload(params: {
     excerptChars: params.excerptChars,
     task: params.task,
     format: params.format,
+    includeProvenance: params.includeProvenance,
   };
 }
 

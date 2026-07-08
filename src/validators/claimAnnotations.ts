@@ -12,18 +12,20 @@ export const validateClaimAnnotations: Validator = (context: ValidationContext):
   const results: ValidationViolation[] = [];
 
   for (const claim of extractClaims(context.newContent)) {
-    if (claim.status !== "malformed" || !claim.annotationErrors) {
+    if (claim.status !== "malformed" || !claim.sourceErrors) {
       continue;
     }
-    for (const error of claim.annotationErrors) {
-      results.push(
-        violation(
-          "BLOCK",
-          "claim_annotation_invalid",
-          `Line ${claim.annotationLine}: invalid provenance annotation on claim "${truncate(claim.text)}": ${error}`,
-          context.path,
-        ),
-      );
+    for (const sourceError of claim.sourceErrors) {
+      for (const error of sourceError.errors) {
+        results.push(
+          violation(
+            "BLOCK",
+            "claim_annotation_invalid",
+            `Line ${sourceError.line}: invalid provenance annotation on claim "${truncate(claim.text)}": ${error}`,
+            context.path,
+          ),
+        );
+      }
     }
   }
 

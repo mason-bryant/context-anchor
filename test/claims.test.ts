@@ -11,8 +11,10 @@ import {
   extractClaims,
   formatAnnotationBody,
   locateClaim,
+  locateClaimByLine,
   parseAnnotationBody,
   upsertClaimAnnotation,
+  upsertClaimSources,
 } from "../src/claims.js";
 
 describe("parseAnnotationBody", () => {
@@ -68,6 +70,70 @@ describe("parseAnnotationBody", () => {
     expect(result.ok).toBe(false);
     if (!result.ok) {
       expect(result.errors.join(" ")).toContain("cap at conf: medium");
+    }
+  });
+
+  it("parses trust-me-bro developer assertions as high-confidence person-backed sources", () => {
+    const result = parseAnnotationBody(
+      "src: trust me bro; kind: trust-me-bro; person: alice; observed: 2026-07-08; conf: high",
+    );
+    expect(result).toEqual({
+      ok: true,
+      annotation: {
+        src: "trust me bro",
+        kind: "trust-me-bro",
+        person: "alice",
+        observed: "2026-07-08",
+        conf: "high",
+      },
+    });
+    const body = formatAnnotationBody({
+      src: "trust me bro",
+      kind: "trust-me-bro",
+      person: "alice",
+      observed: "2026-07-08",
+      conf: "high",
+    });
+    expect(body).toBe("{src: trust me bro; kind: trust-me-bro; person: alice; observed: 2026-07-08; conf: high}");
+  });
+
+  it("parses slug-like configurable evidence kinds", () => {
+    const result = parseAnnotationBody("src: docs/design.md; kind: design doc; observed: 2026-07-08; conf: medium");
+    expect(result).toEqual({
+      ok: true,
+      annotation: { src: "docs/design.md", kind: "design-doc", observed: "2026-07-08", conf: "medium" },
+    });
+  });
+
+  it("keeps person fields for configurable person-backed evidence kinds", () => {
+    const result = parseAnnotationBody(
+      "src: engineer-attestation; kind: engineer-attestation; person: Alice Example; observed: 2026-07-08; conf: high",
+    );
+    expect(result).toEqual({
+      ok: true,
+      annotation: {
+        src: "engineer-attestation",
+        kind: "engineer-attestation",
+        person: "Alice Example",
+        observed: "2026-07-08",
+        conf: "high",
+      },
+    });
+  });
+
+  it("rejects trust-me-bro sources without a person or high confidence", () => {
+    const missing = parseAnnotationBody("src: trust me bro; observed: 2026-07-08; conf: high");
+    expect(missing.ok).toBe(false);
+    if (!missing.ok) {
+      expect(missing.errors.join(" ")).toContain("person field");
+    }
+
+    const medium = parseAnnotationBody(
+      "src: trust me bro; kind: trust-me-bro; person: alice; observed: 2026-07-08; conf: medium",
+    );
+    expect(medium.ok).toBe(false);
+    if (!medium.ok) {
+      expect(medium.errors.join(" ")).toContain("always use conf: high");
     }
   });
 });
@@ -137,6 +203,34 @@ describe("extractClaims", () => {
     expect(texts.some((text) => text.includes("Sub-bullet detail"))).toBe(false);
     expect(texts.some((text) => text.includes("fenced bullet"))).toBe(false);
   });
+
+  it("extracts multiple sources and computes combined strength", () => {
+    const doc = `## Current State
+
+- Multi-source claim.
+  {src: src/a.ts; observed: 2026-07-01; conf: high}
+  {src: PR #42; observed: 2026-07-02; conf: medium}
+`;
+    const [claim] = extractClaims(doc);
+    expect(claim.sources.map((source) => source.src)).toEqual(["src/a.ts", "PR #42"]);
+    expect(claim.annotation?.src).toBe("src/a.ts");
+    expect(claim.strength).toBe("high");
+    expect(claim.strengthScore).toBe(2.5);
+  });
+
+  it("keeps valid sources while reporting malformed source rows", () => {
+    const doc = `## Current State
+
+- Mixed source claim.
+  {src: src/a.ts; observed: 2026-07-01; conf: high}
+  {src: ; observed: nope; conf: certain}
+`;
+    const [claim] = extractClaims(doc);
+    expect(claim.status).toBe("malformed");
+    expect(claim.sources.map((source) => source.src)).toEqual(["src/a.ts"]);
+    expect(claim.sourceErrors?.[0]?.line).toBe(5);
+    expect(claim.annotationErrors?.join(" ")).toContain("Line 5");
+  });
 });
 
 describe("locateClaim / upsertClaimAnnotation", () => {
@@ -185,6 +279,17 @@ describe("locateClaim / upsertClaimAnnotation", () => {
     const parsed = parseAnnotationBody(body.slice(1, -1));
     expect(parsed.ok).toBe(true);
   });
+
+  it("locates by line and replaces all sources", () => {
+    expect(locateClaimByLine(DOC, 12)).toMatchObject({ ok: true });
+    const updated = upsertClaimSources(DOC, { line: 12 }, [
+      { src: "src/a.ts", observed: "2026-07-07", conf: "high" },
+      { src: "PR #55", observed: "2026-07-08", conf: "medium" },
+    ]);
+    expect(updated).toContain(
+      "- Legacy claim with no provenance.\n  {src: src/a.ts; observed: 2026-07-07; conf: high}\n  {src: PR #55; observed: 2026-07-08; conf: medium}",
+    );
+  });
 });
 
 describe("carryClaimAnnotations", () => {
@@ -210,6 +315,27 @@ describe("carryClaimAnnotations", () => {
     expect(result.content).not.toContain("New unrelated claim.\n  {src:");
   });
 
+  it("carries all sources on byte-identical bullets", () => {
+    const oldDoc = `## Current State
+
+- Stable claim.
+  {src: PR #1; observed: 2026-01-01; conf: high}
+  {src: src/a.ts; observed: 2026-01-02; conf: medium}
+`;
+    const newDoc = `## Current State
+
+- Stable claim.
+`;
+    const result = carryClaimAnnotations(oldDoc, newDoc);
+    expect(result.carried[0]?.sources).toEqual([
+      { src: "PR #1", observed: "2026-01-01", conf: "high" },
+      { src: "src/a.ts", observed: "2026-01-02", conf: "medium" },
+    ]);
+    expect(result.content).toContain(
+      "- Stable claim.\n  {src: PR #1; observed: 2026-01-01; conf: high}\n  {src: src/a.ts; observed: 2026-01-02; conf: medium}",
+    );
+  });
+
   it("reports reworded or removed annotated claims as lost, ignoring malformed ones", () => {
     const NEW = `## Current State
 
@@ -218,7 +344,11 @@ describe("carryClaimAnnotations", () => {
 `;
     const result = carryClaimAnnotations(OLD, NEW);
     expect(result.lost).toEqual([
-      { text: "Reworded claim, original wording.", annotation: { src: "PR #2", observed: "2026-02-01", conf: "medium" } },
+      {
+        text: "Reworded claim, original wording.",
+        annotation: { src: "PR #2", observed: "2026-02-01", conf: "medium" },
+        sources: [{ src: "PR #2", observed: "2026-02-01", conf: "medium" }],
+      },
     ]);
   });
 
@@ -406,6 +536,279 @@ None.
     expect(cleared.version).toBeTruthy();
     const after = await service.listClaims({ name: "projects/demo/claims-demo", status: "unannotated" });
     expect(after.claims.map((claim) => claim.text)).toContain("Legacy claim with no provenance.");
+  });
+
+  it("sets multiple sources by line and resolves source links", async () => {
+    const write = await service.writeAnchor({
+      name: "projects/demo/claims-demo",
+      content: anchorContent(),
+      message: "test: add claims demo",
+    });
+    await service.writeProjectMappings({
+      mappings: {
+        projects: [
+          {
+            project: "demo",
+            repos: [
+              {
+                repo: "repo-alpha",
+                paths: [],
+                web: {
+                  url: "https://github.com/owner/repo-alpha",
+                  branch: "main",
+                  pullRequestTemplate: "{url}/pull/{number}",
+                },
+              },
+            ],
+          },
+        ],
+      },
+      message: "test: add project mappings",
+    });
+
+    const read = await service.readAnchor("projects/demo/claims-demo");
+    const set = await service.setClaimSources({
+      name: "projects/demo/claims-demo",
+      line: 19,
+      sources: [
+        { src: "src/a.ts#L12", observed: "2026-07-08", conf: "high" },
+        { src: "PR #42", observed: "2026-07-07", conf: "medium" },
+      ],
+      expectedFileCommit: read.fileCommit,
+    });
+    expect(set.warnings.filter((warning) => warning.severity === "BLOCK")).toEqual([]);
+    expect(set.version).toBeTruthy();
+
+    const listed = await service.listClaims({ name: "projects/demo/claims-demo", q: "PR #42" });
+    const claim = listed.claims.find((entry) => entry.text === "Legacy claim with no provenance.");
+    expect(claim?.sources.map((source) => source.src)).toEqual(["src/a.ts#L12", "PR #42"]);
+    expect(claim?.strength).toBe("high");
+    expect(claim?.sources[0]?.href).toBe("https://github.com/owner/repo-alpha/blob/main/src/a.ts#L12");
+    expect(claim?.sources[1]?.href).toBe("https://github.com/owner/repo-alpha/pull/42");
+  });
+
+  it("does not resolve person-sourced claims as repo-prefixed files", async () => {
+    await service.writeAnchor({
+      name: "projects/demo/claims-demo",
+      content: anchorContent(),
+      message: "test: add claims demo",
+    });
+    await service.writeProjectMappings({
+      mappings: {
+        projects: [
+          {
+            project: "demo",
+            repos: [
+              {
+                repo: "person",
+                paths: [],
+                web: { url: "https://github.com/owner/person" },
+              },
+            ],
+          },
+        ],
+      },
+      message: "test: add project mappings",
+    });
+
+    const set = await service.setClaimSources({
+      name: "projects/demo/claims-demo",
+      claim: "Legacy claim",
+      sources: [{ src: "person:alice", observed: "2026-07-08", conf: "medium" }],
+    });
+    expect(set.warnings.filter((warning) => warning.severity === "BLOCK")).toEqual([]);
+
+    const listed = await service.listClaims({ name: "projects/demo/claims-demo", q: "person:alice" });
+    const claim = listed.claims.find((entry) => entry.text === "Legacy claim with no provenance.");
+    expect(claim?.sources[0]).toMatchObject({ src: "person:alice", conf: "medium" });
+    expect(claim?.sources[0]?.href).toBeUndefined();
+  });
+
+  it("accepts default and configured evidence source types", async () => {
+    await service.writeAnchor({
+      name: "projects/demo/claims-demo",
+      content: anchorContent(),
+      message: "test: add claims demo",
+    });
+    await service.writeProjectMappings({
+      mappings: {
+        claimSourceTypes: [
+          { id: "runbook", label: "Runbook" },
+        ],
+        projects: [],
+      },
+      message: "test: configure source types",
+    });
+
+    const set = await service.setClaimSources({
+      name: "projects/demo/claims-demo",
+      claim: "Legacy claim",
+      sources: [
+        { src: "src/a.ts", kind: "source", observed: "2026-07-08", conf: "high" },
+        { src: "docs/design.md", kind: "design-doc", observed: "2026-07-08", conf: "medium" },
+        { src: "docs/adr-001.md", kind: "adr", observed: "2026-07-08", conf: "medium" },
+        { src: "docs/runbook.md", kind: "runbook", observed: "2026-07-08", conf: "low" },
+      ],
+    });
+    expect(set.warnings.filter((warning) => warning.severity === "BLOCK")).toEqual([]);
+
+    const listed = await service.listClaims({ name: "projects/demo/claims-demo", q: "runbook" });
+    const claim = listed.claims.find((entry) => entry.text === "Legacy claim with no provenance.");
+    expect(claim?.sources.map((source) => source.kind)).toEqual(["source", "design-doc", "adr", "runbook"]);
+
+    const rejected = await service.setClaimSources({
+      name: "projects/demo/claims-demo",
+      claim: "Legacy claim",
+      sources: [{ src: "docs/unknown.md", kind: "unknown-type", observed: "2026-07-08", conf: "medium" }],
+    });
+    expect(rejected.warnings.some((warning) => warning.message.includes("unknown claim source type"))).toBe(true);
+  });
+
+  it("accepts configured person-backed source types", async () => {
+    await service.writeAnchor({
+      name: "projects/demo/claims-demo",
+      content: anchorContent(),
+      message: "test: add claims demo",
+    });
+    await service.writePeopleRegistry({
+      registry: {
+        people: [{ id: "alice", displayName: "Alice Example", identities: { names: ["AE"] } }],
+        teams: [],
+      },
+      message: "test: add person",
+    });
+    await service.writeProjectMappings({
+      mappings: {
+        claimSourceTypes: [
+          { id: "engineer-attestation", label: "Engineer Attestation", requiresPerson: true, lockedConfidence: "high" },
+        ],
+        projects: [],
+      },
+      message: "test: configure person-backed source type",
+    });
+
+    const set = await service.setClaimSources({
+      name: "projects/demo/claims-demo",
+      claim: "Legacy claim",
+      sources: [
+        {
+          src: "engineer-attestation",
+          kind: "engineer-attestation",
+          person: "Alice Example",
+          observed: "2026-07-08",
+          conf: "high",
+        },
+      ],
+    });
+    expect(set.warnings.filter((warning) => warning.severity === "BLOCK")).toEqual([]);
+
+    const listed = await service.listClaims({ name: "projects/demo/claims-demo", q: "Alice" });
+    const claim = listed.claims.find((entry) => entry.text === "Legacy claim with no provenance.");
+    expect(claim?.sources[0]).toMatchObject({
+      src: "engineer-attestation",
+      kind: "engineer-attestation",
+      person: "alice",
+      personName: "Alice Example",
+      conf: "high",
+    });
+
+    const rejected = await service.setClaimSources({
+      name: "projects/demo/claims-demo",
+      claim: "Legacy claim",
+      sources: [
+        {
+          src: "engineer-attestation",
+          kind: "engineer-attestation",
+          person: "Alice Example",
+          observed: "2026-07-08",
+          conf: "medium",
+        },
+      ],
+    });
+    expect(rejected.warnings.some((warning) => warning.message.includes("engineer-attestation sources require conf: high"))).toBe(
+      true,
+    );
+  });
+
+  it("sets trust-me-bro sources by resolving a named developer to a person id", async () => {
+    await service.writeAnchor({
+      name: "projects/demo/claims-demo",
+      content: anchorContent(),
+      message: "test: add claims demo",
+    });
+    await service.writePeopleRegistry({
+      registry: {
+        people: [{ id: "alice", displayName: "Alice Example", identities: { names: ["AE"] } }],
+        teams: [],
+      },
+      message: "test: add person",
+    });
+
+    const set = await service.setClaimSources({
+      name: "projects/demo/claims-demo",
+      claim: "Legacy claim",
+      sources: [
+        {
+          src: "trust me bro",
+          kind: "trust-me-bro",
+          person: "Alice Example",
+          observed: "2026-07-08",
+          conf: "high",
+        },
+      ],
+    });
+    expect(set.warnings.filter((warning) => warning.severity === "BLOCK")).toEqual([]);
+
+    const listed = await service.listClaims({ name: "projects/demo/claims-demo", q: "alice" });
+    const claim = listed.claims.find((entry) => entry.text === "Legacy claim with no provenance.");
+    expect(claim?.sources[0]).toMatchObject({
+      src: "trust me bro",
+      kind: "trust-me-bro",
+      person: "alice",
+      personName: "Alice Example",
+      conf: "high",
+    });
+    expect(claim?.strength).toBe("high");
+
+    const rejected = await service.setClaimSources({
+      name: "projects/demo/claims-demo",
+      claim: "Legacy claim",
+      sources: [
+        {
+          src: "trust me bro",
+          kind: "trust-me-bro",
+          person: "Unknown Person",
+          observed: "2026-07-08",
+          conf: "high",
+        },
+      ],
+    });
+    expect(rejected.warnings.some((warning) => warning.code === "claim_annotation_invalid")).toBe(true);
+  });
+
+  it("rejects stale setClaimSources writes", async () => {
+    await service.writeAnchor({
+      name: "projects/demo/claims-demo",
+      content: anchorContent(),
+      message: "test: add claims demo",
+    });
+    const read = await service.readAnchor("projects/demo/claims-demo");
+    await service.annotateClaim({
+      name: "projects/demo/claims-demo",
+      claim: "Annotated claim",
+      src: "PR #1",
+      observed: "2026-07-07",
+      conf: "medium",
+    });
+
+    const stale = await service.setClaimSources({
+      name: "projects/demo/claims-demo",
+      claim: "Legacy claim",
+      sources: [{ src: "PR #2", observed: "2026-07-08", conf: "low" }],
+      expectedFileCommit: read.fileCommit,
+    });
+    expect(stale.version).toBeUndefined();
+    expect(stale.warnings[0]?.code).toBe("stale_base");
   });
 
   it("returns typed blocks for invalid annotations, unknown claims, and ambiguity", async () => {

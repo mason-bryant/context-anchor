@@ -1,17 +1,25 @@
 import { describe, expect, it } from "vitest";
 
-import { normalizePathForStorage, parseProjectMappings, repoFileUrl } from "../src/projectMappings.js";
+import {
+  DEFAULT_CLAIM_SOURCE_TYPES,
+  normalizePathForStorage,
+  parseProjectMappings,
+  repoFileUrl,
+  repoPullRequestUrl,
+} from "../src/projectMappings.js";
 
 describe("parseProjectMappings", () => {
   it("returns an empty registry for non-object input", () => {
-    expect(parseProjectMappings(null)).toEqual({ projects: [] });
-    expect(parseProjectMappings("nope")).toEqual({ projects: [] });
-    expect(parseProjectMappings([])).toEqual({ projects: [] });
-    expect(parseProjectMappings({})).toEqual({ projects: [] });
+    const empty = { projects: [], claimSourceTypes: DEFAULT_CLAIM_SOURCE_TYPES };
+    expect(parseProjectMappings(null)).toEqual(empty);
+    expect(parseProjectMappings("nope")).toEqual(empty);
+    expect(parseProjectMappings([])).toEqual(empty);
+    expect(parseProjectMappings({})).toEqual(empty);
   });
 
   it("keeps well-formed projects, repos, and paths", () => {
     const parsed = parseProjectMappings({
+      claimSourceTypes: DEFAULT_CLAIM_SOURCE_TYPES,
       projects: [
         {
           project: "payments",
@@ -23,6 +31,7 @@ describe("parseProjectMappings", () => {
       ],
     });
     expect(parsed).toEqual({
+      claimSourceTypes: DEFAULT_CLAIM_SOURCE_TYPES,
       projects: [
         {
           project: "payments",
@@ -56,6 +65,7 @@ describe("parseProjectMappings", () => {
       ],
     });
     expect(parsed).toEqual({
+      claimSourceTypes: DEFAULT_CLAIM_SOURCE_TYPES,
       projects: [{ project: "payments", repos: [{ repo: "repo-alpha", paths: ["a"] }] }],
     });
   });
@@ -84,10 +94,38 @@ describe("parseProjectMappings", () => {
       { repo: "Repo-Alpha", paths: ["services/payments", "libs/pay"] },
     ]);
   });
+
+  it("keeps configurable claim source types and merges them with defaults", () => {
+    const parsed = parseProjectMappings({
+      claimSourceTypes: [
+        { id: "design doc", label: "Design Proposal" },
+        { id: "runbook", label: "Runbook", lockedConfidence: "medium" },
+        { id: "trust-me-bro", label: "Developer Assertion", requiresPerson: false, lockedConfidence: "low" },
+        { id: "", label: "ignored" },
+      ],
+      projects: [],
+    });
+    expect(parsed.claimSourceTypes.find((type) => type.id === "source")).toEqual({ id: "source", label: "Source" });
+    expect(parsed.claimSourceTypes.find((type) => type.id === "design-doc")).toEqual({
+      id: "design-doc",
+      label: "Design Proposal",
+    });
+    expect(parsed.claimSourceTypes.find((type) => type.id === "runbook")).toEqual({
+      id: "runbook",
+      label: "Runbook",
+      lockedConfidence: "medium",
+    });
+    expect(parsed.claimSourceTypes.find((type) => type.id === "trust-me-bro")).toEqual({
+      id: "trust-me-bro",
+      label: "Developer Assertion",
+      requiresPerson: true,
+      lockedConfidence: "high",
+    });
+  });
 });
 
 describe("parseProjectMappings web info", () => {
-  it("keeps web url, branch, and template", () => {
+  it("keeps web url, branch, and templates", () => {
     const parsed = parseProjectMappings({
       projects: [
         {
@@ -96,7 +134,12 @@ describe("parseProjectMappings web info", () => {
             {
               repo: "repo-alpha",
               paths: [],
-              web: { url: "https://github.com/owner/repo-alpha", branch: "main", fileTemplate: "{url}/blob/{branch}/{path}" },
+              web: {
+                url: "https://github.com/owner/repo-alpha",
+                branch: "main",
+                fileTemplate: "{url}/blob/{branch}/{path}",
+                pullRequestTemplate: "{url}/pull/{number}",
+              },
             },
           ],
         },
@@ -106,6 +149,7 @@ describe("parseProjectMappings web info", () => {
       url: "https://github.com/owner/repo-alpha",
       branch: "main",
       fileTemplate: "{url}/blob/{branch}/{path}",
+      pullRequestTemplate: "{url}/pull/{number}",
     });
   });
 
@@ -159,6 +203,18 @@ describe("repoFileUrl", () => {
   it("returns undefined without web url or path", () => {
     expect(repoFileUrl({ web: undefined }, "src/x.ts")).toBeUndefined();
     expect(repoFileUrl({ web: { url: "https://github.com/o/r" } }, "  ")).toBeUndefined();
+  });
+});
+
+describe("repoPullRequestUrl", () => {
+  it("builds a GitHub-style PR URL by default", () => {
+    const repo = { web: { url: "https://github.com/owner/repo" } };
+    expect(repoPullRequestUrl(repo, 42)).toBe("https://github.com/owner/repo/pull/42");
+  });
+
+  it("applies a custom PR template for other hosts", () => {
+    const repo = { web: { url: "https://gitlab.com/acme/api", pullRequestTemplate: "{url}/-/merge_requests/{number}" } };
+    expect(repoPullRequestUrl(repo, 12)).toBe("https://gitlab.com/acme/api/-/merge_requests/12");
   });
 });
 

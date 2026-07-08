@@ -48,6 +48,14 @@ export const UI_HTML = `<!doctype html>
         <rect x="3" y="11" width="18" height="10" rx="2"></rect>
         <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
       </symbol>
+      <symbol id="icon-object-graph" viewBox="0 0 24 24">
+        <circle cx="6" cy="12" r="2.5"></circle>
+        <circle cx="16" cy="6" r="2.5"></circle>
+        <circle cx="18" cy="17" r="2.5"></circle>
+        <path d="M8.1 10.7 13.9 7.3"></path>
+        <path d="M8.4 13.2 15.6 16.1"></path>
+        <path d="M16.4 8.5 17.6 14.5"></path>
+      </symbol>
     </svg>
     <div class="app-shell">
       <header class="topbar">
@@ -355,6 +363,7 @@ export const UI_HTML = `<!doctype html>
             <datalist id="project-slug-suggestions"></datalist>
             <datalist id="milestone-anchor-suggestions"></datalist>
             <datalist id="team-id-suggestions"></datalist>
+            <datalist id="claim-person-suggestions"></datalist>
             <div id="tasks-list" hidden></div>
           </section>
 
@@ -458,6 +467,11 @@ export const UI_HTML = `<!doctype html>
               </div>
             </div>
             <p class="registry-hint">Every project under management is listed below. A project can live in any number of repos; each repo can be narrowed to directory paths (one per line), or left blank to match the whole repo.</p>
+            <div class="metadata-box claim-source-type-config">
+              <h3>Claim Source Types</h3>
+              <div id="claim-source-types-list" class="claim-source-types-list"></div>
+              <button id="claim-source-type-add" type="button">+ Add Source Type</button>
+            </div>
             <div id="mappings-empty" class="empty-state" hidden>No project mappings yet. Add one to map a project to its repos and paths.</div>
             <div id="mappings-list" class="registry-cards"></div>
           </section>
@@ -619,6 +633,33 @@ export const UI_HTML = `<!doctype html>
           </section>
         </section>
       </main>
+    </div>
+    <div id="claim-source-modal" class="modal-backdrop" hidden>
+      <div class="modal-dialog claim-source-dialog" role="dialog" aria-modal="true" aria-labelledby="claim-source-title">
+        <div class="modal-header">
+          <div>
+            <h2 id="claim-source-title">Claim Sources</h2>
+            <p id="claim-source-text"></p>
+          </div>
+          <button id="claim-source-close" type="button" class="icon-button" aria-label="Close claim source editor">×</button>
+        </div>
+        <div id="claim-source-readonly" class="readonly-note" hidden>Built-in server rules are read-only and ship with anchor-mcp.</div>
+        <div id="claim-source-rows" class="claim-source-rows"></div>
+        <details id="claim-person-add" class="claim-person-add">
+          <summary>Add Person</summary>
+          <div class="claim-person-add-grid">
+            <label>ID (slug)<input id="claim-new-person-id" type="text" placeholder="jdoe"></label>
+            <label>Display Name<input id="claim-new-person-name" type="text" placeholder="Jane Doe"></label>
+            <button id="claim-new-person-save" type="button">Save Person</button>
+          </div>
+        </details>
+        <div class="action-row">
+          <button id="claim-source-add" type="button">Add Source</button>
+          <button id="claim-source-save" type="button">Save</button>
+          <button id="claim-source-cancel" type="button">Cancel</button>
+        </div>
+        <p id="claim-source-result" class="claim-editor-result"></p>
+      </div>
     </div>
     <script src="/ui/app.js"></script>
   </body>
@@ -1679,6 +1720,86 @@ textarea {
 .claim-chip-conf-low {
   background: rgba(248, 81, 73, 0.25);
 }
+.claim-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.claim-epistemology {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+.claim-epistemology-button {
+  width: 24px;
+  height: 24px;
+  min-width: 24px;
+  padding: 0;
+  border-radius: 50%;
+  color: #57606a;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.claim-epistemology-button svg {
+  width: 15px;
+  height: 15px;
+}
+.claim-strength-low {
+  color: #cf222e;
+  border-color: rgba(207, 34, 46, 0.45);
+  background: rgba(248, 81, 73, 0.14);
+}
+.claim-strength-medium {
+  color: #9a6700;
+  border-color: rgba(154, 103, 0, 0.45);
+  background: rgba(210, 153, 34, 0.18);
+}
+.claim-strength-high {
+  color: #1a7f37;
+  border-color: rgba(26, 127, 55, 0.45);
+  background: rgba(46, 160, 67, 0.16);
+}
+.claim-popover {
+  position: absolute;
+  left: 0;
+  top: 30px;
+  z-index: 30;
+  width: min(360px, calc(100vw - 48px));
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: var(--shadow);
+  display: none;
+  color: var(--text);
+  font-size: 0.84rem;
+  line-height: 1.35;
+}
+.claim-epistemology:hover .claim-popover,
+.claim-epistemology:focus-within .claim-popover {
+  display: block;
+}
+.claim-popover-title {
+  font-weight: 700;
+  margin-bottom: 6px;
+}
+.claim-popover-row {
+  display: block;
+  padding: 5px 0;
+  border-top: 1px solid var(--panel-strong);
+}
+.claim-popover-row:first-of-type {
+  border-top: 0;
+}
+.claim-popover-meta {
+  display: block;
+  color: var(--muted);
+  font-size: 0.78rem;
+}
 .claim-editor {
   margin-top: 8px;
   display: flex;
@@ -1692,6 +1813,109 @@ textarea {
 }
 .claim-editor-result {
   font-size: 0.85rem;
+}
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  background: rgba(15, 23, 42, 0.35);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+.modal-backdrop[hidden] {
+  display: none;
+}
+.modal-dialog {
+  width: min(760px, 100%);
+  max-height: calc(100vh - 48px);
+  overflow: auto;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: var(--shadow);
+  padding: 18px;
+}
+.modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.modal-header h2 {
+  margin: 0;
+  font-size: 20px;
+}
+.modal-header p {
+  margin: 4px 0 0;
+  color: var(--muted);
+}
+.icon-button {
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  font-size: 20px;
+  line-height: 1;
+}
+.claim-source-rows {
+  display: grid;
+  gap: 8px;
+  margin: 12px 0;
+}
+.claim-source-row {
+  display: grid;
+  grid-template-columns: minmax(110px, 0.7fr) minmax(160px, 1.4fr) minmax(160px, 1.4fr) minmax(140px, 0.8fr) minmax(110px, 0.6fr) minmax(110px, 0.6fr) auto;
+  gap: 8px;
+  align-items: end;
+}
+.claim-source-person-label {
+  display: none;
+}
+.claim-source-row[data-requires-person="1"] .claim-source-src-label {
+  display: none;
+}
+.claim-source-row[data-requires-person="1"] .claim-source-person-label {
+  display: block;
+}
+.claim-source-row label {
+  min-width: 0;
+}
+.claim-source-row input,
+.claim-source-row select {
+  width: 100%;
+}
+.claim-person-add {
+  margin: 6px 0 12px;
+}
+.claim-person-add-grid {
+  display: grid;
+  grid-template-columns: minmax(140px, 1fr) minmax(180px, 1.2fr) auto;
+  gap: 8px;
+  align-items: end;
+  margin-top: 8px;
+}
+.claim-source-type-config {
+  margin-bottom: 14px;
+}
+.claim-source-types-list {
+  display: grid;
+  gap: 8px;
+  margin: 8px 0 10px;
+}
+.claim-source-type-row {
+  display: grid;
+  grid-template-columns: minmax(120px, 0.9fr) minmax(160px, 1.2fr) auto minmax(120px, 0.7fr) auto;
+  gap: 8px;
+  align-items: end;
+}
+.claim-source-type-row label {
+  min-width: 0;
+}
+.claim-source-type-row input,
+.claim-source-type-row select {
+  width: 100%;
 }
 .detail-tasks {
   margin: 0 0 16px;
@@ -2280,13 +2504,24 @@ export const UI_JS = `(function () {
     peopleSearch: "",
     teamsSearch: "",
     selectedPersonId: null,
-    selectedTeamId: null
+    selectedTeamId: null,
+    claimSourceModal: null,
+    claimPersonMatchCache: [],
+    claimPersonSearchTimer: null,
+    claimPersonSearchSeq: 0,
+    claimPersonInput: null
   };
 
   var categories = ["", "server-rules", "agent-rules", "projects", "invariants", "conflicts", "shared", "archive"];
   var tokenStorageKey = "anchor-mcp-token";
   var SERVER_RULES_PREFIX = "server-rules/";
   var SERVER_RULE_READ_ONLY_MESSAGE = "Built-in server rules are read-only. They ship with anchor-mcp and cannot be edited from this UI.";
+  var DEFAULT_CLAIM_SOURCE_TYPES = [
+    { id: "source", label: "Source" },
+    { id: "design-doc", label: "Design Doc" },
+    { id: "adr", label: "ADR" },
+    { id: "trust-me-bro", label: "trust me bro", requiresPerson: true, lockedConfidence: "high" }
+  ];
   var READ_ONLY_DETAIL_CONTROL_IDS = [
     "priority-input",
     "update-priority",
@@ -4510,7 +4745,7 @@ export const UI_JS = `(function () {
   function claimGroupKey(claim, groupBy) {
     if (groupBy === "section") return claim.section;
     if (groupBy === "status") return claim.status;
-    if (groupBy === "conf") return claim.annotation ? "conf: " + claim.annotation.conf : "no annotation";
+    if (groupBy === "conf") return claimSources(claim).length ? "conf: " + claimStrengthValue(claim) : "no annotation";
     if (groupBy === "project") return claimProjectSlug(claim);
     return claim.anchor;
   }
@@ -4518,8 +4753,8 @@ export const UI_JS = `(function () {
   var CLAIM_TRUST_ORDER = { malformed: 0, unannotated: 1, low: 2, medium: 3, high: 4 };
 
   function claimTrustRank(claim) {
-    if (claim.status === "annotated" && claim.annotation) {
-      return CLAIM_TRUST_ORDER[claim.annotation.conf];
+    if (claimSources(claim).length > 0) {
+      return CLAIM_TRUST_ORDER[claimStrengthValue(claim)];
     }
     return CLAIM_TRUST_ORDER[claim.status] || 0;
   }
@@ -4534,8 +4769,10 @@ export const UI_JS = `(function () {
     }
     if (sortMode === "oldest-observed" || sortMode === "newest-observed") {
       // Claims without an observed date sort after dated claims in both directions.
-      var leftDate = left.annotation ? left.annotation.observed : "";
-      var rightDate = right.annotation ? right.annotation.observed : "";
+      var leftDates = claimSources(left).map(function (source) { return source.observed || ""; }).filter(Boolean).sort();
+      var rightDates = claimSources(right).map(function (source) { return source.observed || ""; }).filter(Boolean).sort();
+      var leftDate = sortMode === "oldest-observed" ? leftDates[0] : leftDates[leftDates.length - 1];
+      var rightDate = sortMode === "oldest-observed" ? rightDates[0] : rightDates[rightDates.length - 1];
       if (!leftDate && !rightDate) return documentOrderCompare(left, right);
       if (!leftDate) return 1;
       if (!rightDate) return -1;
@@ -4562,6 +4799,13 @@ export const UI_JS = `(function () {
     text.textContent = claim.text;
     header.appendChild(text);
 
+    var graphButton = document.createElement("button");
+    graphButton.type = "button";
+    graphButton.className = "claim-epistemology-button claim-strength-" + claimStrengthValue(claim);
+    graphButton.title = "Edit claim sources";
+    graphButton.innerHTML = "<svg class=\\"icon\\" aria-hidden=\\"true\\"><use href=\\"#icon-object-graph\\"></use></svg>";
+    header.appendChild(graphButton);
+
     var editButton = document.createElement("button");
     editButton.type = "button";
     editButton.className = "claim-edit-toggle";
@@ -4571,13 +4815,17 @@ export const UI_JS = `(function () {
 
     var meta = document.createElement("div");
     meta.className = "claim-meta";
-    if (claim.annotation) {
-      meta.appendChild(claimChip("src: " + claim.annotation.src, "src"));
-      meta.appendChild(claimChip("observed: " + claim.annotation.observed, "observed"));
-      meta.appendChild(claimChip("conf: " + claim.annotation.conf, "conf-" + claim.annotation.conf));
-      if (claim.annotation.id) {
-        meta.appendChild(claimChip("id: " + claim.annotation.id, "id"));
-      }
+    var sources = claimSources(claim);
+    if (sources.length) {
+      meta.appendChild(claimChip("strength: " + claimStrengthValue(claim), "conf-" + claimStrengthValue(claim)));
+      sources.forEach(function (source) {
+        meta.appendChild(claimChip("src: " + claimSourceDisplayLabel(source), "src"));
+        meta.appendChild(claimChip("last checked: " + source.observed, "observed"));
+        meta.appendChild(claimChip("conf: " + source.conf, "conf-" + source.conf));
+        if (source.id) {
+          meta.appendChild(claimChip("id: " + source.id, "id"));
+        }
+      });
     } else if (claim.status === "malformed") {
       meta.appendChild(claimChip((claim.annotationErrors || []).join(" "), "error"));
     } else {
@@ -4585,75 +4833,11 @@ export const UI_JS = `(function () {
     }
     row.appendChild(meta);
 
-    var editor = document.createElement("div");
-    editor.className = "claim-editor";
-    editor.hidden = true;
-
-    var srcInput = document.createElement("input");
-    srcInput.type = "text";
-    srcInput.placeholder = "src: PR #54, path, anchor, URL, or person:<id>";
-    srcInput.value = claim.annotation ? claim.annotation.src : "";
-    srcInput.setAttribute("aria-label", "Provenance source");
-
-    var observedInput = document.createElement("input");
-    observedInput.type = "date";
-    observedInput.value = claim.annotation ? claim.annotation.observed : todayIso();
-    observedInput.setAttribute("aria-label", "Observed date");
-
-    var confSelect = document.createElement("select");
-    confSelect.setAttribute("aria-label", "Confidence");
-    ["high", "medium", "low"].forEach(function (value) {
-      var option = document.createElement("option");
-      option.value = value;
-      option.textContent = value;
-      confSelect.appendChild(option);
-    });
-    confSelect.value = claim.annotation ? claim.annotation.conf : "medium";
-
-    var saveButton = document.createElement("button");
-    saveButton.type = "button";
-    saveButton.textContent = "Save";
-
-    var clearButton = document.createElement("button");
-    clearButton.type = "button";
-    clearButton.textContent = "Clear";
-    clearButton.hidden = claim.status === "unannotated";
-
-    var cancelButton = document.createElement("button");
-    cancelButton.type = "button";
-    cancelButton.textContent = "Cancel";
-
-    var resultEl = document.createElement("span");
-    resultEl.className = "claim-editor-result";
-
-    editor.appendChild(srcInput);
-    editor.appendChild(observedInput);
-    editor.appendChild(confSelect);
-    editor.appendChild(saveButton);
-    editor.appendChild(clearButton);
-    editor.appendChild(cancelButton);
-    editor.appendChild(resultEl);
-    row.appendChild(editor);
-
-    editButton.addEventListener("click", function () {
-      editor.hidden = !editor.hidden;
-      if (!editor.hidden) {
-        srcInput.focus();
-      }
-    });
-    cancelButton.addEventListener("click", function () {
-      editor.hidden = true;
-    });
-    saveButton.addEventListener("click", function () {
-      saveClaimAnnotation(claim, {
-        src: srcInput.value.trim(),
-        observed: observedInput.value,
-        conf: confSelect.value,
-      }, resultEl);
-    });
-    clearButton.addEventListener("click", function () {
-      saveClaimAnnotation(claim, { clear: true }, resultEl);
-    });
+    function openEditor() {
+      openClaimSourceModal(claim, false, null);
+    }
+    editButton.addEventListener("click", openEditor);
+    graphButton.addEventListener("click", openEditor);
 
     return row;
   }
@@ -4686,6 +4870,408 @@ export const UI_JS = `(function () {
       loadClaims();
     } catch (error) {
       resultEl.textContent = error.message;
+    }
+  }
+
+  function wireClaimEpistemologyControls(container, anchor, readOnly) {
+    var claims = (anchor.ui && anchor.ui.claims) || [];
+    container.querySelectorAll(".claim-epistemology-button[data-claim-line]").forEach(function (button) {
+      button.addEventListener("click", function () {
+        var line = Number(button.dataset.claimLine || "0");
+        var claim = claims.find(function (entry) { return entry.line === line; });
+        if (claim) {
+          openClaimSourceModal(claim, readOnly, anchor);
+        }
+      });
+    });
+  }
+
+  function openClaimSourceModal(claim, readOnly, anchor) {
+    state.claimSourceModal = {
+      claim: claim,
+      readOnly: !!readOnly,
+      anchorName: anchor && anchor.name ? anchor.name : claim.anchor,
+      expectedFileCommit: anchor && anchor.fileCommit ? anchor.fileCommit : undefined
+    };
+    el("claim-source-title").textContent = "Claim Sources";
+    el("claim-source-text").textContent = claim.text || "";
+    el("claim-source-readonly").hidden = !readOnly;
+    el("claim-source-result").textContent = readOnly ? SERVER_RULE_READ_ONLY_MESSAGE : "";
+    el("claim-source-add").disabled = !!readOnly;
+    el("claim-source-save").disabled = !!readOnly;
+    renderClaimSourceRows(claimSources(claim), !!readOnly);
+    renderClaimPersonSuggestions("", []);
+    if (!state.projectMappings && !state.projectMappingsLoading) {
+      loadProjectMappings().then(function () {
+        if (state.claimSourceModal && state.claimSourceModal.claim === claim) {
+          renderClaimSourceRows(claimSources(claim), !!readOnly);
+        }
+      }).catch(function (error) { setBanner(error.message, "error"); });
+    }
+    if (!state.registry && !state.registryLoading) {
+      loadRegistry().catch(function (error) { setBanner(error.message, "error"); });
+    }
+    el("claim-source-modal").hidden = false;
+  }
+
+  function closeClaimSourceModal() {
+    state.claimSourceModal = null;
+    state.claimPersonInput = null;
+    el("claim-source-modal").hidden = true;
+    el("claim-source-result").textContent = "";
+  }
+
+  function renderClaimSourceRows(sources, readOnly) {
+    var rows = sources.length ? sources : [{ src: "", observed: todayIso(), conf: "medium" }];
+    el("claim-source-rows").innerHTML = rows.map(function (source, index) {
+      return claimSourceRowHtml(source, index, readOnly);
+    }).join("");
+    wireClaimSourceRows();
+  }
+
+  function claimSourceRowHtml(source, index, readOnly) {
+    var disabled = readOnly ? " disabled" : "";
+    var kind = claimSourceKind(source);
+    var type = claimSourceTypeById(kind);
+    var personValue = source.personName || source.person || "";
+    return "<div class=\\"claim-source-row\\" data-source-index=\\"" + index + "\\" data-kind=\\"" + escapeHtml(kind) + "\\" data-readonly=\\"" + (readOnly ? "1" : "0") + "\\">"
+      + "<label>Type<select class=\\"claim-source-kind\\"" + disabled + ">"
+      + claimSourceTypeOptionsHtml(type.id)
+      + "</select></label>"
+      + "<label class=\\"claim-source-src-label\\">Source<input class=\\"claim-source-src\\" type=\\"text\\" value=\\"" + escapeHtml(source.src || "") + "\\" placeholder=\\"PR #42, src/file.ts#L12, URL, anchor, or person:id\\"" + disabled + "></label>"
+      + "<label class=\\"claim-source-person-label\\">Developer<input class=\\"claim-source-person\\" type=\\"text\\" value=\\"" + escapeHtml(personValue) + "\\" placeholder=\\"Search people\\" list=\\"claim-person-suggestions\\" autocomplete=\\"off\\"" + disabled + "></label>"
+      + "<label>Last checked<input class=\\"claim-source-observed\\" type=\\"date\\" value=\\"" + escapeHtml(source.observed || todayIso()) + "\\"" + disabled + "></label>"
+      + "<label>Strength<select class=\\"claim-source-conf\\"" + disabled + ">"
+      + ["high", "medium", "low"].map(function (value) {
+        return "<option value=\\"" + value + "\\"" + (source.conf === value ? " selected" : "") + ">" + value + "</option>";
+      }).join("")
+      + "</select></label>"
+      + "<label>ID<input class=\\"claim-source-id\\" type=\\"text\\" value=\\"" + escapeHtml(source.id || "") + "\\" placeholder=\\"optional\\"" + disabled + "></label>"
+      + "<button class=\\"claim-source-delete\\" type=\\"button\\"" + disabled + ">Delete</button>"
+      + "</div>";
+  }
+
+  function wireClaimSourceRows() {
+    el("claim-source-rows").querySelectorAll(".claim-source-row").forEach(function (row) {
+      updateClaimSourceRowKind(row);
+      var kindSelect = row.querySelector(".claim-source-kind");
+      if (kindSelect && !kindSelect.dataset.wired) {
+        kindSelect.dataset.wired = "1";
+        kindSelect.addEventListener("change", function () {
+          updateClaimSourceRowKind(row);
+        });
+      }
+      var personInput = row.querySelector(".claim-source-person");
+      if (personInput && !personInput.dataset.wired) {
+        personInput.dataset.wired = "1";
+        personInput.addEventListener("focus", function () {
+          state.claimPersonInput = personInput;
+          renderClaimPersonSuggestions(personInput.value || "", []);
+          if (!state.registry && !state.registryLoading) {
+            loadRegistry().catch(function (error) { setBanner(error.message, "error"); });
+          }
+        });
+        personInput.addEventListener("input", function () {
+          state.claimPersonInput = personInput;
+          queueClaimPersonSearch(personInput);
+        });
+      }
+    });
+    el("claim-source-rows").querySelectorAll(".claim-source-delete").forEach(function (button) {
+      if (button.dataset.wired) return;
+      button.dataset.wired = "1";
+      button.addEventListener("click", function () {
+        button.closest(".claim-source-row").remove();
+      });
+    });
+  }
+
+  function updateClaimSourceRowKind(row) {
+    if (!row) return;
+    var kindSelect = row.querySelector(".claim-source-kind");
+    var srcInput = row.querySelector(".claim-source-src");
+    var confSelect = row.querySelector(".claim-source-conf");
+    var kind = normalizeClaimSourceTypeId(kindSelect ? kindSelect.value : "source") || "source";
+    var type = claimSourceTypeById(kind);
+    var readOnly = row.dataset.readonly === "1";
+    row.dataset.kind = type.id;
+    row.dataset.requiresPerson = type.requiresPerson ? "1" : "0";
+    if (type.requiresPerson) {
+      if (srcInput) srcInput.value = type.id === "trust-me-bro" ? "trust me bro" : type.id;
+    }
+    if (type.lockedConfidence) {
+      if (confSelect) {
+        confSelect.value = type.lockedConfidence;
+        confSelect.disabled = true;
+      }
+    } else if (confSelect) {
+      confSelect.disabled = readOnly;
+    }
+  }
+
+  function addClaimSourceRow() {
+    var container = el("claim-source-rows");
+    var temp = document.createElement("div");
+    temp.innerHTML = claimSourceRowHtml({ src: "", observed: todayIso(), conf: "medium" }, container.children.length, false);
+    container.appendChild(temp.firstChild);
+    wireClaimSourceRows();
+  }
+
+  function collectClaimSourceRows() {
+    var sources = [];
+    var rows = el("claim-source-rows").querySelectorAll(".claim-source-row");
+    for (var i = 0; i < rows.length; i += 1) {
+      var row = rows[i];
+      updateClaimSourceRowKind(row);
+      var kind = normalizeClaimSourceTypeId((row.querySelector(".claim-source-kind") || {}).value || "source") || "source";
+      var type = claimSourceTypeById(kind);
+      var src = (row.querySelector(".claim-source-src").value || "").trim();
+      var personRaw = (row.querySelector(".claim-source-person").value || "").trim();
+      var observed = row.querySelector(".claim-source-observed").value || "";
+      var conf = row.querySelector(".claim-source-conf").value || "medium";
+      var id = (row.querySelector(".claim-source-id").value || "").trim();
+      if (!type.requiresPerson && !src && !observed && !id) {
+        continue;
+      }
+      if (type.requiresPerson) {
+        var person = claimPersonAssignmentValue(personRaw);
+        if (!person) {
+          return { ok: false, message: "Person is required for every " + type.label + " row." };
+        }
+        if (!observed) {
+          return { ok: false, message: "Last checked is required for every row." };
+        }
+        sources.push(Object.assign({
+          src: kind === "trust-me-bro" ? "trust me bro" : kind,
+          kind: kind,
+          person: person,
+          observed: observed,
+          conf: type.lockedConfidence || conf
+        }, id ? { id: id } : {}));
+        continue;
+      }
+      if (!src) {
+        return { ok: false, message: "Source is required for every row." };
+      }
+      if (!observed) {
+        return { ok: false, message: "Last checked is required for every row." };
+      }
+      sources.push(Object.assign({ src: src, kind: kind, observed: observed, conf: type.lockedConfidence || conf }, id ? { id: id } : {}));
+    }
+    return { ok: true, sources: sources };
+  }
+
+  function claimSourceKind(source) {
+    var kind = normalizeClaimSourceTypeId(source && source.kind);
+    var src = String((source && source.src) || "").toLowerCase().trim();
+    if (src === "trust me bro") return "trust-me-bro";
+    return kind || "source";
+  }
+
+  function claimSourceTypeOptionsHtml(selected) {
+    return claimSourceTypes().map(function (type) {
+      return "<option value=\\"" + escapeHtml(type.id) + "\\"" + (type.id === selected ? " selected" : "") + ">" + escapeHtml(type.label) + "</option>";
+    }).join("");
+  }
+
+  function queueClaimPersonSearch(input) {
+    if (state.claimPersonSearchTimer) {
+      clearTimeout(state.claimPersonSearchTimer);
+    }
+    state.claimPersonSearchTimer = setTimeout(function () {
+      searchClaimPeople(input);
+    }, 120);
+  }
+
+  async function searchClaimPeople(input) {
+    var query = (input && input.value ? input.value : "").trim();
+    renderClaimPersonSuggestions(query, []);
+    if (!query || !document.body.contains(input)) {
+      return;
+    }
+    var seq = ++state.claimPersonSearchSeq;
+    try {
+      var result = await api("/api/ui/people-search?q=" + encodeURIComponent(query) + "&limit=10");
+      if (seq !== state.claimPersonSearchSeq || !document.body.contains(input)) {
+        return;
+      }
+      var matches = normalizeTaskOwnerMatches(result.people || []);
+      rememberClaimPersonMatches(matches);
+      renderClaimPersonSuggestions(query, matches);
+    } catch (_error) {
+      renderClaimPersonSuggestions(query, []);
+    }
+  }
+
+  function rememberClaimPersonMatches(matches) {
+    normalizeTaskOwnerMatches(matches).slice().reverse().forEach(function (match) {
+      var key = claimPersonMatchKey(match);
+      state.claimPersonMatchCache = state.claimPersonMatchCache.filter(function (cached) {
+        return claimPersonMatchKey(cached) !== key;
+      });
+      state.claimPersonMatchCache.unshift(match);
+    });
+    state.claimPersonMatchCache = state.claimPersonMatchCache.slice(0, 10);
+  }
+
+  function claimPersonCachedMatches(query) {
+    var needle = String(query || "").toLowerCase().trim();
+    return state.claimPersonMatchCache.filter(function (match) {
+      if (!needle) return true;
+      return taskOwnerSearchText(match).indexOf(needle) >= 0;
+    });
+  }
+
+  function claimPersonRegistryMatches(query) {
+    var needle = String(query || "").toLowerCase().trim();
+    if (!state.registry) return [];
+    return (state.registry.people || []).filter(function (person) {
+      return !needle || personSearchText(person, state.registry).indexOf(needle) >= 0;
+    }).map(function (person) {
+      return {
+        id: person.id,
+        displayName: person.displayName,
+        aliases: person.identities && Array.isArray(person.identities.names) ? person.identities.names : [],
+        matched: person.displayName,
+        value: person.displayName
+      };
+    });
+  }
+
+  function renderClaimPersonSuggestions(query, matches) {
+    var datalist = safeEl("claim-person-suggestions");
+    if (!datalist) return;
+    var seen = new Set();
+    var options = claimPersonCachedMatches(query)
+      .concat(normalizeTaskOwnerMatches(matches))
+      .concat(claimPersonRegistryMatches(query))
+      .filter(function (match) {
+        var key = claimPersonMatchKey(match);
+        if (!key || seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      }).slice(0, 10);
+    datalist.innerHTML = options.map(function (match) {
+      var value = match.value || match.displayName || match.id;
+      var labelParts = [match.id];
+      if (match.matched && match.matched !== match.displayName && match.matched !== match.id) {
+        labelParts.push("matched " + match.matched);
+      }
+      return "<option value=\\"" + escapeHtml(value) + "\\" label=\\"" + escapeHtml(labelParts.filter(Boolean).join(" · ")) + "\\"></option>";
+    }).join("");
+  }
+
+  function claimPersonAssignmentValue(value) {
+    var trimmed = String(value || "").trim();
+    if (!trimmed) return "";
+    var needle = trimmed.toLowerCase();
+    var match = state.claimPersonMatchCache.find(function (cached) {
+      return taskOwnerExactValues(cached).some(function (candidate) {
+        return candidate.toLowerCase() === needle;
+      });
+    });
+    if (match && match.id) {
+      return match.id;
+    }
+    if (state.registry) {
+      var person = (state.registry.people || []).find(function (candidate) {
+        var values = [candidate.id, candidate.displayName].concat(candidate.identities && Array.isArray(candidate.identities.names) ? candidate.identities.names : []);
+        return values.filter(Boolean).some(function (candidateValue) {
+          return String(candidateValue).toLowerCase() === needle;
+        });
+      });
+      if (person) {
+        return person.id;
+      }
+    }
+    return trimmed;
+  }
+
+  function claimPersonMatchKey(match) {
+    return String((match && (match.id || match.value || match.displayName)) || "").toLowerCase().trim();
+  }
+
+  async function saveClaimPersonFromModal() {
+    var id = (el("claim-new-person-id").value || "").trim();
+    var name = (el("claim-new-person-name").value || "").trim();
+    if (!id) { el("claim-source-result").textContent = "Person ID is required."; return; }
+    if (!name) { el("claim-source-result").textContent = "Display name is required."; return; }
+    if (!state.registry && !state.registryLoading) {
+      await loadRegistry();
+    }
+    if (!state.registry) {
+      state.registry = { people: [], teams: [] };
+    }
+    if ((state.registry.people || []).some(function (person) { return person.id.toLowerCase() === id.toLowerCase(); })) {
+      el("claim-source-result").textContent = "A person with that ID already exists.";
+      return;
+    }
+    var person = { id: id, displayName: name };
+    state.registry.people.push(person);
+    el("claim-source-result").textContent = "Saving person...";
+    try {
+      await apiPost("/api/ui/people-registry", {
+        registry: state.registry,
+        message: "chore: add person " + id,
+        expectedFileCommit: state.registryFileCommit || undefined
+      });
+      await loadRegistry();
+      rememberClaimPersonMatches([{ id: id, displayName: name, aliases: [], matched: name, value: name }]);
+      renderClaimPersonSuggestions(name, state.claimPersonMatchCache);
+      if (state.claimPersonInput && document.body.contains(state.claimPersonInput)) {
+        state.claimPersonInput.value = name;
+      }
+      el("claim-new-person-id").value = "";
+      el("claim-new-person-name").value = "";
+      el("claim-person-add").open = false;
+      el("claim-source-result").textContent = "Person added.";
+    } catch (error) {
+      el("claim-source-result").textContent = error.message;
+      await loadRegistry();
+    }
+  }
+
+  function slugifyPersonId(value) {
+    return String(value || "").toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+  }
+
+  async function saveClaimSourcesFromModal() {
+    var modal = state.claimSourceModal;
+    if (!modal || modal.readOnly) {
+      return;
+    }
+    var collected = collectClaimSourceRows();
+    if (!collected.ok) {
+      el("claim-source-result").textContent = collected.message;
+      return;
+    }
+    el("claim-source-result").textContent = "Saving...";
+    var payload = {
+      name: modal.anchorName,
+      line: modal.claim.line,
+      claim: modal.claim.text,
+      sources: collected.sources,
+      approved: true
+    };
+    if (modal.expectedFileCommit) {
+      payload.expectedFileCommit = modal.expectedFileCommit;
+    }
+    try {
+      var res = await apiPost("/api/ui/claim-sources", payload);
+      if (res.warnings && res.warnings.some(function (warning) { return warning.severity === "BLOCK"; })) {
+        el("claim-source-result").textContent = res.warnings.map(function (warning) { return warning.message; }).join("; ");
+        return;
+      }
+      closeClaimSourceModal();
+      state.claimsLoaded = false;
+      if (state.activeTab === "claims") {
+        loadClaims();
+      }
+      if (state.selectedName === modal.anchorName) {
+        selectAnchor(modal.anchorName, { skipLocationUpdate: true });
+      }
+    } catch (error) {
+      el("claim-source-result").textContent = error.message;
     }
   }
 
@@ -5738,7 +6324,10 @@ export const UI_JS = `(function () {
     state.projectMappingsLoading = true;
     try {
       var result = await api("/api/ui/project-mappings");
-      state.projectMappings = { projects: result.projects || [] };
+      state.projectMappings = {
+        projects: result.projects || [],
+        claimSourceTypes: normalizeClaimSourceTypes(result.claimSourceTypes)
+      };
       state.projectMappingsFileCommit = result.fileCommit || null;
       renderMappings();
     } catch (error) {
@@ -5797,6 +6386,7 @@ export const UI_JS = `(function () {
     if (!state.projectMappings) {
       return;
     }
+    renderClaimSourceTypeRows();
     var display = mappingsForDisplay();
     el("mappings-empty").hidden = display.managed.length + display.orphans.length > 0;
     var html = "";
@@ -5814,6 +6404,69 @@ export const UI_JS = `(function () {
     el("mappings-summary").textContent = mappedCount + " of " + display.managed.length
       + " projects mapped to repos and paths"
       + (display.orphans.length ? " · " + display.orphans.length + " orphaned" : "") + ".";
+  }
+
+  function normalizeClaimSourceTypes(types) {
+    var byId = {};
+    DEFAULT_CLAIM_SOURCE_TYPES.forEach(function (type) {
+      byId[type.id] = Object.assign({}, type);
+    });
+    (Array.isArray(types) ? types : []).forEach(function (type) {
+      var id = normalizeClaimSourceTypeId(type && type.id);
+      var label = String((type && type.label) || "").trim();
+      if (!id || !label) return;
+      byId[id] = {
+        id: id,
+        label: label,
+        requiresPerson: type.requiresPerson === true,
+        lockedConfidence: ["high", "medium", "low"].indexOf(type.lockedConfidence) >= 0 ? type.lockedConfidence : undefined
+      };
+    });
+    byId["trust-me-bro"] = Object.assign({}, byId["trust-me-bro"] || { id: "trust-me-bro", label: "trust me bro" }, {
+      requiresPerson: true,
+      lockedConfidence: "high"
+    });
+    return Object.keys(byId).map(function (id) { return byId[id]; });
+  }
+
+  function claimSourceTypes() {
+    return normalizeClaimSourceTypes(state.projectMappings && state.projectMappings.claimSourceTypes);
+  }
+
+  function claimSourceTypeById(kind) {
+    var id = normalizeClaimSourceTypeId(kind || "source") || "source";
+    var types = claimSourceTypes();
+    return types.find(function (type) { return type.id === id; }) || { id: id, label: id };
+  }
+
+  function normalizeClaimSourceTypeId(value) {
+    var normalized = String(value || "").toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+    return normalized === "evidence" ? "source" : normalized;
+  }
+
+  function renderClaimSourceTypeRows() {
+    var container = safeEl("claim-source-types-list");
+    if (!container || !state.projectMappings) return;
+    container.innerHTML = claimSourceTypes().map(function (type, index) {
+      return claimSourceTypeRowHtml(type, index);
+    }).join("");
+  }
+
+  function claimSourceTypeRowHtml(type, index) {
+    var locked = type.id === "trust-me-bro";
+    var disabled = locked ? " disabled" : "";
+    var confidence = type.lockedConfidence || "";
+    return "<div class=\\"claim-source-type-row\\" data-source-type-index=\\"" + index + "\\">"
+      + "<label>ID<input class=\\"claim-source-type-id\\" type=\\"text\\" value=\\"" + escapeHtml(type.id || "") + "\\"" + disabled + "></label>"
+      + "<label>Label<input class=\\"claim-source-type-label\\" type=\\"text\\" value=\\"" + escapeHtml(type.label || "") + "\\"></label>"
+      + "<label><input class=\\"claim-source-type-person\\" type=\\"checkbox\\"" + (type.requiresPerson ? " checked" : "") + (locked ? " disabled" : "") + "> Person</label>"
+      + "<label>Locked strength<select class=\\"claim-source-type-confidence\\"" + (locked ? " disabled" : "") + ">"
+      + ["", "high", "medium", "low"].map(function (value) {
+        return "<option value=\\"" + value + "\\"" + (confidence === value ? " selected" : "") + ">" + (value || "none") + "</option>";
+      }).join("")
+      + "</select></label>"
+      + (locked ? "<span class=\\"badge\\">required</span>" : "<button class=\\"claim-source-type-remove\\" type=\\"button\\" data-source-type-index=\\"" + index + "\\">Remove</button>")
+      + "</div>";
   }
 
   function mappingCardHtml(project, pi) {
@@ -5850,12 +6503,14 @@ export const UI_JS = `(function () {
     var webUrl = web.url || "";
     var webBranch = web.branch || "";
     var webTemplate = web.fileTemplate || "";
+    var pullRequestTemplate = web.pullRequestTemplate || "";
     return "<div class=\\"mapping-repo-row\\" data-pi=\\"" + pi + "\\" data-ri=\\"" + ri + "\\">"
       + "<label>Repo<input class=\\"mapping-repo\\" type=\\"text\\" value=\\"" + escapeHtml(repoName) + "\\" placeholder=\\"repo-name\\"></label>"
       + "<label>Paths (one per line; blank = whole repo)<textarea class=\\"mapping-paths\\" rows=\\"2\\" placeholder=\\"services/payments\\">" + escapeHtml(paths) + "</textarea></label>"
       + "<label>Web URL (optional, for file links)<input class=\\"mapping-web-url\\" type=\\"text\\" value=\\"" + escapeHtml(webUrl) + "\\" placeholder=\\"https://github.com/owner/repo\\"></label>"
       + "<label>Branch<input class=\\"mapping-web-branch\\" type=\\"text\\" value=\\"" + escapeHtml(webBranch) + "\\" placeholder=\\"main\\"></label>"
       + "<label>File URL template (optional)<input class=\\"mapping-web-template\\" type=\\"text\\" value=\\"" + escapeHtml(webTemplate) + "\\" placeholder=\\"{url}/blob/{branch}/{path}\\"></label>"
+      + "<label>PR URL template (optional)<input class=\\"mapping-pr-template\\" type=\\"text\\" value=\\"" + escapeHtml(pullRequestTemplate) + "\\" placeholder=\\"{url}/pull/{number}\\"></label>"
       + "<button class=\\"mapping-remove-repo\\" type=\\"button\\" data-pi=\\"" + pi + "\\" data-ri=\\"" + ri + "\\">Remove repo</button>"
       + "</div>";
   }
@@ -5893,15 +6548,36 @@ export const UI_JS = `(function () {
         if (webUrl) {
           var webBranch = readRowValue(rows[j], ".mapping-web-branch");
           var webTemplate = readRowValue(rows[j], ".mapping-web-template");
+          var pullRequestTemplate = readRowValue(rows[j], ".mapping-pr-template");
           entry.web = { url: webUrl };
           if (webBranch) { entry.web.branch = webBranch; }
           if (webTemplate) { entry.web.fileTemplate = webTemplate; }
+          if (pullRequestTemplate) { entry.web.pullRequestTemplate = pullRequestTemplate; }
         }
         repos.push(entry);
       }
       projects.push({ project: slug, repos: repos });
     }
-    return { projects: projects };
+    return { projects: projects, claimSourceTypes: readClaimSourceTypesFromDom() };
+  }
+
+  function readClaimSourceTypesFromDom() {
+    var rows = safeEl("claim-source-types-list") ? el("claim-source-types-list").querySelectorAll(".claim-source-type-row") : [];
+    var types = [];
+    for (var i = 0; i < rows.length; i += 1) {
+      var row = rows[i];
+      var id = normalizeClaimSourceTypeId(readRowValue(row, ".claim-source-type-id"));
+      var label = readRowValue(row, ".claim-source-type-label");
+      var personInput = row.querySelector(".claim-source-type-person");
+      var confidence = readRowValue(row, ".claim-source-type-confidence");
+      if (!id || !label) continue;
+      types.push(Object.assign(
+        { id: id, label: label },
+        personInput && personInput.checked ? { requiresPerson: true } : {},
+        confidence ? { lockedConfidence: confidence } : {}
+      ));
+    }
+    return normalizeClaimSourceTypes(types);
   }
 
   function syncMappingsFromDom() {
@@ -5931,6 +6607,31 @@ export const UI_JS = `(function () {
     var project = state.projectMappings.projects[pi];
     if (project) {
       project.repos.push({ repo: "", paths: [] });
+      renderMappings();
+    }
+  }
+
+  function addClaimSourceType() {
+    syncMappingsFromDom();
+    var types = normalizeClaimSourceTypes(state.projectMappings.claimSourceTypes);
+    var existing = new Set(types.map(function (type) { return type.id; }));
+    var base = "custom-source";
+    var id = base;
+    var suffix = 2;
+    while (existing.has(id)) {
+      id = base + "-" + suffix;
+      suffix += 1;
+    }
+    state.projectMappings.claimSourceTypes = types.concat([{ id: id, label: "Custom Source" }]);
+    renderMappings();
+  }
+
+  function removeClaimSourceType(index) {
+    syncMappingsFromDom();
+    var types = normalizeClaimSourceTypes(state.projectMappings.claimSourceTypes);
+    if (types[index] && types[index].id !== "trust-me-bro") {
+      types.splice(index, 1);
+      state.projectMappings.claimSourceTypes = types;
       renderMappings();
     }
   }
@@ -6649,8 +7350,14 @@ export const UI_JS = `(function () {
     }).join("");
     el("validation-status").innerHTML = renderIssues(anchor.ui.health);
     renderDetailTasks(anchor, detailOpts.focusTask);
-    el("detail-rendered").innerHTML = renderMarkdown(markdownBody(anchor.content || ""));
+    var body = markdownBody(anchor.content || "");
+    el("detail-rendered").innerHTML = renderMarkdown(body, {
+      claims: anchor.ui.claims || [],
+      lineOffset: markdownBodyLineOffset(anchor.content || ""),
+      claimControls: true
+    });
     decorateAnchorLinks(el("detail-rendered"));
+    wireClaimEpistemologyControls(el("detail-rendered"), anchor, readOnly);
     el("detail-raw").textContent = anchor.content || "";
     el("detail-frontmatter").textContent = JSON.stringify(anchor.frontmatter || {}, null, 2);
     el("edit-summary").value = "";
@@ -6754,9 +7461,26 @@ export const UI_JS = `(function () {
     }).join("") + "</div>";
   }
 
-  function renderMarkdown(markdown) {
+  function renderMarkdown(markdown, options) {
+    var opts = options || {};
     var fence = String.fromCharCode(96, 96, 96);
     var lines = String(markdown || "").split(/\\r?\\n/);
+    var lineOffset = opts.lineOffset || 0;
+    var claimsByLine = {};
+    var sourceLines = {};
+    (opts.claims || []).forEach(function (claim) {
+      claimsByLine[claim.line] = claim;
+      claimSources(claim).forEach(function (source) {
+        if (source.line && !source.inline) {
+          sourceLines[source.line] = true;
+        }
+      });
+      (claim.sourceErrors || []).forEach(function (entry) {
+        if (entry.line && !entry.inline) {
+          sourceLines[entry.line] = true;
+        }
+      });
+    });
     var html = "";
     var paragraph = [];
     var inList = false;
@@ -6782,7 +7506,11 @@ export const UI_JS = `(function () {
       }
     }
 
-    lines.forEach(function (line) {
+    lines.forEach(function (line, index) {
+      var originalLine = lineOffset + index + 1;
+      if (opts.claimControls && sourceLines[originalLine]) {
+        return;
+      }
       if (line.slice(0, 3) === fence) {
         if (inCode) {
           flushCode();
@@ -6818,7 +7546,8 @@ export const UI_JS = `(function () {
           html += "<ul>";
           inList = true;
         }
-        html += "<li>" + inlineMarkdown(bullet[1]) + "</li>";
+        var claim = opts.claimControls ? claimsByLine[originalLine] : null;
+        html += "<li>" + (claim ? renderClaimInline(claim) : inlineMarkdown(bullet[1])) + "</li>";
         return;
       }
       paragraph.push(line.trim());
@@ -6842,6 +7571,110 @@ export const UI_JS = `(function () {
     }
     var after = text.indexOf("\\n", end + 4);
     return after < 0 ? "" : text.slice(after + 1);
+  }
+
+  function markdownBodyLineOffset(markdown) {
+    var text = String(markdown || "");
+    if (text.slice(0, 4) !== "---\\n") {
+      return 0;
+    }
+    var end = text.indexOf("\\n---", 4);
+    if (end < 0) {
+      return 0;
+    }
+    var after = text.indexOf("\\n", end + 4);
+    if (after < 0) {
+      return text.split(/\\r?\\n/).length;
+    }
+    return text.slice(0, after + 1).split(/\\r?\\n/).length - 1;
+  }
+
+  function claimSources(claim) {
+    if (claim && Array.isArray(claim.sources)) {
+      return claim.sources;
+    }
+    return claim && claim.annotation ? [claim.annotation] : [];
+  }
+
+  function claimStrengthValue(claim) {
+    if (claim && (claim.strength === "high" || claim.strength === "medium" || claim.strength === "low")) {
+      return claim.strength;
+    }
+    var sources = claimSources(claim);
+    if (!sources.length) {
+      return "low";
+    }
+    var total = sources.reduce(function (sum, source) {
+      return sum + (source.conf === "high" ? 3 : source.conf === "medium" ? 2 : 1);
+    }, 0);
+    var average = total / sources.length;
+    return average < 1.5 ? "low" : average < 2.5 ? "medium" : "high";
+  }
+
+  function renderClaimInline(claim) {
+    var strength = claimStrengthValue(claim);
+    var count = claimSources(claim).length;
+    var title = count ? count + " source" + (count === 1 ? "" : "s") + ", " + strength + " strength" : "No provenance sources";
+    return "<span class=\\"claim-inline\\">"
+      + "<span class=\\"claim-epistemology\\">"
+      + "<button type=\\"button\\" class=\\"claim-epistemology-button claim-strength-" + escapeHtml(strength) + "\\" data-claim-line=\\"" + escapeHtml(String(claim.line)) + "\\" title=\\"" + escapeHtml(title) + "\\" aria-label=\\"Edit claim sources\\">"
+      + "<svg class=\\"icon\\" aria-hidden=\\"true\\"><use href=\\"#icon-object-graph\\"></use></svg>"
+      + "</button>"
+      + renderClaimPopover(claim)
+      + "</span>"
+      + "<span class=\\"claim-inline-text\\">" + inlineMarkdown(claim.text || "") + "</span>"
+      + "</span>";
+  }
+
+  function renderClaimPopover(claim) {
+    var sources = claimSources(claim);
+    var strength = claimStrengthValue(claim);
+    if (!sources.length) {
+      return "<span class=\\"claim-popover\\" role=\\"tooltip\\"><span class=\\"claim-popover-title\\">No provenance sources</span><span class=\\"claim-popover-meta\\">Combined strength: " + escapeHtml(strength) + "</span></span>";
+    }
+    return "<span class=\\"claim-popover\\" role=\\"tooltip\\">"
+      + "<span class=\\"claim-popover-title\\">Combined strength: " + escapeHtml(strength) + "</span>"
+      + sources.map(function (source) {
+        return "<span class=\\"claim-popover-row\\">"
+          + renderSourceLabel(source)
+          + "<span class=\\"claim-popover-meta\\">Last checked " + escapeHtml(source.observed || "unknown") + " · " + escapeHtml(source.conf || "unknown") + "</span>"
+          + "</span>";
+      }).join("")
+      + "</span>";
+  }
+
+  function renderSourceLabel(source) {
+    var label = escapeHtml(claimSourceDisplayLabel(source));
+    var href = source.href ? sanitizeLinkHref(source.href) : null;
+    if (!href) {
+      return "<span>" + label + "</span>";
+    }
+    var anchor = sourceHrefAnchorName(href);
+    if (anchor) {
+      return "<a href=\\"" + escapeHtml(anchorHref(anchor)) + "\\" data-anchor-name=\\"" + escapeHtml(anchor) + "\\">" + label + "</a>";
+    }
+    return "<a href=\\"" + escapeHtml(href) + "\\" target=\\"_blank\\" rel=\\"noreferrer\\">" + label + "</a>";
+  }
+
+  function claimSourceDisplayLabel(source) {
+    var type = claimSourceTypeById(claimSourceKind(source));
+    if (type.requiresPerson) {
+      return type.label + ": " + (source.personName || source.person || "(unknown person)");
+    }
+    var label = source.src || "(missing source)";
+    return type.id === "source" ? label : type.label + ": " + label;
+  }
+
+  function sourceHrefAnchorName(href) {
+    try {
+      var parsed = new URL(href, window.location.href);
+      if (parsed.origin !== window.location.origin || parsed.pathname !== "/ui") {
+        return null;
+      }
+      return parsed.searchParams.get("anchor");
+    } catch (_error) {
+      return null;
+    }
   }
 
   function inlineMarkdown(value) {
@@ -7019,6 +7852,30 @@ export const UI_JS = `(function () {
       updateLocationFromState({ anchor: null, view: "claims", history: "replace" });
       loadClaims();
     }, 300));
+    el("claim-source-close").addEventListener("click", closeClaimSourceModal);
+    el("claim-source-cancel").addEventListener("click", closeClaimSourceModal);
+    el("claim-source-add").addEventListener("click", addClaimSourceRow);
+    el("claim-source-save").addEventListener("click", function () {
+      saveClaimSourcesFromModal().catch(function (error) { el("claim-source-result").textContent = error.message; });
+    });
+    el("claim-new-person-save").addEventListener("click", function () {
+      saveClaimPersonFromModal().catch(function (error) { el("claim-source-result").textContent = error.message; });
+    });
+    el("claim-new-person-name").addEventListener("input", function () {
+      if (!el("claim-new-person-id").value.trim()) {
+        el("claim-new-person-id").value = slugifyPersonId(el("claim-new-person-name").value);
+      }
+    });
+    el("claim-source-modal").addEventListener("click", function (event) {
+      if (event.target === el("claim-source-modal")) {
+        closeClaimSourceModal();
+      }
+    });
+    window.addEventListener("keydown", function (event) {
+      if (event.key === "Escape" && state.claimSourceModal) {
+        closeClaimSourceModal();
+      }
+    });
     el("tasks-refresh").addEventListener("click", function () {
       state.tasks = [];
       loadTasks().catch(function (error) { setBanner(error.message, "error"); });
@@ -7212,6 +8069,13 @@ export const UI_JS = `(function () {
       state.projectMappings = null;
       loadProjectMappings().catch(function (error) { setBanner(error.message, "error"); });
     });
+    el("claim-source-type-add").addEventListener("click", addClaimSourceType);
+    el("claim-source-types-list").addEventListener("click", function (event) {
+      var target = event.target;
+      if (target && target.classList && target.classList.contains("claim-source-type-remove")) {
+        removeClaimSourceType(Number(target.getAttribute("data-source-type-index")));
+      }
+    });
     el("mappings-list").addEventListener("click", function (event) {
       var target = event.target;
       if (!target || !target.classList) { return; }
@@ -7313,6 +8177,9 @@ export const UI_JS = `(function () {
     window.__ANCHOR_MCP_UI_TEST_HOOKS__.claimTrustRank = claimTrustRank;
     window.__ANCHOR_MCP_UI_TEST_HOOKS__.claimGroupKey = claimGroupKey;
     window.__ANCHOR_MCP_UI_TEST_HOOKS__.claimProjectSlug = claimProjectSlug;
+    window.__ANCHOR_MCP_UI_TEST_HOOKS__.claimSources = claimSources;
+    window.__ANCHOR_MCP_UI_TEST_HOOKS__.claimStrengthValue = claimStrengthValue;
+    window.__ANCHOR_MCP_UI_TEST_HOOKS__.renderClaimInline = renderClaimInline;
     window.__ANCHOR_MCP_UI_TEST_HOOKS__.renderMarkdown = renderMarkdown;
     window.__ANCHOR_MCP_UI_TEST_HOOKS__.sanitizeLinkHref = sanitizeLinkHref;
     window.__ANCHOR_MCP_UI_TEST_HOOKS__.anchorHref = anchorHref;

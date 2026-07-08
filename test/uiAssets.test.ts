@@ -13,7 +13,9 @@ type UiClaim = {
   section: string;
   text: string;
   status: string;
-  annotation?: { src: string; observed: string; conf: string };
+  strength?: string;
+  annotation?: { src: string; observed: string; conf: string; href?: string; kind?: string; person?: string; personName?: string };
+  sources?: Array<{ src: string; observed: string; conf: string; href?: string; line?: number; inline?: boolean; kind?: string; person?: string; personName?: string }>;
 };
 
 type UiAssetHooks = {
@@ -22,7 +24,9 @@ type UiAssetHooks = {
   claimTrustRank(claim: UiClaim): number;
   claimGroupKey(claim: UiClaim, groupBy: string): string;
   claimProjectSlug(claim: UiClaim): string;
-  renderMarkdown(markdown: string): string;
+  claimStrengthValue(claim: UiClaim): string;
+  renderClaimInline(claim: UiClaim): string;
+  renderMarkdown(markdown: string, options?: Record<string, unknown>): string;
   sanitizeLinkHref(href: string): string | null;
   anchorHref(name: string): string;
   readAnchorFromLocation(): string | null;
@@ -181,6 +185,10 @@ describe("UI browser assets", () => {
     expect(UI_HTML).toContain('id="icon-filter"');
     expect(UI_HTML).toContain('id="icon-plan"');
     expect(UI_HTML).toContain('id="icon-save"');
+    expect(UI_HTML).toContain('id="icon-object-graph"');
+    expect(UI_HTML).toContain('id="claim-person-suggestions"');
+    expect(UI_HTML).toContain('id="claim-new-person-save"');
+    expect(UI_JS).toContain("trust-me-bro");
     expect(UI_HTML).toContain('<use href="#icon-home"></use>');
     expect(UI_HTML).toContain('<use href="#icon-anchor"></use>');
     expect(UI_HTML).toContain('<use href="#icon-filter"></use>');
@@ -735,6 +743,34 @@ describe("UI browser assets", () => {
     expect(html).toContain('href="projects/demo/demo.md"');
   });
 
+  it("renders claim epistemology controls while hiding source annotation lines", () => {
+    const hooks = loadHooks();
+    const html = hooks.renderMarkdown(
+      "## Current State\n\n- Claim text.\n  {src: PR #42; observed: 2026-07-08; conf: high}",
+      {
+        claimControls: true,
+        lineOffset: 0,
+        claims: [
+          {
+            anchor: "projects/demo/demo.md",
+            line: 3,
+            section: "Current State",
+            text: "Claim text.",
+            status: "annotated",
+            strength: "high",
+            sources: [{ src: "PR #42", observed: "2026-07-08", conf: "high", line: 4 }],
+          },
+        ],
+      },
+    );
+
+    expect(html).toContain('use href="#icon-object-graph"');
+    expect(html).toContain('<li><span class="claim-inline"><span class="claim-epistemology">');
+    expect(html).toContain("Claim text.");
+    expect(html).toContain("Combined strength: high");
+    expect(html).not.toContain("{src:");
+  });
+
   it("rejects obfuscated unsafe link protocols", () => {
     const hooks = loadHooks();
 
@@ -1145,11 +1181,14 @@ describe("UI browser assets", () => {
     expect(UI_HTML).toContain('id="mappings-save"');
     expect(UI_HTML).toContain('id="mappings-refresh"');
     expect(UI_HTML).toContain('id="mappings-list"');
+    expect(UI_HTML).toContain('id="claim-source-types-list"');
+    expect(UI_HTML).toContain('id="claim-source-type-add"');
     // No free-text "Add Project": the project list is derived from anchors.
     expect(UI_HTML).not.toContain('id="mappings-add"');
     expect(UI_JS).toContain("/api/ui/project-mappings");
     expect(UI_JS).toContain("loadProjectMappings");
     expect(UI_JS).toContain("saveProjectMappings");
+    expect(UI_JS).toContain("claimSourceTypes");
   });
 
   it("renders a managed project mapping card with a fixed slug and clear action", () => {
@@ -1193,6 +1232,7 @@ describe("UI browser assets", () => {
     expect(html).toContain("mapping-web-branch");
     expect(html).toContain('value="main"');
     expect(html).toContain("mapping-web-template");
+    expect(html).toContain("mapping-pr-template");
   });
 
   it("flags an orphaned mapping (no matching anchor) with a remove action", () => {
@@ -1368,6 +1408,60 @@ describe("claims grouping and sorting", () => {
     const hooks = loadHooks();
     const ranks = [malformed, unannotated, low, medium, high].map((entry) => hooks.claimTrustRank(entry));
     expect(ranks).toEqual([0, 1, 2, 3, 4]);
+  });
+
+  it("averages multiple source strengths for display", () => {
+    const hooks = loadHooks();
+    const multi = claim({
+      status: "annotated",
+      sources: [
+        { src: "a.md", observed: "2026-01-01", conf: "high" },
+        { src: "b.md", observed: "2026-01-02", conf: "low" },
+      ],
+    });
+    expect(hooks.claimStrengthValue(multi)).toBe("medium");
+    expect(hooks.renderClaimInline(multi)).toContain("claim-strength-medium");
+  });
+
+  it("renders trust-me-bro developer assertion labels", () => {
+    const hooks = loadHooks();
+    const trusted = claim({
+      status: "annotated",
+      strength: "high",
+      sources: [
+        {
+          src: "trust me bro",
+          kind: "trust-me-bro",
+          person: "alice",
+          personName: "Alice Example",
+          observed: "2026-07-08",
+          conf: "high",
+        },
+      ],
+    });
+    const html = hooks.renderClaimInline(trusted);
+    expect(html).toContain("trust me bro: Alice Example");
+    expect(html).toContain("claim-strength-high");
+  });
+
+  it("uses configured claim source type labels in claim source display", () => {
+    const hooks = loadHooks();
+    hooks.setMappingsTestState([], {
+      projects: [],
+      claimSourceTypes: [
+        { id: "source", label: "Code Source" },
+        { id: "design-doc", label: "Design Proposal" },
+        { id: "adr", label: "ADR" },
+        { id: "trust-me-bro", label: "Developer Assertion", requiresPerson: true, lockedConfidence: "high" },
+      ],
+    });
+    const html = hooks.renderClaimInline(claim({
+      status: "annotated",
+      sources: [
+        { src: "docs/design.md", kind: "design-doc", observed: "2026-07-08", conf: "medium" },
+      ],
+    }));
+    expect(html).toContain("Design Proposal: docs/design.md");
   });
 
   it("sorts least trusted first with document-order tiebreak", () => {
