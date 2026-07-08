@@ -32,7 +32,12 @@ import {
   collectRoadmapAcceptanceMissingSignals,
 } from "./contextPlanner.js";
 import type { AnchorListPage, AnchorListSort, AnchorStore } from "./storage/store.js";
-import { listRoadmapGoalDetails } from "./roadmap/analyzeRoadmap.js";
+import {
+  listRoadmapGoalDetails,
+  listRoadmapGoalsWithStatus,
+  type RoadmapGoalRow,
+  type RoadmapGoalStatus,
+} from "./roadmap/analyzeRoadmap.js";
 import {
   renderProjectUpdate as renderProjectUpdateFromSnapshot,
   sortUpdateTasks,
@@ -2472,6 +2477,92 @@ None.
         note: "Use readAnchor for full anchor bodies when excerpts are insufficient or truncated is true.",
       },
     };
+  }
+
+  /**
+   * Structured, sorted roadmap goal listing. Status is derived from the region
+   * a goal appears in (Goals = active, Completed/Cancelled = history); a goal
+   * id can appear in more than one region (active goal with a shipped phase).
+   * Default sort groups by status (active, completed, cancelled) with the
+   * newest goal id first within each group, so current work leads instead of
+   * document order surfacing the oldest goals.
+   */
+  async listRoadmapGoals(input: {
+    project: string;
+    status?: RoadmapGoalStatus;
+    sort?: "status" | "id" | "recent";
+  }): Promise<{
+    roadmap: string;
+    goals: (RoadmapGoalRow & { milestones: { name: string; displayId?: string; status: string }[] })[];
+    summary: { total: number; active: number; completed: number; cancelled: number };
+    note?: string;
+    projectFilter?: ProjectFilterResolution;
+  }> {
+    const { projectFilter, effectiveProject } = await this.resolveProjectFilter(input.project);
+    const slug = effectiveProject ?? input.project;
+    const roadmapName = `projects/${slug}/${slug}-roadmap.md`;
+
+    const roadmapContent = await this.repo.readRaw(roadmapName);
+    if (roadmapContent === undefined) {
+      return {
+        roadmap: roadmapName,
+        goals: [],
+        summary: { total: 0, active: 0, completed: 0, cancelled: 0 },
+        note: `Roadmap not found: ${roadmapName}`,
+        ...(projectFilter ? { projectFilter } : {}),
+      };
+    }
+
+    const allRows = listRoadmapGoalsWithStatus(roadmapContent);
+    const summary = {
+      total: allRows.length,
+      active: allRows.filter((row) => row.status === "active").length,
+      completed: allRows.filter((row) => row.status === "completed").length,
+      cancelled: allRows.filter((row) => row.status === "cancelled").length,
+    };
+
+    const milestonesByGoalId = new Map<string, { name: string; displayId?: string; status: string }[]>();
+    for (const milestone of await this.listMilestones(slug)) {
+      for (const goalId of milestone.goalIds) {
+        const entry = {
+          name: milestone.name,
+          ...(milestone.displayId !== undefined ? { displayId: milestone.displayId } : {}),
+          status: milestone.status,
+        };
+        const existing = milestonesByGoalId.get(goalId);
+        if (existing) {
+          existing.push(entry);
+        } else {
+          milestonesByGoalId.set(goalId, [entry]);
+        }
+      }
+    }
+
+    const statusOrder: Record<RoadmapGoalStatus, number> = { active: 0, completed: 1, cancelled: 2 };
+    const goalNumber = (id?: string): number => {
+      const parsed = id ? Number.parseInt(id.slice(2), 10) : Number.NaN;
+      return Number.isNaN(parsed) ? -1 : parsed;
+    };
+    const sort = input.sort ?? "status";
+
+    const goals = allRows
+      .filter((row) => !input.status || row.status === input.status)
+      .map((row) => ({ ...row, milestones: row.id ? (milestonesByGoalId.get(row.id) ?? []) : [] }))
+      .sort((left, right) => {
+        if (sort === "id") {
+          return goalNumber(left.id) - goalNumber(right.id) || left.title.localeCompare(right.title);
+        }
+        if (sort === "recent") {
+          return goalNumber(right.id) - goalNumber(left.id) || left.title.localeCompare(right.title);
+        }
+        return (
+          statusOrder[left.status] - statusOrder[right.status] ||
+          goalNumber(right.id) - goalNumber(left.id) ||
+          left.title.localeCompare(right.title)
+        );
+      });
+
+    return { roadmap: roadmapName, goals, summary, ...(projectFilter ? { projectFilter } : {}) };
   }
 
   async listMilestones(project?: string): Promise<MilestoneListRow[]> {

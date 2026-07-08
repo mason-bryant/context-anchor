@@ -320,6 +320,23 @@ export function registerUiRoutes(
   );
 
   app.get(
+    "/api/ui/roadmap-goals",
+    ...protect,
+    jsonRoute(async (req) => {
+      const project = optionalQueryString(req, "project");
+      if (!project) {
+        throw new UiHttpError(400, "project is required");
+      }
+      const statusRaw = optionalQueryString(req, "status");
+      const status =
+        statusRaw === "active" || statusRaw === "completed" || statusRaw === "cancelled" ? statusRaw : undefined;
+      const sortRaw = optionalQueryString(req, "sort");
+      const sort = sortRaw === "status" || sortRaw === "id" || sortRaw === "recent" ? sortRaw : undefined;
+      return service.listRoadmapGoals({ project, ...(status ? { status } : {}), ...(sort ? { sort } : {}) });
+    }),
+  );
+
+  app.get(
     "/api/ui/claims",
     ...protect,
     jsonRoute(async (req) => {

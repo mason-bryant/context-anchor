@@ -216,6 +216,10 @@ export function analyzeRoadmapFromContent(markdown: string, options: { isProject
 }
 
 function extractGoalsRegion(body: string): string | undefined {
+  return extractH2Region(body, GOALS_H2);
+}
+
+function extractH2Region(body: string, headingPattern: RegExp): string | undefined {
   const lines = body.split(/\r?\n/);
   let i = 0;
   let openFence: Fence | undefined;
@@ -236,7 +240,7 @@ function extractGoalsRegion(body: string): string | undefined {
       continue;
     }
 
-    if (GOALS_H2.test(line)) {
+    if (headingPattern.test(line)) {
       i += 1;
       const chunk: string[] = [];
       while (i < lines.length) {
@@ -291,6 +295,85 @@ export function listRoadmapGoalDetails(markdown: string): Array<{
       }),
     ),
   }));
+}
+
+const COMPLETED_H2 = /^##\s+completed\s*$/i;
+const CANCELLED_H2 = /^##\s+cancelled\s*$/i;
+
+export type RoadmapGoalStatus = "active" | "completed" | "cancelled";
+
+export type RoadmapGoalRow = {
+  id?: string;
+  title: string;
+  status: RoadmapGoalStatus;
+  hasAcceptanceCriteria: boolean;
+};
+
+/**
+ * List roadmap goals with their lifecycle status derived from the region they
+ * appear in: `## Goals` entries are active, `## Completed` / `## Cancelled`
+ * H3 entries are completed/cancelled history. A goal id can appear in more
+ * than one region (an active goal with a completed phase); each occurrence is
+ * its own row so consumers see both.
+ */
+export function listRoadmapGoalsWithStatus(markdown: string): RoadmapGoalRow[] {
+  const body = parseAnchor(markdown).body;
+  const rows: RoadmapGoalRow[] = [];
+
+  const goalsRegion = extractGoalsRegion(body);
+  if (goalsRegion) {
+    for (const goal of extractGoalsUnderRegion(goalsRegion)) {
+      rows.push({
+        id: goal.id,
+        title: goal.title,
+        status: "active",
+        hasAcceptanceCriteria: Boolean(
+          findChildHeadingBlock(goal.bodyLines, 4, "Acceptance Criteria", {
+            stopAtSameLevelSibling: false,
+          }),
+        ),
+      });
+    }
+  }
+
+  const historyRegions: Array<{ region: string | undefined; status: RoadmapGoalStatus }> = [
+    { region: extractH2Region(body, COMPLETED_H2), status: "completed" },
+    { region: extractH2Region(body, CANCELLED_H2), status: "cancelled" },
+  ];
+  for (const { region, status } of historyRegions) {
+    if (!region) {
+      continue;
+    }
+    for (const heading of extractH3Headings(region)) {
+      const id = /^(?:Goal\s+)?(G-\d{1,6})\b/.exec(heading)?.[1];
+      rows.push({ ...(id ? { id } : {}), title: heading, status, hasAcceptanceCriteria: false });
+    }
+  }
+
+  return rows;
+}
+
+function extractH3Headings(regionBody: string): string[] {
+  const headings: string[] = [];
+  let openFence: Fence | undefined;
+  for (const line of regionBody.split(/\r?\n/)) {
+    if (openFence) {
+      if (tryCloseFence(line, openFence)) {
+        openFence = undefined;
+      }
+      continue;
+    }
+    const opened = tryOpenFence(line);
+    if (opened) {
+      openFence = opened;
+      continue;
+    }
+    const heading = /^###\s+(.+?)\s*$/.exec(line);
+    if (heading) {
+      headings.push(heading[1]);
+    }
+  }
+  return headings;
 }
 
 type GoalBlock = { title: string; id?: string; bodyLines: string[] };
