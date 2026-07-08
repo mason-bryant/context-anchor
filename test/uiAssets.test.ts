@@ -107,6 +107,8 @@ type UiAssetHooks = {
   formatPreview(preview: Record<string, unknown>): string;
   priorityLabel(priority: number): string;
   projectOf(anchor: Record<string, unknown>): string;
+  isServerRuleAnchor(anchor: Record<string, unknown> | string | null): boolean;
+  readOnlyDetailControlIds(): string[];
 };
 
 type TestStorage = {
@@ -572,6 +574,32 @@ describe("UI browser assets", () => {
     expect(UI_JS).toContain("/api/ui/project-priority");
     expect(UI_JS).toContain("/api/ui/anchor-versions");
     expect(UI_JS).toContain("/api/ui/anchor-delete");
+  });
+
+  it("marks built-in server rules as read-only in the detail editor", () => {
+    const hooks = loadHooks();
+
+    expect(UI_HTML).toContain('id="detail-readonly-note"');
+    expect(UI_CSS).toContain(".badge.readonly");
+    expect(UI_CSS).toContain(".read-only-anchor");
+    expect(UI_JS).toContain("Read-only server rule");
+    expect(UI_JS).toContain("assertMutableAnchor(anchor");
+
+    expect(hooks.isServerRuleAnchor("server-rules/acceptance-criteria.md")).toBe(true);
+    expect(hooks.isServerRuleAnchor({ name: "server-rules/milestone-usage.md" })).toBe(true);
+    expect(hooks.isServerRuleAnchor({ name: "shared/server-rules.md", origin: "built-in" })).toBe(true);
+    expect(hooks.isServerRuleAnchor({ name: "projects/demo/demo.md", origin: "repo" })).toBe(false);
+    expect(hooks.readOnlyDetailControlIds()).toEqual(
+      expect.arrayContaining([
+        "edit-operation",
+        "edit-content",
+        "stage-proposal",
+        "commit-direct",
+        "rename-anchor",
+        "delete-anchor",
+      ]),
+    );
+    expect(hooks.readOnlyDetailControlIds()).not.toContain("load-history");
   });
 
   it("keeps mutated proposals visible and updates their status in place", () => {

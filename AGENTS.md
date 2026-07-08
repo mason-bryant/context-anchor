@@ -1,3 +1,23 @@
+# Repository Rule Boundary
+
+This repository is the `anchor-mcp` / `context-conductor` product codebase, not the
+backing context repository for a person, team, or project.
+
+Only generic server-owned rules that ship as part of `anchor-mcp` may be stored with
+this project. In practice, those rules belong in the server implementation, such as
+`src/builtin/serverPolicy.ts`, with matching tests and product documentation when
+needed.
+
+Do not add user, team, workspace, or project-specific agent rules to this repository's
+anchor taxonomy directories (`agent-rules/`, `projects/`, `shared/`, `invariants/`,
+`conflicts/`, or `archive/`). Store those rules in the backing `anchor-mcp` context
+repository through MCP tools instead.
+
+Do not simulate MCP writes by pointing `AnchorRepository` at this code checkout unless
+you are intentionally creating a test fixture or product-owned server policy behavior.
+
+---
+
 # anchor-mcp Migration Guide
 
 Use this file to convert an existing collection of context-anchor markdown documents
