@@ -224,6 +224,13 @@ on the relevant anchor — not only in chat. Section mapping: observable reality
 Set last_validated (YYYY-MM-DD) to today's date whenever you materially edit Current State, Decisions, or Constraints; \
 same-day substantive edits may reuse today's date.
 
+Cite provenance on the claims you add, while you still have the source in context: under the new bullet, append an \
+indented annotation line \`  {src: <PR #N | repo path | anchor name | URL | person:<id>>; observed: <YYYY-MM-DD>; \
+conf: high|medium|low}\`. conf semantics: high = observed directly (code you read, tests you ran), medium = read in a \
+doc or PR (all person:<id> told-by sources cap at medium), low = inferred. Writes that add claims without provenance \
+return a claim_annotation_missing WARN. Use annotateClaim to add or fix a single annotation afterwards, and \
+listClaims({ status: "unannotated" }) to find the legacy backlog.
+
 Edits to Decisions or Constraints, or deleting existing bullets, need explicit human approval: retry the same write tool \
 with approved: true after the user confirms.
 
@@ -592,7 +599,8 @@ the index when your workflow checks in that file.`,
     "writeAnchor",
     {
       title: "Write Anchor",
-      description: "Validate, write, commit, and optionally push one context anchor.",
+      description:
+        "Validate, write, commit, and optionally push one context anchor. When adding claims (bullets in Current State/Decisions/Constraints), cite provenance with an indented '{src: ...; observed: YYYY-MM-DD; conf: high|medium|low}' line under the bullet; new claims without one return a claim_annotation_missing WARN.",
       inputSchema: z.object({
         name: z.string(),
         content: z.string(),
@@ -1081,7 +1089,7 @@ the index when your workflow checks in that file.`,
     {
       title: "Update Anchor Section",
       description:
-        "Replace the body of one ## H2 section (heading may be passed as \"## PRs\" or \"PRs\"). Content must not include the heading line. Pass lastValidated (YYYY-MM-DD) to refresh a stale validation date atomically in the same commit when editing a substantive section.",
+        "Replace the body of one ## H2 section (heading may be passed as \"## PRs\" or \"PRs\"). Content must not include the heading line. Pass lastValidated (YYYY-MM-DD) to refresh a stale validation date atomically in the same commit when editing a substantive section. When adding claims to Current State/Decisions/Constraints, cite provenance with an indented '{src: ...; observed: YYYY-MM-DD; conf: high|medium|low}' line under the bullet.",
       inputSchema: z
         .object({
           name: z.string(),
@@ -1112,7 +1120,7 @@ the index when your workflow checks in that file.`,
     {
       title: "Append To Anchor Section",
       description:
-        "Append markdown to the end of one ## H2 section body. Pass lastValidated (YYYY-MM-DD) to refresh a stale validation date atomically in the same commit when editing a substantive section.",
+        "Append markdown to the end of one ## H2 section body. Pass lastValidated (YYYY-MM-DD) to refresh a stale validation date atomically in the same commit when editing a substantive section. When adding claims to Current State/Decisions/Constraints, cite provenance with an indented '{src: ...; observed: YYYY-MM-DD; conf: high|medium|low}' line under the bullet.",
       inputSchema: z
         .object({
           name: z.string(),
