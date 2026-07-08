@@ -324,11 +324,11 @@ export function newlyAddedUnannotatedClaims(
   const existing = new Set<string>();
   if (oldContent !== undefined) {
     for (const claim of extractClaims(oldContent)) {
-      existing.add(`${claim.section} ${claim.text}`);
+      existing.add(claim.text);
     }
   }
   return extractClaims(newContent).filter(
-    (claim) => claim.status === "unannotated" && !existing.has(`${claim.section} ${claim.text}`),
+    (claim) => claim.status === "unannotated" && !existing.has(claim.text),
   );
 }
 

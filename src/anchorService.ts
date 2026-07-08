@@ -681,7 +681,7 @@ export class AnchorService {
         carryWarnings.push({
           severity: "WARN",
           code: "claim_annotation_missing",
-          message: `This write adds ${missing.length} claim(s) without provenance: ${shown}${more}. Record where each fact came from while you still have the source: append "  {src: <PR #N | path | anchor | person:<id>>; observed: <YYYY-MM-DD>; conf: high|medium|low}" under the bullet, or use annotateClaim afterwards.`,
+          message: `This write adds ${missing.length} claim(s) without provenance: ${shown}${more}. Record where each fact came from while you still have the source: append "  {src: <PR #N | repo path | anchor name | URL | person:<id>>; observed: <YYYY-MM-DD>; conf: high|medium|low}" under the bullet, or use annotateClaim afterwards.`,
         });
       }
     }

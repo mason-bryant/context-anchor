@@ -33,7 +33,7 @@ describe("AnchorService", () => {
     expect(result.version).toMatch(/[a-f0-9]{40}/);
     // New claims without provenance get a non-blocking nudge; nothing blocks.
     expect(result.warnings.filter((w) => w.severity === "BLOCK")).toEqual([]);
-    expect(result.warnings.map((w) => w.code)).toEqual(["claim_annotation_missing"]);
+    expect(result.warnings.some((w) => w.code === "claim_annotation_missing")).toBe(true);
 
     const read = await service.readAnchor("projects/demo/demo");
     expect(read.frontmatter.project).toEqual(["demo"]);

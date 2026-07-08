@@ -556,6 +556,26 @@ None.
     expect(nudge?.message).toContain("annotateClaim");
   });
 
+  it("does not nudge when a pre-existing claim moves between sections", async () => {
+    await service.writeAnchor({
+      name: "projects/demo/claims-demo",
+      content: anchorContent(),
+      message: "test: add claims demo",
+    });
+
+    // "A decision claim." moves from Decisions into Constraints: same text,
+    // different section — not a new statement, so no nudge.
+    const moved = await service.updateAnchorSection({
+      name: "projects/demo/claims-demo",
+      heading: "Constraints",
+      content: "- A constraint claim.\n- A decision claim.",
+      message: "test: move claim between sections",
+      approved: true,
+    });
+    expect(moved.version).toBeTruthy();
+    expect(moved.warnings.some((warning) => warning.code === "claim_annotation_missing")).toBe(false);
+  });
+
   it("does not nudge on annotateClaim writes", async () => {
     await service.writeAnchor({
       name: "projects/demo/claims-demo",
