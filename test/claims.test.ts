@@ -330,7 +330,9 @@ None.
       content: anchorContent(),
       message: "test: add claims demo",
     });
-    expect(write.warnings).toEqual([]);
+    expect(write.warnings.filter((warning) => warning.severity === "BLOCK")).toEqual([]);
+    // The write adds unannotated claims, so the provenance nudge fires.
+    expect(write.warnings.some((warning) => warning.code === "claim_annotation_missing")).toBe(true);
 
     const all = await service.listClaims({ project: "demo" });
     expect(all.summary).toEqual({ total: 4, annotated: 1, unannotated: 3, malformed: 0 });
@@ -352,7 +354,7 @@ None.
       content: anchorContent("\n- Another dated claim.\n  {src: docs/spec.md; observed: 2026-01-15; conf: low}"),
       message: "test: add claims demo",
     });
-    expect(write.warnings).toEqual([]);
+    expect(write.warnings.filter((warning) => warning.severity === "BLOCK")).toEqual([]);
     expect(write.version).toBeTruthy();
 
     const section = await service.listClaims({ project: "demo", section: "Decisions" });
@@ -511,6 +513,82 @@ None.
 
     const after = await service.listClaims({ name: "projects/demo/claims-demo" });
     expect(after.summary.annotated).toBe(0);
+  });
+
+  it("nudges only for newly added unannotated claims, not the legacy backlog", async () => {
+    await service.writeAnchor({
+      name: "projects/demo/claims-demo",
+      content: anchorContent(),
+      message: "test: add claims demo",
+    });
+
+    // Re-touching the anchor without adding claims: no nudge for the
+    // pre-existing unannotated claims.
+    const retouch = await service.updateAnchorSection({
+      name: "projects/demo/claims-demo",
+      heading: "Current State",
+      content:
+        "- Annotated claim about the system.\n  {src: PR #54; observed: 2026-07-07; conf: high}\n- Legacy claim with no provenance.",
+      message: "test: retouch without new claims",
+    });
+    expect(retouch.warnings.some((warning) => warning.code === "claim_annotation_missing")).toBe(false);
+
+    // Adding a new annotated claim: no nudge either.
+    const annotatedAdd = await service.appendToAnchorSection({
+      name: "projects/demo/claims-demo",
+      heading: "Current State",
+      content: "- New sourced claim.\n  {src: PR #60; observed: 2026-07-07; conf: medium}",
+      message: "test: add annotated claim",
+    });
+    expect(annotatedAdd.warnings.some((warning) => warning.code === "claim_annotation_missing")).toBe(false);
+
+    // Adding a new claim without provenance: one nudge naming the claim.
+    const bareAdd = await service.appendToAnchorSection({
+      name: "projects/demo/claims-demo",
+      heading: "Current State",
+      content: "- New unsourced claim.",
+      message: "test: add unsourced claim",
+    });
+    expect(bareAdd.version).toBeTruthy();
+    const nudge = bareAdd.warnings.find((warning) => warning.code === "claim_annotation_missing");
+    expect(nudge?.severity).toBe("WARN");
+    expect(nudge?.message).toContain("New unsourced claim.");
+    expect(nudge?.message).toContain("annotateClaim");
+  });
+
+  it("does not nudge when a pre-existing claim moves between sections", async () => {
+    await service.writeAnchor({
+      name: "projects/demo/claims-demo",
+      content: anchorContent(),
+      message: "test: add claims demo",
+    });
+
+    // "A decision claim." moves from Decisions into Constraints: same text,
+    // different section — not a new statement, so no nudge.
+    const moved = await service.updateAnchorSection({
+      name: "projects/demo/claims-demo",
+      heading: "Constraints",
+      content: "- A constraint claim.\n- A decision claim.",
+      message: "test: move claim between sections",
+      approved: true,
+    });
+    expect(moved.version).toBeTruthy();
+    expect(moved.warnings.some((warning) => warning.code === "claim_annotation_missing")).toBe(false);
+  });
+
+  it("does not nudge on annotateClaim writes", async () => {
+    await service.writeAnchor({
+      name: "projects/demo/claims-demo",
+      content: anchorContent(),
+      message: "test: add claims demo",
+    });
+    const cleared = await service.annotateClaim({
+      name: "projects/demo/claims-demo",
+      claim: "Annotated claim",
+      clear: true,
+    });
+    expect(cleared.version).toBeTruthy();
+    expect(cleared.warnings.some((warning) => warning.code === "claim_annotation_missing")).toBe(false);
   });
 
   it("blocks writes containing malformed annotations but allows unannotated claims", async () => {

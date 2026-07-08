@@ -311,6 +311,27 @@ export function carryClaimAnnotations(oldContent: string, newContent: string): C
   return { content: lines.join("\n"), carried, lost };
 }
 
+/**
+ * Claims that this write introduces without provenance: unannotated claims in
+ * newContent whose section+text did not exist in oldContent. Pre-existing
+ * unannotated claims are not reported, so touching an anchor does not nag
+ * about legacy backlog; only the writer's own new statements are flagged.
+ */
+export function newlyAddedUnannotatedClaims(
+  oldContent: string | undefined,
+  newContent: string,
+): AnchorClaim[] {
+  const existing = new Set<string>();
+  if (oldContent !== undefined) {
+    for (const claim of extractClaims(oldContent)) {
+      existing.add(claim.text);
+    }
+  }
+  return extractClaims(newContent).filter(
+    (claim) => claim.status === "unannotated" && !existing.has(claim.text),
+  );
+}
+
 export type ClaimLocation =
   | { ok: true; claim: AnchorClaim }
   | { ok: false; code: "claim_not_found" | "claim_ambiguous"; candidates: string[] };

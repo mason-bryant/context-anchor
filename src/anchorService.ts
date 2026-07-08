@@ -144,6 +144,7 @@ import {
   extractClaims,
   formatAnnotationBody,
   locateClaim,
+  newlyAddedUnannotatedClaims,
   parseAnnotationBody,
   upsertClaimAnnotation,
   type AnchorClaim,
@@ -661,6 +662,26 @@ export class AnchorService {
           severity: "WARN",
           code: "claim_annotation_lost",
           message: `Dropped provenance (approved) from: ${lostList}.`,
+        });
+      }
+    }
+
+    // Nudge writers to record provenance for statements they are adding now
+    // (not for pre-existing legacy claims): one WARN listing the new
+    // unannotated claims, so the feedback arrives while the writer still has
+    // the source (PR, file, conversation) in context.
+    if (input.carryClaimAnnotations !== false) {
+      const missing = newlyAddedUnannotatedClaims(oldContent, content);
+      if (missing.length > 0) {
+        const shown = missing
+          .slice(0, 5)
+          .map((claim) => `"${truncateClaimText(claim.text)}"`)
+          .join("; ");
+        const more = missing.length > 5 ? ` (and ${missing.length - 5} more)` : "";
+        carryWarnings.push({
+          severity: "WARN",
+          code: "claim_annotation_missing",
+          message: `This write adds ${missing.length} claim(s) without provenance: ${shown}${more}. Record where each fact came from while you still have the source: append "  {src: <PR #N | repo path | anchor name | URL | person:<id>>; observed: <YYYY-MM-DD>; conf: high|medium|low}" under the bullet, or use annotateClaim afterwards.`,
         });
       }
     }
@@ -3309,4 +3330,8 @@ function dedupePreserveOrder(names: string[]): string[] {
   }
 
   return result;
+}
+
+function truncateClaimText(text: string): string {
+  return text.length > 80 ? `${text.slice(0, 77)}...` : text;
 }

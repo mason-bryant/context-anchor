@@ -31,7 +31,9 @@ describe("AnchorService", () => {
     });
 
     expect(result.version).toMatch(/[a-f0-9]{40}/);
-    expect(result.warnings).toEqual([]);
+    // New claims without provenance get a non-blocking nudge; nothing blocks.
+    expect(result.warnings.filter((w) => w.severity === "BLOCK")).toEqual([]);
+    expect(result.warnings.some((w) => w.code === "claim_annotation_missing")).toBe(true);
 
     const read = await service.readAnchor("projects/demo/demo");
     expect(read.frontmatter.project).toEqual(["demo"]);
@@ -344,7 +346,7 @@ last_validated: 2026-05-10
     });
 
     expect(result.version).toMatch(/[a-f0-9]{40}/);
-    expect(result.warnings).toEqual([]);
+    expect(result.warnings.filter((w) => w.severity === "BLOCK")).toEqual([]);
   });
 
   it("requires explicit approval for decisions changes", async () => {
@@ -404,7 +406,7 @@ last_validated: 2026-05-10
       lastValidated: "2026-05-14",
     });
     expect(withBump.version).toMatch(/[a-f0-9]{40}/);
-    expect(withBump.warnings).toEqual([]);
+    expect(withBump.warnings.filter((w) => w.severity === "BLOCK")).toEqual([]);
 
     const read = await service.readAnchor("projects/demo/demo");
     expect(read.frontmatter.last_validated).toBe("2026-05-14");
