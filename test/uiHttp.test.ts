@@ -1137,9 +1137,18 @@ async function postJson<T = unknown>(pathSuffix: string, body: unknown): Promise
   return (await response.json()) as T;
 }
 
+function localDateKey(): string {
+  const now = new Date();
+  const month = String(now.getMonth() + 1).padStart(2, "0");
+  const day = String(now.getDate()).padStart(2, "0");
+  return `${now.getFullYear()}-${month}-${day}`;
+}
+
 function projectAnchorContent(project = "demo"): string {
-  // Computed so the fixture never ages past the staleAfterDays window.
-  const recentLastValidated = new Date().toISOString().slice(0, 10);
+  // Computed so the fixture never ages past the staleAfterDays window. Uses
+  // the local date to match the lastValidatedBump validator's "today" (UTC
+  // would disagree with it every evening west of Greenwich).
+  const recentLastValidated = localDateKey();
   return `---
 project:
   - ${project}

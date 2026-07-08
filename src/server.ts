@@ -375,6 +375,22 @@ the index when your workflow checks in that file.`,
   );
 
   server.registerTool(
+    "listRoadmapGoals",
+    {
+      title: "List Roadmap Goals",
+      description:
+        "Structured, sorted listing of a project's roadmap goals without reading the whole roadmap document. Status derives from the region a goal appears in (## Goals = active, ## Completed / ## Cancelled = history; a goal id can appear in both when a phase shipped). Default sort groups by status (active first) with the newest G-### first within each group; sort: id gives ascending id order, sort: recent gives newest-first across statuses. Each goal lists the milestones that reference it.",
+      inputSchema: z.object({
+        project: z.string().describe("Project slug (alias-aware)."),
+        status: z.enum(["active", "completed", "cancelled"]).optional().describe("Filter by goal status."),
+        sort: z.enum(["status", "id", "recent"]).optional().describe("Sort mode. Defaults to status grouping with newest ids first."),
+      }),
+      annotations: { readOnlyHint: true },
+    },
+    async ({ project, status, sort }) => jsonResult(await service.listRoadmapGoals({ project, status, sort })),
+  );
+
+  server.registerTool(
     "readMilestone",
     {
       title: "Read Milestone",

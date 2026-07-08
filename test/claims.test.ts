@@ -286,6 +286,10 @@ describe("AnchorService claims", () => {
   });
 
   function anchorContent(extraClaim = ""): string {
+    // Local date so writes that keep last_validated unchanged pass the
+    // lastValidatedBump validator's local-time "today" check.
+    const now = new Date();
+    const localToday = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
     return `---
 project:
   - demo
@@ -295,7 +299,7 @@ tags:
 summary: "Claims test anchor."
 read_this_if:
   - "You are testing claims."
-last_validated: 2026-07-07
+last_validated: ${localToday}
 ---
 
 # Claims Demo
