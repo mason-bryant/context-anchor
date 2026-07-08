@@ -226,14 +226,12 @@ the flag.
 
 ## Example
 
-The `context-conductor` project itself uses this pattern. After upgrading:
+In a backing context repository, a project can use this pattern with:
 
-- `projects/context-conductor/context-conductor-roadmap.md` — goals `G-001` through
-  `G-003` with acceptance criteria
-- `projects/context-conductor/milestones/steel-thread-v1.md` — groups `G-003`
-  (milestones typed schemas and anchor relations) under the theme
-  `"Milestones typed schemas relations planner CONTEXT-ROOT"`, status `active`,
-  with `milestone_id: M1` and `sequence: 1`
+- `projects/demo/demo-roadmap.md` — goals such as `G-001` through `G-003` with
+  acceptance criteria
+- `projects/demo/milestones/steel-thread-v1.md` — groups `G-003` under a concrete
+  theme, with `status`, `milestone_id: M1`, and `sequence: 1`
 
 Call `readMilestone` to see a fully-resolved response with both goals confirmed:
 
@@ -241,7 +239,7 @@ Call `readMilestone` to see a fully-resolved response with both goals confirmed:
 CallMcpTool(
   server="anchor-mcp",
   toolName="readMilestone",
-  arguments={ "name": "projects/context-conductor/milestones/steel-thread-v1.md" }
+  arguments={ "name": "projects/demo/milestones/steel-thread-v1.md" }
 )
 ```
 

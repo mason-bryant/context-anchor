@@ -506,6 +506,7 @@ export const UI_HTML = `<!doctype html>
                   <div id="detail-badges" class="badges"></div>
                   <h2 id="detail-title"></h2>
                   <p id="detail-path"></p>
+                  <p id="detail-readonly-note" class="readonly-note" hidden>Built-in server rules are read-only and ship with anchor-mcp.</p>
                 </div>
                 <div class="segmented">
                   <button class="mode active" data-detail-mode="rendered" type="button">Rendered</button>
@@ -764,6 +765,14 @@ textarea {
   background: var(--panel);
   color: var(--text);
   padding: 8px 10px;
+}
+
+input:disabled,
+select:disabled,
+textarea:disabled {
+  background: #eef1f4;
+  color: var(--muted);
+  cursor: not-allowed;
 }
 
 textarea {
@@ -1049,6 +1058,13 @@ textarea {
   color: var(--muted);
 }
 
+.view-header .readonly-note {
+  margin-top: 8px;
+  max-width: 720px;
+  color: #4f5f6f;
+  font-size: 13px;
+}
+
 .segmented {
   display: inline-flex;
   gap: 0;
@@ -1184,6 +1200,21 @@ textarea {
 .stack-form {
   display: grid;
   gap: 10px;
+}
+
+.read-only-anchor .editor-grid .metadata-box,
+.read-only-anchor .detail-grid .metadata-box:nth-child(3) {
+  background: #f8f9fb;
+  border-color: #d2d8df;
+}
+
+.read-only-anchor .editor-grid input:disabled,
+.read-only-anchor .editor-grid select:disabled,
+.read-only-anchor .editor-grid textarea:disabled,
+.read-only-anchor #priority-input:disabled,
+.read-only-anchor #rename-target:disabled,
+.read-only-anchor #action-message:disabled {
+  border-color: #cbd3dc;
 }
 
 .stack-form label,
@@ -1346,6 +1377,12 @@ textarea {
   color: var(--block);
   border-color: rgba(199, 53, 45, 0.28);
   background: rgba(199, 53, 45, 0.08);
+}
+
+.badge.readonly {
+  color: #4f5f6f;
+  border-color: #c4ccd5;
+  background: #eef1f4;
 }
 
 .issue {
@@ -2248,6 +2285,26 @@ export const UI_JS = `(function () {
 
   var categories = ["", "server-rules", "agent-rules", "projects", "invariants", "conflicts", "shared", "archive"];
   var tokenStorageKey = "anchor-mcp-token";
+  var SERVER_RULES_PREFIX = "server-rules/";
+  var SERVER_RULE_READ_ONLY_MESSAGE = "Built-in server rules are read-only. They ship with anchor-mcp and cannot be edited from this UI.";
+  var READ_ONLY_DETAIL_CONTROL_IDS = [
+    "priority-input",
+    "update-priority",
+    "clear-priority",
+    "edit-operation",
+    "edit-heading",
+    "edit-summary",
+    "edit-content",
+    "edit-message",
+    "edit-last-validated",
+    "edit-approved",
+    "stage-proposal",
+    "commit-direct",
+    "rename-target",
+    "action-message",
+    "rename-anchor",
+    "delete-anchor"
+  ];
 
   function readAnchorFromLocation() {
     var queryAnchor = new URLSearchParams(window.location.search).get("anchor");
@@ -2724,6 +2781,46 @@ export const UI_JS = `(function () {
       return anchor.frontmatter.project;
     }
     return "";
+  }
+
+  function isServerRuleAnchor(anchor) {
+    if (!anchor) {
+      return false;
+    }
+    var name = typeof anchor === "string" ? anchor : anchor.name;
+    return (anchor.origin === "built-in")
+      || (typeof name === "string" && name.indexOf(SERVER_RULES_PREFIX) === 0);
+  }
+
+  function assertMutableAnchor(anchor, action) {
+    if (isServerRuleAnchor(anchor)) {
+      throw new Error("Server rules are read-only; you cannot " + action + " from this UI.");
+    }
+  }
+
+  function setDetailReadOnlyState(readOnly) {
+    var detailContent = safeEl("detail-content");
+    if (detailContent && detailContent.classList) {
+      detailContent.classList.toggle("read-only-anchor", readOnly);
+    }
+    var note = safeEl("detail-readonly-note");
+    if (note) {
+      note.hidden = !readOnly;
+      note.textContent = SERVER_RULE_READ_ONLY_MESSAGE;
+    }
+    READ_ONLY_DETAIL_CONTROL_IDS.forEach(function (id) {
+      var control = safeEl(id);
+      if (!control) {
+        return;
+      }
+      control.disabled = readOnly;
+      control.title = readOnly ? SERVER_RULE_READ_ONLY_MESSAGE : "";
+      if (readOnly && control.setAttribute) {
+        control.setAttribute("aria-disabled", "true");
+      } else if (control.removeAttribute) {
+        control.removeAttribute("aria-disabled");
+      }
+    });
   }
 
   function categoryLabel(category) {
@@ -3964,6 +4061,7 @@ export const UI_JS = `(function () {
     if (!anchor) {
       throw new Error("Select an anchor before staging a proposal.");
     }
+    assertMutableAnchor(anchor, "stage proposals for them");
     var operation = editOperation();
     var summary = el("edit-summary").value.trim() || (operation.type + " " + anchor.name);
     var result = await apiPost("/api/ui/propose-change", {
@@ -3985,6 +4083,7 @@ export const UI_JS = `(function () {
     if (!anchor) {
       throw new Error("Select an anchor before committing.");
     }
+    assertMutableAnchor(anchor, "commit edits to them");
     var operation = editOperation();
     var common = {
       name: anchor.name,
@@ -4024,6 +4123,7 @@ export const UI_JS = `(function () {
     if (!anchor) {
       throw new Error("Select a project anchor before updating priority.");
     }
+    assertMutableAnchor(anchor, "update their project priority");
     var project = projectOf(anchor);
     if (!project) {
       throw new Error("Selected anchor is not associated with a project.");
@@ -4069,6 +4169,7 @@ export const UI_JS = `(function () {
 
   function renderAnchorHistory() {
     var list = el("history-list");
+    var readOnly = isServerRuleAnchor(state.selectedAnchor);
     if (!state.anchorVersions.length) {
       list.innerHTML = "<div class=\\"empty-state\\">No versions returned.</div>";
       return;
@@ -4078,11 +4179,14 @@ export const UI_JS = `(function () {
       var diffButton = previous
         ? "<button type=\\"button\\" data-diff-index=\\"" + index + "\\">Diff previous</button>"
         : "";
+      var revertButton = readOnly
+        ? ""
+        : "<button type=\\"button\\" data-revert-version=\\"" + escapeHtml(version.version) + "\\">Revert</button>";
       return "<div class=\\"planner-card\\">"
         + "<div class=\\"planner-card-title\\"><span>" + escapeHtml(version.message || version.version) + "</span><span class=\\"badge\\">" + escapeHtml(version.date || "") + "</span></div>"
         + "<p>" + escapeHtml(version.version) + "</p>"
         + "<p>" + escapeHtml(version.author || "") + "</p>"
-        + "<div class=\\"action-row\\">" + diffButton + "<button type=\\"button\\" data-revert-version=\\"" + escapeHtml(version.version) + "\\">Revert</button></div>"
+        + "<div class=\\"action-row\\">" + diffButton + revertButton + "</div>"
         + "</div>";
     }).join("");
   }
@@ -4102,7 +4206,11 @@ export const UI_JS = `(function () {
 
   async function revertAnchorVersion(version) {
     var anchor = state.selectedAnchor;
-    if (!anchor || !window.confirm("Revert " + anchor.name + " to " + version + " as a new commit?")) {
+    if (!anchor) {
+      return;
+    }
+    assertMutableAnchor(anchor, "revert them");
+    if (!window.confirm("Revert " + anchor.name + " to " + version + " as a new commit?")) {
       return;
     }
     var result = await apiPost("/api/ui/anchor-revert", {
@@ -4121,6 +4229,7 @@ export const UI_JS = `(function () {
     if (!anchor || !to) {
       throw new Error("Rename requires a selected anchor and a target path.");
     }
+    assertMutableAnchor(anchor, "rename them");
     if (!window.confirm("Rename " + anchor.name + " to " + to + "?")) {
       return;
     }
@@ -4144,6 +4253,7 @@ export const UI_JS = `(function () {
     if (!anchor) {
       throw new Error("Select an anchor before deleting.");
     }
+    assertMutableAnchor(anchor, "delete them");
     var typed = window.prompt("Type the full anchor name to delete it.", "");
     if (typed !== anchor.name) {
       setBanner("Delete cancelled; anchor name did not match.", "warn");
@@ -6521,13 +6631,16 @@ export const UI_JS = `(function () {
 
   function renderDetail(anchor, options) {
     var detailOpts = options || {};
+    var readOnly = isServerRuleAnchor(anchor);
     state.selectedAnchor = anchor;
     state.anchorVersions = [];
     el("detail-empty").hidden = true;
     el("detail-content").hidden = false;
+    setDetailReadOnlyState(readOnly);
     el("detail-title").textContent = anchor.ui.label;
     el("detail-path").textContent = anchor.name;
     el("detail-badges").innerHTML = healthBadge(anchor.ui.health)
+      + (readOnly ? "<span class=\\"badge readonly\\">Read-only server rule</span>" : "")
       + "<span class=\\"badge\\">" + escapeHtml(anchor.frontmatter.type || "unknown type") + "</span>"
       + (priorityLabel(anchorPriority(anchor)) ? "<span class=\\"badge\\">" + escapeHtml(priorityLabel(anchorPriority(anchor))) + "</span>" : "");
     el("section-status").innerHTML = Object.keys(anchor.ui.sections).map(function (section) {
@@ -6547,12 +6660,18 @@ export const UI_JS = `(function () {
     el("priority-input").value = priorityLabel(anchorPriority(anchor)).replace(/^P/, "");
     el("rename-target").value = anchor.name;
     el("action-message").value = "";
-    el("priority-result").textContent = projectOf(anchor)
+    el("priority-result").textContent = readOnly
+      ? SERVER_RULE_READ_ONLY_MESSAGE
+      : projectOf(anchor)
       ? "Set a numeric priority such as 1, 1.1, or 2.045."
       : "Priority is only available for project anchors.";
-    el("edit-result").textContent = "Compose an edit to preview proposal or commit results.";
+    el("edit-result").textContent = readOnly
+      ? SERVER_RULE_READ_ONLY_MESSAGE
+      : "Compose an edit to preview proposal or commit results.";
     el("history-list").innerHTML = "";
-    el("history-diff").textContent = "Load history to inspect diffs or revert.";
+    el("history-diff").textContent = readOnly
+      ? "Load history to inspect diffs. Built-in server rules cannot be renamed, deleted, edited, or reverted."
+      : "Load history to inspect diffs or revert.";
     showDetailMode(state.detailMode);
   }
 
@@ -7208,6 +7327,10 @@ export const UI_JS = `(function () {
     window.__ANCHOR_MCP_UI_TEST_HOOKS__.sortAnchorGroups = sortAnchorGroups;
     window.__ANCHOR_MCP_UI_TEST_HOOKS__.priorityLabel = priorityLabel;
     window.__ANCHOR_MCP_UI_TEST_HOOKS__.projectOf = projectOf;
+    window.__ANCHOR_MCP_UI_TEST_HOOKS__.isServerRuleAnchor = isServerRuleAnchor;
+    window.__ANCHOR_MCP_UI_TEST_HOOKS__.readOnlyDetailControlIds = function () {
+      return READ_ONLY_DETAIL_CONTROL_IDS.slice();
+    };
     window.__ANCHOR_MCP_UI_TEST_HOOKS__.setAnchorGroupSortForTest = function (value) {
       state.anchorGroupSort = validAnchorGroupSort(value);
     };
