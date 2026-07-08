@@ -1,3 +1,4 @@
+import type { AnchorClaim, ClaimProvenanceSummary } from "./claims.js";
 import type { DiscoveryCategory } from "./taxonomy.js";
 
 export type AnchorFrontmatter = Record<string, unknown>;
@@ -92,6 +93,8 @@ export type AnchorRead = {
   version?: string;
   /** Latest commit that touched this anchor path (for optimistic concurrency). */
   fileCommit?: string;
+  /** Optional parsed claim provenance sidecar, returned only when requested. */
+  claimProvenance?: AnchorClaimProvenance;
 };
 
 export type SearchHit = {
@@ -584,6 +587,19 @@ export type ProjectFilterResolution = {
  */
 export type ProjectMappings = {
   projects: ProjectMapping[];
+  /** Configurable provenance source types shown in claim-source editors. */
+  claimSourceTypes: ClaimSourceType[];
+};
+
+export type ClaimSourceType = {
+  /** Stable source-kind id stored in claim annotations, e.g. `source`, `design-doc`, or `adr`. */
+  id: string;
+  /** Human-facing label for UI controls. */
+  label: string;
+  /** When true, the source row stores a person id/name in addition to src. */
+  requiresPerson?: boolean;
+  /** Optional confidence value forced by this source type. */
+  lockedConfidence?: "high" | "medium" | "low";
 };
 
 export type ProjectMapping = {
@@ -613,6 +629,12 @@ export type ProjectRepoWeb = {
    * hosts that differ (e.g. GitLab `{url}/-/blob/{branch}/{path}`).
    */
   fileTemplate?: string;
+  /**
+   * Optional pull-request URL template with `{url}` and `{number}` placeholders.
+   * Defaults to the common `{url}/pull/{number}` (GitHub-style); override for
+   * hosts that differ (e.g. GitLab `{url}/-/merge_requests/{number}`).
+   */
+  pullRequestTemplate?: string;
 };
 
 export type ProjectMappingsWithCommit = ProjectMappings & { fileCommit?: string };
@@ -653,6 +675,26 @@ export type ContextRootResult = {
 /** How much anchor body to include in `loadContext` results. */
 export type AnchorContentMode = "full" | "excerpt" | "none";
 
+/** How much structured claim provenance to include alongside anchor reads. */
+export type ClaimProvenanceMode = "none" | "summary" | "relevant" | "full";
+
+export type AnchorClaimProvenance = {
+  mode: Exclude<ClaimProvenanceMode, "none">;
+  summary: ClaimProvenanceSummary;
+  /** Present for `relevant` and `full`; `relevant` may be truncated. */
+  claims?: AnchorClaim[];
+  claimsTruncated?: boolean;
+};
+
+export type ContextProvenanceSummary = {
+  mode: "summary";
+  summary: ClaimProvenanceSummary;
+  anchors: Array<{
+    name: string;
+    summary: ClaimProvenanceSummary;
+  }>;
+};
+
 /** Input for the combined discovery + multi-anchor read tool (`loadContext`). */
 export type LoadContextInput = {
   project?: string;
@@ -673,6 +715,8 @@ export type LoadContextInput = {
   task?: string;
   /** Same as `contextRoot`: include markdown snapshot in the result. */
   format?: ContextRootFormat;
+  /** Optional structured claim provenance sidecar. Defaults to `relevant` when task is set, otherwise `none`. */
+  includeProvenance?: ClaimProvenanceMode;
 };
 
 export type LoadContextSelectionReason = "explicit_names" | "filter";
@@ -690,6 +734,8 @@ export type LoadContextAnchor = {
   /** Present when `includeContent` is `excerpt`. */
   excerpt?: string;
   frontmatter?: AnchorFrontmatter;
+  /** Optional parsed claim provenance sidecar. */
+  claimProvenance?: AnchorClaimProvenance;
 };
 
 export type LoadContextResult = {
@@ -705,6 +751,7 @@ export type LoadContextResult = {
   /** How many anchors were returned in `anchors` this page. */
   returnedCount: number;
   projectFilter?: ProjectFilterResolution;
+  provenance?: ContextProvenanceSummary;
 };
 
 /** Input for a task-aware context bundle planning tool. */
@@ -725,6 +772,8 @@ export type PlanContextBundleInput = {
   maxAnchors?: number;
   /** Maximum excluded anchors to explain in the response. */
   maxExcluded?: number;
+  /** Compact claim-provenance health to include with the plan. Defaults to `summary`; pass `none` to omit. */
+  includeProvenance?: "none" | "summary";
 };
 
 export type PlanContextBundleItem = {
@@ -754,11 +803,13 @@ export type PlanContextBundleResult = {
   projectFilter?: ProjectFilterResolution;
   /** Candidate projects derived from a repo name and/or file paths, with explanations. */
   projectResolution?: ProjectResolution;
+  provenance?: ContextProvenanceSummary;
   loadContext: {
     names: string[];
     includeContent: "excerpt";
     maxBytes: number;
     project?: string;
+    includeProvenance?: ClaimProvenanceMode;
   };
 };
 
@@ -773,6 +824,8 @@ export type StartTaskInput = {
   budgetTokens?: number;
   maxAnchors?: number;
   includeArchive?: boolean;
+  /** Compact claim-provenance health to include with the plan and loaded anchors. Defaults to `summary`; pass `none` to omit. */
+  includeProvenance?: "none" | "summary";
 };
 
 export type StartTaskActiveMilestone = {
@@ -792,6 +845,7 @@ export type StartTaskResult = {
     missingContext: string[];
     projectFilter?: ProjectFilterResolution;
     projectResolution?: ProjectResolution;
+    provenance?: ContextProvenanceSummary;
   };
   anchors: LoadContextAnchor[];
   truncated: boolean;

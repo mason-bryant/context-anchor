@@ -220,6 +220,82 @@ describe("AnchorService", () => {
     expect(logSpy).not.toHaveBeenCalled();
   });
 
+  it("adds optional claim provenance sidecars to anchor reads and context loads", async () => {
+    await service.writeAnchor({
+      name: "projects/demo/provenance-demo",
+      content: projectAnchorContent({
+        currentState:
+          "- Payment flow is implemented.\n  {src: src/payments.ts; observed: 2026-07-08; conf: high}\n- Legacy payment claim needs review.",
+        decisions: "None.",
+        constraints: "None.",
+      }),
+      message: "test: add provenance demo",
+    });
+
+    const plain = await service.readAnchor("projects/demo/provenance-demo");
+    expect(plain.claimProvenance).toBeUndefined();
+
+    const full = await service.readAnchor("projects/demo/provenance-demo", undefined, { includeProvenance: "full" });
+    expect(full.claimProvenance?.mode).toBe("full");
+    expect(full.claimProvenance?.summary).toMatchObject({
+      totalClaims: 2,
+      annotatedClaims: 1,
+      unannotatedClaims: 1,
+      sourceCount: 1,
+    });
+    expect(full.claimProvenance?.claims?.map((claim) => claim.text)).toEqual([
+      "Payment flow is implemented.",
+      "Legacy payment claim needs review.",
+    ]);
+
+    const loaded = await service.loadContext({
+      names: ["projects/demo/provenance-demo"],
+      includeContent: "none",
+      includeProvenance: "relevant",
+      task: "payment flow",
+    });
+    expect(loaded.provenance?.summary.totalClaims).toBe(2);
+    expect(loaded.anchors[0]?.claimProvenance?.mode).toBe("relevant");
+    expect(loaded.anchors[0]?.claimProvenance?.claims?.map((claim) => claim.text)).toContain(
+      "Payment flow is implemented.",
+    );
+  });
+
+  it("includes compact claim provenance health in planner and startTask by default", async () => {
+    await service.writeAnchor({
+      name: "projects/demo/provenance-plan",
+      content: projectAnchorContent({
+        currentState:
+          "- Demo planner fact is weakly sourced.\n  {src: person:alice; observed: 2026-01-02; conf: medium}\n- Demo planner backlog fact has no source.",
+        decisions: "None.",
+        constraints: "None.",
+      }),
+      message: "test: add provenance planner anchor",
+    });
+
+    const plan = await service.planContextBundle({ task: "demo planner fact", project: "demo" });
+    expect(plan.provenance?.summary).toMatchObject({
+      totalClaims: 2,
+      annotatedClaims: 1,
+      unannotatedClaims: 1,
+    });
+    expect(plan.provenance?.summary.claimStrengths.medium).toBe(1);
+    expect(plan.missingContext.some((line) => line.includes("Claim provenance health"))).toBe(true);
+    expect(plan.loadContext.includeProvenance).toBe("summary");
+
+    const withoutProvenance = await service.planContextBundle({
+      task: "demo planner fact",
+      project: "demo",
+      includeProvenance: "none",
+    });
+    expect(withoutProvenance.provenance).toBeUndefined();
+    expect(withoutProvenance.missingContext.some((line) => line.includes("Claim provenance health"))).toBe(false);
+
+    const started = await service.startTask({ task: "demo planner fact", project: "demo" });
+    expect(started.plan.provenance?.summary.totalClaims).toBe(2);
+    expect(started.anchors[0]?.claimProvenance?.mode).toBe("summary");
+  });
+
   it("blocks anchors missing required sections", async () => {
     const result = await service.writeAnchor({
       name: "shared/bad",
@@ -676,6 +752,7 @@ last_validated: 2026-05-10
       project: "demo",
       budgetTokens: 1200,
       maxAnchors: 1,
+      includeProvenance: "none",
     });
 
     expect(planned.included).toHaveLength(1);

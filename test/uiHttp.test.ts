@@ -192,8 +192,9 @@ describe("UI HTTP routes", () => {
     const plan = await fetchJson<{
       included: Array<{ name: string; reason: string }>;
       excluded: Array<{ name: string; reason: string }>;
-      loadContext: { names: string[]; includeContent: string; maxBytes: number };
+      loadContext: { names: string[]; includeContent: string; maxBytes: number; includeProvenance?: string };
       missingContext: string[];
+      provenance?: { summary: { totalClaims: number; unannotatedClaims: number } };
     }>("/api/ui/context-plan?task=Update%20demo%20context&project=demo&budgetTokens=1200&maxAnchors=1&maxExcluded=5");
 
     expect(plan.included[0]?.name).toBe("projects/demo/demo.md");
@@ -203,7 +204,9 @@ describe("UI HTTP routes", () => {
     expect(plan.loadContext.names.some((n: string) => serverRuleNames.includes(n))).toBe(false);
     expect(plan.loadContext.includeContent).toBe("excerpt");
     expect(plan.loadContext.maxBytes).toBe(4800);
-    expect(plan.missingContext).toEqual([]);
+    expect(plan.loadContext.includeProvenance).toBe("summary");
+    expect(plan.provenance?.summary.totalClaims).toBeGreaterThan(0);
+    expect(plan.missingContext.some((line) => line.includes("Claim provenance health"))).toBe(true);
   });
 
   it("forwards an unknown repo through the planner route and flags it", async () => {
@@ -234,14 +237,19 @@ describe("UI HTTP routes", () => {
     });
 
     // CRUD: an empty registry, then a write through the POST route.
-    const initial = await fetchJson<{ projects: unknown[]; fileCommit?: string }>("/api/ui/project-mappings");
+    const initial = await fetchJson<{ projects: unknown[]; claimSourceTypes: Array<{ id: string }>; fileCommit?: string }>("/api/ui/project-mappings");
     expect(initial.projects).toEqual([]);
+    expect(initial.claimSourceTypes.map((type) => type.id)).toEqual(["source", "design-doc", "adr", "trust-me-bro"]);
 
     const writeResponse = await fetch(`${baseUrl}/api/ui/project-mappings`, {
       method: "POST",
       headers: { Authorization: `Bearer ${TOKEN}`, "Content-Type": "application/json" },
       body: JSON.stringify({
         mappings: {
+          claimSourceTypes: [
+            { id: "source", label: "Source" },
+            { id: "runbook", label: "Runbook" },
+          ],
           projects: [
             {
               project: "project-one",
@@ -258,8 +266,11 @@ describe("UI HTTP routes", () => {
     expect(writeResponse.ok).toBe(true);
 
     const stored = await fetchJson<{
+      claimSourceTypes: Array<{ id: string; label: string }>;
       projects: Array<{ project: string; repos: Array<{ web?: { url: string; branch?: string } }> }>;
     }>("/api/ui/project-mappings");
+    expect(stored.claimSourceTypes.map((type) => type.id)).toContain("runbook");
+    expect(stored.claimSourceTypes.find((type) => type.id === "runbook")?.label).toBe("Runbook");
     expect(stored.projects.map((p) => p.project).sort()).toEqual(["project-one", "project-two"]);
     const projectOne = stored.projects.find((p) => p.project === "project-one");
     expect(projectOne?.repos[0]?.web).toEqual({ url: "https://github.com/owner/repo-alpha", branch: "main" });
@@ -858,7 +869,14 @@ describe("UI HTTP routes", () => {
 
   it("lists and annotates claims through the UI routes", async () => {
     type ClaimsResult = {
-      claims: Array<{ anchor: string; text: string; status: string; annotation?: { src: string; conf: string } }>;
+      claims: Array<{
+        anchor: string;
+        text: string;
+        status: string;
+        annotation?: { src: string; conf: string; kind?: string; person?: string; personName?: string };
+        sources?: Array<{ src: string; conf: string; kind?: string; person?: string; personName?: string }>;
+        strength?: string;
+      }>;
       summary: { total: number; annotated: number; unannotated: number; malformed: number };
     };
     type ClaimWrite = { version?: string; warnings: { severity: string; code: string; message: string }[] };
@@ -885,6 +903,23 @@ describe("UI HTTP routes", () => {
     expect(annotated.claims.map((claim) => claim.text)).toContain(target.text);
     expect(annotated.claims.find((claim) => claim.text === target.text)?.annotation?.src).toBe("PR #54");
 
+    const multi = await postJson<ClaimWrite>("/api/ui/claim-sources", {
+      name: target.anchor,
+      claim: target.text,
+      sources: [
+        { src: "PR #55", observed: "2026-07-08", conf: "high" },
+        { src: "src/a.ts", observed: "2026-07-09", conf: "low" },
+      ],
+      approved: true,
+    });
+    expect(multi.warnings.filter((warning) => warning.severity === "BLOCK")).toEqual([]);
+    const multiListed = await fetchJson<ClaimsResult>(
+      `/api/ui/claims?name=${encodeURIComponent(target.anchor)}&status=annotated`,
+    );
+    const multiClaim = multiListed.claims.find((claim) => claim.text === target.text);
+    expect(multiClaim?.sources?.map((source) => source.src)).toEqual(["PR #55", "src/a.ts"]);
+    expect(multiClaim?.strength).toBe("medium");
+
     const cleared = await postJson<ClaimWrite>("/api/ui/claim-annotation", {
       name: target.anchor,
       claim: target.text,
@@ -892,6 +927,37 @@ describe("UI HTTP routes", () => {
       approved: true,
     });
     expect(cleared.warnings.filter((warning) => warning.severity === "BLOCK")).toEqual([]);
+
+    await postJson("/api/ui/people-registry", {
+      registry: { people: [{ id: "alice", displayName: "Alice Example" }], teams: [] },
+      message: "test: add claim source person",
+    });
+    const trust = await postJson<ClaimWrite>("/api/ui/claim-sources", {
+      name: target.anchor,
+      claim: target.text,
+      sources: [
+        {
+          src: "trust me bro",
+          kind: "trust-me-bro",
+          person: "Alice Example",
+          observed: "2026-07-08",
+          conf: "high",
+        },
+      ],
+      approved: true,
+    });
+    expect(trust.warnings.filter((warning) => warning.severity === "BLOCK")).toEqual([]);
+    const trustListed = await fetchJson<ClaimsResult>(
+      `/api/ui/claims?name=${encodeURIComponent(target.anchor)}&q=${encodeURIComponent("trust-me-bro")}`,
+    );
+    const trustClaim = trustListed.claims.find((claim) => claim.text === target.text);
+    expect(trustClaim?.sources?.[0]).toMatchObject({
+      src: "trust me bro",
+      kind: "trust-me-bro",
+      person: "alice",
+      personName: "Alice Example",
+      conf: "high",
+    });
 
     const rejected = await postJson<ClaimWrite>("/api/ui/claim-annotation", {
       name: target.anchor,

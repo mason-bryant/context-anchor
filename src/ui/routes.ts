@@ -80,7 +80,8 @@ export function registerUiRoutes(
     jsonRoute(async (req) => {
       const name = requiredQueryString(req, "name");
       const anchor = await service.readAnchor(name);
-      return { anchor: toAnchorUiDetail(anchor) };
+      const claims = await service.listClaims({ name });
+      return { anchor: toAnchorUiDetail(anchor, undefined, claims.claims) };
     }),
   );
 
@@ -384,7 +385,35 @@ export function registerUiRoutes(
         observed: optionalBodyString(body, "observed"),
         conf: optionalBodyString(body, "conf"),
         id: optionalBodyString(body, "id"),
+        kind: optionalBodyString(body, "kind"),
+        person: optionalBodyString(body, "person"),
         clear: booleanBody(body, "clear"),
+        message: optionalBodyString(body, "message"),
+        approved: booleanBody(body, "approved"),
+        coAuthor: optionalBodyString(body, "coAuthor"),
+        expectedFileCommit: optionalBodyString(body, "expectedFileCommit"),
+      });
+    }),
+  );
+
+  app.post(
+    "/api/ui/claim-sources",
+    ...protect,
+    jsonRoute(async (req) => {
+      const body = bodyRecord(req);
+      const sources = bodyArray(body, "sources").map((source, index) => ({
+        src: requiredObjectString(source, "src", `sources[${index}].src`),
+        observed: requiredObjectString(source, "observed", `sources[${index}].observed`),
+        conf: requiredObjectString(source, "conf", `sources[${index}].conf`),
+        ...(optionalObjectString(source, "id") ? { id: optionalObjectString(source, "id") } : {}),
+        ...(optionalObjectString(source, "kind") ? { kind: optionalObjectString(source, "kind") } : {}),
+        ...(optionalObjectString(source, "person") ? { person: optionalObjectString(source, "person") } : {}),
+      }));
+      return service.setClaimSources({
+        name: requiredBodyString(body, "name"),
+        claim: optionalBodyString(body, "claim"),
+        line: optionalBodyNumber(body, "line"),
+        sources,
         message: optionalBodyString(body, "message"),
         approved: booleanBody(body, "approved"),
         coAuthor: optionalBodyString(body, "coAuthor"),
@@ -852,6 +881,17 @@ function optionalBodyString(body: Record<string, unknown>, key: string): string 
   return undefined;
 }
 
+function optionalBodyNumber(body: Record<string, unknown>, key: string): number | undefined {
+  const value = body[key];
+  if (value === undefined || value === null || value === "") {
+    return undefined;
+  }
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+  throw new UiHttpError(400, `Invalid ${key}: expected a number`);
+}
+
 function bodyObject(body: Record<string, unknown>, key: string): Record<string, unknown> {
   const value = body[key];
   if (!value || typeof value !== "object" || Array.isArray(value)) {
@@ -866,6 +906,19 @@ function bodyArray(body: Record<string, unknown>, key: string): Array<Record<str
     throw new UiHttpError(400, `Invalid ${key}: expected an array of objects`);
   }
   return value as Array<Record<string, unknown>>;
+}
+
+function optionalObjectString(body: Record<string, unknown>, key: string): string | undefined {
+  const value = body[key];
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
+}
+
+function requiredObjectString(body: Record<string, unknown>, key: string, label: string): string {
+  const value = optionalObjectString(body, key);
+  if (!value) {
+    throw new UiHttpError(400, `Missing required body field: ${label}`);
+  }
+  return value;
 }
 
 function booleanBody(body: Record<string, unknown>, key: string): boolean | undefined {
