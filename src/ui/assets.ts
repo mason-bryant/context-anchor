@@ -56,6 +56,13 @@ export const UI_HTML = `<!doctype html>
         <path d="M8.4 13.2 15.6 16.1"></path>
         <path d="M16.4 8.5 17.6 14.5"></path>
       </symbol>
+      <symbol id="icon-trash" viewBox="0 0 24 24">
+        <path d="M4 7h16"></path>
+        <path d="M9 7V5h6v2"></path>
+        <path d="M7 7l1 13h8l1-13"></path>
+        <path d="M10 11v5"></path>
+        <path d="M14 11v5"></path>
+      </symbol>
     </svg>
     <div class="app-shell">
       <header class="topbar">
@@ -1837,6 +1844,9 @@ textarea {
   box-shadow: var(--shadow);
   padding: 18px;
 }
+.claim-source-dialog {
+  width: min(1120px, calc(100vw - 48px));
+}
 .modal-header {
   display: flex;
   justify-content: space-between;
@@ -1859,6 +1869,15 @@ textarea {
   font-size: 20px;
   line-height: 1;
 }
+.danger-button {
+  color: var(--block);
+  border-color: rgba(199, 53, 45, 0.45);
+  background: rgba(199, 53, 45, 0.08);
+}
+.danger-button:hover {
+  border-color: var(--block);
+  background: rgba(199, 53, 45, 0.14);
+}
 .claim-source-rows {
   display: grid;
   gap: 8px;
@@ -1866,7 +1885,7 @@ textarea {
 }
 .claim-source-row {
   display: grid;
-  grid-template-columns: minmax(110px, 0.7fr) minmax(160px, 1.4fr) minmax(160px, 1.4fr) minmax(140px, 0.8fr) minmax(110px, 0.6fr) minmax(110px, 0.6fr) auto;
+  grid-template-columns: minmax(110px, 0.75fr) minmax(260px, 2fr) minmax(140px, 0.9fr) minmax(110px, 0.7fr) minmax(92px, 0.55fr) minmax(108px, auto);
   gap: 8px;
   align-items: end;
 }
@@ -1885,6 +1904,10 @@ textarea {
 .claim-source-row input,
 .claim-source-row select {
   width: 100%;
+}
+.claim-source-delete {
+  gap: 6px;
+  white-space: nowrap;
 }
 .claim-person-add {
   margin: 6px 0 12px;
@@ -1916,6 +1939,19 @@ textarea {
 .claim-source-type-row input,
 .claim-source-type-row select {
   width: 100%;
+}
+@media (max-width: 900px) {
+  .claim-source-dialog {
+    width: 100%;
+  }
+  .claim-source-row,
+  .claim-person-add-grid,
+  .claim-source-type-row {
+    grid-template-columns: 1fr;
+  }
+  .claim-source-delete {
+    justify-self: start;
+  }
 }
 .detail-tasks {
   margin: 0 0 16px;
@@ -2517,9 +2553,10 @@ export const UI_JS = `(function () {
   var SERVER_RULES_PREFIX = "server-rules/";
   var SERVER_RULE_READ_ONLY_MESSAGE = "Built-in server rules are read-only. They ship with anchor-mcp and cannot be edited from this UI.";
   var DEFAULT_CLAIM_SOURCE_TYPES = [
-    { id: "source", label: "Source" },
+    { id: "url", label: "URL" },
     { id: "design-doc", label: "Design Doc" },
     { id: "adr", label: "ADR" },
+    { id: "misc", label: "Misc" },
     { id: "trust-me-bro", label: "trust me bro", requiresPerson: true, lockedConfidence: "high" }
   ];
   var READ_ONLY_DETAIL_CONTROL_IDS = [
@@ -4938,7 +4975,7 @@ export const UI_JS = `(function () {
       + "<label>Type<select class=\\"claim-source-kind\\"" + disabled + ">"
       + claimSourceTypeOptionsHtml(type.id)
       + "</select></label>"
-      + "<label class=\\"claim-source-src-label\\">Source<input class=\\"claim-source-src\\" type=\\"text\\" value=\\"" + escapeHtml(source.src || "") + "\\" placeholder=\\"PR #42, src/file.ts#L12, URL, anchor, or person:id\\"" + disabled + "></label>"
+      + "<label class=\\"claim-source-src-label\\"><span class=\\"claim-source-src-title\\">" + escapeHtml(claimSourceValueLabel(type)) + "</span><input class=\\"claim-source-src\\" type=\\"text\\" value=\\"" + escapeHtml(source.src || "") + "\\" placeholder=\\"" + escapeHtml(claimSourceValuePlaceholder(type)) + "\\"" + disabled + "></label>"
       + "<label class=\\"claim-source-person-label\\">Developer<input class=\\"claim-source-person\\" type=\\"text\\" value=\\"" + escapeHtml(personValue) + "\\" placeholder=\\"Search people\\" list=\\"claim-person-suggestions\\" autocomplete=\\"off\\"" + disabled + "></label>"
       + "<label>Last checked<input class=\\"claim-source-observed\\" type=\\"date\\" value=\\"" + escapeHtml(source.observed || todayIso()) + "\\"" + disabled + "></label>"
       + "<label>Strength<select class=\\"claim-source-conf\\"" + disabled + ">"
@@ -4947,7 +4984,7 @@ export const UI_JS = `(function () {
       }).join("")
       + "</select></label>"
       + "<label>ID<input class=\\"claim-source-id\\" type=\\"text\\" value=\\"" + escapeHtml(source.id || "") + "\\" placeholder=\\"optional\\"" + disabled + "></label>"
-      + "<button class=\\"claim-source-delete\\" type=\\"button\\"" + disabled + ">Delete</button>"
+      + "<button class=\\"claim-source-delete danger-button\\" type=\\"button\\"" + disabled + "><span class=\\"icon-label\\"><svg class=\\"icon\\" aria-hidden=\\"true\\"><use href=\\"#icon-trash\\"></use></svg><span>Delete</span></span></button>"
       + "</div>";
   }
 
@@ -4990,12 +5027,15 @@ export const UI_JS = `(function () {
     if (!row) return;
     var kindSelect = row.querySelector(".claim-source-kind");
     var srcInput = row.querySelector(".claim-source-src");
+    var srcTitle = row.querySelector(".claim-source-src-title");
     var confSelect = row.querySelector(".claim-source-conf");
-    var kind = normalizeClaimSourceTypeId(kindSelect ? kindSelect.value : "source") || "source";
+    var kind = normalizeClaimSourceTypeId(kindSelect ? kindSelect.value : "url") || "url";
     var type = claimSourceTypeById(kind);
     var readOnly = row.dataset.readonly === "1";
     row.dataset.kind = type.id;
     row.dataset.requiresPerson = type.requiresPerson ? "1" : "0";
+    if (srcTitle) srcTitle.textContent = claimSourceValueLabel(type);
+    if (srcInput) srcInput.placeholder = claimSourceValuePlaceholder(type);
     if (type.requiresPerson) {
       if (srcInput) srcInput.value = type.id === "trust-me-bro" ? "trust me bro" : type.id;
     }
@@ -5023,7 +5063,7 @@ export const UI_JS = `(function () {
     for (var i = 0; i < rows.length; i += 1) {
       var row = rows[i];
       updateClaimSourceRowKind(row);
-      var kind = normalizeClaimSourceTypeId((row.querySelector(".claim-source-kind") || {}).value || "source") || "source";
+      var kind = normalizeClaimSourceTypeId((row.querySelector(".claim-source-kind") || {}).value || "url") || "url";
       var type = claimSourceTypeById(kind);
       var src = (row.querySelector(".claim-source-src").value || "").trim();
       var personRaw = (row.querySelector(".claim-source-person").value || "").trim();
@@ -5051,7 +5091,7 @@ export const UI_JS = `(function () {
         continue;
       }
       if (!src) {
-        return { ok: false, message: "Source is required for every row." };
+        return { ok: false, message: claimSourceValueLabel(type) + " is required for every row." };
       }
       if (!observed) {
         return { ok: false, message: "Last checked is required for every row." };
@@ -5065,7 +5105,17 @@ export const UI_JS = `(function () {
     var kind = normalizeClaimSourceTypeId(source && source.kind);
     var src = String((source && source.src) || "").toLowerCase().trim();
     if (src === "trust me bro") return "trust-me-bro";
-    return kind || "source";
+    return kind || "url";
+  }
+
+  function claimSourceValueLabel(type) {
+    return type && type.id === "url" ? "URL" : "Source";
+  }
+
+  function claimSourceValuePlaceholder(type) {
+    if (type && type.id === "url") return "https://example.com/source";
+    if (type && type.id === "misc") return "Reference, note, or other source";
+    return "PR #42, src/file.ts#L12, URL, anchor, or person:id";
   }
 
   function claimSourceTypeOptionsHtml(selected) {
@@ -6415,6 +6465,7 @@ export const UI_JS = `(function () {
       var id = normalizeClaimSourceTypeId(type && type.id);
       var label = String((type && type.label) || "").trim();
       if (!id || !label) return;
+      if (id === "url" && label.toLowerCase() === "source") label = "URL";
       byId[id] = {
         id: id,
         label: label,
@@ -6434,14 +6485,14 @@ export const UI_JS = `(function () {
   }
 
   function claimSourceTypeById(kind) {
-    var id = normalizeClaimSourceTypeId(kind || "source") || "source";
+    var id = normalizeClaimSourceTypeId(kind || "url") || "url";
     var types = claimSourceTypes();
     return types.find(function (type) { return type.id === id; }) || { id: id, label: id };
   }
 
   function normalizeClaimSourceTypeId(value) {
     var normalized = String(value || "").toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
-    return normalized === "evidence" ? "source" : normalized;
+    return normalized === "source" || normalized === "evidence" ? "url" : normalized;
   }
 
   function renderClaimSourceTypeRows() {
@@ -8180,6 +8231,7 @@ export const UI_JS = `(function () {
     window.__ANCHOR_MCP_UI_TEST_HOOKS__.claimSources = claimSources;
     window.__ANCHOR_MCP_UI_TEST_HOOKS__.claimStrengthValue = claimStrengthValue;
     window.__ANCHOR_MCP_UI_TEST_HOOKS__.renderClaimInline = renderClaimInline;
+    window.__ANCHOR_MCP_UI_TEST_HOOKS__.claimSourceRowHtml = claimSourceRowHtml;
     window.__ANCHOR_MCP_UI_TEST_HOOKS__.renderMarkdown = renderMarkdown;
     window.__ANCHOR_MCP_UI_TEST_HOOKS__.sanitizeLinkHref = sanitizeLinkHref;
     window.__ANCHOR_MCP_UI_TEST_HOOKS__.anchorHref = anchorHref;

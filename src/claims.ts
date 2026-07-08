@@ -147,7 +147,7 @@ export function parseAnnotationBody(inner: string): AnnotationParseResult {
   const kind = normalizeClaimSourceKind(rawKind, src);
 
   if (rawKind !== undefined && kind === undefined) {
-    errors.push(`kind must be a source type id like source, design-doc, adr, or trust-me-bro, got "${rawKind}".`);
+    errors.push(`kind must be a source type id like url, misc, design-doc, adr, or trust-me-bro, got "${rawKind}".`);
   }
   if (!src && kind !== TRUST_ME_BRO_KIND) {
     errors.push("Annotation requires a non-empty src (PR reference, file path, anchor name, URL, or person:<id>).");
@@ -205,8 +205,8 @@ function normalizeClaimSourceKind(rawKind: string | undefined, src: string): Cla
   if (!value) {
     return source === TRUST_ME_BRO_SOURCE ? TRUST_ME_BRO_KIND : undefined;
   }
-  if (value === "evidence") {
-    return "source";
+  if (value === "source" || value === "evidence") {
+    return "url";
   }
   if (value === TRUST_ME_BRO_KIND || value === TRUST_ME_BRO_SOURCE) {
     return TRUST_ME_BRO_KIND;
@@ -347,7 +347,7 @@ function sourceKindForSummary(source: Pick<ClaimAnnotation, "kind" | "src">): st
   if (source.kind) {
     return source.kind;
   }
-  return source.src.trim().toLowerCase() === TRUST_ME_BRO_SOURCE ? TRUST_ME_BRO_KIND : "source";
+  return source.src.trim().toLowerCase() === TRUST_ME_BRO_SOURCE ? TRUST_ME_BRO_KIND : "url";
 }
 
 function confidenceScore(conf: ClaimConfidence): number {

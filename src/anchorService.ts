@@ -1999,7 +1999,7 @@ None.
       }
       return {
         ...source,
-        ...(kind === "source" && !source.kind ? {} : { kind }),
+        ...(kind === "url" ? {} : { kind }),
         ...(kind === TRUST_ME_BRO_KIND ? { src: TRUST_ME_BRO_SOURCE } : {}),
         ...(personId ? { person: personId } : {}),
       };
@@ -3823,13 +3823,13 @@ function claimSourceTypesById(sourceTypes: ClaimSourceType[]): Map<string, Claim
 
 function claimSourceKindId(source: Pick<ClaimAnnotation, "kind" | "src">): string {
   const kind = source.kind?.trim().toLowerCase();
-  if (kind === "evidence") {
-    return "source";
+  if (kind === "source" || kind === "evidence") {
+    return "url";
   }
   if (kind) {
     return kind;
   }
-  return source.src.trim().toLowerCase() === TRUST_ME_BRO_SOURCE ? TRUST_ME_BRO_KIND : "source";
+  return source.src.trim().toLowerCase() === TRUST_ME_BRO_SOURCE ? TRUST_ME_BRO_KIND : "url";
 }
 
 function truncateClaimText(text: string): string {

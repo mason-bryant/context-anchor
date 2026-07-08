@@ -592,7 +592,7 @@ export type ProjectMappings = {
 };
 
 export type ClaimSourceType = {
-  /** Stable source-kind id stored in claim annotations, e.g. `source`, `design-doc`, or `adr`. */
+  /** Stable source-kind id stored in claim annotations, e.g. `url`, `misc`, `design-doc`, or `adr`. */
   id: string;
   /** Human-facing label for UI controls. */
   label: string;

@@ -26,6 +26,7 @@ type UiAssetHooks = {
   claimProjectSlug(claim: UiClaim): string;
   claimStrengthValue(claim: UiClaim): string;
   renderClaimInline(claim: UiClaim): string;
+  claimSourceRowHtml(source: Record<string, unknown>, index: number, readOnly: boolean): string;
   renderMarkdown(markdown: string, options?: Record<string, unknown>): string;
   sanitizeLinkHref(href: string): string | null;
   anchorHref(name: string): string;
@@ -186,6 +187,7 @@ describe("UI browser assets", () => {
     expect(UI_HTML).toContain('id="icon-plan"');
     expect(UI_HTML).toContain('id="icon-save"');
     expect(UI_HTML).toContain('id="icon-object-graph"');
+    expect(UI_HTML).toContain('id="icon-trash"');
     expect(UI_HTML).toContain('id="claim-person-suggestions"');
     expect(UI_HTML).toContain('id="claim-new-person-save"');
     expect(UI_JS).toContain("trust-me-bro");
@@ -195,6 +197,24 @@ describe("UI browser assets", () => {
     expect(UI_HTML).toContain('<use href="#icon-plan"></use>');
     expect(UI_HTML).toContain('<use href="#icon-save"></use>');
     expect(UI_CSS).toContain("stroke: currentColor");
+  });
+
+  it("renders a wider claim-source modal with red icon delete actions", () => {
+    const hooks = loadHooks();
+    const html = hooks.claimSourceRowHtml(
+      { src: "https://example.test/source", kind: "source", observed: "2026-07-08", conf: "medium" },
+      0,
+      false,
+    );
+
+    expect(UI_CSS).toContain(".claim-source-dialog");
+    expect(UI_CSS).toContain("width: min(1120px, calc(100vw - 48px))");
+    expect(UI_CSS).toContain(".danger-button");
+    expect(UI_CSS).toContain("color: var(--block)");
+    expect(html).toContain('<span class="claim-source-src-title">URL</span>');
+    expect(html).toContain('value="url" selected');
+    expect(html).toContain('class="claim-source-delete danger-button"');
+    expect(html).toContain('<use href="#icon-trash"></use>');
   });
 
   it("labels the detail tab as a disabled selected-anchor tab", () => {
@@ -1449,9 +1469,10 @@ describe("claims grouping and sorting", () => {
     hooks.setMappingsTestState([], {
       projects: [],
       claimSourceTypes: [
-        { id: "source", label: "Code Source" },
+        { id: "url", label: "URL" },
         { id: "design-doc", label: "Design Proposal" },
         { id: "adr", label: "ADR" },
+        { id: "misc", label: "Misc" },
         { id: "trust-me-bro", label: "Developer Assertion", requiresPerson: true, lockedConfidence: "high" },
       ],
     });

@@ -239,7 +239,7 @@ describe("UI HTTP routes", () => {
     // CRUD: an empty registry, then a write through the POST route.
     const initial = await fetchJson<{ projects: unknown[]; claimSourceTypes: Array<{ id: string }>; fileCommit?: string }>("/api/ui/project-mappings");
     expect(initial.projects).toEqual([]);
-    expect(initial.claimSourceTypes.map((type) => type.id)).toEqual(["source", "design-doc", "adr", "trust-me-bro"]);
+    expect(initial.claimSourceTypes.map((type) => type.id)).toEqual(["url", "design-doc", "adr", "misc", "trust-me-bro"]);
 
     const writeResponse = await fetch(`${baseUrl}/api/ui/project-mappings`, {
       method: "POST",
@@ -270,6 +270,7 @@ describe("UI HTTP routes", () => {
       projects: Array<{ project: string; repos: Array<{ web?: { url: string; branch?: string } }> }>;
     }>("/api/ui/project-mappings");
     expect(stored.claimSourceTypes.map((type) => type.id)).toContain("runbook");
+    expect(stored.claimSourceTypes.find((type) => type.id === "url")?.label).toBe("URL");
     expect(stored.claimSourceTypes.find((type) => type.id === "runbook")?.label).toBe("Runbook");
     expect(stored.projects.map((p) => p.project).sort()).toEqual(["project-one", "project-two"]);
     const projectOne = stored.projects.find((p) => p.project === "project-one");

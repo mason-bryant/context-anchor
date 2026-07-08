@@ -654,7 +654,7 @@ None.
 
     const listed = await service.listClaims({ name: "projects/demo/claims-demo", q: "runbook" });
     const claim = listed.claims.find((entry) => entry.text === "Legacy claim with no provenance.");
-    expect(claim?.sources.map((source) => source.kind)).toEqual(["source", "design-doc", "adr", "runbook"]);
+    expect(claim?.sources.map((source) => source.kind ?? "url")).toEqual(["url", "design-doc", "adr", "runbook"]);
 
     const rejected = await service.setClaimSources({
       name: "projects/demo/claims-demo",
