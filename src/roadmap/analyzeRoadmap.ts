@@ -323,8 +323,13 @@ export function listRoadmapGoalsWithStatus(markdown: string): RoadmapGoalRow[] {
   const goalsRegion = extractGoalsRegion(body);
   if (goalsRegion) {
     for (const goal of extractGoalsUnderRegion(goalsRegion)) {
+      // Fallback for history-style headings under ## Goals ("### G-039 -- ...")
+      // that parseStableGoalIdFromHeading (which requires the "Goal " prefix)
+      // does not match. Kept local to this listing so migration's notion of a
+      // "bare" goal heading is unchanged.
+      const id = goal.id ?? /^(?:Goal\s+)?(G-\d{1,6})\b/.exec(goal.title)?.[1];
       rows.push({
-        id: goal.id,
+        ...(id ? { id } : {}),
         title: goal.title,
         status: "active",
         hasAcceptanceCriteria: Boolean(

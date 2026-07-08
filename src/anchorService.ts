@@ -2539,9 +2539,15 @@ None.
     }
 
     const statusOrder: Record<RoadmapGoalStatus, number> = { active: 0, completed: 1, cancelled: 2 };
+    // Missing/unparseable ids sort last in every mode: -1 for the descending
+    // comparisons, +Infinity for the ascending id sort.
     const goalNumber = (id?: string): number => {
       const parsed = id ? Number.parseInt(id.slice(2), 10) : Number.NaN;
       return Number.isNaN(parsed) ? -1 : parsed;
+    };
+    const goalNumberAscending = (id?: string): number => {
+      const parsed = goalNumber(id);
+      return parsed === -1 ? Number.POSITIVE_INFINITY : parsed;
     };
     const sort = input.sort ?? "status";
 
@@ -2550,7 +2556,7 @@ None.
       .map((row) => ({ ...row, milestones: row.id ? (milestonesByGoalId.get(row.id) ?? []) : [] }))
       .sort((left, right) => {
         if (sort === "id") {
-          return goalNumber(left.id) - goalNumber(right.id) || left.title.localeCompare(right.title);
+          return goalNumberAscending(left.id) - goalNumberAscending(right.id) || left.title.localeCompare(right.title);
         }
         if (sort === "recent") {
           return goalNumber(right.id) - goalNumber(left.id) || left.title.localeCompare(right.title);

@@ -130,6 +130,28 @@ describe("listRoadmapGoalsWithStatus", () => {
     const rows = listRoadmapGoalsWithStatus(ROADMAP);
     expect(rows.some((row) => row.id === "G-999")).toBe(false);
   });
+
+  it("parses history-style headings under Goals and leaves bare goals id-less", () => {
+    const doc = `## Goals
+
+### G-040 -- History-style active heading
+
+#### Requirements
+
+- Something.
+
+### Goal without a stable id
+
+#### Requirements
+
+- Something.
+`;
+    const rows = listRoadmapGoalsWithStatus(doc);
+    expect(rows).toEqual([
+      { id: "G-040", title: "G-040 -- History-style active heading", status: "active", hasAcceptanceCriteria: false },
+      { title: "Goal without a stable id", status: "active", hasAcceptanceCriteria: false },
+    ]);
+  });
 });
 
 describe("AnchorService.listRoadmapGoals", () => {
@@ -160,6 +182,18 @@ describe("AnchorService.listRoadmapGoals", () => {
       "cancelled:G-002",
     ]);
     expect(result.summary).toEqual({ total: 5, active: 2, completed: 2, cancelled: 1 });
+  });
+
+  it("sorts id-less goals last in ascending id order", async () => {
+    const withBare = ROADMAP.replace(
+      "### Goal G-001 -- Oldest active goal",
+      "### Goal Bare goal without id\n\n#### Requirements\n\n- Something.\n\n### Goal G-001 -- Oldest active goal",
+    );
+    await repo.commitAnchor({ name: "projects/demo/demo-roadmap.md", content: withBare, message: "add bare goal" });
+
+    const byId = await service.listRoadmapGoals({ project: "demo", sort: "id" });
+    expect(byId.goals[byId.goals.length - 1]?.id).toBeUndefined();
+    expect(byId.goals[0]?.id).toBe("G-001");
   });
 
   it("supports id and recent sorts plus status filtering", async () => {
