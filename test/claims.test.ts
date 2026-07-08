@@ -587,6 +587,43 @@ None.
     expect(claim?.sources[1]?.href).toBe("https://github.com/owner/repo-alpha/pull/42");
   });
 
+  it("does not resolve person-sourced claims as repo-prefixed files", async () => {
+    await service.writeAnchor({
+      name: "projects/demo/claims-demo",
+      content: anchorContent(),
+      message: "test: add claims demo",
+    });
+    await service.writeProjectMappings({
+      mappings: {
+        projects: [
+          {
+            project: "demo",
+            repos: [
+              {
+                repo: "person",
+                paths: [],
+                web: { url: "https://github.com/owner/person" },
+              },
+            ],
+          },
+        ],
+      },
+      message: "test: add project mappings",
+    });
+
+    const set = await service.setClaimSources({
+      name: "projects/demo/claims-demo",
+      claim: "Legacy claim",
+      sources: [{ src: "person:alice", observed: "2026-07-08", conf: "medium" }],
+    });
+    expect(set.warnings.filter((warning) => warning.severity === "BLOCK")).toEqual([]);
+
+    const listed = await service.listClaims({ name: "projects/demo/claims-demo", q: "person:alice" });
+    const claim = listed.claims.find((entry) => entry.text === "Legacy claim with no provenance.");
+    expect(claim?.sources[0]).toMatchObject({ src: "person:alice", conf: "medium" });
+    expect(claim?.sources[0]?.href).toBeUndefined();
+  });
+
   it("accepts default and configured evidence source types", async () => {
     await service.writeAnchor({
       name: "projects/demo/claims-demo",

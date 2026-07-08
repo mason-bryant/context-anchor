@@ -3680,9 +3680,13 @@ function isHttpUrl(value: string): boolean {
 }
 
 function parseRepoPrefixedSource(value: string): { repo?: string; path: string } {
-  const match = /^([A-Za-z0-9_.-]+):(.+)$/.exec(value);
+  const trimmed = value.trim();
+  if (trimmed.toLowerCase().startsWith("person:")) {
+    return { path: trimmed };
+  }
+  const match = /^([A-Za-z0-9_.-]+):(.+)$/.exec(trimmed);
   if (!match) {
-    return { path: value };
+    return { path: trimmed };
   }
   return { repo: match[1], path: match[2].trim() };
 }
