@@ -21,9 +21,10 @@ function makeAnchor(overrides: Partial<AnchorMeta> & Pick<AnchorMeta, "name">): 
 
 const mappings: ProjectMappings = {
   claimSourceTypes: [
-    { id: "source", label: "Source" },
+    { id: "url", label: "URL" },
     { id: "design-doc", label: "Design Doc" },
     { id: "adr", label: "ADR" },
+    { id: "misc", label: "Misc" },
     { id: "trust-me-bro", label: "trust me bro", requiresPerson: true, lockedConfidence: "high" },
   ],
   projects: [

@@ -105,7 +105,8 @@ describe("parseProjectMappings", () => {
       ],
       projects: [],
     });
-    expect(parsed.claimSourceTypes.find((type) => type.id === "source")).toEqual({ id: "source", label: "Source" });
+    expect(parsed.claimSourceTypes.find((type) => type.id === "url")).toEqual({ id: "url", label: "URL" });
+    expect(parsed.claimSourceTypes.find((type) => type.id === "misc")).toEqual({ id: "misc", label: "Misc" });
     expect(parsed.claimSourceTypes.find((type) => type.id === "design-doc")).toEqual({
       id: "design-doc",
       label: "Design Proposal",
@@ -121,6 +122,20 @@ describe("parseProjectMappings", () => {
       requiresPerson: true,
       lockedConfidence: "high",
     });
+  });
+
+  it("normalizes legacy source evidence type ids to url", () => {
+    const parsed = parseProjectMappings({
+      claimSourceTypes: [
+        { id: "source", label: "Source" },
+        { id: "evidence", label: "Evidence" },
+      ],
+      projects: [],
+    });
+
+    expect(parsed.claimSourceTypes.find((type) => type.id === "source")).toBeUndefined();
+    expect(parsed.claimSourceTypes.find((type) => type.id === "evidence")).toBeUndefined();
+    expect(parsed.claimSourceTypes.find((type) => type.id === "url")).toEqual({ id: "url", label: "Evidence" });
   });
 });
 

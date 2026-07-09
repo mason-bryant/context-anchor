@@ -239,7 +239,7 @@ describe("UI HTTP routes", () => {
     // CRUD: an empty registry, then a write through the POST route.
     const initial = await fetchJson<{ projects: unknown[]; claimSourceTypes: Array<{ id: string }>; fileCommit?: string }>("/api/ui/project-mappings");
     expect(initial.projects).toEqual([]);
-    expect(initial.claimSourceTypes.map((type) => type.id)).toEqual(["source", "design-doc", "adr", "trust-me-bro"]);
+    expect(initial.claimSourceTypes.map((type) => type.id)).toEqual(["url", "design-doc", "adr", "misc", "trust-me-bro"]);
 
     const writeResponse = await fetch(`${baseUrl}/api/ui/project-mappings`, {
       method: "POST",
@@ -270,6 +270,7 @@ describe("UI HTTP routes", () => {
       projects: Array<{ project: string; repos: Array<{ web?: { url: string; branch?: string } }> }>;
     }>("/api/ui/project-mappings");
     expect(stored.claimSourceTypes.map((type) => type.id)).toContain("runbook");
+    expect(stored.claimSourceTypes.find((type) => type.id === "url")?.label).toBe("URL");
     expect(stored.claimSourceTypes.find((type) => type.id === "runbook")?.label).toBe("Runbook");
     expect(stored.projects.map((p) => p.project).sort()).toEqual(["project-one", "project-two"]);
     const projectOne = stored.projects.find((p) => p.project === "project-one");
@@ -470,6 +471,7 @@ describe("UI HTTP routes", () => {
     const restoreSection = stubAnchorServiceMethod("updateAnchorSection", vi.fn(async () => ({ version: "v2", warnings: [] })));
     const restoreAppend = stubAnchorServiceMethod("appendToAnchorSection", vi.fn(async () => ({ version: "v3", warnings: [] })));
     const restoreDeleteSection = stubAnchorServiceMethod("deleteAnchorSection", vi.fn(async () => ({ version: "v4", warnings: [] })));
+    const restoreClaimText = stubAnchorServiceMethod("updateClaimText", vi.fn(async () => ({ version: "vc", warnings: [] })));
 
     try {
       await postJson("/api/ui/anchor-frontmatter", {
@@ -500,6 +502,14 @@ describe("UI HTTP routes", () => {
         name: "projects/demo/demo.md",
         heading: "Old Section",
         approved: true,
+      });
+      await postJson("/api/ui/claim-text", {
+        name: "projects/demo/demo.md",
+        line: 12,
+        claim: "Old claim",
+        text: "Updated claim",
+        approved: true,
+        expectedFileCommit: "abc123",
       });
 
       expect((AnchorService.prototype as unknown as { updateAnchorFrontmatter: ReturnType<typeof vi.fn> }).updateAnchorFrontmatter)
@@ -532,6 +542,18 @@ describe("UI HTTP routes", () => {
           coAuthor: undefined,
           expectedFileCommit: undefined,
         });
+      expect((AnchorService.prototype as unknown as { updateClaimText: ReturnType<typeof vi.fn> }).updateClaimText)
+        .toHaveBeenCalledWith({
+          name: "projects/demo/demo.md",
+          claim: "Old claim",
+          line: 12,
+          text: "Updated claim",
+          delete: false,
+          message: undefined,
+          approved: true,
+          coAuthor: undefined,
+          expectedFileCommit: "abc123",
+        });
       expect((AnchorService.prototype as unknown as { appendToAnchorSection: ReturnType<typeof vi.fn> }).appendToAnchorSection)
         .toHaveBeenCalledWith({
           name: "projects/demo/demo.md",
@@ -559,6 +581,7 @@ describe("UI HTTP routes", () => {
       restoreSection();
       restoreAppend();
       restoreDeleteSection();
+      restoreClaimText();
     }
   });
 
@@ -871,6 +894,7 @@ describe("UI HTTP routes", () => {
     type ClaimsResult = {
       claims: Array<{
         anchor: string;
+        line: number;
         text: string;
         status: string;
         annotation?: { src: string; conf: string; kind?: string; person?: string; personName?: string };
@@ -968,6 +992,31 @@ describe("UI HTTP routes", () => {
       approved: true,
     });
     expect(rejected.warnings.some((warning) => warning.code === "claim_annotation_invalid")).toBe(true);
+
+    const edited = await postJson<ClaimWrite>("/api/ui/claim-text", {
+      name: target.anchor,
+      claim: target.text,
+      text: "Edited through the claim text route.",
+      approved: true,
+    });
+    expect(edited.warnings.filter((warning) => warning.severity === "BLOCK")).toEqual([]);
+    const editedListed = await fetchJson<ClaimsResult>(
+      `/api/ui/claims?name=${encodeURIComponent(target.anchor)}&q=${encodeURIComponent("claim text route")}`,
+    );
+    expect(editedListed.claims[0]?.text).toBe("Edited through the claim text route.");
+    expect(editedListed.claims[0]?.sources?.[0]?.src).toBe("trust me bro");
+
+    const deleted = await postJson<ClaimWrite>("/api/ui/claim-text", {
+      name: target.anchor,
+      line: editedListed.claims[0]?.line,
+      delete: true,
+      approved: true,
+    });
+    expect(deleted.warnings.filter((warning) => warning.severity === "BLOCK")).toEqual([]);
+    const deletedListed = await fetchJson<ClaimsResult>(
+      `/api/ui/claims?name=${encodeURIComponent(target.anchor)}&q=${encodeURIComponent("claim text route")}`,
+    );
+    expect(deletedListed.claims).toHaveLength(0);
   });
 
   it("updates task priority through the UI routes", async () => {

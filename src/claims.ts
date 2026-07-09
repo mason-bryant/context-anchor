@@ -147,7 +147,7 @@ export function parseAnnotationBody(inner: string): AnnotationParseResult {
   const kind = normalizeClaimSourceKind(rawKind, src);
 
   if (rawKind !== undefined && kind === undefined) {
-    errors.push(`kind must be a source type id like source, design-doc, adr, or trust-me-bro, got "${rawKind}".`);
+    errors.push(`kind must be a source type id like url, misc, design-doc, adr, or trust-me-bro, got "${rawKind}".`);
   }
   if (!src && kind !== TRUST_ME_BRO_KIND) {
     errors.push("Annotation requires a non-empty src (PR reference, file path, anchor name, URL, or person:<id>).");
@@ -205,8 +205,8 @@ function normalizeClaimSourceKind(rawKind: string | undefined, src: string): Cla
   if (!value) {
     return source === TRUST_ME_BRO_SOURCE ? TRUST_ME_BRO_KIND : undefined;
   }
-  if (value === "evidence") {
-    return "source";
+  if (value === "source" || value === "evidence") {
+    return "url";
   }
   if (value === TRUST_ME_BRO_KIND || value === TRUST_ME_BRO_SOURCE) {
     return TRUST_ME_BRO_KIND;
@@ -347,7 +347,7 @@ function sourceKindForSummary(source: Pick<ClaimAnnotation, "kind" | "src">): st
   if (source.kind) {
     return source.kind;
   }
-  return source.src.trim().toLowerCase() === TRUST_ME_BRO_SOURCE ? TRUST_ME_BRO_KIND : "source";
+  return source.src.trim().toLowerCase() === TRUST_ME_BRO_SOURCE ? TRUST_ME_BRO_KIND : "url";
 }
 
 function confidenceScore(conf: ClaimConfidence): number {
@@ -629,11 +629,7 @@ export function upsertClaimAnnotation(
 
 export type ClaimTarget = { claim: string } | { line: number };
 
-export function upsertClaimSources(
-  content: string,
-  target: ClaimTarget,
-  sources: ClaimAnnotation[],
-): string {
+function claimLocationForTarget(content: string, target: ClaimTarget): AnchorClaim {
   const location = "line" in target ? locateClaimByLine(content, target.line) : locateClaim(content, target.claim);
   if (!location.ok) {
     const targetLabel = "line" in target ? `line ${target.line}` : `"${target.claim}"`;
@@ -643,8 +639,48 @@ export function upsertClaimSources(
         : `Claim match ${targetLabel} is ambiguous (${location.candidates.length}+ matches).`,
     );
   }
+  return location.claim;
+}
 
-  const claim = location.claim;
+function claimBlockEndIndex(lines: string[], bulletIndex: number): number {
+  for (let index = bulletIndex + 1; index < lines.length; index += 1) {
+    const line = lines[index];
+    if (!line.trim() || !/^\s/.test(line)) {
+      return index;
+    }
+  }
+  return lines.length;
+}
+
+export function replaceClaimText(content: string, target: ClaimTarget, text: string): string {
+  const claim = claimLocationForTarget(content, target);
+  const lines = content.split(/\r?\n/);
+  const bulletIndex = claim.line - 1;
+  if (claim.annotationInline) {
+    const trailing = TRAILING_ANNOTATION_PATTERN.exec(lines[bulletIndex]);
+    if (trailing && looksLikeAnnotationBody(trailing[2])) {
+      lines[bulletIndex] = `- ${text} {${trailing[2]}}`;
+      return lines.join("\n");
+    }
+  }
+  lines[bulletIndex] = `- ${text}`;
+  return lines.join("\n");
+}
+
+export function deleteClaim(content: string, target: ClaimTarget): string {
+  const claim = claimLocationForTarget(content, target);
+  const lines = content.split(/\r?\n/);
+  const bulletIndex = claim.line - 1;
+  lines.splice(bulletIndex, claimBlockEndIndex(lines, bulletIndex) - bulletIndex);
+  return lines.join("\n");
+}
+
+export function upsertClaimSources(
+  content: string,
+  target: ClaimTarget,
+  sources: ClaimAnnotation[],
+): string {
+  const claim = claimLocationForTarget(content, target);
   const lines = content.split(/\r?\n/);
   const bulletIndex = claim.line - 1;
 

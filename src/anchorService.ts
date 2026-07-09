@@ -146,6 +146,7 @@ import { buildPeopleIndex, parsePeopleRegistry, type PeopleIndex } from "./peopl
 import { runValidators } from "./validators/pipeline.js";
 import {
   carryClaimAnnotations,
+  deleteClaim,
   extractClaims,
   formatAnnotationBody,
   locateClaim,
@@ -153,6 +154,7 @@ import {
   mergeClaimProvenanceSummaries,
   newlyAddedUnannotatedClaims,
   parseAnnotationBody,
+  replaceClaimText,
   summarizeClaimProvenance,
   TRUST_ME_BRO_KIND,
   TRUST_ME_BRO_SOURCE,
@@ -1965,6 +1967,93 @@ None.
     });
   }
 
+  async updateClaimText(input: {
+    name: string;
+    claim?: string;
+    line?: number;
+    text?: string;
+    delete?: boolean;
+    message?: string;
+    approved?: boolean;
+    coAuthor?: string;
+    expectedFileCommit?: string;
+  }): Promise<WriteAnchorResult> {
+    let target: { line: number } | { claim: string } | undefined;
+    if (input.line !== undefined) {
+      target = { line: input.line };
+    } else if (input.claim) {
+      target = { claim: input.claim };
+    }
+    if (!target) {
+      return AnchorService.blockResult(
+        "claim_target_missing",
+        "updateClaimText requires either a claim text fragment or a line number.",
+      );
+    }
+    if (input.delete && !input.approved) {
+      return {
+        warnings: [
+          {
+            severity: "BLOCK",
+            code: "requires_approval",
+            message:
+              "updateClaimText delete removes a claim bullet and its attached provenance lines; retry with approved: true after explicit confirmation.",
+          },
+        ],
+        requiresApproval: true,
+      };
+    }
+
+    const text = input.text?.trim();
+    if (!input.delete) {
+      if (!text) {
+        return AnchorService.blockResult("claim_text_missing", "Claim text is required.");
+      }
+      if (/[\r\n]/.test(text)) {
+        return AnchorService.blockResult("claim_text_multiline", "Claim text must be a single line.");
+      }
+    }
+
+    const content = await this.repo.readRaw(input.name);
+    if (content !== undefined) {
+      const location = "line" in target ? locateClaimByLine(content, target.line) : locateClaim(content, target.claim);
+      if (!location.ok) {
+        return {
+          warnings: [
+            {
+              severity: "BLOCK",
+              code: location.code,
+              message:
+                location.code === "claim_not_found"
+                  ? `No claim in ${input.name} matches ${
+                      "line" in target ? `line ${target.line}` : `"${target.claim}"`
+                    }. Claims are top-level bullets in Current State, Decisions, or Constraints.`
+                  : `Claim match "${"claim" in target ? target.claim : `line ${target.line}`}" is ambiguous in ${input.name}. Matches: ${location.candidates
+                      .map((candidate) => `"${candidate}"`)
+                      .join(", ")}. Use a longer unique fragment.`,
+            },
+          ],
+        };
+      }
+    }
+
+    return this.applyAnchorContentPatch({
+      name: input.name,
+      lastValidated: localDateKey(),
+      message:
+        input.message ??
+        (input.delete ? `chore: delete claim in ${input.name}` : `chore: update claim text in ${input.name}`),
+      approved: input.approved,
+      coAuthor: input.coAuthor,
+      expectedFileCommit: input.expectedFileCommit,
+      // This sanctioned claim editor preserves sources on text edits and
+      // deliberately removes them on deletes, so carry/loss guarding would be
+      // noisy rather than helpful.
+      carryClaimAnnotations: false,
+      mutate: (old) => (input.delete ? deleteClaim(old, target) : replaceClaimText(old, target, text as string)),
+    });
+  }
+
   private async normalizeClaimSources(
     sources: ClaimAnnotation[],
   ): Promise<{ ok: true; sources: ClaimAnnotation[] } | { ok: false; errors: string[] }> {
@@ -1997,9 +2086,10 @@ None.
         }
         personId = person.id;
       }
+      const { kind: _incomingKind, ...sourceWithoutKind } = source;
       return {
-        ...source,
-        ...(kind === "source" && !source.kind ? {} : { kind }),
+        ...sourceWithoutKind,
+        ...(kind === "url" ? {} : { kind }),
         ...(kind === TRUST_ME_BRO_KIND ? { src: TRUST_ME_BRO_SOURCE } : {}),
         ...(personId ? { person: personId } : {}),
       };
@@ -3823,13 +3913,13 @@ function claimSourceTypesById(sourceTypes: ClaimSourceType[]): Map<string, Claim
 
 function claimSourceKindId(source: Pick<ClaimAnnotation, "kind" | "src">): string {
   const kind = source.kind?.trim().toLowerCase();
-  if (kind === "evidence") {
-    return "source";
+  if (kind === "source" || kind === "evidence") {
+    return "url";
   }
   if (kind) {
     return kind;
   }
-  return source.src.trim().toLowerCase() === TRUST_ME_BRO_SOURCE ? TRUST_ME_BRO_KIND : "source";
+  return source.src.trim().toLowerCase() === TRUST_ME_BRO_SOURCE ? TRUST_ME_BRO_KIND : "url";
 }
 
 function truncateClaimText(text: string): string {

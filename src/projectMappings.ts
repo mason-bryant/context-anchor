@@ -1,9 +1,10 @@
 import type { ClaimSourceType, ProjectMapping, ProjectMappings, ProjectRepoMapping, ProjectRepoWeb } from "./types.js";
 
 export const DEFAULT_CLAIM_SOURCE_TYPES: ClaimSourceType[] = [
-  { id: "source", label: "Source" },
+  { id: "url", label: "URL" },
   { id: "design-doc", label: "Design Doc" },
   { id: "adr", label: "ADR" },
+  { id: "misc", label: "Misc" },
   { id: "trust-me-bro", label: "trust me bro", requiresPerson: true, lockedConfidence: "high" },
 ];
 
@@ -42,7 +43,8 @@ function parseClaimSourceTypes(raw: unknown): ClaimSourceType[] {
       }
       const obj = item as Record<string, unknown>;
       const id = normalizeSourceTypeId(stringValue(obj.id) ?? "");
-      const label = stringValue(obj.label);
+      const rawLabel = stringValue(obj.label);
+      const label = id === "url" && rawLabel?.toLowerCase() === "source" ? "URL" : rawLabel;
       if (!id || !label) {
         continue;
       }
@@ -262,5 +264,6 @@ function claimConfidenceValue(raw: unknown): ClaimSourceType["lockedConfidence"]
 }
 
 export function normalizeSourceTypeId(value: string): string {
-  return value.toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+  const normalized = value.toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+  return normalized === "source" || normalized === "evidence" ? "url" : normalized;
 }
