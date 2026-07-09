@@ -10,9 +10,11 @@ import {
   carryClaimAnnotations,
   extractClaims,
   formatAnnotationBody,
+  deleteClaim,
   locateClaim,
   locateClaimByLine,
   parseAnnotationBody,
+  replaceClaimText,
   upsertClaimAnnotation,
   upsertClaimSources,
 } from "../src/claims.js";
@@ -289,6 +291,26 @@ describe("locateClaim / upsertClaimAnnotation", () => {
     expect(updated).toContain(
       "- Legacy claim with no provenance.\n  {src: src/a.ts; observed: 2026-07-07; conf: high}\n  {src: PR #55; observed: 2026-07-08; conf: medium}",
     );
+  });
+
+  it("replaces claim text while preserving attached sources", () => {
+    const updated = replaceClaimText(DOC, { line: 9 }, "Owner resolution prefers registered people.");
+    expect(updated).toContain(
+      "- Owner resolution prefers registered people.\n  {src: PR #39; observed: 2026-06-17; conf: high}",
+    );
+    expect(updated).not.toContain("- Owner resolution resolves a person before a team.");
+
+    const inline = replaceClaimText(DOC, { line: 11 }, "HTTP auth remains required.");
+    expect(inline).toContain(
+      "- HTTP auth remains required. {src: src/http/server.ts; observed: 2026-06-01; conf: high}",
+    );
+  });
+
+  it("deletes a claim with its attached source block", () => {
+    const updated = deleteClaim(DOC, { line: 9 });
+    expect(updated).not.toContain("Owner resolution resolves a person before a team.");
+    expect(updated).not.toContain("src: PR #39");
+    expect(updated).toContain("- The HTTP server refuses to start without an auth token.");
   });
 });
 
@@ -809,6 +831,52 @@ None.
     });
     expect(stale.version).toBeUndefined();
     expect(stale.warnings[0]?.code).toBe("stale_base");
+  });
+
+  it("updates and deletes claim text by line while preserving or removing sources", async () => {
+    await service.writeAnchor({
+      name: "projects/demo/claims-demo",
+      content: anchorContent(),
+      message: "test: add claims demo",
+    });
+    const set = await service.setClaimSources({
+      name: "projects/demo/claims-demo",
+      claim: "Legacy claim",
+      sources: [{ src: "PR #2", observed: "2026-07-08", conf: "medium" }],
+    });
+    expect(set.warnings.filter((warning) => warning.severity === "BLOCK")).toEqual([]);
+    const before = await service.listClaims({ name: "projects/demo/claims-demo", q: "Legacy claim" });
+    const target = before.claims.find((claim) => claim.text === "Legacy claim with no provenance.");
+    expect(target).toBeTruthy();
+
+    const updated = await service.updateClaimText({
+      name: "projects/demo/claims-demo",
+      line: target?.line,
+      text: "Legacy claim now has revised wording.",
+      approved: true,
+    });
+    expect(updated.warnings.filter((warning) => warning.severity === "BLOCK")).toEqual([]);
+    const listed = await service.listClaims({ name: "projects/demo/claims-demo", q: "revised wording" });
+    expect(listed.claims[0]?.text).toBe("Legacy claim now has revised wording.");
+    expect(listed.claims[0]?.sources.map((source) => source.src)).toEqual(["PR #2"]);
+
+    const needsApproval = await service.updateClaimText({
+      name: "projects/demo/claims-demo",
+      line: listed.claims[0]?.line,
+      delete: true,
+    });
+    expect(needsApproval.version).toBeUndefined();
+    expect(needsApproval.warnings[0]?.code).toBe("requires_approval");
+
+    const deleted = await service.updateClaimText({
+      name: "projects/demo/claims-demo",
+      line: listed.claims[0]?.line,
+      delete: true,
+      approved: true,
+    });
+    expect(deleted.warnings.filter((warning) => warning.severity === "BLOCK")).toEqual([]);
+    const after = await service.listClaims({ name: "projects/demo/claims-demo", q: "revised wording" });
+    expect(after.claims).toHaveLength(0);
   });
 
   it("returns typed blocks for invalid annotations, unknown claims, and ambiguity", async () => {

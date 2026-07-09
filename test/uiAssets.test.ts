@@ -188,6 +188,7 @@ describe("UI browser assets", () => {
     expect(UI_HTML).toContain('id="icon-save"');
     expect(UI_HTML).toContain('id="icon-object-graph"');
     expect(UI_HTML).toContain('id="icon-trash"');
+    expect(UI_HTML).toContain('id="icon-pencil"');
     expect(UI_HTML).toContain('id="claim-person-suggestions"');
     expect(UI_HTML).toContain('id="claim-new-person-save"');
     expect(UI_JS).toContain("trust-me-bro");
@@ -282,6 +283,7 @@ describe("UI browser assets", () => {
     expect(UI_JS).toContain("/api/ui/task-owner");
     expect(UI_JS).toContain("/api/ui/task-priority");
     expect(UI_JS).toContain("/api/ui/task-notes");
+    expect(UI_JS).toContain("/api/ui/claim-text");
     expect(UI_JS).toContain("/api/ui/task-reopen");
     expect(UI_JS).toContain("/api/ui/people-search");
     expect(UI_HTML).toContain('id="new-task-project" type="text" placeholder="anchor-mcp" list="project-slug-suggestions" autocomplete="off"');
@@ -785,7 +787,9 @@ describe("UI browser assets", () => {
     );
 
     expect(html).toContain('use href="#icon-object-graph"');
+    expect(html).toContain('use href="#icon-pencil"');
     expect(html).toContain('<li><span class="claim-inline"><span class="claim-epistemology">');
+    expect(html).toContain('class="claim-text-edit-button"');
     expect(html).toContain("Claim text.");
     expect(html).toContain("Combined strength: high");
     expect(html).not.toContain("{src:");

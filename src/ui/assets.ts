@@ -63,6 +63,10 @@ export const UI_HTML = `<!doctype html>
         <path d="M10 11v5"></path>
         <path d="M14 11v5"></path>
       </symbol>
+      <symbol id="icon-pencil" viewBox="0 0 24 24">
+        <path d="M4 20h4l11-11-4-4L4 16z"></path>
+        <path d="M13.5 6.5l4 4"></path>
+      </symbol>
     </svg>
     <div class="app-shell">
       <header class="topbar">
@@ -1751,9 +1755,47 @@ textarea {
   align-items: center;
   justify-content: center;
 }
-.claim-epistemology-button svg {
+.claim-text-edit-button {
+  width: 24px;
+  height: 24px;
+  min-width: 24px;
+  padding: 0;
+  border-radius: 50%;
+  color: #57606a;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.claim-epistemology-button svg,
+.claim-text-edit-button svg {
   width: 15px;
   height: 15px;
+}
+.claim-text-editor {
+  display: inline-flex;
+  align-items: flex-start;
+  gap: 6px;
+  flex-wrap: wrap;
+  max-width: 100%;
+}
+.claim-text-editor textarea {
+  width: min(620px, calc(100vw - 180px));
+  min-width: min(420px, 100%);
+  min-height: 62px;
+  resize: vertical;
+}
+.claim-text-editor-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.claim-text-editor-result {
+  color: var(--muted);
+  font-size: 12px;
+  align-self: center;
 }
 .claim-strength-low {
   color: #cf222e;
@@ -1951,6 +1993,10 @@ textarea {
   }
   .claim-source-delete {
     justify-self: start;
+  }
+  .claim-text-editor,
+  .claim-text-editor textarea {
+    width: 100%;
   }
 }
 .detail-tasks {
@@ -2542,6 +2588,7 @@ export const UI_JS = `(function () {
     selectedPersonId: null,
     selectedTeamId: null,
     claimSourceModal: null,
+    claimTextEditor: null,
     claimPersonMatchCache: [],
     claimPersonSearchTimer: null,
     claimPersonSearchSeq: 0,
@@ -4921,6 +4968,105 @@ export const UI_JS = `(function () {
         }
       });
     });
+    container.querySelectorAll(".claim-text-edit-button[data-claim-line]").forEach(function (button) {
+      button.disabled = !!readOnly;
+      button.title = readOnly ? SERVER_RULE_READ_ONLY_MESSAGE : "Edit claim text";
+      button.addEventListener("click", function () {
+        if (readOnly) return;
+        var line = Number(button.dataset.claimLine || "0");
+        var claim = claims.find(function (entry) { return entry.line === line; });
+        if (claim) {
+          openClaimTextEditor(button, claim, anchor);
+        }
+      });
+    });
+  }
+
+  function closeClaimTextEditor() {
+    var editor = state.claimTextEditor;
+    if (!editor) return;
+    if (editor.textEl) editor.textEl.hidden = false;
+    if (editor.editorEl && editor.editorEl.parentNode) {
+      editor.editorEl.parentNode.removeChild(editor.editorEl);
+    }
+    if (editor.button) editor.button.disabled = false;
+    state.claimTextEditor = null;
+  }
+
+  function openClaimTextEditor(button, claim, anchor) {
+    closeClaimTextEditor();
+    var inline = button.closest(".claim-inline");
+    var textEl = inline ? inline.querySelector(".claim-inline-text") : null;
+    if (!inline || !textEl) return;
+    button.disabled = true;
+    textEl.hidden = true;
+    var editorEl = document.createElement("span");
+    editorEl.className = "claim-text-editor";
+    editorEl.innerHTML = "<textarea class=\\"claim-text-input\\" rows=\\"3\\"></textarea>"
+      + "<span class=\\"claim-text-editor-actions\\">"
+      + "<button type=\\"button\\" class=\\"claim-text-update\\">Update</button>"
+      + "<button type=\\"button\\" class=\\"claim-text-cancel\\">Cancel</button>"
+      + "<button type=\\"button\\" class=\\"claim-text-delete danger-button\\"><span class=\\"icon-label\\"><svg class=\\"icon\\" aria-hidden=\\"true\\"><use href=\\"#icon-trash\\"></use></svg><span>Delete</span></span></button>"
+      + "<span class=\\"claim-text-editor-result\\"></span>"
+      + "</span>";
+    inline.insertBefore(editorEl, textEl.nextSibling);
+    var input = editorEl.querySelector(".claim-text-input");
+    input.value = claim.text || "";
+    input.focus();
+    input.select();
+    state.claimTextEditor = { anchor: anchor, claim: claim, button: button, textEl: textEl, editorEl: editorEl };
+    editorEl.querySelector(".claim-text-cancel").addEventListener("click", closeClaimTextEditor);
+    editorEl.querySelector(".claim-text-update").addEventListener("click", function () {
+      saveClaimTextEditor(false).catch(function (error) {
+        editorEl.querySelector(".claim-text-editor-result").textContent = error.message;
+      });
+    });
+    editorEl.querySelector(".claim-text-delete").addEventListener("click", function () {
+      var ok = !window.confirm || window.confirm("Delete this claim and its provenance sources?");
+      if (!ok) return;
+      saveClaimTextEditor(true).catch(function (error) {
+        editorEl.querySelector(".claim-text-editor-result").textContent = error.message;
+      });
+    });
+  }
+
+  async function saveClaimTextEditor(remove) {
+    var editor = state.claimTextEditor;
+    if (!editor) return;
+    var resultEl = editor.editorEl.querySelector(".claim-text-editor-result");
+    var input = editor.editorEl.querySelector(".claim-text-input");
+    var nextText = (input.value || "").trim();
+    if (!remove && !nextText) {
+      resultEl.textContent = "Claim text is required.";
+      return;
+    }
+    if (!remove && /[\\r\\n]/.test(nextText)) {
+      resultEl.textContent = "Claim text must be a single line.";
+      return;
+    }
+    resultEl.textContent = remove ? "Deleting..." : "Updating...";
+    var payload = {
+      name: editor.anchor.name,
+      line: editor.claim.line,
+      claim: editor.claim.text,
+      delete: !!remove,
+      approved: true
+    };
+    if (!remove) payload.text = nextText;
+    if (editor.anchor.fileCommit) payload.expectedFileCommit = editor.anchor.fileCommit;
+    var res = await apiPost("/api/ui/claim-text", payload);
+    if (res.warnings && res.warnings.some(function (warning) { return warning.severity === "BLOCK"; })) {
+      resultEl.textContent = res.warnings.map(function (warning) { return warning.message; }).join("; ");
+      return;
+    }
+    closeClaimTextEditor();
+    state.claimsLoaded = false;
+    if (state.activeTab === "claims") {
+      loadClaims();
+    }
+    if (state.selectedName === editor.anchor.name) {
+      selectAnchor(editor.anchor.name, { skipLocationUpdate: true });
+    }
   }
 
   function openClaimSourceModal(claim, readOnly, anchor) {
@@ -7673,6 +7819,9 @@ export const UI_JS = `(function () {
       + "</button>"
       + renderClaimPopover(claim)
       + "</span>"
+      + "<button type=\\"button\\" class=\\"claim-text-edit-button\\" data-claim-line=\\"" + escapeHtml(String(claim.line)) + "\\" title=\\"Edit claim text\\" aria-label=\\"Edit claim text\\">"
+      + "<svg class=\\"icon\\" aria-hidden=\\"true\\"><use href=\\"#icon-pencil\\"></use></svg>"
+      + "</button>"
       + "<span class=\\"claim-inline-text\\">" + inlineMarkdown(claim.text || "") + "</span>"
       + "</span>";
   }
@@ -7922,9 +8071,18 @@ export const UI_JS = `(function () {
         closeClaimSourceModal();
       }
     });
+    document.addEventListener("click", function (event) {
+      if (!state.claimTextEditor) return;
+      var target = event.target;
+      if (target && target.closest && (target.closest(".claim-text-editor") || target.closest(".claim-text-edit-button"))) {
+        return;
+      }
+      closeClaimTextEditor();
+    });
     window.addEventListener("keydown", function (event) {
-      if (event.key === "Escape" && state.claimSourceModal) {
-        closeClaimSourceModal();
+      if (event.key === "Escape") {
+        if (state.claimSourceModal) closeClaimSourceModal();
+        if (state.claimTextEditor) closeClaimTextEditor();
       }
     });
     el("tasks-refresh").addEventListener("click", function () {

@@ -423,6 +423,25 @@ export function registerUiRoutes(
   );
 
   app.post(
+    "/api/ui/claim-text",
+    ...protect,
+    jsonRoute(async (req) => {
+      const body = bodyRecord(req);
+      return service.updateClaimText({
+        name: requiredBodyString(body, "name"),
+        claim: optionalBodyString(body, "claim"),
+        line: optionalBodyNumber(body, "line"),
+        text: optionalBodyString(body, "text"),
+        delete: booleanBody(body, "delete") === true,
+        message: optionalBodyString(body, "message"),
+        approved: booleanBody(body, "approved"),
+        coAuthor: optionalBodyString(body, "coAuthor"),
+        expectedFileCommit: optionalBodyString(body, "expectedFileCommit"),
+      });
+    }),
+  );
+
+  app.post(
     "/api/ui/task-due",
     ...protect,
     jsonRoute(async (req) => {
