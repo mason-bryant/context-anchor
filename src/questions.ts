@@ -116,8 +116,9 @@ export function setQuestionStatus(
       replacement.push(`  Resolved on: ${input.resolvedOn.trim()}`);
     }
   }
-  if (input.owner?.trim()) {
-    replacement.push(`  Owner: ${input.owner.trim()}`);
+  const owner = input.owner?.trim() || question.owner;
+  if (owner) {
+    replacement.push(`  Owner: ${owner}`);
   }
 
   lines.splice(bulletIndex, endIndex - bulletIndex, ...replacement);

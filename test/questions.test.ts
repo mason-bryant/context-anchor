@@ -67,6 +67,17 @@ describe("questions", () => {
     expect(reopened).toContain("  Context note that should stay.");
     expect(reopened).not.toContain("Resolution:");
     expect(reopened).not.toContain("Resolved on:");
+
+    const ownerPreserved = setQuestionStatus(
+      `## Open Questions
+
+- [ ] Q-2: Who owns the follow-up?
+  Owner: platform
+`,
+      { id: "Q-2" },
+      { status: "resolved", resolution: "Platform owns it.", resolvedOn: "2026-07-09" },
+    );
+    expect(ownerPreserved).toContain("  Owner: platform");
   });
 });
 
