@@ -667,6 +667,7 @@ None.
       claim: "Legacy claim",
       sources: [
         { src: "src/a.ts", kind: "source", observed: "2026-07-08", conf: "high" },
+        { src: "docs/evidence.md", kind: "evidence", observed: "2026-07-08", conf: "medium" },
         { src: "docs/design.md", kind: "design-doc", observed: "2026-07-08", conf: "medium" },
         { src: "docs/adr-001.md", kind: "adr", observed: "2026-07-08", conf: "medium" },
         { src: "docs/runbook.md", kind: "runbook", observed: "2026-07-08", conf: "low" },
@@ -676,7 +677,9 @@ None.
 
     const listed = await service.listClaims({ name: "projects/demo/claims-demo", q: "runbook" });
     const claim = listed.claims.find((entry) => entry.text === "Legacy claim with no provenance.");
-    expect(claim?.sources.map((source) => source.kind ?? "url")).toEqual(["url", "design-doc", "adr", "runbook"]);
+    expect(claim?.sources.map((source) => source.kind ?? "url")).toEqual(["url", "url", "design-doc", "adr", "runbook"]);
+    expect(claim?.sources[0]?.kind).toBeUndefined();
+    expect(claim?.sources[1]?.kind).toBeUndefined();
 
     const rejected = await service.setClaimSources({
       name: "projects/demo/claims-demo",

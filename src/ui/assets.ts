@@ -4682,7 +4682,7 @@ export const UI_JS = `(function () {
   }
 
   function claimSourceValueLabel(type) {
-    return type && type.id === "url" ? "URL" : "Source";
+    return type && type.label ? type.label : "Source";
   }
 
   function claimSourceValuePlaceholder(type) {

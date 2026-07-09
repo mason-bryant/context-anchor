@@ -197,6 +197,16 @@ describe("UI browser assets", () => {
 
   it("renders a wider claim-source modal with red icon delete actions", () => {
     const hooks = loadHooks();
+    hooks.setMappingsTestState([], {
+      projects: [],
+      claimSourceTypes: [
+        { id: "url", label: "Evidence" },
+        { id: "design-doc", label: "Design Doc" },
+        { id: "adr", label: "ADR" },
+        { id: "misc", label: "Misc" },
+        { id: "trust-me-bro", label: "trust me bro", requiresPerson: true, lockedConfidence: "high" },
+      ],
+    });
     const html = hooks.claimSourceRowHtml(
       { src: "https://example.test/source", kind: "source", observed: "2026-07-08", conf: "medium" },
       0,
@@ -207,7 +217,7 @@ describe("UI browser assets", () => {
     expect(UI_CSS).toContain("width: min(1120px, calc(100vw - 48px))");
     expect(UI_CSS).toContain(".danger-button");
     expect(UI_CSS).toContain("color: var(--block)");
-    expect(html).toContain('<span class="claim-source-src-title">URL</span>');
+    expect(html).toContain('<span class="claim-source-src-title">Evidence</span>');
     expect(html).toContain('value="url" selected');
     expect(html).toContain('class="claim-source-delete danger-button"');
     expect(html).toContain('<use href="#icon-trash"></use>');

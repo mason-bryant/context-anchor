@@ -2086,8 +2086,9 @@ None.
         }
         personId = person.id;
       }
+      const { kind: _incomingKind, ...sourceWithoutKind } = source;
       return {
-        ...source,
+        ...sourceWithoutKind,
         ...(kind === "url" ? {} : { kind }),
         ...(kind === TRUST_ME_BRO_KIND ? { src: TRUST_ME_BRO_SOURCE } : {}),
         ...(personId ? { person: personId } : {}),
