@@ -134,7 +134,6 @@ export const UI_HTML = `<!doctype html>
             <button class="tab active" data-tab="root" type="button"><span class="icon-label"><svg class="icon" aria-hidden="true"><use href="#icon-home"></use></svg><span>Context Root</span></span></button>
             <button class="tab" data-tab="planner" type="button"><span class="icon-label"><svg class="icon" aria-hidden="true"><use href="#icon-plan"></use></svg><span>Planner</span></span></button>
             <button class="tab" data-tab="tasks" type="button"><span class="icon-label"><svg class="icon" aria-hidden="true"><use href="#icon-filter"></use></svg><span>Tasks</span></span></button>
-            <button class="tab" data-tab="claims" type="button"><span class="icon-label"><svg class="icon" aria-hidden="true"><use href="#icon-anchor"></use></svg><span>Claims</span></span></button>
             <button class="tab" data-tab="people" type="button"><span class="icon-label"><svg class="icon" aria-hidden="true"><use href="#icon-people"></use></svg><span>People</span></span></button>
             <button class="tab" data-tab="teams" type="button"><span class="icon-label"><svg class="icon" aria-hidden="true"><use href="#icon-team"></use></svg><span>Teams</span></span></button>
             <button class="tab" data-tab="mappings" type="button"><span class="icon-label"><svg class="icon" aria-hidden="true"><use href="#icon-filter"></use></svg><span>Mappings</span></span></button>
@@ -378,57 +377,6 @@ export const UI_HTML = `<!doctype html>
             <div id="tasks-list" hidden></div>
           </section>
 
-          <section id="claims-view" class="view">
-            <div class="view-header">
-              <div>
-                <h2>Claims</h2>
-                <p id="claims-summary">Claim provenance across Current State, Decisions, and Constraints bullets.</p>
-              </div>
-              <div class="tasks-filters">
-                <select id="claims-project-filter" aria-label="Filter claims by project">
-                  <option value="">All projects</option>
-                </select>
-                <select id="claims-status-filter" aria-label="Filter claims by provenance status">
-                  <option value="">All claims</option>
-                  <option value="unannotated">Unannotated only</option>
-                  <option value="annotated">Annotated only</option>
-                  <option value="malformed">Malformed only</option>
-                </select>
-                <select id="claims-section-filter" aria-label="Filter claims by section">
-                  <option value="">All sections</option>
-                  <option value="Current State">Current State</option>
-                  <option value="Decisions">Decisions</option>
-                  <option value="Constraints">Constraints</option>
-                </select>
-                <select id="claims-conf-filter" aria-label="Filter claims by confidence">
-                  <option value="">Any confidence</option>
-                  <option value="high">high</option>
-                  <option value="medium">medium</option>
-                  <option value="low">low</option>
-                </select>
-                <input id="claims-search" type="search" placeholder="Search text or src" aria-label="Search claims">
-                <label class="task-report-field">Observed before<input id="claims-observed-before" type="date" aria-label="Only claims observed before this date"></label>
-                <select id="claims-group-by" aria-label="Group claims">
-                  <option value="anchor">Group: anchor</option>
-                  <option value="section">Group: section</option>
-                  <option value="status">Group: status</option>
-                  <option value="conf">Group: confidence</option>
-                  <option value="project">Group: project</option>
-                </select>
-                <select id="claims-sort" aria-label="Sort claims">
-                  <option value="document">Sort: document order</option>
-                  <option value="least-trusted">Sort: least trusted first</option>
-                  <option value="oldest-observed">Sort: oldest observed</option>
-                  <option value="newest-observed">Sort: newest observed</option>
-                  <option value="text">Sort: text A-Z</option>
-                </select>
-                <button id="claims-refresh" type="button">Refresh</button>
-              </div>
-            </div>
-            <div id="claims-empty" class="empty-state">No claims match the current filters.</div>
-            <div id="claims-list" hidden></div>
-          </section>
-
           <section id="people-view" class="view">
             <div class="view-header">
               <div>
@@ -533,11 +481,6 @@ export const UI_HTML = `<!doctype html>
                   <p id="detail-path"></p>
                   <p id="detail-readonly-note" class="readonly-note" hidden>Built-in server rules are read-only and ship with anchor-mcp.</p>
                 </div>
-                <div class="segmented">
-                  <button class="mode active" data-detail-mode="rendered" type="button">Rendered</button>
-                  <button class="mode" data-detail-mode="raw" type="button">Raw</button>
-                  <button class="mode" data-detail-mode="frontmatter" type="button">Front Matter</button>
-                </div>
               </div>
               <section class="detail-grid">
                 <div class="metadata-box">
@@ -563,6 +506,13 @@ export const UI_HTML = `<!doctype html>
                   <pre id="priority-result" class="compact-raw">Set a numeric priority such as 1, 1.1, or 2.045.</pre>
                 </div>
               </section>
+              <div class="detail-mode-row">
+                <div class="segmented" aria-label="Anchor detail content format">
+                  <button class="mode active" data-detail-mode="rendered" type="button">Rendered</button>
+                  <button class="mode" data-detail-mode="raw" type="button">Raw</button>
+                  <button class="mode" data-detail-mode="frontmatter" type="button">Front Matter</button>
+                </div>
+              </div>
               <div id="detail-tasks" class="detail-tasks" hidden></div>
               <article id="detail-rendered" class="markdown"></article>
               <pre id="detail-raw" class="raw-view" hidden></pre>
@@ -1167,6 +1117,12 @@ textarea {
   margin-bottom: 14px;
 }
 
+.detail-mode-row {
+  display: flex;
+  justify-content: flex-end;
+  margin: 0 0 10px;
+}
+
 .metadata-box {
   padding: 14px;
 }
@@ -1620,60 +1576,6 @@ textarea {
   font-weight: 600;
 }
 
-.claims-anchor-heading {
-  margin: 18px 0 6px;
-  font-size: 0.95rem;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-.claims-group-label {
-  min-width: 0;
-  overflow-wrap: anywhere;
-}
-.claim-row {
-  border: 1px solid var(--border, #d0d7de);
-  border-radius: 6px;
-  padding: 8px 10px;
-  margin-bottom: 8px;
-}
-.claim-row-header {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-.claim-text {
-  flex: 1;
-  min-width: 200px;
-}
-.claim-meta {
-  margin-top: 6px;
-  display: flex;
-  gap: 6px;
-  flex-wrap: wrap;
-}
-.claim-chip {
-  display: inline-block;
-  border-radius: 10px;
-  padding: 1px 8px;
-  font-size: 0.78rem;
-  background: rgba(110, 118, 129, 0.15);
-}
-.claim-chip-annotated,
-.claim-chip-conf-high {
-  background: rgba(46, 160, 67, 0.2);
-}
-.claim-chip-unannotated,
-.claim-chip-missing,
-.claim-chip-conf-medium {
-  background: rgba(210, 153, 34, 0.25);
-}
-.claim-chip-malformed,
-.claim-chip-error,
-.claim-chip-conf-low {
-  background: rgba(248, 81, 73, 0.25);
-}
 .claim-inline {
   display: inline-flex;
   align-items: center;
@@ -2466,6 +2368,8 @@ export const UI_JS = `(function () {
     "tasksModifiedAfter",
     "tasksNoDue",
     "tasksUnassigned",
+    // Legacy standalone Claims tab parameters; keep them here so URL rewrites
+    // drop stale filters after that tab was folded into inline anchor editing.
     "claimsProject",
     "claimsStatus",
     "claimsSection",
@@ -2499,10 +2403,6 @@ export const UI_JS = `(function () {
     anchorGroupSort: DEFAULT_ANCHOR_SORT,
     tasks: [],
     tasksLoading: false,
-    claims: [],
-    claimsSummary: null,
-    claimsLoading: false,
-    claimsLoaded: false,
     pendingTaskFocus: null,
     tasksProject: "",
     tasksStatus: "active,todo,blocked",
@@ -2516,7 +2416,6 @@ export const UI_JS = `(function () {
     tasksNoDue: false,
     tasksUnassigned: false,
     collapsedTaskGroups: new Set(),
-    collapsedClaimGroups: new Set(),
     taskOwnerMatchCache: [],
     taskOwnerSearchTimer: null,
     taskOwnerSearchSeq: 0,
@@ -2632,7 +2531,7 @@ export const UI_JS = `(function () {
   }
 
   function validTab(value) {
-    return value === "root" || value === "planner" || value === "tasks" || value === "claims" || value === "people" || value === "teams" || value === "mappings" || value === "review" || value === "detail" ? value : null;
+    return value === "root" || value === "planner" || value === "tasks" || value === "people" || value === "teams" || value === "mappings" || value === "review" || value === "detail" ? value : null;
   }
 
   function validRootMode(value) {
@@ -2755,15 +2654,6 @@ export const UI_JS = `(function () {
     setControlValue("tasks-modified-after", state.tasksModifiedAfter);
     setControlChecked("tasks-no-due", state.tasksNoDue);
     setControlChecked("tasks-unassigned", state.tasksUnassigned);
-
-    setSelectValueAllowingNew("claims-project-filter", params.get("claimsProject") || "");
-    setControlValue("claims-status-filter", params.get("claimsStatus") || "");
-    setControlValue("claims-section-filter", params.get("claimsSection") || "");
-    setControlValue("claims-conf-filter", params.get("claimsConf") || "");
-    setControlValue("claims-search", params.get("claimsSearch") || "");
-    setControlValue("claims-observed-before", params.get("claimsObservedBefore") || "");
-    setControlValue("claims-group-by", params.get("claimsGroup") || "anchor");
-    setControlValue("claims-sort", params.get("claimsSort") || "document");
   }
 
   function urlForState(overrides) {
@@ -2858,15 +2748,6 @@ export const UI_JS = `(function () {
     if (controlChecked("tasks-unassigned", state.tasksUnassigned)) {
       params.set("tasksUnassigned", "true");
     }
-
-    setParam(params, "claimsProject", controlValue("claims-project-filter", sourceParams.get("claimsProject") || ""));
-    setParam(params, "claimsStatus", controlValue("claims-status-filter", sourceParams.get("claimsStatus") || ""));
-    setParam(params, "claimsSection", controlValue("claims-section-filter", sourceParams.get("claimsSection") || ""));
-    setParam(params, "claimsConf", controlValue("claims-conf-filter", sourceParams.get("claimsConf") || ""));
-    setParam(params, "claimsSearch", controlValue("claims-search", sourceParams.get("claimsSearch") || ""));
-    setParam(params, "claimsObservedBefore", controlValue("claims-observed-before", sourceParams.get("claimsObservedBefore") || ""));
-    setNonDefaultParam(params, "claimsGroup", controlValue("claims-group-by", sourceParams.get("claimsGroup") || "anchor"), "anchor");
-    setNonDefaultParam(params, "claimsSort", controlValue("claims-sort", sourceParams.get("claimsSort") || "document"), "document");
 
     return params;
   }
@@ -3353,9 +3234,6 @@ export const UI_JS = `(function () {
     if (state.activeTab === "tasks") {
       await loadTasks();
     }
-    if (state.activeTab === "claims") {
-      await loadClaims();
-    }
     // Anchors are now loaded; re-render the registry views so soft project-slug
     // validation (which reads state.anchors) runs even when the user landed
     // directly on the People/Teams tab before anchors finished loading.
@@ -3495,9 +3373,7 @@ export const UI_JS = `(function () {
     var currentPlannerCategory = plannerCategorySelect.value;
     var tasksProjectSelect = el("tasks-project-filter");
     var currentTasksProject = tasksProjectSelect.value;
-    var claimsProjectSelect = el("claims-project-filter");
-    var currentClaimsProject = claimsProjectSelect.value;
-    projects = uniqueSorted(projects.concat([currentProject, currentPlannerProject, currentTasksProject, currentClaimsProject]));
+    projects = uniqueSorted(projects.concat([currentProject, currentPlannerProject, currentTasksProject]));
     tags = uniqueSorted(tags.concat([currentTag, currentPlannerTag]));
     projectSelect.innerHTML = optionList(projects, "All projects");
     tagSelect.innerHTML = optionList(tags, "All tags");
@@ -3506,8 +3382,6 @@ export const UI_JS = `(function () {
     plannerTagSelect.innerHTML = optionList(tags, "All tags");
     plannerCategorySelect.innerHTML = optionList(categories.slice(1), "All categories");
     tasksProjectSelect.innerHTML = optionList(projects, "All projects");
-    claimsProjectSelect.innerHTML = optionList(projects, "All projects");
-    claimsProjectSelect.value = currentClaimsProject && projects.includes(currentClaimsProject) ? currentClaimsProject : "";
     projectSelect.value = currentProject && projects.includes(currentProject) ? currentProject : "";
     tagSelect.value = currentTag && tags.includes(currentTag) ? currentTag : "";
     categorySelect.value = categories.includes(currentCategory) ? currentCategory : "";
@@ -4514,282 +4388,6 @@ export const UI_JS = `(function () {
     }
   }
 
-  function showClaimsView(options) {
-    var opts = options || {};
-    if (!opts.skipLocationUpdate) {
-      updateLocationFromState({ anchor: null, view: "claims", history: "push" });
-    }
-    state.pendingAnchor = null;
-    showTab("claims");
-    if (!state.claimsLoaded && !state.claimsLoading) {
-      loadClaims();
-    }
-  }
-
-  async function loadClaims() {
-    state.claimsLoading = true;
-    var project = el("claims-project-filter").value || "";
-    var status = el("claims-status-filter").value || "";
-    var section = el("claims-section-filter").value || "";
-    var conf = el("claims-conf-filter").value || "";
-    var search = (el("claims-search").value || "").trim();
-    var observedBefore = el("claims-observed-before").value || "";
-    var qs = [];
-    if (project) qs.push("project=" + encodeURIComponent(project));
-    if (status) qs.push("status=" + encodeURIComponent(status));
-    if (section) qs.push("section=" + encodeURIComponent(section));
-    if (conf) qs.push("conf=" + encodeURIComponent(conf));
-    if (search) qs.push("q=" + encodeURIComponent(search));
-    if (observedBefore) qs.push("observedBefore=" + encodeURIComponent(observedBefore));
-    var url = "/api/ui/claims" + (qs.length ? "?" + qs.join("&") : "");
-    try {
-      var result = await api(url);
-      state.claims = result.claims || [];
-      state.claimsSummary = result.summary || null;
-      state.claimsLoaded = true;
-      renderClaims();
-    } catch (error) {
-      setBanner(error.message, "error");
-    } finally {
-      state.claimsLoading = false;
-    }
-  }
-
-  function claimChip(text, kind) {
-    var chip = document.createElement("span");
-    chip.className = "claim-chip" + (kind ? " claim-chip-" + kind : "");
-    chip.textContent = text;
-    return chip;
-  }
-
-  function renderClaims() {
-    var list = el("claims-list");
-    var emptyEl = el("claims-empty");
-    var summaryEl = el("claims-summary");
-    list.innerHTML = "";
-    var claims = state.claims || [];
-    var summary = state.claimsSummary;
-    summaryEl.textContent = summary
-      ? summary.total + " claims: " + summary.annotated + " annotated, " + summary.unannotated + " unannotated, " + summary.malformed + " malformed."
-      : "Claim provenance across Current State, Decisions, and Constraints bullets.";
-    if (claims.length === 0) {
-      list.hidden = true;
-      emptyEl.hidden = false;
-      return;
-    }
-    emptyEl.hidden = true;
-    list.hidden = false;
-
-    var groupBy = el("claims-group-by").value || "anchor";
-    var sortMode = el("claims-sort").value || "document";
-
-    claimGroupsForDisplay(claims, groupBy, sortMode).forEach(function (group) {
-      var heading = document.createElement("h3");
-      heading.className = "claims-anchor-heading";
-
-      // Collapse state is keyed per group mode so switching modes never
-      // misapplies a collapsed key from another grouping.
-      var collapseKey = groupBy + "\\u0000" + group.key;
-      var collapsed = state.collapsedClaimGroups.has(collapseKey);
-      var toggle = document.createElement("button");
-      toggle.type = "button";
-      toggle.className = "task-group-toggle";
-      toggle.setAttribute("aria-expanded", collapsed ? "false" : "true");
-      toggle.title = collapsed ? "Expand group claims" : "Collapse group claims";
-      var triangle = document.createElement("span");
-      triangle.className = "task-group-triangle";
-      triangle.setAttribute("aria-hidden", "true");
-      toggle.appendChild(triangle);
-      toggle.addEventListener("click", function () {
-        if (state.collapsedClaimGroups.has(collapseKey)) {
-          state.collapsedClaimGroups.delete(collapseKey);
-        } else {
-          state.collapsedClaimGroups.add(collapseKey);
-        }
-        renderClaims();
-      });
-      heading.appendChild(toggle);
-
-      if (groupBy === "anchor") {
-        var link = document.createElement("a");
-        link.className = "claims-group-label";
-        link.href = "?anchor=" + encodeURIComponent(group.key);
-        link.textContent = group.key + " (" + group.claims.length + ")";
-        heading.appendChild(link);
-      } else {
-        var label = document.createElement("span");
-        label.className = "claims-group-label";
-        label.textContent = group.key + " (" + group.claims.length + ")";
-        heading.appendChild(label);
-      }
-      list.appendChild(heading);
-      if (collapsed) {
-        return;
-      }
-      group.claims.forEach(function (claim) {
-        list.appendChild(renderClaimRow(claim));
-      });
-    });
-  }
-
-  function claimGroupsForDisplay(claims, groupBy, sortMode) {
-    var sorted = claims.slice().sort(function (left, right) {
-      return compareClaims(left, right, sortMode);
-    });
-    var byGroup = {};
-    var groupOrder = [];
-    sorted.forEach(function (claim) {
-      var key = claimGroupKey(claim, groupBy);
-      if (!byGroup[key]) {
-        byGroup[key] = [];
-        groupOrder.push(key);
-      }
-      byGroup[key].push(claim);
-    });
-    if (groupBy !== "anchor") {
-      groupOrder.sort();
-    }
-    return groupOrder.map(function (key) {
-      return { key: key, claims: byGroup[key] };
-    });
-  }
-
-  function claimProjectSlug(claim) {
-    var match = /^projects\\/([^/]+)\\//.exec(claim.anchor);
-    return match ? match[1] : claim.anchor.split("/")[0];
-  }
-
-  function claimGroupKey(claim, groupBy) {
-    if (groupBy === "section") return claim.section;
-    if (groupBy === "status") return claim.status;
-    if (groupBy === "conf") return claimSources(claim).length ? "conf: " + claimStrengthValue(claim) : "no annotation";
-    if (groupBy === "project") return claimProjectSlug(claim);
-    return claim.anchor;
-  }
-
-  var CLAIM_TRUST_ORDER = { malformed: 0, unannotated: 1, low: 2, medium: 3, high: 4 };
-
-  function claimTrustRank(claim) {
-    if (claimSources(claim).length > 0) {
-      return CLAIM_TRUST_ORDER[claimStrengthValue(claim)];
-    }
-    return CLAIM_TRUST_ORDER[claim.status] || 0;
-  }
-
-  function documentOrderCompare(left, right) {
-    return left.anchor === right.anchor ? left.line - right.line : left.anchor.localeCompare(right.anchor);
-  }
-
-  function compareClaims(left, right, sortMode) {
-    if (sortMode === "least-trusted") {
-      return claimTrustRank(left) - claimTrustRank(right) || documentOrderCompare(left, right);
-    }
-    if (sortMode === "oldest-observed" || sortMode === "newest-observed") {
-      // Claims without an observed date sort after dated claims in both directions.
-      var leftDates = claimSources(left).map(function (source) { return source.observed || ""; }).filter(Boolean).sort();
-      var rightDates = claimSources(right).map(function (source) { return source.observed || ""; }).filter(Boolean).sort();
-      var leftDate = sortMode === "oldest-observed" ? leftDates[0] : leftDates[leftDates.length - 1];
-      var rightDate = sortMode === "oldest-observed" ? rightDates[0] : rightDates[rightDates.length - 1];
-      if (!leftDate && !rightDate) return documentOrderCompare(left, right);
-      if (!leftDate) return 1;
-      if (!rightDate) return -1;
-      var cmp = sortMode === "oldest-observed" ? leftDate.localeCompare(rightDate) : rightDate.localeCompare(leftDate);
-      return cmp || documentOrderCompare(left, right);
-    }
-    if (sortMode === "text") {
-      return left.text.localeCompare(right.text) || documentOrderCompare(left, right);
-    }
-    return documentOrderCompare(left, right);
-  }
-
-  function renderClaimRow(claim) {
-    var row = document.createElement("div");
-    row.className = "claim-row claim-row-" + claim.status;
-
-    var header = document.createElement("div");
-    header.className = "claim-row-header";
-    header.appendChild(claimChip(claim.status, claim.status));
-    header.appendChild(claimChip(claim.section, "section"));
-
-    var text = document.createElement("span");
-    text.className = "claim-text";
-    text.textContent = claim.text;
-    header.appendChild(text);
-
-    var graphButton = document.createElement("button");
-    graphButton.type = "button";
-    graphButton.className = "claim-epistemology-button claim-strength-" + claimStrengthValue(claim);
-    graphButton.title = "Edit claim sources";
-    graphButton.innerHTML = "<svg class=\\"icon\\" aria-hidden=\\"true\\"><use href=\\"#icon-object-graph\\"></use></svg>";
-    header.appendChild(graphButton);
-
-    var editButton = document.createElement("button");
-    editButton.type = "button";
-    editButton.className = "claim-edit-toggle";
-    editButton.textContent = claim.status === "unannotated" ? "Annotate" : "Edit";
-    header.appendChild(editButton);
-    row.appendChild(header);
-
-    var meta = document.createElement("div");
-    meta.className = "claim-meta";
-    var sources = claimSources(claim);
-    if (sources.length) {
-      meta.appendChild(claimChip("strength: " + claimStrengthValue(claim), "conf-" + claimStrengthValue(claim)));
-      sources.forEach(function (source) {
-        meta.appendChild(claimChip("src: " + claimSourceDisplayLabel(source), "src"));
-        meta.appendChild(claimChip("last checked: " + source.observed, "observed"));
-        meta.appendChild(claimChip("conf: " + source.conf, "conf-" + source.conf));
-        if (source.id) {
-          meta.appendChild(claimChip("id: " + source.id, "id"));
-        }
-      });
-    } else if (claim.status === "malformed") {
-      meta.appendChild(claimChip((claim.annotationErrors || []).join(" "), "error"));
-    } else {
-      meta.appendChild(claimChip("no provenance", "missing"));
-    }
-    row.appendChild(meta);
-
-    function openEditor() {
-      openClaimSourceModal(claim, false, null);
-    }
-    editButton.addEventListener("click", openEditor);
-    graphButton.addEventListener("click", openEditor);
-
-    return row;
-  }
-
-  async function saveClaimAnnotation(claim, fields, resultEl) {
-    var payload = { name: claim.anchor, claim: claim.text, approved: true };
-    if (fields.clear) {
-      payload.clear = true;
-    } else {
-      if (!fields.src) {
-        resultEl.textContent = "src is required.";
-        return;
-      }
-      if (!fields.observed) {
-        resultEl.textContent = "observed date is required.";
-        return;
-      }
-      payload.src = fields.src;
-      payload.observed = fields.observed;
-      payload.conf = fields.conf;
-    }
-    resultEl.textContent = "Saving...";
-    try {
-      var res = await apiPost("/api/ui/claim-annotation", payload);
-      if (res.warnings && res.warnings.some(function (warning) { return warning.severity === "BLOCK"; })) {
-        resultEl.textContent = res.warnings.map(function (warning) { return warning.message; }).join("; ");
-        return;
-      }
-      resultEl.textContent = "Saved.";
-      loadClaims();
-    } catch (error) {
-      resultEl.textContent = error.message;
-    }
-  }
-
   function wireClaimEpistemologyControls(container, anchor, readOnly) {
     var claims = (anchor.ui && anchor.ui.claims) || [];
     container.querySelectorAll(".claim-epistemology-button[data-claim-line]").forEach(function (button) {
@@ -4893,10 +4491,6 @@ export const UI_JS = `(function () {
       return;
     }
     closeClaimTextEditor();
-    state.claimsLoaded = false;
-    if (state.activeTab === "claims") {
-      loadClaims();
-    }
     if (state.selectedName === editor.anchor.name) {
       selectAnchor(editor.anchor.name, { skipLocationUpdate: true });
     }
@@ -5292,10 +4886,6 @@ export const UI_JS = `(function () {
         return;
       }
       closeClaimSourceModal();
-      state.claimsLoaded = false;
-      if (state.activeTab === "claims") {
-        loadClaims();
-      }
       if (state.selectedName === modal.anchorName) {
         selectAnchor(modal.anchorName, { skipLocationUpdate: true });
       }
@@ -7800,8 +7390,6 @@ export const UI_JS = `(function () {
       showPlanner({ skipLocationUpdate: true });
     } else if (state.activeTab === "tasks") {
       showTasksView({ skipLocationUpdate: true });
-    } else if (state.activeTab === "claims") {
-      showClaimsView({ skipLocationUpdate: true });
     } else if (state.activeTab === "people") {
       showPeopleView({ skipLocationUpdate: true });
     } else if (state.activeTab === "teams") {
@@ -7859,25 +7447,6 @@ export const UI_JS = `(function () {
         loadProposals().catch(function (error) { setBanner(error.message, "error"); });
       });
     });
-    el("claims-refresh").addEventListener("click", function () {
-      loadClaims();
-    });
-    ["claims-project-filter", "claims-status-filter", "claims-section-filter", "claims-conf-filter", "claims-observed-before"].forEach(function (id) {
-      el(id).addEventListener("change", function () {
-        updateLocationFromState({ anchor: null, view: "claims", history: "push" });
-        loadClaims();
-      });
-    });
-    ["claims-group-by", "claims-sort"].forEach(function (id) {
-      el(id).addEventListener("change", function () {
-        updateLocationFromState({ anchor: null, view: "claims", history: "push" });
-        renderClaims();
-      });
-    });
-    el("claims-search").addEventListener("input", debounce(function () {
-      updateLocationFromState({ anchor: null, view: "claims", history: "replace" });
-      loadClaims();
-    }, 300));
     el("claim-source-close").addEventListener("click", closeClaimSourceModal);
     el("claim-source-cancel").addEventListener("click", closeClaimSourceModal);
     el("claim-source-add").addEventListener("click", addClaimSourceRow);
@@ -8044,10 +7613,6 @@ export const UI_JS = `(function () {
           showTasksView();
           return;
         }
-        if (button.dataset.tab === "claims") {
-          showClaimsView();
-          return;
-        }
         if (button.dataset.tab === "people") {
           showPeopleView();
           return;
@@ -8200,11 +7765,6 @@ export const UI_JS = `(function () {
   }
 
   if (window.__ANCHOR_MCP_UI_TEST_HOOKS__) {
-    window.__ANCHOR_MCP_UI_TEST_HOOKS__.claimGroupsForDisplay = claimGroupsForDisplay;
-    window.__ANCHOR_MCP_UI_TEST_HOOKS__.compareClaims = compareClaims;
-    window.__ANCHOR_MCP_UI_TEST_HOOKS__.claimTrustRank = claimTrustRank;
-    window.__ANCHOR_MCP_UI_TEST_HOOKS__.claimGroupKey = claimGroupKey;
-    window.__ANCHOR_MCP_UI_TEST_HOOKS__.claimProjectSlug = claimProjectSlug;
     window.__ANCHOR_MCP_UI_TEST_HOOKS__.claimSources = claimSources;
     window.__ANCHOR_MCP_UI_TEST_HOOKS__.claimStrengthValue = claimStrengthValue;
     window.__ANCHOR_MCP_UI_TEST_HOOKS__.renderClaimInline = renderClaimInline;

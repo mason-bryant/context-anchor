@@ -19,11 +19,6 @@ type UiClaim = {
 };
 
 type UiAssetHooks = {
-  claimGroupsForDisplay(claims: UiClaim[], groupBy: string, sortMode: string): Array<{ key: string; claims: UiClaim[] }>;
-  compareClaims(left: UiClaim, right: UiClaim, sortMode: string): number;
-  claimTrustRank(claim: UiClaim): number;
-  claimGroupKey(claim: UiClaim, groupBy: string): string;
-  claimProjectSlug(claim: UiClaim): string;
   claimStrengthValue(claim: UiClaim): string;
   renderClaimInline(claim: UiClaim): string;
   claimSourceRowHtml(source: Record<string, unknown>, index: number, readOnly: boolean): string;
@@ -588,6 +583,9 @@ describe("UI browser assets", () => {
     expect(UI_HTML).toContain('data-tab="review"');
     expect(UI_HTML).toContain('id="proposal-list"');
     expect(UI_HTML).toContain('id="proposal-preview"');
+    expect(UI_HTML).not.toContain('data-tab="claims"');
+    expect(UI_HTML).not.toContain('id="claims-view"');
+    expect(UI_HTML).not.toContain('id="claims-project-filter"');
     expect(UI_HTML).not.toContain("Edit Composer");
     expect(UI_HTML).not.toContain('id="edit-form"');
     expect(UI_HTML).not.toContain('id="stage-proposal"');
@@ -596,7 +594,10 @@ describe("UI browser assets", () => {
     expect(UI_HTML).toContain('id="rename-anchor"');
     expect(UI_HTML).toContain('id="delete-anchor"');
     expect(UI_HTML).toContain('id="priority-form"');
+    expect(UI_HTML.indexOf('class="detail-mode-row"')).toBeGreaterThan(UI_HTML.indexOf('class="detail-grid"'));
+    expect(UI_HTML.indexOf('class="detail-mode-row"')).toBeLessThan(UI_HTML.indexOf('id="detail-tasks"'));
     expect(UI_HTML.indexOf('id="history-actions"')).toBeGreaterThan(UI_HTML.indexOf('id="detail-frontmatter"'));
+    expect(UI_CSS).toContain(".detail-mode-row");
     expect(UI_HTML).toContain('<option value="priority">Priority</option>');
     expect(UI_JS).toContain("/api/ui/proposed-change-apply");
     expect(UI_JS).toContain("updateProposalFromMutationResult(result)");
@@ -1393,7 +1394,7 @@ describe("UI browser assets", () => {
   });
 });
 
-describe("claims grouping and sorting", () => {
+describe("inline claim rendering", () => {
   function claim(overrides: Partial<UiClaim>): UiClaim {
     return {
       anchor: "projects/demo/demo.md",
@@ -1404,34 +1405,6 @@ describe("claims grouping and sorting", () => {
       ...overrides,
     };
   }
-
-  const malformed = claim({ line: 1, text: "broken", status: "malformed" });
-  const unannotated = claim({ line: 2, text: "legacy", status: "unannotated" });
-  const low = claim({
-    line: 3,
-    text: "weak",
-    status: "annotated",
-    annotation: { src: "a.md", observed: "2026-01-01", conf: "low" },
-  });
-  const medium = claim({
-    line: 4,
-    text: "told",
-    status: "annotated",
-    annotation: { src: "person:alice", observed: "2026-06-01", conf: "medium" },
-  });
-  const high = claim({
-    line: 5,
-    text: "verified",
-    status: "annotated",
-    annotation: { src: "PR #54", observed: "2026-07-01", conf: "high" },
-  });
-  const all = [high, medium, low, unannotated, malformed];
-
-  it("ranks trust as malformed < unannotated < low < medium < high", () => {
-    const hooks = loadHooks();
-    const ranks = [malformed, unannotated, low, medium, high].map((entry) => hooks.claimTrustRank(entry));
-    expect(ranks).toEqual([0, 1, 2, 3, 4]);
-  });
 
   it("averages multiple source strengths for display", () => {
     const hooks = loadHooks();
@@ -1487,70 +1460,19 @@ describe("claims grouping and sorting", () => {
     }));
     expect(html).toContain("Design Proposal: docs/design.md");
   });
-
-  it("sorts least trusted first with document-order tiebreak", () => {
-    const hooks = loadHooks();
-    const groups = hooks.claimGroupsForDisplay(all, "anchor", "least-trusted");
-    expect(groups).toHaveLength(1);
-    expect(groups[0].claims.map((entry) => entry.text)).toEqual(["broken", "legacy", "weak", "told", "verified"]);
-  });
-
-  it("sorts by observed date with undated claims last in both directions", () => {
-    const hooks = loadHooks();
-    const oldest = hooks.claimGroupsForDisplay(all, "anchor", "oldest-observed")[0].claims.map((entry) => entry.text);
-    expect(oldest).toEqual(["weak", "told", "verified", "broken", "legacy"]);
-    const newest = hooks.claimGroupsForDisplay(all, "anchor", "newest-observed")[0].claims.map((entry) => entry.text);
-    expect(newest).toEqual(["verified", "told", "weak", "broken", "legacy"]);
-  });
-
-  it("keeps document order per anchor and orders anchors alphabetically by default", () => {
-    const hooks = loadHooks();
-    const other = claim({ anchor: "agent-rules/zz.md", line: 9, text: "rule claim" });
-    const groups = hooks.claimGroupsForDisplay([other, high, low], "anchor", "document");
-    expect(groups.map((group) => group.key)).toEqual(["agent-rules/zz.md", "projects/demo/demo.md"]);
-    expect(groups[1].claims.map((entry) => entry.text)).toEqual(["weak", "verified"]);
-  });
-
-  it("groups by section, status, confidence, and project with sorted group keys", () => {
-    const hooks = loadHooks();
-    const decision = claim({ line: 8, section: "Decisions", text: "decided" });
-    const bySection = hooks.claimGroupsForDisplay(all.concat([decision]), "section", "document");
-    expect(bySection.map((group) => group.key)).toEqual(["Current State", "Decisions"]);
-
-    const byStatus = hooks.claimGroupsForDisplay(all, "status", "document");
-    expect(byStatus.map((group) => group.key)).toEqual(["annotated", "malformed", "unannotated"]);
-
-    const byConf = hooks.claimGroupsForDisplay(all, "conf", "document");
-    expect(byConf.map((group) => group.key)).toEqual(["conf: high", "conf: low", "conf: medium", "no annotation"]);
-
-    const shared = claim({ anchor: "shared/how-to.md", line: 2, text: "shared claim" });
-    const byProject = hooks.claimGroupsForDisplay(all.concat([shared]), "project", "document");
-    expect(byProject.map((group) => group.key)).toEqual(["demo", "shared"]);
-  });
-
-  it("derives project slugs from anchor paths", () => {
-    const hooks = loadHooks();
-    expect(hooks.claimProjectSlug(claim({ anchor: "projects/data-graph/x.md" }))).toBe("data-graph");
-    expect(hooks.claimProjectSlug(claim({ anchor: "agent-rules/rules.md" }))).toBe("agent-rules");
-  });
 });
 
-describe("claims URL state", () => {
-  it("preserves claims filters when regenerating URLs", () => {
+describe("legacy claims URL state", () => {
+  it("drops old standalone claims filters when regenerating URLs", () => {
     const hooks = loadHooks({
       search: "?view=claims&claimsProject=demo&claimsStatus=unannotated&claimsSearch=auth&claimsSort=least-trusted",
     });
     const href = hooks.anchorHref("projects/demo/demo.md");
-    expect(href).toContain("claimsProject=demo");
-    expect(href).toContain("claimsStatus=unannotated");
-    expect(href).toContain("claimsSearch=auth");
-    expect(href).toContain("claimsSort=least-trusted");
-  });
-
-  it("omits default claims group and sort from URLs", () => {
-    const hooks = loadHooks({ search: "?view=claims&claimsGroup=anchor&claimsSort=document" });
-    const href = hooks.anchorHref("projects/demo/demo.md");
-    expect(href).not.toContain("claimsGroup");
+    expect(href).toContain("anchor=projects%2Fdemo%2Fdemo.md");
+    expect(href).not.toContain("view=claims");
+    expect(href).not.toContain("claimsProject");
+    expect(href).not.toContain("claimsStatus");
+    expect(href).not.toContain("claimsSearch");
     expect(href).not.toContain("claimsSort");
   });
 });
