@@ -152,6 +152,7 @@ describe("AnchorService questions", () => {
 
     const edited = await service.updateQuestionText({
       name: "projects/demo/questions-demo.md",
+      line: afterReopen.questions.find((question) => question.id === "Q-2")?.line,
       id: "Q-1",
       text: "Should open questions be editable in the UI?",
       approved: true,
@@ -159,6 +160,9 @@ describe("AnchorService questions", () => {
     expect(edited.warnings.filter((warning) => warning.severity === "BLOCK")).toEqual([]);
     const afterEdit = await service.listQuestions({ name: "projects/demo/questions-demo.md", q: "editable" });
     expect(afterEdit.questions[0]).toMatchObject({ id: "Q-1", text: "Should open questions be editable in the UI?" });
+    const q2AfterEdit = (await service.listQuestions({ name: "projects/demo/questions-demo.md", q: "resolved questions" }))
+      .questions.find((question) => question.id === "Q-2");
+    expect(q2AfterEdit).toMatchObject({ id: "Q-2", text: "Should resolved questions remain queryable?" });
 
     const deleteBlocked = await service.updateQuestionText({
       name: "projects/demo/questions-demo.md",

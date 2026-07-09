@@ -35,6 +35,26 @@ describe("editable rendered bullets", () => {
     expect(deleted).not.toContain("- Second summary.");
   });
 
+  it("accepts Markdown whitespace after the dash", () => {
+    const doc = `# Demo
+
+## tl-dr
+
+-\tTabbed summary.
+-   Spaced summary.
+`;
+
+    expect(locateEditableBullet(doc, 5)).toMatchObject({
+      ok: true,
+      text: "Tabbed summary.",
+    });
+    expect(locateEditableBullet(doc, 6)).toMatchObject({
+      ok: true,
+      text: "Spaced summary.",
+    });
+    expect(replaceEditableBulletText(doc, 5, "Updated tabbed summary.")).toContain("- Updated tabbed summary.");
+  });
+
   it("rejects claim bullets and fenced bullets", () => {
     expect(locateEditableBullet(DOC, 10)).toMatchObject({
       ok: false,

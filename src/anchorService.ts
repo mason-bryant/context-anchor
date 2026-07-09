@@ -1782,7 +1782,7 @@ None.
   }
 
   async updateQuestionText(input: UpdateQuestionTextInput): Promise<WriteAnchorResult> {
-    const target = questionTargetFromInput(input);
+    const target = questionTextTargetFromInput(input);
     if (!target) {
       return AnchorService.blockResult(
         "question_target_missing",
@@ -3894,6 +3894,23 @@ function questionTargetFromInput(input: {
   }
   if (input.id?.trim()) {
     return { id: input.id.trim() };
+  }
+  if (input.question?.trim()) {
+    return { question: input.question.trim() };
+  }
+  return undefined;
+}
+
+function questionTextTargetFromInput(input: {
+  line?: number;
+  id?: string;
+  question?: string;
+}): QuestionTarget | undefined {
+  if (input.id?.trim()) {
+    return { id: input.id.trim() };
+  }
+  if (input.line !== undefined) {
+    return { line: input.line };
   }
   if (input.question?.trim()) {
     return { question: input.question.trim() };

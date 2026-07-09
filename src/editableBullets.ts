@@ -42,13 +42,14 @@ export function locateEditableBullet(content: string, line: number): EditableBul
     if (index !== line - 1) {
       continue;
     }
-    if (state.inFence || !current.startsWith("- ")) {
+    const bullet = /^-\s+(.+)$/.exec(current);
+    if (state.inFence || !bullet) {
       return { ok: false, code: "editable_bullet_not_found" };
     }
     if (!state.section || !isEditableBulletSection(state.section)) {
       return { ok: false, code: "editable_bullet_not_allowed" };
     }
-    return { ok: true, section: state.section, line, text: current.slice(2).trim() };
+    return { ok: true, section: state.section, line, text: bullet[1].trim() };
   }
 
   return { ok: false, code: "editable_bullet_not_found" };
