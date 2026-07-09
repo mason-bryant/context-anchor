@@ -888,6 +888,23 @@ describe("UI browser assets", () => {
     expect(html).not.toContain('class="claim-epistemology-button');
   });
 
+  it("does not render tl-dr edit controls for asterisk bullets or bullets after a top-level heading", () => {
+    const hooks = loadHooks();
+    const html = hooks.renderMarkdown(
+      "## tl-dr\n\n"
+        + "* Summary bullet.\n\n"
+        + "# Next\n\n"
+        + "- Not a tl-dr bullet.",
+      {
+        claimControls: true,
+        lineOffset: 0,
+      },
+    );
+
+    expect(html).not.toContain('data-bullet-line="3" data-bullet-kind="bullet"');
+    expect(html).not.toContain('data-bullet-line="7" data-bullet-kind="bullet"');
+  });
+
   it("rejects obfuscated unsafe link protocols", () => {
     const hooks = loadHooks();
 

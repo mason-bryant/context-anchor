@@ -94,9 +94,16 @@ function advanceScanState(state: LineScanState, line: string): void {
     return;
   }
 
-  const heading = /^##\s+(.+?)\s*$/.exec(line);
+  const heading = /^(#{1,6})\s+(.+?)\s*$/.exec(line);
   if (heading) {
-    state.section = heading[1].replace(/\s+#+\s*$/, "").trim();
+    const level = heading[1].length;
+    if (level === 1) {
+      state.section = undefined;
+      return;
+    }
+    if (level === 2) {
+      state.section = heading[2].replace(/\s+#+\s*$/, "").trim();
+    }
   }
 }
 

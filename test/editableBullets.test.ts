@@ -45,4 +45,25 @@ describe("editable rendered bullets", () => {
       code: "editable_bullet_not_found",
     });
   });
+
+  it("stops treating bullets as editable after a later top-level heading", () => {
+    const content = `## tl-dr
+
+- Summary bullet.
+
+# Next
+
+- Not a tl-dr bullet.
+`;
+
+    expect(locateEditableBullet(content, 3)).toMatchObject({
+      ok: true,
+      section: "tl-dr",
+      text: "Summary bullet.",
+    });
+    expect(locateEditableBullet(content, 7)).toMatchObject({
+      ok: false,
+      code: "editable_bullet_not_allowed",
+    });
+  });
 });

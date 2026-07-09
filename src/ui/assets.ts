@@ -7385,13 +7385,15 @@ export const UI_JS = `(function () {
         flushParagraph();
         closeList();
         var level = heading[1].length;
-        if (level === 2) {
+        if (level === 1) {
+          currentSection = "";
+        } else if (level === 2) {
           currentSection = stripClosingHeadingHashes(heading[2]);
         }
         html += "<h" + level + ">" + inlineMarkdown(heading[2]) + "</h" + level + ">";
         continue;
       }
-      var bullet = line.match(/^[-*]\\s+(.+)$/);
+      var bullet = line.match(/^([-*])\\s+(.+)$/);
       if (bullet) {
         flushParagraph();
         if (!inList) {
@@ -7400,7 +7402,7 @@ export const UI_JS = `(function () {
         }
         var claim = opts.claimControls ? claimsByLine[originalLine] : null;
         var question = opts.claimControls ? questionsByLine[originalLine] : null;
-        var renderedBullet = inlineMarkdown(bullet[1]);
+        var renderedBullet = inlineMarkdown(bullet[2]);
         if (claim) {
           renderedBullet = renderClaimInline(claim);
         } else if (question) {
@@ -7411,11 +7413,11 @@ export const UI_JS = `(function () {
             label: "Edit question text",
             displayHtml: renderedBullet
           });
-        } else if (opts.claimControls && isEditableRenderedBulletSection(currentSection)) {
+        } else if (opts.claimControls && bullet[1] === "-" && isEditableRenderedBulletSection(currentSection)) {
           renderedBullet = renderEditableBulletInline({
             line: originalLine,
             kind: "bullet",
-            text: bullet[1],
+            text: bullet[2],
             label: "Edit bullet text",
             displayHtml: renderedBullet
           });
