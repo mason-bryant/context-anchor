@@ -4190,7 +4190,6 @@ export const UI_JS = `(function () {
     if (!project) {
       throw new Error("Selected anchor is not associated with a project.");
     }
-    sanitizeProjectPriorityInput();
     var raw = el("priority-input").value.trim();
     var priority = null;
     if (raw) {

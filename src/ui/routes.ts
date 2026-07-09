@@ -427,10 +427,14 @@ export function registerUiRoutes(
     ...protect,
     jsonRoute(async (req) => {
       const body = bodyRecord(req);
+      const line = optionalBodyNumber(body, "line");
+      if (line !== undefined && (!Number.isInteger(line) || line < 1)) {
+        throw new UiHttpError(400, "Invalid line: expected a positive integer");
+      }
       return service.updateClaimText({
         name: requiredBodyString(body, "name"),
         claim: optionalBodyString(body, "claim"),
-        line: optionalBodyNumber(body, "line"),
+        line,
         text: optionalBodyString(body, "text"),
         delete: booleanBody(body, "delete") === true,
         message: optionalBodyString(body, "message"),
