@@ -813,7 +813,7 @@ describe("UI browser assets", () => {
     expect(html).toContain('<li><span class="claim-inline"><span class="claim-epistemology">');
     expect(html).toContain('class="claim-text-edit-button"');
     expect(html).toContain("Claim text.");
-    expect(html).toContain("Combined strength: high");
+    expect(html).toContain("Claim justification strength: high");
     expect(html).not.toContain("{src:");
   });
 

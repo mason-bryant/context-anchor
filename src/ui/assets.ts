@@ -7284,10 +7284,10 @@ export const UI_JS = `(function () {
     var sources = claimSources(claim);
     var strength = claimStrengthValue(claim);
     if (!sources.length) {
-      return "<span class=\\"claim-popover\\" role=\\"tooltip\\"><span class=\\"claim-popover-title\\">No provenance sources</span><span class=\\"claim-popover-meta\\">Combined strength: " + escapeHtml(strength) + "</span></span>";
+      return "<span class=\\"claim-popover\\" role=\\"tooltip\\"><span class=\\"claim-popover-title\\">No provenance sources</span><span class=\\"claim-popover-meta\\">Claim justification strength: " + escapeHtml(strength) + "</span></span>";
     }
     return "<span class=\\"claim-popover\\" role=\\"tooltip\\">"
-      + "<span class=\\"claim-popover-title\\">Combined strength: " + escapeHtml(strength) + "</span>"
+      + "<span class=\\"claim-popover-title\\">Claim justification strength: " + escapeHtml(strength) + "</span>"
       + sources.map(function (source) {
         return "<span class=\\"claim-popover-row\\">"
           + renderSourceLabel(source)
