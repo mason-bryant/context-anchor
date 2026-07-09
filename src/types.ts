@@ -405,6 +405,40 @@ export type ReopenQuestionInput = {
   expectedFileCommit?: string;
 };
 
+export type UpdateQuestionTextInput = {
+  /** Anchor containing the question. */
+  name: string;
+  /** 1-based line number of the question bullet. */
+  line?: number;
+  /** Stable question id such as Q-1 or Q-001. */
+  id?: string;
+  /** Unique substring of the question text. */
+  question?: string;
+  /** Replacement question text. Required unless delete is true. */
+  text?: string;
+  /** Remove the question bullet and its attached metadata lines. */
+  delete?: boolean;
+  message?: string;
+  approved?: boolean;
+  coAuthor?: string;
+  expectedFileCommit?: string;
+};
+
+export type UpdateBulletTextInput = {
+  /** Anchor containing the rendered bullet. */
+  name: string;
+  /** 1-based line number of the top-level bullet. */
+  line: number;
+  /** Replacement bullet text. Required unless delete is true. */
+  text?: string;
+  /** Remove the bullet and its attached continuation lines. */
+  delete?: boolean;
+  message?: string;
+  approved?: boolean;
+  coAuthor?: string;
+  expectedFileCommit?: string;
+};
+
 export type PersonIdentities = {
   slack?: string;
   confluence?: string;

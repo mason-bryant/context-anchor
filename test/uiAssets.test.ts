@@ -1,6 +1,6 @@
 import vm from "node:vm";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { UI_CSS, UI_HTML, UI_JS } from "../src/ui/assets.js";
 
@@ -23,6 +23,7 @@ type UiAssetHooks = {
   renderClaimInline(claim: UiClaim): string;
   claimSourceRowHtml(source: Record<string, unknown>, index: number, readOnly: boolean): string;
   renderMarkdown(markdown: string, options?: Record<string, unknown>): string;
+  renderMermaidDiagrams(container: { querySelectorAll(selector: string): unknown[] }): Promise<void>;
   sanitizeLinkHref(href: string): string | null;
   anchorHref(name: string): string;
   readAnchorFromLocation(): string | null;
@@ -137,6 +138,7 @@ function loadHooks(
     localStorage?: TestStorage;
     sessionStorage?: TestStorage;
     historyUpdates?: string[];
+    mermaid?: Record<string, unknown>;
   } = {},
 ): UiAssetHooks {
   const hooks: Partial<UiAssetHooks> = {};
@@ -162,6 +164,7 @@ function loadHooks(
       },
       localStorage,
       sessionStorage,
+      mermaid: options.mermaid,
       history: {
         pushState: (_state: unknown, _title: string, url: string) => {
           options.historyUpdates?.push(url);
@@ -772,6 +775,43 @@ describe("UI browser assets", () => {
     expect(UI_CSS).toContain("color: inherit");
   });
 
+  it("renders markdown pipe tables", () => {
+    const hooks = loadHooks();
+    const html = hooks.renderMarkdown(
+      "| Marker | Symbol | File | Line |\n"
+        + "|--------|--------|------|------|\n"
+        + "| 1 | `NodeScope.__init__` | `app/hub_platform/rql_v2/translation/containers.py` | ~380 |",
+    );
+
+    expect(html).toContain('<div class="markdown-table-scroll"><table>');
+    expect(html).toContain("<th>Marker</th>");
+    expect(html).toContain("<td>1</td>");
+    expect(html).toContain("<td><code>NodeScope.__init__</code></td>");
+    expect(html).toContain("<td>~380</td>");
+  });
+
+  it("renders mermaid fences as diagram blocks and invokes the Mermaid runtime", async () => {
+    const initialize = vi.fn();
+    const run = vi.fn(async () => undefined);
+    const hooks = loadHooks({ mermaid: { initialize, run } });
+    const html = hooks.renderMarkdown("```mermaid\nflowchart TD\nA --> B\n```");
+    const block = { classList: { add: vi.fn() }, title: "" };
+
+    expect(html).toContain('<div class="mermaid">flowchart TD\nA --&gt; B</div>');
+    expect(html).not.toContain("<pre><code>flowchart TD");
+
+    await hooks.renderMermaidDiagrams({
+      querySelectorAll: (selector: string) => (selector === ".mermaid" ? [block] : []),
+    });
+
+    expect(initialize).toHaveBeenCalledWith({
+      startOnLoad: false,
+      securityLevel: "strict",
+      theme: "default",
+    });
+    expect(run).toHaveBeenCalledWith({ nodes: [block], suppressErrors: true });
+  });
+
   it("neutralizes unsafe markdown link schemes", () => {
     const hooks = loadHooks();
     const html = hooks.renderMarkdown(
@@ -815,6 +855,37 @@ describe("UI browser assets", () => {
     expect(html).toContain("Claim text.");
     expect(html).toContain("Claim justification strength: high");
     expect(html).not.toContain("{src:");
+  });
+
+  it("renders edit controls for tl-dr and question bullets without claim provenance controls", () => {
+    const hooks = loadHooks();
+    const html = hooks.renderMarkdown(
+      "## tl-dr\n\n"
+        + "- Summary bullet.\n\n"
+        + "## Open Questions\n\n"
+        + "- [ ] Q-1: Should questions be editable?\n\n"
+        + "## PRs\n\n"
+        + "- [PR Demo - #1](https://github.com/example/repo/pull/1)",
+      {
+        claimControls: true,
+        lineOffset: 0,
+        questions: [
+          {
+            anchor: "projects/demo/demo.md",
+            line: 7,
+            section: "Open Questions",
+            text: "Should questions be editable?",
+            status: "open",
+            id: "Q-1",
+          },
+        ],
+      },
+    );
+
+    expect(html).toContain('class="bullet-text-edit-button" data-bullet-line="3" data-bullet-kind="bullet"');
+    expect(html).toContain('data-bullet-line="7" data-bullet-kind="question"');
+    expect(html).not.toContain('data-bullet-line="11"');
+    expect(html).not.toContain('class="claim-epistemology-button');
   });
 
   it("rejects obfuscated unsafe link protocols", () => {

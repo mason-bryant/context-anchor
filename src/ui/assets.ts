@@ -1096,6 +1096,63 @@ textarea {
   border-radius: 0;
 }
 
+.markdown-table-scroll {
+  overflow-x: auto;
+  margin: 0.9em 0;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+}
+
+.markdown table {
+  width: 100%;
+  min-width: 520px;
+  border-collapse: collapse;
+}
+
+.markdown th,
+.markdown td {
+  padding: 9px 11px;
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+  vertical-align: top;
+}
+
+.markdown th {
+  background: var(--panel-strong);
+  color: var(--text);
+  font-weight: 650;
+}
+
+.markdown tr:last-child td {
+  border-bottom: 0;
+}
+
+.markdown .mermaid {
+  overflow: auto;
+  margin: 1em 0;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: #ffffff;
+  color: #1f2937;
+  text-align: center;
+  white-space: pre-wrap;
+}
+
+.markdown .mermaid svg {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin: 0 auto;
+}
+
+.markdown .mermaid.mermaid-unavailable {
+  background: #15202b;
+  color: #eef6ff;
+  text-align: left;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+}
+
 .unsafe-link {
   color: var(--muted);
   text-decoration: line-through;
@@ -1592,7 +1649,8 @@ textarea {
   font-weight: 600;
 }
 
-.claim-inline {
+.claim-inline,
+.editable-bullet-inline {
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -1616,7 +1674,8 @@ textarea {
   align-items: center;
   justify-content: center;
 }
-.claim-text-edit-button {
+.claim-text-edit-button,
+.bullet-text-edit-button {
   width: 24px;
   height: 24px;
   min-width: 24px;
@@ -1630,7 +1689,8 @@ textarea {
   justify-content: center;
 }
 .claim-epistemology-button svg,
-.claim-text-edit-button svg {
+.claim-text-edit-button svg,
+.bullet-text-edit-button svg {
   width: 15px;
   height: 15px;
 }
@@ -2349,6 +2409,8 @@ export const UI_JS = `(function () {
   var DEFAULT_TASK_GROUP_BY = "project";
   var DEFAULT_TASK_SORT = "projectPriority";
   var ANCHOR_BATCH_SIZE = 50;
+  var mermaidRuntimePromise = null;
+  var mermaidInitialized = false;
   var KNOWN_URL_PARAMS = [
     "anchor",
     "view",
@@ -2447,6 +2509,7 @@ export const UI_JS = `(function () {
     selectedTeamId: null,
     claimSourceModal: null,
     claimTextEditor: null,
+    bulletTextEditor: null,
     claimPersonMatchCache: [],
     claimPersonSearchTimer: null,
     claimPersonSearchSeq: 0,
@@ -3613,6 +3676,7 @@ export const UI_JS = `(function () {
     el("root-generated").textContent = state.root ? "Generated " + state.root.generatedAt + " from " + state.root.entries.length + " entries" : "Generated root output";
     el("root-rendered").innerHTML = renderMarkdown(markdown);
     decorateAnchorLinks(el("root-rendered"));
+    renderMermaidDiagrams(el("root-rendered"));
     el("root-raw").textContent = markdown;
     showRootMode(state.rootMode);
   }
@@ -4467,8 +4531,20 @@ export const UI_JS = `(function () {
     state.claimTextEditor = null;
   }
 
+  function closeBulletTextEditor() {
+    var editor = state.bulletTextEditor;
+    if (!editor) return;
+    if (editor.textEl) editor.textEl.hidden = false;
+    if (editor.editorEl && editor.editorEl.parentNode) {
+      editor.editorEl.parentNode.removeChild(editor.editorEl);
+    }
+    if (editor.button) editor.button.disabled = false;
+    state.bulletTextEditor = null;
+  }
+
   function openClaimTextEditor(button, claim, anchor) {
     closeClaimTextEditor();
+    closeBulletTextEditor();
     var inline = button.closest(".claim-inline");
     var textEl = inline ? inline.querySelector(".claim-inline-text") : null;
     if (!inline || !textEl) return;
@@ -4534,6 +4610,103 @@ export const UI_JS = `(function () {
       return;
     }
     closeClaimTextEditor();
+    if (state.selectedName === editor.anchor.name) {
+      selectAnchor(editor.anchor.name, { skipLocationUpdate: true });
+    }
+  }
+
+  function wireEditableBulletControls(container, anchor, readOnly) {
+    var questions = (anchor.ui && anchor.ui.questions) || [];
+    container.querySelectorAll(".bullet-text-edit-button[data-bullet-line]").forEach(function (button) {
+      button.disabled = !!readOnly;
+      button.title = readOnly ? SERVER_RULE_READ_ONLY_MESSAGE : (button.getAttribute("title") || "Edit bullet text");
+      button.addEventListener("click", function () {
+        if (readOnly) return;
+        var line = Number(button.dataset.bulletLine || "0");
+        var kind = button.dataset.bulletKind || "bullet";
+        var question = questions.find(function (entry) { return entry.line === line; });
+        var bullet = {
+          line: line,
+          kind: kind,
+          text: question ? question.text || "" : button.dataset.bulletText || "",
+          id: question ? question.id : undefined
+        };
+        openBulletTextEditor(button, bullet, anchor);
+      });
+    });
+  }
+
+  function openBulletTextEditor(button, bullet, anchor) {
+    closeClaimTextEditor();
+    closeBulletTextEditor();
+    var inline = button.closest(".editable-bullet-inline");
+    var textEl = inline ? inline.querySelector(".editable-bullet-inline-text") : null;
+    if (!inline || !textEl) return;
+    button.disabled = true;
+    textEl.hidden = true;
+    var editorEl = document.createElement("span");
+    editorEl.className = "claim-text-editor";
+    editorEl.innerHTML = "<textarea class=\\"claim-text-input\\" rows=\\"3\\"></textarea>"
+      + "<span class=\\"claim-text-editor-actions\\">"
+      + "<button type=\\"button\\" class=\\"bullet-text-update\\">Update</button>"
+      + "<button type=\\"button\\" class=\\"bullet-text-cancel\\">Cancel</button>"
+      + "<button type=\\"button\\" class=\\"bullet-text-delete danger-button\\"><span class=\\"icon-label\\"><svg class=\\"icon\\" aria-hidden=\\"true\\"><use href=\\"#icon-trash\\"></use></svg><span>Delete</span></span></button>"
+      + "<span class=\\"claim-text-editor-result\\"></span>"
+      + "</span>";
+    inline.insertBefore(editorEl, textEl.nextSibling);
+    var input = editorEl.querySelector(".claim-text-input");
+    input.value = bullet.text || "";
+    input.focus();
+    input.select();
+    state.bulletTextEditor = { anchor: anchor, bullet: bullet, button: button, textEl: textEl, editorEl: editorEl };
+    editorEl.querySelector(".bullet-text-cancel").addEventListener("click", closeBulletTextEditor);
+    editorEl.querySelector(".bullet-text-update").addEventListener("click", function () {
+      saveBulletTextEditor(false).catch(function (error) {
+        editorEl.querySelector(".claim-text-editor-result").textContent = error.message;
+      });
+    });
+    editorEl.querySelector(".bullet-text-delete").addEventListener("click", function () {
+      var label = bullet.kind === "question" ? "question" : "bullet";
+      var ok = !window.confirm || window.confirm("Delete this " + label + "?");
+      if (!ok) return;
+      saveBulletTextEditor(true).catch(function (error) {
+        editorEl.querySelector(".claim-text-editor-result").textContent = error.message;
+      });
+    });
+  }
+
+  async function saveBulletTextEditor(remove) {
+    var editor = state.bulletTextEditor;
+    if (!editor) return;
+    var resultEl = editor.editorEl.querySelector(".claim-text-editor-result");
+    var input = editor.editorEl.querySelector(".claim-text-input");
+    var nextText = (input.value || "").trim();
+    var label = editor.bullet.kind === "question" ? "Question" : "Bullet";
+    if (!remove && !nextText) {
+      resultEl.textContent = label + " text is required.";
+      return;
+    }
+    if (!remove && /[\\r\\n]/.test(nextText)) {
+      resultEl.textContent = label + " text must be a single line.";
+      return;
+    }
+    resultEl.textContent = remove ? "Deleting..." : "Updating...";
+    var payload = {
+      name: editor.anchor.name,
+      line: editor.bullet.line,
+      delete: !!remove,
+      approved: true
+    };
+    if (editor.bullet.kind === "question" && editor.bullet.id) payload.id = editor.bullet.id;
+    if (!remove) payload.text = nextText;
+    if (editor.anchor.fileCommit) payload.expectedFileCommit = editor.anchor.fileCommit;
+    var endpoint = editor.bullet.kind === "question" ? "/api/ui/question-text" : "/api/ui/bullet-text";
+    var res = await apiPost(endpoint, payload);
+    if (res.warnings && res.warnings.some(function (warning) { return warning.severity === "BLOCK"; })) {
+      resultEl.textContent = res.warnings.map(function (warning) { return warning.message; }).join("; ");
+      return;
+    }
+    closeBulletTextEditor();
     if (state.selectedName === editor.anchor.name) {
       selectAnchor(editor.anchor.name, { skipLocationUpdate: true });
     }
@@ -7016,11 +7189,14 @@ export const UI_JS = `(function () {
     var body = markdownBody(anchor.content || "");
     el("detail-rendered").innerHTML = renderMarkdown(body, {
       claims: anchor.ui.claims || [],
+      questions: anchor.ui.questions || [],
       lineOffset: markdownBodyLineOffset(anchor.content || ""),
       claimControls: true
     });
     decorateAnchorLinks(el("detail-rendered"));
     wireClaimEpistemologyControls(el("detail-rendered"), anchor, readOnly);
+    wireEditableBulletControls(el("detail-rendered"), anchor, readOnly);
+    renderMermaidDiagrams(el("detail-rendered"));
     el("detail-raw").textContent = anchor.content || "";
     el("detail-frontmatter").textContent = JSON.stringify(anchor.frontmatter || {}, null, 2);
     el("priority-input").value = priorityLabel(anchorPriority(anchor)).replace(/^P/, "");
@@ -7118,6 +7294,7 @@ export const UI_JS = `(function () {
     var lines = String(markdown || "").split(/\\r?\\n/);
     var lineOffset = opts.lineOffset || 0;
     var claimsByLine = {};
+    var questionsByLine = {};
     var sourceLines = {};
     (opts.claims || []).forEach(function (claim) {
       claimsByLine[claim.line] = claim;
@@ -7132,11 +7309,16 @@ export const UI_JS = `(function () {
         }
       });
     });
+    (opts.questions || []).forEach(function (question) {
+      questionsByLine[question.line] = question;
+    });
     var html = "";
     var paragraph = [];
     var inList = false;
     var inCode = false;
     var code = [];
+    var codeLanguage = "";
+    var currentSection = "";
 
     function flushParagraph() {
       if (paragraph.length) {
@@ -7152,15 +7334,22 @@ export const UI_JS = `(function () {
     }
     function flushCode() {
       if (code.length || inCode) {
-        html += "<pre><code>" + escapeHtml(code.join("\\n")) + "</code></pre>";
+        var codeText = code.join("\\n");
+        if (codeLanguage === "mermaid") {
+          html += "<div class=\\"mermaid\\">" + escapeHtml(codeText) + "</div>";
+        } else {
+          html += "<pre><code>" + escapeHtml(codeText) + "</code></pre>";
+        }
         code = [];
+        codeLanguage = "";
       }
     }
 
-    lines.forEach(function (line, index) {
+    for (var index = 0; index < lines.length; index += 1) {
+      var line = lines[index];
       var originalLine = lineOffset + index + 1;
       if (opts.claimControls && sourceLines[originalLine]) {
-        return;
+        continue;
       }
       if (line.slice(0, 3) === fence) {
         if (inCode) {
@@ -7170,25 +7359,37 @@ export const UI_JS = `(function () {
           flushParagraph();
           closeList();
           inCode = true;
+          codeLanguage = firstFenceLanguage(line.slice(3));
         }
-        return;
+        continue;
       }
       if (inCode) {
         code.push(line);
-        return;
+        continue;
       }
       if (!line.trim()) {
         flushParagraph();
         closeList();
-        return;
+        continue;
+      }
+      if (isTableStart(lines, index, opts, sourceLines, lineOffset)) {
+        flushParagraph();
+        closeList();
+        var table = renderMarkdownTable(lines, index);
+        html += table.html;
+        index = table.nextIndex - 1;
+        continue;
       }
       var heading = line.match(/^(#{1,4})\\s+(.+)$/);
       if (heading) {
         flushParagraph();
         closeList();
         var level = heading[1].length;
+        if (level === 2) {
+          currentSection = stripClosingHeadingHashes(heading[2]);
+        }
         html += "<h" + level + ">" + inlineMarkdown(heading[2]) + "</h" + level + ">";
-        return;
+        continue;
       }
       var bullet = line.match(/^[-*]\\s+(.+)$/);
       if (bullet) {
@@ -7198,17 +7399,211 @@ export const UI_JS = `(function () {
           inList = true;
         }
         var claim = opts.claimControls ? claimsByLine[originalLine] : null;
-        html += "<li>" + (claim ? renderClaimInline(claim) : inlineMarkdown(bullet[1])) + "</li>";
-        return;
+        var question = opts.claimControls ? questionsByLine[originalLine] : null;
+        var renderedBullet = inlineMarkdown(bullet[1]);
+        if (claim) {
+          renderedBullet = renderClaimInline(claim);
+        } else if (question) {
+          renderedBullet = renderEditableBulletInline({
+            line: originalLine,
+            kind: "question",
+            text: question.text || "",
+            label: "Edit question text",
+            displayHtml: renderedBullet
+          });
+        } else if (opts.claimControls && isEditableRenderedBulletSection(currentSection)) {
+          renderedBullet = renderEditableBulletInline({
+            line: originalLine,
+            kind: "bullet",
+            text: bullet[1],
+            label: "Edit bullet text",
+            displayHtml: renderedBullet
+          });
+        }
+        html += "<li>" + renderedBullet + "</li>";
+        continue;
       }
       paragraph.push(line.trim());
-    });
+    }
     flushParagraph();
     closeList();
     if (inCode) {
       flushCode();
     }
     return html;
+  }
+
+  function firstFenceLanguage(info) {
+    var first = String(info || "").trim().split(/\\s+/)[0] || "";
+    return first.toLowerCase();
+  }
+
+  function stripClosingHeadingHashes(text) {
+    return String(text || "").replace(/\\s+#+\\s*$/, "").trim();
+  }
+
+  function isEditableRenderedBulletSection(section) {
+    var normalized = String(section || "")
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "");
+    return normalized === "tl-dr" || normalized === "tldr";
+  }
+
+  function isTableStart(lines, index, opts, sourceLines, lineOffset) {
+    var current = lines[index] || "";
+    var next = lines[index + 1] || "";
+    if (!looksLikeTableRow(current) || !isTableSeparator(next)) {
+      return false;
+    }
+    var nextLine = lineOffset + index + 2;
+    return !(opts.claimControls && sourceLines[nextLine]);
+  }
+
+  function renderMarkdownTable(lines, startIndex) {
+    var headers = splitTableRow(lines[startIndex]);
+    var alignments = tableAlignments(lines[startIndex + 1], headers.length);
+    var rows = [];
+    var index = startIndex + 2;
+    while (index < lines.length && looksLikeTableRow(lines[index]) && !isTableSeparator(lines[index])) {
+      rows.push(splitTableRow(lines[index]));
+      index += 1;
+    }
+    var html = "<div class=\\"markdown-table-scroll\\"><table><thead><tr>"
+      + headers.map(function (cell, cellIndex) {
+        return "<th" + tableAlignAttribute(alignments[cellIndex]) + ">" + inlineMarkdown(cell) + "</th>";
+      }).join("")
+      + "</tr></thead><tbody>"
+      + rows.map(function (row) {
+        return "<tr>" + headers.map(function (_header, cellIndex) {
+          return "<td" + tableAlignAttribute(alignments[cellIndex]) + ">" + inlineMarkdown(row[cellIndex] || "") + "</td>";
+        }).join("") + "</tr>";
+      }).join("")
+      + "</tbody></table></div>";
+    return { html: html, nextIndex: index };
+  }
+
+  function looksLikeTableRow(line) {
+    var trimmed = String(line || "").trim();
+    return trimmed.indexOf("|") >= 0 && splitTableRow(trimmed).length > 1;
+  }
+
+  function isTableSeparator(line) {
+    var cells = splitTableRow(line);
+    return cells.length > 1 && cells.every(function (cell) {
+      return /^:?-{3,}:?$/.test(cell.replace(/\\s+/g, ""));
+    });
+  }
+
+  function tableAlignments(separatorLine, count) {
+    var cells = splitTableRow(separatorLine);
+    var alignments = [];
+    for (var index = 0; index < count; index += 1) {
+      var cell = (cells[index] || "").replace(/\\s+/g, "");
+      alignments.push(cell.charAt(0) === ":" && cell.charAt(cell.length - 1) === ":"
+        ? "center"
+        : cell.charAt(cell.length - 1) === ":"
+          ? "right"
+          : "");
+    }
+    return alignments;
+  }
+
+  function tableAlignAttribute(alignment) {
+    return alignment ? " style=\\"text-align: " + alignment + "\\"" : "";
+  }
+
+  function splitTableRow(line) {
+    var tick = String.fromCharCode(96);
+    var text = String(line || "").trim();
+    if (text.charAt(0) === "|") {
+      text = text.slice(1);
+    }
+    if (text.charAt(text.length - 1) === "|" && text.charAt(text.length - 2) !== "\\\\") {
+      text = text.slice(0, -1);
+    }
+    var cells = [];
+    var cell = "";
+    var inCode = false;
+    for (var index = 0; index < text.length; index += 1) {
+      var char = text.charAt(index);
+      if (char === tick) {
+        inCode = !inCode;
+        cell += char;
+        continue;
+      }
+      if (char === "\\\\" && text.charAt(index + 1) === "|") {
+        cell += "|";
+        index += 1;
+        continue;
+      }
+      if (char === "|" && !inCode) {
+        cells.push(cell.trim());
+        cell = "";
+        continue;
+      }
+      cell += char;
+    }
+    cells.push(cell.trim());
+    return cells;
+  }
+
+  function loadMermaidRuntime() {
+    var runtime = window.mermaid && (window.mermaid.default || window.mermaid);
+    if (runtime) {
+      return Promise.resolve(runtime);
+    }
+    if (!mermaidRuntimePromise) {
+      mermaidRuntimePromise = import("/ui/vendor/mermaid/mermaid.esm.min.mjs").then(function (module) {
+        var loaded = module.default || module;
+        window.mermaid = loaded;
+        return loaded;
+      }).catch(function (error) {
+        mermaidRuntimePromise = null;
+        throw error;
+      });
+    }
+    return mermaidRuntimePromise;
+  }
+
+  function renderMermaidDiagrams(container) {
+    if (!container || !container.querySelectorAll) {
+      return Promise.resolve();
+    }
+    var blocks = Array.prototype.slice.call(container.querySelectorAll(".mermaid"));
+    if (!blocks.length) {
+      return Promise.resolve();
+    }
+    return loadMermaidRuntime().then(function (mermaid) {
+      if (!mermaidInitialized && mermaid.initialize) {
+        mermaid.initialize({
+          startOnLoad: false,
+          securityLevel: "strict",
+          theme: "default"
+        });
+        mermaidInitialized = true;
+      }
+      if (mermaid.run) {
+        return mermaid.run({ nodes: blocks, suppressErrors: true });
+      }
+      if (mermaid.init) {
+        return mermaid.init(undefined, blocks);
+      }
+      markMermaidUnavailable(blocks);
+      return undefined;
+    }).catch(function () {
+      markMermaidUnavailable(blocks);
+    });
+  }
+
+  function markMermaidUnavailable(blocks) {
+    blocks.forEach(function (block) {
+      if (block.classList) {
+        block.classList.add("mermaid-unavailable");
+      }
+      block.title = "Mermaid rendering unavailable";
+    });
   }
 
   function markdownBody(markdown) {
@@ -7277,6 +7672,15 @@ export const UI_JS = `(function () {
       + "<svg class=\\"icon\\" aria-hidden=\\"true\\"><use href=\\"#icon-pencil\\"></use></svg>"
       + "</button>"
       + "<span class=\\"claim-inline-text\\">" + inlineMarkdown(claim.text || "") + "</span>"
+      + "</span>";
+  }
+
+  function renderEditableBulletInline(bullet) {
+    return "<span class=\\"editable-bullet-inline\\">"
+      + "<button type=\\"button\\" class=\\"bullet-text-edit-button\\" data-bullet-line=\\"" + escapeHtml(String(bullet.line)) + "\\" data-bullet-kind=\\"" + escapeHtml(bullet.kind) + "\\" data-bullet-text=\\"" + escapeHtml(bullet.text || "") + "\\" title=\\"" + escapeHtml(bullet.label) + "\\" aria-label=\\"" + escapeHtml(bullet.label) + "\\">"
+      + "<svg class=\\"icon\\" aria-hidden=\\"true\\"><use href=\\"#icon-pencil\\"></use></svg>"
+      + "</button>"
+      + "<span class=\\"editable-bullet-inline-text\\">" + bullet.displayHtml + "</span>"
       + "</span>";
   }
 
@@ -7505,17 +7909,23 @@ export const UI_JS = `(function () {
       }
     });
     document.addEventListener("click", function (event) {
-      if (!state.claimTextEditor) return;
+      if (!state.claimTextEditor && !state.bulletTextEditor) return;
       var target = event.target;
-      if (target && target.closest && (target.closest(".claim-text-editor") || target.closest(".claim-text-edit-button"))) {
+      if (target && target.closest && (
+        target.closest(".claim-text-editor")
+        || target.closest(".claim-text-edit-button")
+        || target.closest(".bullet-text-edit-button")
+      )) {
         return;
       }
-      closeClaimTextEditor();
+      if (state.claimTextEditor) closeClaimTextEditor();
+      if (state.bulletTextEditor) closeBulletTextEditor();
     });
     window.addEventListener("keydown", function (event) {
       if (event.key === "Escape") {
         if (state.claimSourceModal) closeClaimSourceModal();
         if (state.claimTextEditor) closeClaimTextEditor();
+        if (state.bulletTextEditor) closeBulletTextEditor();
       }
     });
     el("tasks-refresh").addEventListener("click", function () {
@@ -7808,6 +8218,7 @@ export const UI_JS = `(function () {
     window.__ANCHOR_MCP_UI_TEST_HOOKS__.renderClaimInline = renderClaimInline;
     window.__ANCHOR_MCP_UI_TEST_HOOKS__.claimSourceRowHtml = claimSourceRowHtml;
     window.__ANCHOR_MCP_UI_TEST_HOOKS__.renderMarkdown = renderMarkdown;
+    window.__ANCHOR_MCP_UI_TEST_HOOKS__.renderMermaidDiagrams = renderMermaidDiagrams;
     window.__ANCHOR_MCP_UI_TEST_HOOKS__.sanitizeLinkHref = sanitizeLinkHref;
     window.__ANCHOR_MCP_UI_TEST_HOOKS__.anchorHref = anchorHref;
     window.__ANCHOR_MCP_UI_TEST_HOOKS__.readAnchorFromLocation = readAnchorFromLocation;

@@ -124,6 +124,8 @@ import type {
   DeleteTaskInput,
   ResolveQuestionInput,
   ReopenQuestionInput,
+  UpdateBulletTextInput,
+  UpdateQuestionTextInput,
   UpdateProjectPriorityInput,
   UpdateTaskDueInput,
   UpdateTaskOwnerInput,
@@ -169,12 +171,15 @@ import {
   type ClaimStatus,
 } from "./claims.js";
 import {
+  deleteQuestion,
   extractQuestions,
   locateQuestion,
+  replaceQuestionText,
   setQuestionStatus,
   type QuestionStatus,
   type QuestionTarget,
 } from "./questions.js";
+import { deleteEditableBullet, locateEditableBullet, replaceEditableBulletText } from "./editableBullets.js";
 
 const BM25_INDEX_READ_CONCURRENCY = 8;
 
@@ -1773,6 +1778,118 @@ None.
           status: "open",
           ...(input.owner ? { owner: input.owner } : {}),
         }),
+    });
+  }
+
+  async updateQuestionText(input: UpdateQuestionTextInput): Promise<WriteAnchorResult> {
+    const target = questionTargetFromInput(input);
+    if (!target) {
+      return AnchorService.blockResult(
+        "question_target_missing",
+        "updateQuestionText requires a line number, question id, or question text fragment.",
+      );
+    }
+    if (input.delete && !input.approved) {
+      return {
+        warnings: [
+          {
+            severity: "BLOCK",
+            code: "requires_approval",
+            message:
+              "updateQuestionText delete removes a question bullet and its attached metadata lines; retry with approved: true after explicit confirmation.",
+          },
+        ],
+        requiresApproval: true,
+      };
+    }
+
+    const text = input.text?.trim();
+    if (!input.delete) {
+      if (!text) {
+        return AnchorService.blockResult("question_text_missing", "Question text is required.");
+      }
+      if (/[\r\n]/.test(text)) {
+        return AnchorService.blockResult("question_text_multiline", "Question text must be a single line.");
+      }
+    }
+
+    const existing = await this.repo.readRaw(input.name);
+    if (existing !== undefined) {
+      const location = locateQuestion(existing, target);
+      if (!location.ok) {
+        return questionLocationBlock(input.name, target, location);
+      }
+    }
+
+    return this.applyAnchorContentPatch({
+      name: input.name,
+      message:
+        input.message ??
+        (input.delete ? `chore: delete question in ${input.name}` : `chore: update question text in ${input.name}`),
+      approved: input.approved,
+      coAuthor: input.coAuthor,
+      expectedFileCommit: input.expectedFileCommit,
+      mutate: (old) => (input.delete ? deleteQuestion(old, target) : replaceQuestionText(old, target, text as string)),
+    });
+  }
+
+  async updateBulletText(input: UpdateBulletTextInput): Promise<WriteAnchorResult> {
+    if (!Number.isInteger(input.line) || input.line < 1) {
+      return AnchorService.blockResult("editable_bullet_line_invalid", "Line must be a positive integer.");
+    }
+    if (input.delete && !input.approved) {
+      return {
+        warnings: [
+          {
+            severity: "BLOCK",
+            code: "requires_approval",
+            message:
+              "updateBulletText delete removes a rendered bullet and its attached continuation lines; retry with approved: true after explicit confirmation.",
+          },
+        ],
+        requiresApproval: true,
+      };
+    }
+
+    const text = input.text?.trim();
+    if (!input.delete) {
+      if (!text) {
+        return AnchorService.blockResult("editable_bullet_text_missing", "Bullet text is required.");
+      }
+      if (/[\r\n]/.test(text)) {
+        return AnchorService.blockResult("editable_bullet_text_multiline", "Bullet text must be a single line.");
+      }
+    }
+
+    const existing = await this.repo.readRaw(input.name);
+    if (existing !== undefined) {
+      const location = locateEditableBullet(existing, input.line);
+      if (!location.ok) {
+        return {
+          warnings: [
+            {
+              severity: "BLOCK",
+              code: location.code,
+              message:
+                location.code === "editable_bullet_not_allowed"
+                  ? `Line ${input.line} in ${input.name} is not in an editable rendered-bullet section.`
+                  : `No editable rendered bullet found at line ${input.line} in ${input.name}.`,
+            },
+          ],
+        };
+      }
+    }
+
+    return this.applyAnchorContentPatch({
+      name: input.name,
+      message:
+        input.message ??
+        (input.delete ? `chore: delete rendered bullet in ${input.name}` : `chore: update rendered bullet in ${input.name}`),
+      approved: input.approved,
+      coAuthor: input.coAuthor,
+      expectedFileCommit: input.expectedFileCommit,
+      mutate: (old) =>
+        input.delete ? deleteEditableBullet(old, input.line) : replaceEditableBulletText(old, input.line, text as string),
     });
   }
 
