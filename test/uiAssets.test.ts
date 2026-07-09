@@ -827,6 +827,14 @@ describe("UI browser assets", () => {
     expect(html).toContain('href="projects/demo/demo.md"');
   });
 
+  it("escapes safe markdown href values before inserting them into html", () => {
+    const hooks = loadHooks();
+    const html = hooks.renderMarkdown('[quoted](https://example.test/a" onclick="alert(1))');
+
+    expect(html).toContain('href="https://example.test/a&amp;quot; onclick=&amp;quot;alert(1"');
+    expect(html).not.toContain('<a href="https://example.test/a" onclick="alert(1"');
+  });
+
   it("renders claim epistemology controls while hiding source annotation lines", () => {
     const hooks = loadHooks();
     const html = hooks.renderMarkdown(
@@ -903,6 +911,23 @@ describe("UI browser assets", () => {
 
     expect(html).not.toContain('data-bullet-line="3" data-bullet-kind="bullet"');
     expect(html).not.toContain('data-bullet-line="7" data-bullet-kind="bullet"');
+  });
+
+  it("treats indented tilde fences as code blocks for rendered bullets", () => {
+    const hooks = loadHooks();
+    const html = hooks.renderMarkdown(
+      "## tl-dr\n\n"
+        + "  ~~~markdown\n"
+        + "  - Hidden fenced bullet.\n"
+        + "  ~~~",
+      {
+        claimControls: true,
+        lineOffset: 0,
+      },
+    );
+
+    expect(html).toContain("<pre><code>  - Hidden fenced bullet.</code></pre>");
+    expect(html).not.toContain('data-bullet-line="4" data-bullet-kind="bullet"');
   });
 
   it("rejects obfuscated unsafe link protocols", () => {

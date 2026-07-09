@@ -7290,7 +7290,6 @@ export const UI_JS = `(function () {
 
   function renderMarkdown(markdown, options) {
     var opts = options || {};
-    var fence = String.fromCharCode(96, 96, 96);
     var lines = String(markdown || "").split(/\\r?\\n/);
     var lineOffset = opts.lineOffset || 0;
     var claimsByLine = {};
@@ -7316,6 +7315,7 @@ export const UI_JS = `(function () {
     var paragraph = [];
     var inList = false;
     var inCode = false;
+    var codeFence = null;
     var code = [];
     var codeLanguage = "";
     var currentSection = "";
@@ -7351,15 +7351,18 @@ export const UI_JS = `(function () {
       if (opts.claimControls && sourceLines[originalLine]) {
         continue;
       }
-      if (line.slice(0, 3) === fence) {
+      var fence = markdownFence(line);
+      if (fence && (!inCode || markdownFenceCloses(line, codeFence))) {
         if (inCode) {
           flushCode();
           inCode = false;
+          codeFence = null;
         } else {
           flushParagraph();
           closeList();
           inCode = true;
-          codeLanguage = firstFenceLanguage(line.slice(3));
+          codeFence = fence;
+          codeLanguage = firstFenceLanguage(fence.info);
         }
         continue;
       }
@@ -7438,6 +7441,23 @@ export const UI_JS = `(function () {
   function firstFenceLanguage(info) {
     var first = String(info || "").trim().split(/\\s+/)[0] || "";
     return first.toLowerCase();
+  }
+
+  function markdownFence(line) {
+    var tick = String.fromCharCode(96);
+    var match = new RegExp("^(\\\\s*)((?:" + tick + "{3,})|(?:~{3,}))(.*)$").exec(String(line || ""));
+    if (!match) {
+      return null;
+    }
+    return { char: match[2].charAt(0), len: match[2].length, info: match[3] || "" };
+  }
+
+  function markdownFenceCloses(line, fence) {
+    if (!fence) {
+      return false;
+    }
+    var pattern = fence.char === String.fromCharCode(96) ? String.fromCharCode(96) : "~";
+    return new RegExp("^\\\\s*" + pattern + "{" + fence.len + ",}\\\\s*$").test(String(line || ""));
   }
 
   function stripClosingHeadingHashes(text) {
@@ -7747,7 +7767,7 @@ export const UI_JS = `(function () {
         if (!safeHref) {
           return "<span class=\\"unsafe-link\\" title=\\"Unsafe link removed\\">" + label + "</span>";
         }
-        return "<a href=\\"" + safeHref + "\\" target=\\"_blank\\" rel=\\"noreferrer\\">" + label + "</a>";
+        return "<a href=\\"" + escapeHtml(safeHref) + "\\" target=\\"_blank\\" rel=\\"noreferrer\\">" + label + "</a>";
       });
   }
 
