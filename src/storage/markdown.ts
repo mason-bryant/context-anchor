@@ -188,7 +188,13 @@ export function extractBullets(markdown: string): Set<string> {
 }
 
 export function normalizeBullet(input: string): string {
-  return input.replace(/\s+/g, " ").trim().toLowerCase();
+  return input
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/^\[(?: |x|~|-|open|resolved|deferred|wont-answer|won't-answer|wont answer)\]\s+/i, "")
+    .replace(/^(?:open|resolved|deferred|wont-answer|won't-answer|wont answer):\s+/i, "")
+    .trim()
+    .toLowerCase();
 }
 
 export function countCompletedRows(markdown: string): number {

@@ -1,3 +1,4 @@
+import { stripClaimAnnotations } from "../claims.js";
 import { parseAnchor } from "../storage/markdown.js";
 import type { Validator } from "./types.js";
 import { maybeMigrationBlock } from "./types.js";
@@ -12,7 +13,9 @@ export const validateLastValidatedBump: Validator = (context) => {
   const oldParsed = parseAnchor(context.oldContent);
   const newParsed = parseAnchor(context.newContent);
   const substantiveChanged = SUBSTANTIVE_SECTIONS.some(
-    (section) => oldParsed.sections.get(section) !== newParsed.sections.get(section),
+    (section) =>
+      sectionForSubstantiveComparison(oldParsed.sections.get(section)) !==
+      sectionForSubstantiveComparison(newParsed.sections.get(section)),
   );
 
   if (!substantiveChanged) {
@@ -33,6 +36,10 @@ export const validateLastValidatedBump: Validator = (context) => {
     ),
   ];
 };
+
+function sectionForSubstantiveComparison(sectionBody: string | undefined): string | undefined {
+  return sectionBody === undefined ? undefined : stripClaimAnnotations(sectionBody);
+}
 
 function dateKey(value: unknown): unknown {
   return value instanceof Date ? value.toISOString().slice(0, 10) : value;

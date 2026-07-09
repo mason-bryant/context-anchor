@@ -1085,6 +1085,63 @@ describe("UI HTTP routes", () => {
     expect(listed.tasks.find((task) => task.taskId === created.taskId)?.notes).toBeUndefined();
   });
 
+  it("lists and updates questions through the UI routes", async () => {
+    type QuestionWrite = { version?: string; warnings: { severity: string; code?: string }[] };
+    type QuestionsResult = {
+      questions: Array<{ id?: string; text: string; status: string; resolution?: string }>;
+      summary: { total: number; open: number; resolved: number; deferred: number; "wont-answer": number };
+    };
+    const content = projectAnchorContent().replace(
+      "## PRs",
+      `## Open Questions
+
+- [ ] Q-1: Should questions be structured?
+- [x] Q-2: Should resolved questions remain queryable?
+  Resolution: Yes.
+
+## PRs`,
+    );
+    const write = await service.writeAnchor({
+      name: "projects/demo/questions.md",
+      content,
+      message: "test: add questions anchor",
+      approved: true,
+    });
+    expect(write.warnings.filter((warning) => warning.severity === "BLOCK")).toEqual([]);
+
+    const initial = await fetchJson<QuestionsResult>("/api/ui/questions?project=demo&status=open");
+    expect(initial.summary).toEqual({ total: 2, open: 1, resolved: 1, deferred: 0, "wont-answer": 0 });
+    expect(initial.questions.map((question) => question.id)).toEqual(["Q-1"]);
+
+    const resolved = await postJson<QuestionWrite>("/api/ui/question-status", {
+      name: "projects/demo/questions.md",
+      id: "Q-1",
+      resolution: "Yes, they are queryable workflow state.",
+      resolvedOn: "2026-07-09",
+      approved: true,
+    });
+    expect(resolved.warnings.filter((warning) => warning.severity === "BLOCK")).toEqual([]);
+    expect(resolved.version).toBeTruthy();
+
+    const afterResolve = await fetchJson<QuestionsResult>("/api/ui/questions?name=projects%2Fdemo%2Fquestions.md");
+    expect(afterResolve.summary.resolved).toBe(2);
+    expect(afterResolve.questions.find((question) => question.id === "Q-1")?.resolution).toBe(
+      "Yes, they are queryable workflow state.",
+    );
+
+    const reopened = await postJson<QuestionWrite>("/api/ui/question-status", {
+      name: "projects/demo/questions.md",
+      id: "Q-1",
+      action: "reopen",
+      approved: true,
+    });
+    expect(reopened.warnings.filter((warning) => warning.severity === "BLOCK")).toEqual([]);
+
+    const afterReopen = await fetchJson<QuestionsResult>("/api/ui/questions?name=projects%2Fdemo%2Fquestions.md&q=structured");
+    expect(afterReopen.questions[0]).toMatchObject({ id: "Q-1", status: "open" });
+    expect(afterReopen.questions[0]?.resolution).toBeUndefined();
+  });
+
   it("blocks task creation with a due date but no date confidence", async () => {
     const response = await postJson<{ taskId?: string; warnings: { code: string }[] }>("/api/ui/task-create", {
       project: "demo",

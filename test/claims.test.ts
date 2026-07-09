@@ -15,6 +15,7 @@ import {
   locateClaimByLine,
   parseAnnotationBody,
   replaceClaimText,
+  stripClaimAnnotations,
   upsertClaimAnnotation,
   upsertClaimSources,
 } from "../src/claims.js";
@@ -218,6 +219,17 @@ describe("extractClaims", () => {
     expect(claim.annotation?.src).toBe("src/a.ts");
     expect(claim.strength).toBe("high");
     expect(claim.strengthScore).toBe(2.5);
+  });
+
+  it("strips claim annotations while preserving claim text", () => {
+    const stripped = stripClaimAnnotations(`- Standalone source claim.
+  {src: PR #42; observed: 2026-07-08; conf: medium}
+- Inline source claim. {src: src/a.ts; observed: 2026-07-08; conf: high}
+- Unsourced claim.`);
+
+    expect(stripped).toBe(`- Standalone source claim.
+- Inline source claim.
+- Unsourced claim.`);
   });
 
   it("keeps valid sources while reporting malformed source rows", () => {
@@ -437,7 +449,7 @@ describe("AnchorService claims", () => {
     await rm(tmpDir, { recursive: true, force: true });
   });
 
-  function anchorContent(extraClaim = ""): string {
+  function anchorContent(extraClaim = "", lastValidated?: string): string {
     // Local date so writes that keep last_validated unchanged pass the
     // lastValidatedBump validator's local-time "today" check.
     const now = new Date();
@@ -451,7 +463,7 @@ tags:
 summary: "Claims test anchor."
 read_this_if:
   - "You are testing claims."
-last_validated: ${localToday}
+last_validated: ${lastValidated ?? localToday}
 ---
 
 # Claims Demo
@@ -474,6 +486,10 @@ last_validated: ${localToday}
 
 None.
 `;
+  }
+
+  function dateKey(value: unknown): unknown {
+    return value instanceof Date ? value.toISOString().slice(0, 10) : value;
   }
 
   it("lists claims with coverage summary and status filter", async () => {
@@ -558,6 +574,27 @@ None.
     expect(cleared.version).toBeTruthy();
     const after = await service.listClaims({ name: "projects/demo/claims-demo", status: "unannotated" });
     expect(after.claims.map((claim) => claim.text)).toContain("Legacy claim with no provenance.");
+  });
+
+  it("does not require a last_validated bump for provenance-only source edits", async () => {
+    await service.writeAnchor({
+      name: "projects/demo/claims-demo",
+      content: anchorContent("", "1900-01-01"),
+      message: "test: add stale claims demo",
+    });
+
+    const set = await service.setClaimSources({
+      name: "projects/demo/claims-demo",
+      claim: "Legacy claim",
+      sources: [{ src: "PR #42", observed: "2026-07-08", conf: "medium" }],
+    });
+
+    expect(set.warnings.filter((warning) => warning.severity === "BLOCK")).toEqual([]);
+    expect(set.version).toBeTruthy();
+
+    const read = await service.readAnchor("projects/demo/claims-demo");
+    expect(dateKey(read.frontmatter.last_validated)).toBe("1900-01-01");
+    expect(read.content).toContain("  {src: PR #42; observed: 2026-07-08; conf: medium}");
   });
 
   it("sets multiple sources by line and resolves source links", async () => {

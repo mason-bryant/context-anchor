@@ -373,6 +373,70 @@ export function registerUiRoutes(
     }),
   );
 
+  app.get(
+    "/api/ui/questions",
+    ...protect,
+    jsonRoute(async (req) => {
+      const name = optionalQueryString(req, "name");
+      const project = optionalQueryString(req, "project");
+      const statusRaw = optionalQueryString(req, "status");
+      const status =
+        statusRaw === "open" || statusRaw === "resolved" || statusRaw === "deferred" || statusRaw === "wont-answer"
+          ? statusRaw
+          : undefined;
+      const q = optionalQueryString(req, "q");
+      return service.listQuestions({
+        ...(name ? { name } : {}),
+        ...(project ? { project } : {}),
+        ...(status ? { status } : {}),
+        ...(q ? { q } : {}),
+      });
+    }),
+  );
+
+  app.post(
+    "/api/ui/question-status",
+    ...protect,
+    jsonRoute(async (req) => {
+      const body = bodyRecord(req);
+      const action = optionalBodyString(body, "action");
+      const line = optionalBodyNumber(body, "line");
+      if (line !== undefined && (!Number.isInteger(line) || line < 1)) {
+        throw new UiHttpError(400, "Invalid line: expected a positive integer");
+      }
+      if (action === "reopen") {
+        return service.reopenQuestion({
+          name: requiredBodyString(body, "name"),
+          line,
+          id: optionalBodyString(body, "id"),
+          question: optionalBodyString(body, "question"),
+          owner: optionalBodyString(body, "owner"),
+          message: optionalBodyString(body, "message"),
+          approved: booleanBody(body, "approved"),
+          coAuthor: optionalBodyString(body, "coAuthor"),
+          expectedFileCommit: optionalBodyString(body, "expectedFileCommit"),
+        });
+      }
+      const statusRaw = optionalBodyString(body, "status");
+      const status =
+        statusRaw === "resolved" || statusRaw === "deferred" || statusRaw === "wont-answer" ? statusRaw : undefined;
+      return service.resolveQuestion({
+        name: requiredBodyString(body, "name"),
+        line,
+        id: optionalBodyString(body, "id"),
+        question: optionalBodyString(body, "question"),
+        status,
+        resolution: optionalBodyString(body, "resolution"),
+        resolvedOn: optionalBodyString(body, "resolvedOn"),
+        owner: optionalBodyString(body, "owner"),
+        message: optionalBodyString(body, "message"),
+        approved: booleanBody(body, "approved"),
+        coAuthor: optionalBodyString(body, "coAuthor"),
+        expectedFileCommit: optionalBodyString(body, "expectedFileCommit"),
+      });
+    }),
+  );
+
   app.post(
     "/api/ui/claim-annotation",
     ...protect,

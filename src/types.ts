@@ -1,4 +1,5 @@
 import type { AnchorClaim, ClaimProvenanceSummary } from "./claims.js";
+import type { AnchorQuestion, QuestionStatus } from "./questions.js";
 import type { DiscoveryCategory } from "./taxonomy.js";
 
 export type AnchorFrontmatter = Record<string, unknown>;
@@ -342,6 +343,66 @@ export type TaskDueRow = {
   resolvedPerson?: { id: string; displayName: string };
   /** Resolved team from the people registry, when the task owner matches a known team. */
   resolvedTeam?: { id: string; displayName: string };
+};
+
+export type QuestionRow = AnchorQuestion & {
+  anchor: string;
+};
+
+export type ListQuestionsInput = {
+  /** Limit to one anchor by name. */
+  name?: string;
+  /** Limit to a project slug or alias. */
+  project?: string;
+  /** Filter by question status. Defaults to all statuses. */
+  status?: QuestionStatus;
+  /** Case-insensitive text search over question text, id, resolution, owner, section, or anchor name. */
+  q?: string;
+};
+
+export type ListQuestionsResult = {
+  questions: QuestionRow[];
+  summary: Record<QuestionStatus, number> & { total: number };
+  projectFilter?: ProjectFilterResolution;
+};
+
+export type ResolveQuestionInput = {
+  /** Anchor containing the question. */
+  name: string;
+  /** 1-based line number of the question bullet. */
+  line?: number;
+  /** Stable question id such as Q-1 or Q-001. */
+  id?: string;
+  /** Unique substring of the question text. */
+  question?: string;
+  /** Terminal or non-open status to apply. Defaults to resolved. */
+  status?: Exclude<QuestionStatus, "open">;
+  /** Optional resolution text stored under the question bullet. */
+  resolution?: string;
+  /** Date the question was resolved or otherwise closed (YYYY-MM-DD). Defaults to today. */
+  resolvedOn?: string;
+  /** Optional owner or decision-maker. */
+  owner?: string;
+  message?: string;
+  approved?: boolean;
+  coAuthor?: string;
+  expectedFileCommit?: string;
+};
+
+export type ReopenQuestionInput = {
+  /** Anchor containing the question. */
+  name: string;
+  /** 1-based line number of the question bullet. */
+  line?: number;
+  /** Stable question id such as Q-1 or Q-001. */
+  id?: string;
+  /** Unique substring of the question text. */
+  question?: string;
+  owner?: string;
+  message?: string;
+  approved?: boolean;
+  coAuthor?: string;
+  expectedFileCommit?: string;
 };
 
 export type PersonIdentities = {

@@ -6,8 +6,8 @@ Persistent project memory for AI coding agents.
 right project context already in view. It serves curated Markdown anchors from a
 private git repo, plans task-specific context bundles, tracks cross-project task state
 through both MCP tools and a browser UI, and validates every write so decisions,
-constraints, roadmaps, PR history, tasks, and agent rules stay durable instead of
-disappearing into chat.
+constraints, roadmaps, PR history, tasks, open questions, and agent rules stay
+durable instead of disappearing into chat.
 
 Use it when you want agents to:
 
@@ -16,6 +16,7 @@ Use it when you want agents to:
 - write durable discoveries back through validated, committed MCP tools
 - keep roadmaps, milestones, proposed changes, and stale-context warnings auditable
 - manage backlog and milestone tasks across projects from MCP or the HTTP UI
+- track open, resolved, deferred, and won't-answer questions from anchor question sections
 - share the same context across multiple agent runtimes without copying files around
 
 ## Quick Start
@@ -48,6 +49,10 @@ For setup walkthroughs, see [QUICKSTART.md](QUICKSTART.md).
   first-class data with status, owner, priority, notes, due dates, completion dates,
   and roadmap goal links. Agents can manage them through MCP, while the `/ui` Tasks
   view supports cross-project filtering, grouping, assignment, and lifecycle edits.
+- **Structured question tracking in anchors.** Top-level bullets in `## Open Questions`,
+  `## Questions`, and `## Resolved Questions` are parsed as first-class questions with
+  status, owner, resolution, and resolution date. Agents can list, resolve, defer,
+  close, and reopen them without losing the readable Markdown trail.
 - **People and teams as coordination data.** The people registry stores teammates,
   teams, identities, aliases, and project roles. Task owners can resolve to people or
   teams, and project associations can feed owner filters, coordination views, and
@@ -86,6 +91,11 @@ milestone for unscheduled work. Agents can list, create, complete, reopen, delet
 update tasks through MCP tools such as `listTasksDue`, `createTask`, `updateTaskOwner`,
 `updateTaskDue`, and `completeTask`.
 
+Structured questions live as top-level bullets in anchor `## Open Questions`,
+`## Questions`, or `## Resolved Questions` sections. Agents can use `listQuestions`,
+`resolveQuestion`, and `reopenQuestion` to keep unresolved questions queryable while
+retaining resolved questions as historical context.
+
 ## What It Keeps Organized
 
 - Project state: current facts, decisions, constraints, PR history, and roadmaps.
@@ -94,6 +104,8 @@ update tasks through MCP tools such as `listTasksDue`, `createTask`, `updateTask
 - Milestones: roadmap goal groupings with stable goal IDs and task-aware retrieval.
 - Tasks: cross-project backlog and milestone work with status, owner, priority, notes,
   due dates, and completion dates.
+- Questions: open, resolved, deferred, and won't-answer follow-ups with optional
+  resolution metadata.
 - Proposed changes: reviewable draft edits before they become durable context.
 
 The HTTP server also serves a browser UI at `/ui` for browsing the generated root,
