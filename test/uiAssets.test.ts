@@ -604,15 +604,24 @@ describe("UI browser assets", () => {
     expect(UI_HTML).toContain('id="rename-anchor"');
     expect(UI_HTML).toContain('id="delete-anchor"');
     expect(UI_HTML).toContain('id="priority-form"');
+    expect(UI_HTML).toContain('class="priority-form"');
+    expect(UI_HTML).toContain('id="priority-input" type="text" inputmode="decimal" pattern="[0-9.]*"');
+    expect(UI_HTML).not.toContain('id="clear-priority"');
+    expect(UI_HTML).not.toContain('id="priority-result"');
+    expect(UI_HTML).not.toContain("Set a numeric priority such as 1, 1.1, or 2.045.");
     expect(UI_HTML.indexOf('class="detail-mode-row"')).toBeGreaterThan(UI_HTML.indexOf('class="detail-grid"'));
     expect(UI_HTML.indexOf('class="detail-mode-row"')).toBeLessThan(UI_HTML.indexOf('id="detail-tasks"'));
     expect(UI_HTML.indexOf('id="history-actions"')).toBeGreaterThan(UI_HTML.indexOf('id="detail-frontmatter"'));
     expect(UI_CSS).toContain(".detail-mode-row");
+    expect(UI_CSS).toContain(".priority-form");
+    expect(UI_CSS).toContain("#priority-input");
     expect(UI_HTML).toContain('<option value="priority">Priority</option>');
     expect(UI_JS).toContain("/api/ui/proposed-change-apply");
     expect(UI_JS).toContain("updateProposalFromMutationResult(result)");
     expect(UI_JS).not.toContain("await selectAnchor(state.selectedName");
     expect(UI_JS).toContain("/api/ui/project-priority");
+    expect(UI_JS).toContain("sanitizeProjectPriorityInput");
+    expect(UI_JS).toContain("replace(/[^0-9.]/g, \"\")");
     expect(UI_JS).toContain("/api/ui/anchor-versions");
     expect(UI_JS).toContain("/api/ui/anchor-delete");
   });
@@ -636,6 +645,9 @@ describe("UI browser assets", () => {
         "delete-anchor",
       ]),
     );
+    expect(hooks.readOnlyDetailControlIds()).toContain("priority-input");
+    expect(hooks.readOnlyDetailControlIds()).toContain("update-priority");
+    expect(hooks.readOnlyDetailControlIds()).not.toContain("clear-priority");
     expect(hooks.readOnlyDetailControlIds()).not.toContain("load-history");
     expect(hooks.readOnlyDetailControlIds()).not.toContain("edit-operation");
     expect(hooks.readOnlyDetailControlIds()).not.toContain("stage-proposal");

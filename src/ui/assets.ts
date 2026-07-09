@@ -493,17 +493,13 @@ export const UI_HTML = `<!doctype html>
                 </div>
                 <div class="metadata-box">
                   <h3>Project Priority</h3>
-                  <form id="priority-form" class="stack-form">
-                    <label>
+                  <form id="priority-form" class="priority-form">
+                    <label class="priority-field">
                       Priority
-                      <input id="priority-input" type="number" step="any" placeholder="1.1">
+                      <input id="priority-input" type="text" inputmode="decimal" pattern="[0-9.]*" placeholder="1.1" aria-label="Project priority">
                     </label>
-                    <div class="action-row">
-                      <button id="update-priority" type="submit">Update</button>
-                      <button id="clear-priority" type="button">Clear</button>
-                    </div>
+                    <button id="update-priority" type="submit">Update</button>
                   </form>
-                  <pre id="priority-result" class="compact-raw">Set a numeric priority such as 1, 1.1, or 2.045.</pre>
                 </div>
               </section>
               <div class="detail-mode-row">
@@ -1150,6 +1146,26 @@ textarea {
 .stack-form {
   display: grid;
   gap: 10px;
+}
+
+.priority-form {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.priority-field {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 4px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+#priority-input {
+  width: 7ch;
+  min-width: 7ch;
 }
 
 .read-only-anchor .history-actions,
@@ -2451,7 +2467,6 @@ export const UI_JS = `(function () {
   var READ_ONLY_DETAIL_CONTROL_IDS = [
     "priority-input",
     "update-priority",
-    "clear-priority",
     "rename-target",
     "action-message",
     "rename-anchor",
@@ -4144,7 +4159,28 @@ export const UI_JS = `(function () {
     return JSON.stringify(result, null, 2);
   }
 
-  async function updateProjectPriorityFromDetail(clear) {
+  function sanitizeProjectPriorityValue(value) {
+    return String(value || "").replace(/[^0-9.]/g, "");
+  }
+
+  function sanitizeProjectPriorityInput() {
+    var input = el("priority-input");
+    var clean = sanitizeProjectPriorityValue(input.value);
+    if (input.value !== clean) {
+      input.value = clean;
+    }
+  }
+
+  function warningSummary(warnings) {
+    if (!Array.isArray(warnings) || !warnings.length) {
+      return "";
+    }
+    return warnings.map(function (warning) {
+      return warning.message || warning.code || "Warning";
+    }).join("; ");
+  }
+
+  async function updateProjectPriorityFromDetail() {
     var anchor = state.selectedAnchor;
     if (!anchor) {
       throw new Error("Select a project anchor before updating priority.");
@@ -4154,18 +4190,19 @@ export const UI_JS = `(function () {
     if (!project) {
       throw new Error("Selected anchor is not associated with a project.");
     }
+    sanitizeProjectPriorityInput();
+    var raw = el("priority-input").value.trim();
     var priority = null;
-    if (!clear) {
-      var raw = el("priority-input").value.trim();
-      if (!raw) {
-        throw new Error("Enter a priority number, or use Clear.");
+    if (raw) {
+      if (!/^[0-9.]+$/.test(raw)) {
+        throw new Error("Project priority can only contain digits and periods.");
       }
       priority = Number(raw);
       if (!Number.isFinite(priority)) {
         throw new Error("Priority must be a finite number.");
       }
     }
-    var label = clear ? "clear this project priority" : "set this project priority to P" + String(priority);
+    var label = raw ? "set this project priority to P" + String(priority) : "clear this project priority";
     if (!window.confirm("Explicitly approve and " + label + "?")) {
       return;
     }
@@ -4176,11 +4213,18 @@ export const UI_JS = `(function () {
       approved: true,
       expectedFileCommit: anchor.fileCommit
     });
-    el("priority-result").textContent = formatWriteResult(result);
     if (result.version) {
+      setBanner(raw ? "Project priority updated." : "Project priority cleared.", "info");
       await load();
       await selectAnchor(anchor.name, { skipLocationUpdate: true });
+      return;
     }
+    var warnings = warningSummary(result.warnings);
+    if (warnings) {
+      setBanner(warnings, (result.warnings || []).some(function (warning) { return warning.severity === "BLOCK"; }) ? "error" : "warn");
+      return;
+    }
+    setBanner("Project priority update returned without a new version.", "warn");
   }
 
   async function loadAnchorHistory() {
@@ -6983,11 +7027,6 @@ export const UI_JS = `(function () {
     el("priority-input").value = priorityLabel(anchorPriority(anchor)).replace(/^P/, "");
     el("rename-target").value = anchor.name;
     el("action-message").value = "";
-    el("priority-result").textContent = readOnly
-      ? SERVER_RULE_READ_ONLY_MESSAGE
-      : projectOf(anchor)
-      ? "Set a numeric priority such as 1, 1.1, or 2.045."
-      : "Priority is only available for project anchors.";
     el("history-list").innerHTML = "";
     el("history-diff").textContent = readOnly
       ? "Load history to inspect diffs. Built-in server rules cannot be renamed, deleted, edited, or reverted."
@@ -7551,10 +7590,10 @@ export const UI_JS = `(function () {
     });
     el("priority-form").addEventListener("submit", function (event) {
       event.preventDefault();
-      updateProjectPriorityFromDetail(false).catch(function (error) { setBanner(error.message, "error"); });
+      updateProjectPriorityFromDetail().catch(function (error) { setBanner(error.message, "error"); });
     });
-    el("clear-priority").addEventListener("click", function () {
-      updateProjectPriorityFromDetail(true).catch(function (error) { setBanner(error.message, "error"); });
+    el("priority-input").addEventListener("input", function () {
+      sanitizeProjectPriorityInput();
     });
     el("load-history").addEventListener("click", function () {
       loadAnchorHistory().catch(function (error) { setBanner(error.message, "error"); });
