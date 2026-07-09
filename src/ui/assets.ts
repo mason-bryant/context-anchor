@@ -7776,6 +7776,16 @@ export const UI_JS = `(function () {
     if (!value || value.indexOf("//") === 0) {
       return null;
     }
+    if (
+      value.indexOf('"') >= 0
+      || value.indexOf("'") >= 0
+      || value.indexOf("<") >= 0
+      || value.indexOf(">") >= 0
+      || value.indexOf(String.fromCharCode(96)) >= 0
+      || /&(quot|#34|#39|lt|gt|#x27|#x60);/i.test(value)
+    ) {
+      return null;
+    }
     var schemeProbe = value.replace(/[\\u0000-\\u001f\\u007f\\s]+/g, "");
     var scheme = schemeProbe.match(/^([a-zA-Z][a-zA-Z0-9+.-]*):/);
     if (!scheme) {

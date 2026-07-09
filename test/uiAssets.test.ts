@@ -827,12 +827,13 @@ describe("UI browser assets", () => {
     expect(html).toContain('href="projects/demo/demo.md"');
   });
 
-  it("escapes safe markdown href values before inserting them into html", () => {
+  it("treats quote-bearing markdown href values as unsafe", () => {
     const hooks = loadHooks();
-    const html = hooks.renderMarkdown('[quoted](https://example.test/a" onclick="alert(1))');
+    const html = hooks.renderMarkdown('[quoted](https://example.test/a" onclick="steal")');
 
-    expect(html).toContain('href="https://example.test/a&amp;quot; onclick=&amp;quot;alert(1"');
-    expect(html).not.toContain('<a href="https://example.test/a" onclick="alert(1"');
+    expect(html).toContain("Unsafe link removed");
+    expect(html).not.toContain('<a href="https://example.test/a" onclick="steal"');
+    expect(html).not.toContain("onclick=");
   });
 
   it("renders claim epistemology controls while hiding source annotation lines", () => {
