@@ -563,83 +563,32 @@ export const UI_HTML = `<!doctype html>
                   <pre id="priority-result" class="compact-raw">Set a numeric priority such as 1, 1.1, or 2.045.</pre>
                 </div>
               </section>
-              <section class="editor-grid">
-                <div class="metadata-box">
-                  <h3>Edit Composer</h3>
-                  <form id="edit-form" class="stack-form">
-                    <label>
-                      Operation
-                      <select id="edit-operation">
-                        <option value="section.replace">Replace section</option>
-                        <option value="section.append">Append to section</option>
-                        <option value="frontmatter.merge">Merge front matter</option>
-                      </select>
-                    </label>
-                    <label>
-                      Heading
-                      <select id="edit-heading">
-                        <option value="Current State">Current State</option>
-                        <option value="Decisions">Decisions</option>
-                        <option value="Constraints">Constraints</option>
-                        <option value="PRs">PRs</option>
-                      </select>
-                    </label>
-                    <label>
-                      Summary
-                      <input id="edit-summary" type="text" placeholder="Short review summary">
-                    </label>
-                    <label>
-                      Content or front matter JSON
-                      <textarea id="edit-content" rows="7" placeholder="- New anchor fact, or { &quot;summary&quot;: &quot;...&quot; }"></textarea>
-                    </label>
-                    <div class="form-grid">
-                      <label>
-                        Commit message
-                        <input id="edit-message" type="text" placeholder="optional">
-                      </label>
-                      <label>
-                        last_validated
-                        <input id="edit-last-validated" type="date">
-                      </label>
-                    </div>
-                    <label class="checkbox-row">
-                      <input id="edit-approved" type="checkbox">
-                      Explicit approval for gated changes
-                    </label>
-                    <div class="action-row">
-                      <button id="stage-proposal" type="button">Stage Proposal</button>
-                      <button id="commit-direct" type="submit">Commit Directly</button>
-                    </div>
-                  </form>
-                  <pre id="edit-result" class="compact-raw">Compose an edit to preview proposal or commit results.</pre>
-                </div>
-                <div class="metadata-box">
-                  <h3>History and Actions</h3>
-                  <div class="action-row">
-                    <button id="load-history" type="button">Load History</button>
-                    <button id="delete-anchor" type="button">Delete</button>
-                  </div>
-                  <div class="form-grid">
-                    <label>
-                      New path
-                      <input id="rename-target" type="text" placeholder="projects/demo/new-name.md">
-                    </label>
-                    <label>
-                      Action message
-                      <input id="action-message" type="text" placeholder="optional">
-                    </label>
-                  </div>
-                  <div class="action-row">
-                    <button id="rename-anchor" type="button">Rename</button>
-                  </div>
-                  <div id="history-list" class="planner-list"></div>
-                  <pre id="history-diff" class="compact-raw">Load history to inspect diffs or revert.</pre>
-                </div>
-              </section>
               <div id="detail-tasks" class="detail-tasks" hidden></div>
               <article id="detail-rendered" class="markdown"></article>
               <pre id="detail-raw" class="raw-view" hidden></pre>
               <pre id="detail-frontmatter" class="raw-view" hidden></pre>
+              <section id="history-actions" class="metadata-box history-actions">
+                <h3>History and Actions</h3>
+                <div class="action-row">
+                  <button id="load-history" type="button">Load History</button>
+                  <button id="delete-anchor" type="button">Delete</button>
+                </div>
+                <div class="form-grid">
+                  <label>
+                    New path
+                    <input id="rename-target" type="text" placeholder="projects/demo/new-name.md">
+                  </label>
+                  <label>
+                    Action message
+                    <input id="action-message" type="text" placeholder="optional">
+                  </label>
+                </div>
+                <div class="action-row">
+                  <button id="rename-anchor" type="button">Rename</button>
+                </div>
+                <div id="history-list" class="planner-list"></div>
+                <pre id="history-diff" class="compact-raw">Load history to inspect diffs or revert.</pre>
+              </section>
             </div>
           </section>
         </section>
@@ -1218,13 +1167,6 @@ textarea {
   margin-bottom: 14px;
 }
 
-.editor-grid {
-  display: grid;
-  grid-template-columns: minmax(360px, 1.1fr) minmax(320px, 0.9fr);
-  gap: 12px;
-  margin-bottom: 14px;
-}
-
 .metadata-box {
   padding: 14px;
 }
@@ -1254,19 +1196,21 @@ textarea {
   gap: 10px;
 }
 
-.read-only-anchor .editor-grid .metadata-box,
+.read-only-anchor .history-actions,
 .read-only-anchor .detail-grid .metadata-box:nth-child(3) {
   background: #f8f9fb;
   border-color: #d2d8df;
 }
 
-.read-only-anchor .editor-grid input:disabled,
-.read-only-anchor .editor-grid select:disabled,
-.read-only-anchor .editor-grid textarea:disabled,
 .read-only-anchor #priority-input:disabled,
 .read-only-anchor #rename-target:disabled,
 .read-only-anchor #action-message:disabled {
   border-color: #cbd3dc;
+}
+
+.history-actions {
+  margin-top: 14px;
+  margin-bottom: 14px;
 }
 
 .stack-form label,
@@ -1481,7 +1425,6 @@ textarea {
 
   .view-header,
   .detail-grid,
-  .editor-grid,
   .planner-controls,
   .planner-summary,
   .planner-grid,
@@ -2610,15 +2553,6 @@ export const UI_JS = `(function () {
     "priority-input",
     "update-priority",
     "clear-priority",
-    "edit-operation",
-    "edit-heading",
-    "edit-summary",
-    "edit-content",
-    "edit-message",
-    "edit-last-validated",
-    "edit-approved",
-    "stage-proposal",
-    "commit-direct",
     "rename-target",
     "action-message",
     "rename-anchor",
@@ -4330,107 +4264,6 @@ export const UI_JS = `(function () {
     });
     el("proposal-preview").textContent = formatWriteResult(result);
     updateProposalFromMutationResult(result);
-  }
-
-  function scopeForAnchor(anchor) {
-    if (!anchor) {
-      throw new Error("Select an anchor before staging a proposal.");
-    }
-    if (anchor.name.indexOf("agent-rules/") === 0) {
-      return { kind: "agent-rules" };
-    }
-    var project = projectOf(anchor);
-    if (project) {
-      return { kind: "project", project: project };
-    }
-    throw new Error("Proposals are currently supported for project and agent-rule anchors.");
-  }
-
-  function parseFrontmatterUpdates() {
-    try {
-      var parsed = JSON.parse(el("edit-content").value || "{}");
-      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-        throw new Error("Front matter updates must be a JSON object.");
-      }
-      return parsed;
-    } catch (error) {
-      throw new Error("Front matter updates must be valid JSON. " + error.message);
-    }
-  }
-
-  function editOperation() {
-    var type = el("edit-operation").value;
-    if (type === "frontmatter.merge") {
-      return { type: type, updates: parseFrontmatterUpdates() };
-    }
-    var operation = {
-      type: type,
-      heading: el("edit-heading").value,
-      content: el("edit-content").value
-    };
-    var lastValidated = el("edit-last-validated").value;
-    if (lastValidated) {
-      operation.lastValidated = lastValidated;
-    }
-    return operation;
-  }
-
-  async function stageProposalFromComposer() {
-    var anchor = state.selectedAnchor;
-    if (!anchor) {
-      throw new Error("Select an anchor before staging a proposal.");
-    }
-    assertMutableAnchor(anchor, "stage proposals for them");
-    var operation = editOperation();
-    var summary = el("edit-summary").value.trim() || (operation.type + " " + anchor.name);
-    var result = await apiPost("/api/ui/propose-change", {
-      scope: scopeForAnchor(anchor),
-      target: anchor.name,
-      summary: summary,
-      operations: [operation],
-      message: el("edit-message").value.trim() || undefined
-    });
-    el("edit-result").textContent = formatWriteResult(result);
-    await loadProposals();
-    if (result.proposal && result.proposal.id) {
-      await selectProposal(result.proposal.id);
-    }
-  }
-
-  async function commitDirectFromComposer() {
-    var anchor = state.selectedAnchor;
-    if (!anchor) {
-      throw new Error("Select an anchor before committing.");
-    }
-    assertMutableAnchor(anchor, "commit edits to them");
-    var operation = editOperation();
-    var common = {
-      name: anchor.name,
-      message: el("edit-message").value.trim() || undefined,
-      approved: el("edit-approved").checked,
-      expectedFileCommit: anchor.fileCommit
-    };
-    var result;
-    if (operation.type === "frontmatter.merge") {
-      result = await apiPost("/api/ui/anchor-frontmatter", Object.assign({}, common, { updates: operation.updates }));
-    } else if (operation.type === "section.append") {
-      result = await apiPost("/api/ui/anchor-append", Object.assign({}, common, {
-        heading: operation.heading,
-        content: operation.content,
-        lastValidated: operation.lastValidated
-      }));
-    } else {
-      result = await apiPost("/api/ui/anchor-section", Object.assign({}, common, {
-        heading: operation.heading,
-        content: operation.content,
-        lastValidated: operation.lastValidated
-      }));
-    }
-    el("edit-result").textContent = formatWriteResult(result);
-    if (result.version) {
-      await load();
-      await selectAnchor(anchor.name, { skipLocationUpdate: true });
-    }
   }
 
   function formatWriteResult(result) {
@@ -7557,10 +7390,6 @@ export const UI_JS = `(function () {
     wireClaimEpistemologyControls(el("detail-rendered"), anchor, readOnly);
     el("detail-raw").textContent = anchor.content || "";
     el("detail-frontmatter").textContent = JSON.stringify(anchor.frontmatter || {}, null, 2);
-    el("edit-summary").value = "";
-    el("edit-content").value = "";
-    el("edit-message").value = "";
-    el("edit-approved").checked = false;
     el("priority-input").value = priorityLabel(anchorPriority(anchor)).replace(/^P/, "");
     el("rename-target").value = anchor.name;
     el("action-message").value = "";
@@ -7569,9 +7398,6 @@ export const UI_JS = `(function () {
       : projectOf(anchor)
       ? "Set a numeric priority such as 1, 1.1, or 2.045."
       : "Priority is only available for project anchors.";
-    el("edit-result").textContent = readOnly
-      ? SERVER_RULE_READ_ONLY_MESSAGE
-      : "Compose an edit to preview proposal or commit results.";
     el("history-list").innerHTML = "";
     el("history-diff").textContent = readOnly
       ? "Load history to inspect diffs. Built-in server rules cannot be renamed, deleted, edited, or reverted."
@@ -8153,13 +7979,6 @@ export const UI_JS = `(function () {
     });
     el("reject-proposal").addEventListener("click", function () {
       reviewActiveProposal("rejected").catch(function (error) { setBanner(error.message, "error"); });
-    });
-    el("stage-proposal").addEventListener("click", function () {
-      stageProposalFromComposer().catch(function (error) { setBanner(error.message, "error"); });
-    });
-    el("edit-form").addEventListener("submit", function (event) {
-      event.preventDefault();
-      commitDirectFromComposer().catch(function (error) { setBanner(error.message, "error"); });
     });
     el("priority-form").addEventListener("submit", function (event) {
       event.preventDefault();

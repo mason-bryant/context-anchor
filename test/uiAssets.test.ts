@@ -584,23 +584,23 @@ describe("UI browser assets", () => {
     expect(groups.flatMap((group) => group.tasks.map((task) => task.taskId))).toEqual(["T-3", "T-2", "T-1", "T-4"]);
   });
 
-  it("includes guarded editing and proposal review surfaces", () => {
+  it("includes field editing, history, and proposal review surfaces without the edit composer", () => {
     expect(UI_HTML).toContain('data-tab="review"');
     expect(UI_HTML).toContain('id="proposal-list"');
     expect(UI_HTML).toContain('id="proposal-preview"');
-    expect(UI_HTML).toContain('id="edit-form"');
-    expect(UI_HTML).toContain('id="stage-proposal"');
-    expect(UI_HTML).toContain('id="commit-direct"');
+    expect(UI_HTML).not.toContain("Edit Composer");
+    expect(UI_HTML).not.toContain('id="edit-form"');
+    expect(UI_HTML).not.toContain('id="stage-proposal"');
+    expect(UI_HTML).not.toContain('id="commit-direct"');
     expect(UI_HTML).toContain('id="load-history"');
     expect(UI_HTML).toContain('id="rename-anchor"');
     expect(UI_HTML).toContain('id="delete-anchor"');
     expect(UI_HTML).toContain('id="priority-form"');
+    expect(UI_HTML.indexOf('id="history-actions"')).toBeGreaterThan(UI_HTML.indexOf('id="detail-frontmatter"'));
     expect(UI_HTML).toContain('<option value="priority">Priority</option>');
-    expect(UI_JS).toContain("/api/ui/propose-change");
     expect(UI_JS).toContain("/api/ui/proposed-change-apply");
     expect(UI_JS).toContain("updateProposalFromMutationResult(result)");
     expect(UI_JS).not.toContain("await selectAnchor(state.selectedName");
-    expect(UI_JS).toContain("/api/ui/anchor-frontmatter");
     expect(UI_JS).toContain("/api/ui/project-priority");
     expect(UI_JS).toContain("/api/ui/anchor-versions");
     expect(UI_JS).toContain("/api/ui/anchor-delete");
@@ -621,15 +621,14 @@ describe("UI browser assets", () => {
     expect(hooks.isServerRuleAnchor({ name: "projects/demo/demo.md", origin: "repo" })).toBe(false);
     expect(hooks.readOnlyDetailControlIds()).toEqual(
       expect.arrayContaining([
-        "edit-operation",
-        "edit-content",
-        "stage-proposal",
-        "commit-direct",
         "rename-anchor",
         "delete-anchor",
       ]),
     );
     expect(hooks.readOnlyDetailControlIds()).not.toContain("load-history");
+    expect(hooks.readOnlyDetailControlIds()).not.toContain("edit-operation");
+    expect(hooks.readOnlyDetailControlIds()).not.toContain("stage-proposal");
+    expect(hooks.readOnlyDetailControlIds()).not.toContain("commit-direct");
   });
 
   it("keeps mutated proposals visible and updates their status in place", () => {
