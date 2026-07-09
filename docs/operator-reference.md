@@ -377,6 +377,34 @@ When a user asks to put a task on a project backlog, resolve or create the reser
 `milestone_id: backlog` milestone, add the task to its structured `tasks`, do not
 assign `sequence`, and do not invent dates, owners, or goal ids.
 
+## Structured Questions
+
+Anchors can keep follow-up questions as readable Markdown while exposing them as
+queryable data. `listQuestions` parses top-level bullets from these H2 sections:
+
+- `## Open Questions`
+- `## Questions`
+- `## Resolved Questions`
+
+Supported status markers include `[ ]`, `[x]`, `[-]`, `[resolved]`, `[deferred]`,
+and `[wont-answer]`. Optional metadata lines under the bullet are parsed when they
+start with `Resolution:`, `Resolved on:`, `Owner:`, or `Status:`.
+
+Example:
+
+```md
+## Open Questions
+
+- [ ] Q-1: Which source owns this decision?
+- [x] Q-2: Should resolved questions remain queryable?
+  Resolution: Yes, they remain useful as historical context.
+  Resolved on: 2026-07-09
+```
+
+Use `resolveQuestion` to mark a question `resolved`, `deferred`, or `wont-answer`.
+Use `reopenQuestion` to mark it open again. Both tools locate questions by line,
+stable `Q-...` id, or unique text fragment.
+
 ## Staleness Signals
 
 `planContextBundle` and `startTask` flag included anchors whose `last_validated` date

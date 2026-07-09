@@ -899,6 +899,105 @@ the index when your workflow checks in that file.`,
     },
   );
 
+  const QuestionStatusSchema = z.enum(["open", "resolved", "deferred", "wont-answer"]);
+  const ClosedQuestionStatusSchema = z.enum(["resolved", "deferred", "wont-answer"]);
+
+  server.registerTool(
+    "listQuestions",
+    {
+      title: "List Anchor Questions",
+      description:
+        "List structured questions parsed from top-level bullets in Open Questions, Questions, or Resolved Questions sections across one anchor or a project. Supports common markdown markers like [ ], [x], [resolved], [deferred], and [wont-answer], plus metadata lines such as Resolution, Resolved on, Owner, and Status. The summary reflects the full scope; filters narrow only the returned list.",
+      inputSchema: z.object({
+        name: z.string().optional().describe("Limit to one anchor by name."),
+        project: z.string().optional().describe("Limit to a project slug or alias."),
+        status: QuestionStatusSchema.optional().describe("Filter by question status."),
+        q: z.string().optional().describe("Case-insensitive search over question text, id, resolution, owner, section, or anchor name."),
+      }),
+      annotations: { destructiveHint: false, idempotentHint: true },
+    },
+    async ({ name, project, status, q }) => {
+      const result = await service.listQuestions({ name, project, status, q });
+      return jsonResult(result, false);
+    },
+  );
+
+  server.registerTool(
+    "resolveQuestion",
+    {
+      title: "Resolve Anchor Question",
+      description:
+        "Mark one question resolved, deferred, or wont-answer in an anchor's Open Questions, Questions, or Resolved Questions section. Locate the question by line, id, or unique text fragment. The write rewrites the question bullet with a structured status marker and optional resolution metadata.",
+      inputSchema: z.object({
+        name: z.string().describe("Anchor containing the question."),
+        line: z.number().int().positive().optional().describe("1-based line number of the question bullet."),
+        id: z.string().optional().describe("Stable question id such as Q-1 or Q-001."),
+        question: z.string().optional().describe("Unique substring of the question text."),
+        status: ClosedQuestionStatusSchema.optional().describe("Status to apply. Defaults to resolved."),
+        resolution: z.string().optional().describe("Resolution text to store under the question bullet."),
+        resolvedOn: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().describe("Resolution/closure date. Defaults to today."),
+        owner: z.string().optional().describe("Optional owner or decision-maker."),
+        message: z.string().optional(),
+        approved: z.boolean().default(false),
+        coAuthor: z.string().optional(),
+        expectedFileCommit: z.string().optional(),
+      }),
+      annotations: { destructiveHint: false, idempotentHint: false },
+    },
+    async ({ name, line, id, question, status, resolution, resolvedOn, owner, message, approved, coAuthor, expectedFileCommit }) => {
+      const result = await service.resolveQuestion({
+        name,
+        line,
+        id,
+        question,
+        status,
+        resolution,
+        resolvedOn,
+        owner,
+        message,
+        approved,
+        coAuthor,
+        expectedFileCommit,
+      });
+      return jsonResult(result, result.version ? false : true);
+    },
+  );
+
+  server.registerTool(
+    "reopenQuestion",
+    {
+      title: "Reopen Anchor Question",
+      description:
+        "Mark one structured question open again in an anchor's Open Questions, Questions, or Resolved Questions section. Locate the question by line, id, or unique text fragment. Existing resolution metadata is removed while non-metadata continuation lines are preserved.",
+      inputSchema: z.object({
+        name: z.string().describe("Anchor containing the question."),
+        line: z.number().int().positive().optional().describe("1-based line number of the question bullet."),
+        id: z.string().optional().describe("Stable question id such as Q-1 or Q-001."),
+        question: z.string().optional().describe("Unique substring of the question text."),
+        owner: z.string().optional().describe("Optional owner to retain or set."),
+        message: z.string().optional(),
+        approved: z.boolean().default(false),
+        coAuthor: z.string().optional(),
+        expectedFileCommit: z.string().optional(),
+      }),
+      annotations: { destructiveHint: false, idempotentHint: false },
+    },
+    async ({ name, line, id, question, owner, message, approved, coAuthor, expectedFileCommit }) => {
+      const result = await service.reopenQuestion({
+        name,
+        line,
+        id,
+        question,
+        owner,
+        message,
+        approved,
+        coAuthor,
+        expectedFileCommit,
+      });
+      return jsonResult(result, result.version ? false : true);
+    },
+  );
+
   const ClaimConfidenceSchema = z.enum(["high", "medium", "low"]);
   const ClaimSourceSchema = z.object({
     src: z.string().min(1),

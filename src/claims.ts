@@ -111,6 +111,28 @@ export function looksLikeAnnotationBody(inner: string): boolean {
   return /(^|;)\s*(src|observed|conf|kind|person)\s*:/.test(inner);
 }
 
+export function stripClaimAnnotations(content: string): string {
+  const lines = content.split(/\r?\n/);
+  const removeIndexes = new Set<number>();
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+    if (!line.startsWith("- ")) {
+      continue;
+    }
+
+    const trailing = TRAILING_ANNOTATION_PATTERN.exec(line);
+    if (trailing && looksLikeAnnotationBody(trailing[2])) {
+      lines[index] = trailing[1];
+    }
+    for (const annotationIndex of findStandaloneAnnotationIndexes(lines, index)) {
+      removeIndexes.add(annotationIndex);
+    }
+  }
+
+  return lines.filter((_, index) => !removeIndexes.has(index)).join("\n");
+}
+
 export function parseAnnotationBody(inner: string): AnnotationParseResult {
   const errors: string[] = [];
   const fields = new Map<string, string>();

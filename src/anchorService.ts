@@ -115,11 +115,15 @@ import type {
   SearchHit,
   TaskDueRow,
   ListTasksDueInput,
+  ListQuestionsInput,
+  ListQuestionsResult,
   CreateTaskInput,
   CreateTaskResult,
   CompleteTaskInput,
   ReopenTaskInput,
   DeleteTaskInput,
+  ResolveQuestionInput,
+  ReopenQuestionInput,
   UpdateProjectPriorityInput,
   UpdateTaskDueInput,
   UpdateTaskOwnerInput,
@@ -164,6 +168,13 @@ import {
   type ClaimSource,
   type ClaimStatus,
 } from "./claims.js";
+import {
+  extractQuestions,
+  locateQuestion,
+  setQuestionStatus,
+  type QuestionStatus,
+  type QuestionTarget,
+} from "./questions.js";
 
 const BM25_INDEX_READ_CONCURRENCY = 8;
 
@@ -1655,6 +1666,114 @@ None.
     });
 
     return { claims, summary, ...(projectFilter ? { projectFilter } : {}) };
+  }
+
+  async listQuestions(input: ListQuestionsInput = {}): Promise<ListQuestionsResult> {
+    let names: string[];
+    let projectFilter: ProjectFilterResolution | undefined;
+
+    if (input.name) {
+      names = [this.repo.resolveAnchor(input.name).name];
+    } else {
+      const resolved = await this.resolveProjectFilter(input.project);
+      projectFilter = resolved.projectFilter;
+      const metas = await this.repo.listAnchors(
+        resolved.effectiveProject ? { project: resolved.effectiveProject } : {},
+      );
+      names = metas.map((meta) => meta.name);
+    }
+
+    const allQuestions: ListQuestionsResult["questions"] = [];
+    for (const name of names) {
+      if (isBuiltInAnchorName(name)) {
+        continue;
+      }
+      const content = await this.repo.readRaw(name);
+      if (content === undefined) {
+        continue;
+      }
+      for (const question of extractQuestions(content)) {
+        allQuestions.push({ anchor: name, ...question });
+      }
+    }
+
+    const summary = questionSummary(allQuestions);
+    const needle = input.q?.trim().toLowerCase();
+    const questions = allQuestions.filter((question) => {
+      if (input.status && question.status !== input.status) {
+        return false;
+      }
+      if (needle && !questionSearchText(question).includes(needle)) {
+        return false;
+      }
+      return true;
+    });
+
+    return { questions, summary, ...(projectFilter ? { projectFilter } : {}) };
+  }
+
+  async resolveQuestion(input: ResolveQuestionInput): Promise<WriteAnchorResult> {
+    const target = questionTargetFromInput(input);
+    if (!target) {
+      return AnchorService.blockResult(
+        "question_target_missing",
+        "resolveQuestion requires a line number, question id, or question text fragment.",
+      );
+    }
+    const status = input.status ?? "resolved";
+    const resolvedOn = input.resolvedOn ?? AnchorService.today();
+    const existing = await this.repo.readRaw(input.name);
+    if (existing !== undefined) {
+      const location = locateQuestion(existing, target);
+      if (!location.ok) {
+        return questionLocationBlock(input.name, target, location);
+      }
+    }
+
+    return this.applyAnchorContentPatch({
+      name: input.name,
+      message: input.message ?? `chore: ${status} question in ${input.name}`,
+      approved: input.approved,
+      coAuthor: input.coAuthor,
+      expectedFileCommit: input.expectedFileCommit,
+      mutate: (old) =>
+        setQuestionStatus(old, target, {
+          status,
+          ...(input.resolution ? { resolution: input.resolution } : {}),
+          resolvedOn,
+          ...(input.owner ? { owner: input.owner } : {}),
+        }),
+    });
+  }
+
+  async reopenQuestion(input: ReopenQuestionInput): Promise<WriteAnchorResult> {
+    const target = questionTargetFromInput(input);
+    if (!target) {
+      return AnchorService.blockResult(
+        "question_target_missing",
+        "reopenQuestion requires a line number, question id, or question text fragment.",
+      );
+    }
+    const existing = await this.repo.readRaw(input.name);
+    if (existing !== undefined) {
+      const location = locateQuestion(existing, target);
+      if (!location.ok) {
+        return questionLocationBlock(input.name, target, location);
+      }
+    }
+
+    return this.applyAnchorContentPatch({
+      name: input.name,
+      message: input.message ?? `chore: reopen question in ${input.name}`,
+      approved: input.approved,
+      coAuthor: input.coAuthor,
+      expectedFileCommit: input.expectedFileCommit,
+      mutate: (old) =>
+        setQuestionStatus(old, target, {
+          status: "open",
+          ...(input.owner ? { owner: input.owner } : {}),
+        }),
+    });
   }
 
   private withResolvedSourceLinks(
@@ -3616,6 +3735,75 @@ function taskMatchesCompletedWindow(task: MilestoneTaskMeta, input: ListTasksDue
     return false;
   }
   return true;
+}
+
+function questionSummary(questions: readonly { status: QuestionStatus }[]): ListQuestionsResult["summary"] {
+  const summary: ListQuestionsResult["summary"] = {
+    total: questions.length,
+    open: 0,
+    resolved: 0,
+    deferred: 0,
+    "wont-answer": 0,
+  };
+  for (const question of questions) {
+    summary[question.status] += 1;
+  }
+  return summary;
+}
+
+function questionSearchText(question: ListQuestionsResult["questions"][number]): string {
+  return [
+    question.anchor,
+    question.section,
+    question.id,
+    question.text,
+    question.status,
+    question.resolution,
+    question.resolvedOn,
+    question.owner,
+  ]
+    .filter((part): part is string => typeof part === "string" && part.length > 0)
+    .join(" ")
+    .toLowerCase();
+}
+
+function questionTargetFromInput(input: {
+  line?: number;
+  id?: string;
+  question?: string;
+}): QuestionTarget | undefined {
+  if (input.line !== undefined) {
+    return { line: input.line };
+  }
+  if (input.id?.trim()) {
+    return { id: input.id.trim() };
+  }
+  if (input.question?.trim()) {
+    return { question: input.question.trim() };
+  }
+  return undefined;
+}
+
+function questionLocationBlock(
+  name: string,
+  target: QuestionTarget,
+  location: ReturnType<typeof locateQuestion> & { ok: false },
+): WriteAnchorResult {
+  const targetLabel = "line" in target ? `line ${target.line}` : "id" in target ? `id "${target.id}"` : `"${target.question}"`;
+  return {
+    warnings: [
+      {
+        severity: "BLOCK",
+        code: location.code,
+        message:
+          location.code === "question_not_found"
+            ? `No question in ${name} matches ${targetLabel}. Questions are top-level bullets in Open Questions, Questions, or Resolved Questions sections.`
+            : `Question match ${targetLabel} is ambiguous in ${name}. Matches: ${location.candidates
+                .map((candidate) => `"${candidate}"`)
+                .join(", ")}. Use a line number, id, or longer unique fragment.`,
+      },
+    ],
+  };
 }
 
 function compareAnchorTimestamp(
