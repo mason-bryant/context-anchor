@@ -15,6 +15,7 @@ import type {
   ProposedChangeStatus,
   ProposeChangeInput,
 } from "../types.js";
+import type { GraphEdgeType } from "../graph/model.js";
 import { UI_CSS, UI_HTML, UI_JS } from "./assets.js";
 import { toAnchorUiDetail, toAnchorUiMeta } from "./viewModel.js";
 
@@ -397,6 +398,30 @@ export function registerUiRoutes(
         ...(q ? { q } : {}),
         ...(observedBefore ? { observedBefore } : {}),
         ...(observedAfter ? { observedAfter } : {}),
+      });
+    }),
+  );
+
+  app.get(
+    "/api/ui/graph-neighbors",
+    ...protect,
+    jsonRoute(async (req) => {
+      const node = requiredQueryString(req, "node");
+      const depth = positiveIntQuery(req, "depth", 3);
+      const limit = positiveIntQuery(req, "limit", 200);
+      const directionRaw = optionalQueryString(req, "direction");
+      const direction =
+        directionRaw === "forward" || directionRaw === "reverse" || directionRaw === "both" ? directionRaw : undefined;
+      const edgeTypesRaw = optionalQueryString(req, "edgeTypes");
+      const edgeTypes = edgeTypesRaw
+        ? (edgeTypesRaw.split(",").map((value) => value.trim()).filter(Boolean) as GraphEdgeType[])
+        : undefined;
+      return service.graphNeighbors({
+        node,
+        ...(depth !== undefined ? { depth } : {}),
+        ...(limit !== undefined ? { limit } : {}),
+        ...(direction ? { direction } : {}),
+        ...(edgeTypes && edgeTypes.length > 0 ? { edgeTypes } : {}),
       });
     }),
   );
