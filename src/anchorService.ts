@@ -156,6 +156,7 @@ import {
   parseRepoPrefixedSource,
 } from "./graph/sourceParsing.js";
 import { parseClaimSource, type ParseClaimSourceContext } from "./graph/sourceId.js";
+import { GraphIndex } from "./graph/index.js";
 import { buildPeopleIndex, parsePeopleRegistry, type PeopleIndex } from "./peopleRegistry.js";
 import {
   extractMermaidBlocks,
@@ -224,6 +225,15 @@ export class AnchorService {
   private _projectMappings: ProjectMappings | undefined;
   /** Git commit the cached project mappings were parsed from. */
   private _projectMappingsCommit: string | undefined;
+  /**
+   * Derived knowledge graph (WP3), built lazily on first graph-consuming
+   * call and reused across calls — pattern-matches `_peopleRegistry`/
+   * `_projectMappings` above. Never constructed in the constructor (stdio
+   * spawns one process per session; no session should pay for the graph
+   * unless it asks a graph question). Its own `ensureBuilt()` is HEAD-keyed
+   * and self-refreshing, so this field just needs to exist once.
+   */
+  private _graphIndex: GraphIndex | undefined;
 
   constructor(
     private readonly repo: AnchorStore,
@@ -250,6 +260,33 @@ export class AnchorService {
   private invalidatePeopleRegistry(): void {
     this._peopleRegistry = undefined;
     this._peopleRegistryCommit = undefined;
+  }
+
+  /** Lazily construct (once) and return the derived graph index. Does not force a build — `GraphIndex` itself builds on first query. */
+  private getGraphIndex(): GraphIndex {
+    if (!this._graphIndex) {
+      this._graphIndex = new GraphIndex(this.repo, {
+        loadPeopleRegistry: () => this.loadPeopleRegistry(),
+        loadProjectMappings: () => this.loadProjectMappings(),
+      });
+    }
+    return this._graphIndex;
+  }
+
+  /**
+   * Fold a write/delete/rename into the graph index without forcing a build:
+   * only touch it if some earlier call already constructed it (mirrors the
+   * `GitMetadataCache`-style laziness other caches in this class use — an
+   * anchor write before anyone has ever queried the graph should not pay for
+   * a whole-tree graph build just to invalidate one document of a graph
+   * nobody has built yet). Awaited by callers so the graph is consistent
+   * before the write result returns; `invalidateDocument` itself is a no-op
+   * (returns immediately) if the graph was never built.
+   */
+  private async invalidateGraphDocument(anchorName: string): Promise<void> {
+    if (this._graphIndex) {
+      await this._graphIndex.invalidateDocument(anchorName);
+    }
   }
 
   async listPeople(team?: string): Promise<{ people: Person[] }> {
@@ -348,6 +385,16 @@ export class AnchorService {
       expectedFileCommit: input.expectedFileCommit,
     });
     this.invalidatePeopleRegistry();
+    // Registry-derived graph edges (person/team -> project RACI) live only in
+    // GraphIndex's whole-tree registryEdges, which invalidateDocument cannot
+    // refresh (it only re-extracts one anchor document's edges). A registry
+    // write DOES also advance repo HEAD, so GraphIndex's own HEAD-keyed
+    // ensureBuilt() would eventually rebuild anyway on the next query — but
+    // that is an implicit, easy-to-break coincidence, not an enforced
+    // invariant. Invalidate explicitly, mirroring invalidatePeopleRegistry
+    // above, so registry-derived edges are never served stale even if a
+    // future change decouples registry commits from anchor-tree HEAD.
+    this._graphIndex?.invalidate();
   }
 
   async getPeopleRegistry(): Promise<PeopleRegistryWithCommit> {
@@ -389,6 +436,10 @@ export class AnchorService {
       expectedFileCommit: input.expectedFileCommit,
     });
     this.invalidateProjectMappings();
+    // See the matching comment in writePeopleRegistry: project-mappings
+    // writes feed GraphIndex's registryEdges (project -> repo -> path),
+    // which invalidateDocument cannot refresh. Invalidate explicitly.
+    this._graphIndex?.invalidate();
   }
 
   private async buildBM25SearchIndex(anchors: AnchorMeta[]): Promise<{
@@ -813,6 +864,7 @@ export class AnchorService {
       coAuthor: input.coAuthor,
       push: this.options.pushOnWrite,
     });
+    await this.invalidateGraphDocument(resolved.name);
 
     return { version, warnings };
   }
@@ -894,6 +946,7 @@ export class AnchorService {
         coAuthor: input.coAuthor,
         push: this.options.pushOnWrite,
       });
+      await this.invalidateGraphDocument(resolved.name);
       return { version, warnings: [] };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -1007,6 +1060,8 @@ export class AnchorService {
         coAuthor: input.coAuthor,
         push: this.options.pushOnWrite,
       });
+      await this.invalidateGraphDocument(fromResolved.name);
+      await this.invalidateGraphDocument(toResolved.name);
       return { version, warnings: [] };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -3132,6 +3187,9 @@ None.
       return { newVersion: undefined };
     }
     const newVersion = await this.repo.revertAnchor(name, toVersion, message, this.options.pushOnWrite);
+    if (newVersion) {
+      await this.invalidateGraphDocument(this.repo.resolveAnchor(name).name);
+    }
     return { newVersion };
   }
 
