@@ -126,6 +126,18 @@ export type ValidationViolation = {
   path?: string;
 };
 
+export type MarkdownLinkSuggestion = {
+  line: number;
+  reference: string;
+  replacement: string;
+  url: string;
+};
+
+export type MarkdownLinkSuggestionResult = {
+  suggestions: MarkdownLinkSuggestion[];
+  suggestedContent: string;
+};
+
 export type WriteAnchorResult = {
   version?: string;
   warnings: ValidationViolation[];

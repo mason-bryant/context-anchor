@@ -133,6 +133,7 @@ import type {
   UpdateTaskPriorityInput,
   UpdateTaskNotesInput,
   ValidationViolation,
+  MarkdownLinkSuggestionResult,
   WriteAnchorInput,
   WriteAnchorResult,
   Person,
@@ -168,6 +169,7 @@ import {
   type GraphNeighborsResultNode,
 } from "./graph/neighbors.js";
 import { buildPeopleIndex, parsePeopleRegistry, type PeopleIndex } from "./peopleRegistry.js";
+import { suggestMarkdownLinks } from "./markdownLinks.js";
 import {
   extractMermaidBlocks,
   replaceMermaidBlockText,
@@ -692,6 +694,12 @@ export class AnchorService {
     return await this.withOptionalClaimProvenance(read, options.includeProvenance ?? "none", options.task);
   }
 
+  /** Return a reviewable Markdown-link rewrite without mutating the anchor. */
+  async suggestMarkdownLinks(name: string): Promise<MarkdownLinkSuggestionResult & { name: string; fileCommit?: string }> {
+    const read = await this.readAnchor(name);
+    return { name: read.name, ...(read.fileCommit ? { fileCommit: read.fileCommit } : {}), ...suggestMarkdownLinks(read.content) };
+  }
+
   readAnchorBatch(
     names: string[],
     options: { includeProvenance?: ClaimProvenanceMode; task?: string } = {},
@@ -808,6 +816,17 @@ export class AnchorService {
           message: `This write adds ${missing.length} claim(s) without provenance: ${shown}${more}. Record where each fact came from while you still have the source: append "  {src: <PR #N | repo path | anchor name | URL | person:<id>>; observed: <YYYY-MM-DD>; conf: high|medium|low}" or "  {src: trust me bro; kind: trust-me-bro; person: <id>; observed: <YYYY-MM-DD>; conf: high}" under the bullet, or use annotateClaim afterwards.`,
         });
       }
+    }
+
+    const linkSuggestions = suggestMarkdownLinks(content).suggestions;
+    if (linkSuggestions.length > 0) {
+      const shown = linkSuggestions.slice(0, 3).map((item) => `\`${item.reference}\``).join(", ");
+      const more = linkSuggestions.length > 3 ? ` (and ${linkSuggestions.length - 3} more)` : "";
+      carryWarnings.push({
+        severity: "WARN",
+        code: "markdown_link_suggested",
+        message: `Found ${linkSuggestions.length} inline-code reference(s) with an unambiguous URL already in this anchor: ${shown}${more}. Use suggestMarkdownLinks to preview explicit [label](url) replacements; inline code remains literal by design.`,
+      });
     }
 
     // Stable claim ids (WP1): every annotated claim leaves a write with an
