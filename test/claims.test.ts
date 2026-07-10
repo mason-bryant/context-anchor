@@ -8,11 +8,15 @@ import { AnchorService } from "../src/anchorService.js";
 import { AnchorRepository } from "../src/git/repo.js";
 import {
   carryClaimAnnotations,
+  collectClaimIds,
   extractClaims,
   formatAnnotationBody,
   deleteClaim,
+  isMintedClaimIdFormat,
   locateClaim,
   locateClaimByLine,
+  mintClaimId,
+  mintMissingClaimIds,
   parseAnnotationBody,
   replaceClaimText,
   stripClaimAnnotations,
@@ -245,6 +249,110 @@ describe("extractClaims", () => {
     expect(claim.sourceErrors?.[0]?.line).toBe(5);
     expect(claim.annotationErrors?.join(" ")).toContain("Line 5");
   });
+
+  it("parses a claim-level id from a multi-row claim when the id is on the second line", () => {
+    const doc = `## Current State
+
+- Multi-row claim with id on the second source.
+  {src: src/a.ts; observed: 2026-07-01; conf: high}
+  {src: PR #42; observed: 2026-07-02; conf: medium; id: c-abc123}
+`;
+    const [claim] = extractClaims(doc);
+    expect(claim.status).toBe("annotated");
+    expect(claim.id).toBe("c-abc123");
+  });
+
+  it("accepts a legacy kebab-case id as a valid claim id", () => {
+    const doc = `## Current State
+
+- Legacy-id claim.
+  {src: PR #1; observed: 2026-01-01; conf: high; id: owner-resolution}
+`;
+    const [claim] = extractClaims(doc);
+    expect(claim.status).toBe("annotated");
+    expect(claim.id).toBe("owner-resolution");
+    expect(isMintedClaimIdFormat(claim.id as string)).toBe(false);
+  });
+
+  it("blocks (marks malformed) a claim whose rows carry conflicting ids", () => {
+    const doc = `## Current State
+
+- Conflicting id claim.
+  {src: src/a.ts; observed: 2026-07-01; conf: high; id: c-aaaaaa}
+  {src: PR #42; observed: 2026-07-02; conf: medium; id: c-bbbbbb}
+`;
+    const [claim] = extractClaims(doc);
+    expect(claim.status).toBe("malformed");
+    expect(claim.annotationErrors?.join(" ")).toContain("conflicting ids");
+  });
+});
+
+describe("mintClaimId / collectClaimIds / mintMissingClaimIds", () => {
+  it("mints ids matching the c-xxxxxx format and unique against the existing set", () => {
+    const existing = new Set<string>();
+    for (let i = 0; i < 50; i += 1) {
+      const id = mintClaimId(existing);
+      expect(id).toMatch(/^c-[a-z0-9]{6,8}$/);
+      expect(existing.has(id)).toBe(false);
+      existing.add(id);
+    }
+  });
+
+  it("grows to 8 characters when the 6-character space is exhausted", () => {
+    // Force every possible 6-char id to appear "taken" so mintClaimId must
+    // grow to 8 chars; we simulate this with a Set-like object that always
+    // reports a hit for 6-char candidates only.
+    const existing: ReadonlySet<string> = {
+      has: (value: string) => /^c-[a-z0-9]{6}$/.test(value),
+    } as unknown as ReadonlySet<string>;
+    const id = mintClaimId(existing);
+    expect(id).toMatch(/^c-[a-z0-9]{8}$/);
+  });
+
+  it("collects every id present across a list of claims", () => {
+    const doc = `## Current State
+
+- Claim one.
+  {src: PR #1; observed: 2026-01-01; conf: high; id: c-one111}
+- Claim two.
+  {src: PR #2; observed: 2026-01-02; conf: medium; id: c-two222}
+- Claim three, unannotated.
+`;
+    const ids = collectClaimIds(extractClaims(doc));
+    expect(ids).toEqual(new Set(["c-one111", "c-two222"]));
+  });
+
+  it("mints missing ids for annotated claims and reports each mint, without re-minting existing ids", () => {
+    const doc = `## Current State
+
+- Already has an id.
+  {src: PR #1; observed: 2026-01-01; conf: high; id: c-existg}
+- Needs an id.
+  {src: PR #2; observed: 2026-01-02; conf: medium}
+- Unannotated claim stays id-less.
+`;
+    const result = mintMissingClaimIds(doc, new Set(["c-existg"]));
+    expect(result.minted).toHaveLength(1);
+    expect(result.minted[0]?.text).toBe("Needs an id.");
+    expect(result.minted[0]?.id).toMatch(/^c-[a-z0-9]{6,8}$/);
+
+    const claims = extractClaims(result.content);
+    expect(claims.find((claim) => claim.text === "Already has an id.")?.id).toBe("c-existg");
+    expect(claims.find((claim) => claim.text === "Needs an id.")?.id).toBe(result.minted[0]?.id);
+    expect(claims.find((claim) => claim.text === "Unannotated claim stays id-less.")?.id).toBeUndefined();
+  });
+
+  it("never mints for unannotated or malformed claims", () => {
+    const doc = `## Current State
+
+- Unannotated claim.
+- Malformed claim.
+  {src: ; observed: nope; conf: certain}
+`;
+    const result = mintMissingClaimIds(doc, new Set());
+    expect(result.minted).toEqual([]);
+    expect(result.content).toBe(doc);
+  });
 });
 
 describe("locateClaim / upsertClaimAnnotation", () => {
@@ -431,6 +539,68 @@ describe("carryClaimAnnotations", () => {
     expect(result.carried).toEqual([]);
     expect(result.lost).toHaveLength(1);
   });
+
+  it("carries sources by id onto a reworded claim, id match winning over text match", () => {
+    const oldDoc = `## Current State
+
+- Original wording, kept id.
+  {src: PR #1; observed: 2026-01-01; conf: high; id: c-keepid}
+  {src: src/a.ts; observed: 2026-01-02; conf: medium}
+`;
+    const newDoc = `## Current State
+
+- Completely reworded text, same id.
+  {src: PR #1; observed: 2026-01-01; conf: high; id: c-keepid}
+`;
+    const result = carryClaimAnnotations(oldDoc, newDoc);
+    expect(result.lost).toEqual([]);
+    // The second old source row (src/a.ts) is missing from the reworded
+    // claim's single annotation line, so id-match still re-applies the full
+    // old source set rather than silently keeping the partial new one.
+    expect(result.carried.map((entry) => entry.text)).toEqual(["Completely reworded text, same id."]);
+
+    const claims = extractClaims(result.content);
+    const reworded = claims.find((claim) => claim.text === "Completely reworded text, same id.");
+    expect(reworded?.id).toBe("c-keepid");
+    expect(reworded?.sources.map((source) => source.src)).toEqual(["PR #1", "src/a.ts"]);
+    expect(reworded?.status).toBe("annotated");
+  });
+
+  it("leaves a reworded claim alone when its kept id already carries the full old source set", () => {
+    const oldDoc = `## Current State
+
+- Original wording.
+  {src: PR #7; observed: 2026-03-01; conf: high; id: c-samesrc}
+`;
+    const newDoc = `## Current State
+
+- Reworded text, same source already present.
+  {src: PR #7; observed: 2026-03-01; conf: high; id: c-samesrc}
+`;
+    const result = carryClaimAnnotations(oldDoc, newDoc);
+    expect(result.lost).toEqual([]);
+    // Sources are already identical, so this is still reported as carried
+    // (the replacement is a no-op rewrite) rather than lost or blocked.
+    expect(result.carried.map((entry) => entry.text)).toEqual(["Reworded text, same source already present."]);
+    expect(result.content).toContain(
+      "- Reworded text, same source already present.\n  {src: PR #7; observed: 2026-03-01; conf: high; id: c-samesrc}",
+    );
+  });
+
+  it("reports loss when both the id and the byte-identical text are absent from new content", () => {
+    const oldDoc = `## Current State
+
+- Original wording, dropped id.
+  {src: PR #1; observed: 2026-01-01; conf: high; id: c-dropid}
+`;
+    const newDoc = `## Current State
+
+- Reworded text with no matching id anywhere.
+`;
+    const result = carryClaimAnnotations(oldDoc, newDoc);
+    expect(result.carried).toEqual([]);
+    expect(result.lost.map((entry) => entry.text)).toEqual(["Original wording, dropped id."]);
+  });
 });
 
 describe("AnchorService claims", () => {
@@ -565,6 +735,11 @@ None.
     const listed = await service.listClaims({ name: "projects/demo/claims-demo", status: "annotated" });
     expect(listed.claims).toHaveLength(2);
     expect(listed.claims.map((claim) => claim.annotation?.src)).toContain("person:alice");
+    // annotateClaim funnels through writeAnchor, so both annotated claims
+    // (the pre-existing one and this newly annotated one) end up with a
+    // minted claim id (WP1 acceptance: no annotated claim leaves a write
+    // without an id).
+    expect(listed.claims.every((claim) => Boolean(claim.id))).toBe(true);
 
     const cleared = await service.annotateClaim({
       name: "projects/demo/claims-demo",
@@ -594,7 +769,10 @@ None.
 
     const read = await service.readAnchor("projects/demo/claims-demo");
     expect(dateKey(read.frontmatter.last_validated)).toBe("1900-01-01");
-    expect(read.content).toContain("  {src: PR #42; observed: 2026-07-08; conf: medium}");
+    // The claim had no id before this edit, so the write pipeline mints one
+    // (WP1) — the source line still carries PR #42, plus a fresh id.
+    expect(read.content).toContain("src: PR #42; observed: 2026-07-08; conf: medium");
+    expect(read.content).toMatch(/\{src: PR #42; observed: 2026-07-08; conf: medium; id: c-[a-z0-9]{6,8}\}/);
   });
 
   it("sets multiple sources by line and resolves source links", async () => {
@@ -1117,5 +1295,272 @@ None.
       message: "test: clean write",
     });
     expect(clean.warnings.filter((warning) => warning.severity === "BLOCK")).toEqual([]);
+  });
+
+  it("mints a stable id for an annotated claim that lacks one, reporting a claim_id_minted WARN", async () => {
+    const write = await service.writeAnchor({
+      name: "projects/demo/claims-demo",
+      content: anchorContent(),
+      message: "test: add claims demo",
+    });
+    expect(write.warnings.filter((warning) => warning.severity === "BLOCK")).toEqual([]);
+    const minted = write.warnings.find((warning) => warning.code === "claim_id_minted");
+    expect(minted).toBeTruthy();
+    expect(minted?.severity).toBe("WARN");
+    expect(minted?.message).toContain("Annotated claim about the system.");
+
+    const listed = await service.listClaims({ name: "projects/demo/claims-demo", status: "annotated" });
+    expect(listed.claims).toHaveLength(1);
+    expect(listed.claims[0]?.id).toMatch(/^c-[a-z0-9]{6,8}$/);
+  });
+
+  it("acceptance: after a successful write, listClaims shows zero annotated claims without ids", async () => {
+    await service.writeAnchor({
+      name: "projects/demo/claims-demo",
+      content: anchorContent("\n- Another annotated claim.\n  {src: PR #60; observed: 2026-07-08; conf: medium}"),
+      message: "test: add claims demo",
+    });
+    const listed = await service.listClaims({ name: "projects/demo/claims-demo", status: "annotated" });
+    expect(listed.claims.length).toBeGreaterThan(0);
+    expect(listed.claims.every((claim) => Boolean(claim.id))).toBe(true);
+  });
+
+  it("does not re-mint an id for a claim that already has one", async () => {
+    const write = await service.writeAnchor({
+      name: "projects/demo/claims-demo",
+      content: anchorContent(),
+      message: "test: add claims demo",
+    });
+    expect(write.warnings.some((warning) => warning.code === "claim_id_minted")).toBe(true);
+    const firstId = (await service.listClaims({ name: "projects/demo/claims-demo", status: "annotated" })).claims[0]
+      ?.id;
+    expect(firstId).toBeTruthy();
+
+    // Touch the anchor again without changing the annotated claim: no
+    // second mint, and the id is unchanged.
+    const retouch = await service.updateAnchorSection({
+      name: "projects/demo/claims-demo",
+      heading: "Decisions",
+      content: "- A decision claim.\n- Another decision claim.",
+      message: "test: unrelated retouch",
+    });
+    expect(retouch.warnings.some((warning) => warning.code === "claim_id_minted")).toBe(false);
+    const secondId = (await service.listClaims({ name: "projects/demo/claims-demo", status: "annotated" })).claims[0]
+      ?.id;
+    expect(secondId).toBe(firstId);
+  });
+
+  it("mints tree-unique ids across anchors: no collisions across two anchors written in the same session", async () => {
+    await service.writeAnchor({
+      name: "projects/demo/claims-demo",
+      content: anchorContent(),
+      message: "test: add first claims demo",
+    });
+    const secondContent = anchorContent().replace("projects/demo", "projects/demo2");
+    await service.writeAnchor({
+      name: "projects/demo2/claims-demo-2",
+      content: `---
+project:
+  - demo2
+type: context-anchor
+tags:
+  - context-anchor
+summary: "Second claims test anchor."
+read_this_if:
+  - "You are testing claims."
+last_validated: 2026-07-08
+---
+
+# Claims Demo 2
+
+## Current State
+
+- Annotated claim in a second anchor.
+  {src: PR #61; observed: 2026-07-08; conf: high}
+
+## Decisions
+
+- A decision claim.
+
+## Constraints
+
+- A constraint claim.
+
+## PRs
+
+None.
+`,
+      message: "test: add second claims demo",
+    });
+
+    const all = await service.listClaims({ status: "annotated" });
+    const ids = all.claims.map((claim) => claim.id).filter(Boolean);
+    expect(new Set(ids).size).toBe(ids.length);
+  });
+
+  it("reword-keeping-id: rewriting a section that keeps a claim's id carries sources without gating", async () => {
+    const initial = await service.writeAnchor({
+      name: "projects/demo/claims-demo",
+      content: anchorContent(),
+      message: "test: add claims demo",
+    });
+    const mintedId = initial.warnings.find((warning) => warning.code === "claim_id_minted")?.message.match(
+      /Minted claim id (\S+)/,
+    )?.[1];
+    expect(mintedId).toBeTruthy();
+
+    const reword = await service.updateAnchorSection({
+      name: "projects/demo/claims-demo",
+      heading: "Current State",
+      content: `- Annotated claim about the system, reworded but keeps its id.\n  {src: PR #54; observed: 2026-07-07; conf: high; id: ${mintedId}}\n- Legacy claim with no provenance.`,
+      message: "test: reword keeping id",
+      // The pre-existing approval gate (validateApprovalGate) blocks any
+      // bullet-text change independent of provenance; approved: true clears
+      // that unrelated gate so this test isolates the WP1 assertion below:
+      // id-carry means claim_annotation_lost never fires for this rewording.
+      approved: true,
+    });
+    expect(reword.warnings.filter((warning) => warning.severity === "BLOCK")).toEqual([]);
+    expect(reword.warnings.some((warning) => warning.code === "claim_annotation_lost")).toBe(false);
+    expect(reword.version).toBeTruthy();
+
+    const listed = await service.listClaims({ name: "projects/demo/claims-demo", status: "annotated" });
+    expect(listed.claims[0]?.id).toBe(mintedId);
+    expect(listed.claims[0]?.text).toBe("Annotated claim about the system, reworded but keeps its id.");
+  });
+
+  it("reword-dropping-id: rewording a claim without its id still gates as a loss", async () => {
+    await service.writeAnchor({
+      name: "projects/demo/claims-demo",
+      content: anchorContent(),
+      message: "test: add claims demo",
+    });
+
+    const reword = await service.updateAnchorSection({
+      name: "projects/demo/claims-demo",
+      heading: "Current State",
+      content: "- Annotated claim about the system, reworded with no id carried.\n- Legacy claim with no provenance.",
+      message: "test: reword dropping id",
+    });
+    expect(reword.version).toBeUndefined();
+    expect(reword.requiresApproval).toBe(true);
+    expect(reword.warnings[0]?.code).toBe("claim_annotation_lost");
+  });
+
+  it("setClaimSources preserves an existing id when replacing a claim's sources", async () => {
+    const initial = await service.writeAnchor({
+      name: "projects/demo/claims-demo",
+      content: anchorContent(),
+      message: "test: add claims demo",
+    });
+    const mintedId = initial.warnings.find((warning) => warning.code === "claim_id_minted")?.message.match(
+      /Minted claim id (\S+)/,
+    )?.[1];
+    expect(mintedId).toBeTruthy();
+
+    const set = await service.setClaimSources({
+      name: "projects/demo/claims-demo",
+      claim: "Annotated claim about the system",
+      sources: [{ src: "PR #70", observed: "2026-07-09", conf: "medium" }],
+    });
+    expect(set.warnings.filter((warning) => warning.severity === "BLOCK")).toEqual([]);
+    // setClaimSources replaces sources silently (carryClaimAnnotations: false
+    // internally) and is not expected to emit its own claim_id_minted WARN
+    // when it is only preserving an id that already existed.
+    expect(set.warnings.some((warning) => warning.code === "claim_id_minted")).toBe(false);
+
+    const listed = await service.listClaims({ name: "projects/demo/claims-demo", status: "annotated" });
+    const claim = listed.claims.find((entry) => entry.text === "Annotated claim about the system.");
+    expect(claim?.id).toBe(mintedId);
+    expect(claim?.sources[0]?.src).toBe("PR #70");
+  });
+
+  it("annotateClaim clear removes the id along with the rest of the provenance", async () => {
+    await service.writeAnchor({
+      name: "projects/demo/claims-demo",
+      content: anchorContent(),
+      message: "test: add claims demo",
+    });
+    const beforeClear = await service.listClaims({ name: "projects/demo/claims-demo", status: "annotated" });
+    expect(beforeClear.claims[0]?.id).toBeTruthy();
+
+    const cleared = await service.annotateClaim({
+      name: "projects/demo/claims-demo",
+      claim: "Annotated claim about the system",
+      clear: true,
+    });
+    expect(cleared.warnings.filter((warning) => warning.severity === "BLOCK")).toEqual([]);
+
+    const afterClear = await service.listClaims({ name: "projects/demo/claims-demo" });
+    const claim = afterClear.claims.find((entry) => entry.text === "Annotated claim about the system.");
+    expect(claim?.status).toBe("unannotated");
+    expect(claim?.id).toBeUndefined();
+  });
+
+  it("blocks a write whose claim id duplicates another claim's id in the same write", async () => {
+    const duplicateContent = anchorContent(
+      `\n- Second annotated claim.\n  {src: PR #62; observed: 2026-07-08; conf: high; id: c-duptest}`,
+    ).replace(
+      "- Annotated claim about the system.\n  {src: PR #54; observed: 2026-07-07; conf: high}",
+      "- Annotated claim about the system.\n  {src: PR #54; observed: 2026-07-07; conf: high; id: c-duptest}",
+    );
+    const duplicate = await service.writeAnchor({
+      name: "projects/demo/claims-demo",
+      content: duplicateContent,
+      message: "test: duplicate id in same write",
+    });
+    expect(duplicate.version).toBeUndefined();
+    expect(duplicate.warnings.some((warning) => warning.code === "claim_id_duplicate")).toBe(true);
+  });
+
+  it("blocks a write whose claim id collides with an id already used elsewhere in the tree", async () => {
+    const first = await service.writeAnchor({
+      name: "projects/demo/claims-demo",
+      content: anchorContent(),
+      message: "test: add first claims demo",
+    });
+    const mintedId = first.warnings.find((warning) => warning.code === "claim_id_minted")?.message.match(
+      /Minted claim id (\S+)/,
+    )?.[1];
+    expect(mintedId).toBeTruthy();
+
+    const collidingContent = `---
+project:
+  - other
+type: context-anchor
+tags:
+  - context-anchor
+summary: "Other anchor."
+read_this_if:
+  - "You are testing claims."
+last_validated: 2026-07-08
+---
+
+# Other Anchor
+
+## Current State
+
+- A claim in a different anchor reusing the same id.
+  {src: PR #63; observed: 2026-07-08; conf: high; id: ${mintedId}}
+
+## Decisions
+
+- Another decision.
+
+## Constraints
+
+- Another constraint.
+
+## PRs
+
+None.
+`;
+    const collision = await service.writeAnchor({
+      name: "projects/other/other-anchor",
+      content: collidingContent,
+      message: "test: colliding id in a different anchor",
+    });
+    expect(collision.version).toBeUndefined();
+    expect(collision.warnings.some((warning) => warning.code === "claim_id_duplicate")).toBe(true);
   });
 });

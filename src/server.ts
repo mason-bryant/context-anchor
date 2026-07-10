@@ -231,7 +231,9 @@ Cite provenance on the claims you add, while you still have the source in contex
 indented annotation line \`  {src: <PR #N | repo path | anchor name | URL | person:<id>>; kind: <url|misc|design-doc|adr|configured>; observed: <YYYY-MM-DD>; \
 conf: high|medium|low}\`. Omit \`kind\` for ordinary URL evidence. Trust-me-bro developer assertions use \`{src: trust me bro; kind: trust-me-bro; person: <id>; observed: <YYYY-MM-DD>; conf: high}\`. conf semantics: high = observed directly (code you read, tests you ran) or a named trust-me-bro developer assertion, medium = read in a \
 doc or PR (all plain person:<id> told-by sources cap at medium), low = inferred. Writes that add claims without provenance \
-return a claim_annotation_missing WARN. Use annotateClaim to add or fix a single annotation afterwards, and \
+return a claim_annotation_missing WARN. You do not need to supply \`id\`: the server mints a stable, opaque claim id \
+(\`c-xxxxxx\`) for every annotated claim that lacks one, reported as a claim_id_minted WARN, so claims stay citable \
+across anchors as \`<anchor>#<id>\` and survive rewording. Use annotateClaim to add or fix a single annotation afterwards, and \
 listClaims({ status: "unannotated" }) to find the legacy backlog.
 
 Edits to Decisions or Constraints, or deleting existing bullets, need explicit human approval: retry the same write tool \
@@ -1037,14 +1039,14 @@ the index when your workflow checks in that file.`,
     {
       title: "Annotate Claim Provenance",
       description:
-        "Set or clear the provenance annotation ({src; observed; conf[; id; kind; person]}) on one claim without rewriting the anchor. Locate the claim with a unique substring of its bullet text. src may be a PR reference, repo file path, anchor name, URL, or person:<id> (plain person-sourced claims cap at conf: medium). kind is an optional claim source type configured in project-mappings.json; defaults include url, misc, design-doc, adr, and trust-me-bro. For a high-confidence named developer assertion, pass src: \"trust me bro\", kind: \"trust-me-bro\", person: <person id/name>, observed, and conf: high. Pass clear: true to remove an annotation.",
+        "Set or clear the provenance annotation ({src; observed; conf[; id; kind; person]}) on one claim without rewriting the anchor. Locate the claim with a unique substring of its bullet text. src may be a PR reference, repo file path, anchor name, URL, or person:<id> (plain person-sourced claims cap at conf: medium). kind is an optional claim source type configured in project-mappings.json; defaults include url, misc, design-doc, adr, and trust-me-bro. For a high-confidence named developer assertion, pass src: \"trust me bro\", kind: \"trust-me-bro\", person: <person id/name>, observed, and conf: high. id is normally omitted: the server mints and preserves a stable opaque id (c-xxxxxx) automatically, reported as a claim_id_minted WARN. Pass clear: true to remove an annotation (and its id).",
       inputSchema: z.object({
         name: z.string().describe("Anchor containing the claim."),
         claim: z.string().min(1).describe("Unique substring of the claim's bullet text."),
         src: z.string().optional().describe("Provenance source: PR #N, file path, anchor name, URL, person:<id>, or trust me bro."),
         observed: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().describe("Date the fact was observed/verified (YYYY-MM-DD)."),
         conf: ClaimConfidenceSchema.optional().describe("Stated confidence: high (observed directly), medium (read in doc/PR), low (inferred)."),
-        id: z.string().optional().describe("Optional stable kebab-case id for cross-references."),
+        id: z.string().optional().describe("Usually omit this: the server mints and preserves a stable opaque claim id (c-xxxxxx) automatically. Only pass it to intentionally set a specific id."),
         kind: z.string().optional().describe("Optional configured source kind, such as url, misc, design-doc, adr, or trust-me-bro."),
         person: z.string().optional().describe("Person id, display name, or alias for a person-backed source kind."),
         clear: z.boolean().optional().describe("When true, remove the claim's annotation."),
@@ -1080,7 +1082,7 @@ the index when your workflow checks in that file.`,
     {
       title: "Set Claim Provenance Sources",
       description:
-        "Replace all provenance sources on one claim. Locate the claim by a 1-based bullet line or by a unique substring of its bullet text. Each source is {src, observed, conf[, id, kind, person]}; kind is a configurable claim source type in project-mappings.json with built-in defaults url, misc, design-doc, adr, and trust-me-bro. Use {src:\"trust me bro\", kind:\"trust-me-bro\", person:\"<person>\", observed, conf:\"high\"} for a named developer assertion. Pass an empty sources array to clear provenance.",
+        "Replace all provenance sources on one claim. Locate the claim by a 1-based bullet line or by a unique substring of its bullet text. Each source is {src, observed, conf[, id, kind, person]}; kind is a configurable claim source type in project-mappings.json with built-in defaults url, misc, design-doc, adr, and trust-me-bro. Use {src:\"trust me bro\", kind:\"trust-me-bro\", person:\"<person>\", observed, conf:\"high\"} for a named developer assertion. The claim's existing stable id (c-xxxxxx) is preserved automatically across the replacement unless you pass an empty sources array to clear provenance, which drops the id with it.",
       inputSchema: z.object({
         name: z.string().describe("Anchor containing the claim."),
         claim: z.string().min(1).optional().describe("Unique substring of the claim's bullet text."),

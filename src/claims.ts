@@ -5,19 +5,38 @@
  * `## Constraints` section. A claim may carry one or more provenance sources:
  *
  *   - Owner resolution resolves a person before a team.
- *     {src: PR #39; observed: 2026-06-17; conf: high}
+ *     {src: PR #39; observed: 2026-06-17; conf: high; id: c-7f3a9d}
  *     {src: src/people.ts; observed: 2026-06-18; conf: medium}
  *
  * A source is either a standalone indented line inside the bullet's block
  * (preferred) or a trailing `{...}` block on the bullet line itself.
- * Grammar: `{src: <source>; observed: <YYYY-MM-DD>; conf: high|medium|low[; kind: <source-kind>][; id: <kebab-case>]}`
+ * Grammar: `{src: <source>; observed: <YYYY-MM-DD>; conf: high|medium|low[; kind: <source-kind>][; id: <opaque-id>]}`
  * Trust-me-bro sources use
  * `{src: trust me bro; kind: trust-me-bro; person: <person-id>; observed: <YYYY-MM-DD>; conf: high}`.
  * with order-insensitive keys. `src` values starting with `person:` record
  * told-by-a-person provenance and cap `conf` at `medium` (the conflicts-schema
  * semantics: `high` requires direct observation of an artifact or an explicit
  * trust-me-bro developer assertion).
+ *
+ * `id` is claim-level, not source-row-level (Work Package 1, claim knowledge
+ * graph design part 3 "Stable claim ids"): a claim has at most one id, though
+ * it may be written on any one of its source rows — the parser accepts it on
+ * any row and marks the claim malformed (surfaced as `claim_annotation_invalid`
+ * at the write-validator layer) if its rows carry two *different* ids. When
+ * normalizing/serializing, the id is always emitted on the claim's first
+ * annotation line.
+ *
+ * Every annotated claim gets an id; the server mints one at write time
+ * (`mintClaimId`) for any annotated claim that lacks one, reported via a
+ * `claim_id_minted` WARN (see `anchorService.ts`). Minted ids are opaque,
+ * random, and match `^c-[a-z0-9]{6,8}$` (6 chars, grown to 8 on collision).
+ * Grandfather clause: ids written before this format existed are plain
+ * kebab-case slugs (e.g. `owner-resolution`) and remain valid, parseable ids
+ * forever — `ID_PATTERN` accepts both shapes — but the server never *mints*
+ * a kebab slug; only the `c-` form is newly minted.
  */
+
+import { randomBytes } from "node:crypto";
 
 export const CLAIM_SECTIONS = ["Current State", "Decisions", "Constraints"] as const;
 
@@ -59,6 +78,13 @@ export type AnchorClaim = {
   /** Bullet text without the leading `- ` or any trailing annotation block. */
   text: string;
   status: ClaimStatus;
+  /**
+   * Stable claim-level graph node id (opaque, server-minted for new ids;
+   * legacy kebab-case ids are grandfathered). Present only when at least one
+   * valid source row carries an `id`. Undefined for unannotated claims —
+   * ids are never minted or attached to plain bullets.
+   */
+  id?: string;
   /** Valid provenance sources attached to this claim. */
   sources: ClaimSource[];
   /** Combined strength derived from valid sources. */
@@ -97,7 +123,10 @@ export type ClaimProvenanceSummary = {
 
 const ANNOTATION_KEYS = new Set(["src", "observed", "conf", "id", "kind", "person"]);
 const OBSERVED_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+/** Any legacy kebab-case slug or a server-minted `c-xxxxxx[xx]` id (grandfather clause; see module docstring). */
 const ID_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+/** Format the server mints: `c-` + 6 base36 chars, grown to 8 on collision. Never author-supplied by convention. */
+const MINTED_ID_PATTERN = /^c-[a-z0-9]{6,8}$/;
 const SOURCE_KIND_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const STANDALONE_ANNOTATION_PATTERN = /^(\s+)\{([^{}]*)\}\s*$/;
 const TRAILING_ANNOTATION_PATTERN = /^(- .*?)\s*\{([^{}]*)\}\s*$/;
@@ -258,6 +287,58 @@ export function formatAnnotationBody(annotation: ClaimAnnotation): string {
     parts.push(`id: ${annotation.id}`);
   }
   return `{${parts.join("; ")}}`;
+}
+
+const BASE36_ALPHABET = "0123456789abcdefghijklmnopqrstuvwxyz";
+
+/** Draw `length` random base36 characters using crypto-strength randomness. */
+function randomBase36(length: number): string {
+  const bytes = randomBytes(length);
+  let out = "";
+  for (let index = 0; index < length; index += 1) {
+    out += BASE36_ALPHABET[bytes[index] % BASE36_ALPHABET.length];
+  }
+  return out;
+}
+
+/**
+ * Mint a new claim-level id: `c-` + 6 random base36 chars, grown to 8 chars
+ * if that collides with `existing` (collision-checked against the full set
+ * of ids already present in the tree, passed in by the caller). Opaque,
+ * immutable once minted, and never content-derived (see module docstring).
+ */
+export function mintClaimId(existing: ReadonlySet<string>): string {
+  for (let attempt = 0; attempt < 50; attempt += 1) {
+    const candidate = `c-${randomBase36(6)}`;
+    if (!existing.has(candidate)) {
+      return candidate;
+    }
+  }
+  // Six-char space exhausted after 50 tries (astronomically unlikely at any
+  // real tree size) — grow to 8 chars for a much larger collision space.
+  for (let attempt = 0; attempt < 50; attempt += 1) {
+    const candidate = `c-${randomBase36(8)}`;
+    if (!existing.has(candidate)) {
+      return candidate;
+    }
+  }
+  throw new Error("mintClaimId: unable to mint a unique claim id after repeated attempts.");
+}
+
+/** Collect every id already present on a list of claims (annotated claims may have at most one each). */
+export function collectClaimIds(claims: readonly AnchorClaim[]): Set<string> {
+  const ids = new Set<string>();
+  for (const claim of claims) {
+    if (claim.id) {
+      ids.add(claim.id);
+    }
+  }
+  return ids;
+}
+
+/** True when `id` matches the server-minted format (`c-` + 6-8 base36 chars). */
+export function isMintedClaimIdFormat(id: string): boolean {
+  return MINTED_ID_PATTERN.test(id);
 }
 
 export function claimStrength(sources: readonly Pick<ClaimAnnotation, "conf">[]): ClaimConfidence {
@@ -465,6 +546,21 @@ function applyParsedAnnotation(claim: AnchorClaim, inner: string, line: number, 
 function finalizeClaim(claim: AnchorClaim): void {
   claim.strength = claimStrength(claim.sources);
   claim.strengthScore = claimStrengthScore(claim.sources);
+
+  // `id` is claim-level (WP1): accept it on any source row, but two rows of
+  // the same claim carrying *different* ids is a malformed annotation.
+  const idConflict = claimLevelId(claim);
+  if (idConflict.ok) {
+    claim.id = idConflict.id;
+  } else {
+    claim.sourceErrors ??= [];
+    claim.sourceErrors.push({
+      line: claim.annotationLine ?? claim.line,
+      inline: claim.annotationInline ?? false,
+      errors: [idConflict.error],
+    });
+  }
+
   if (claim.sourceErrors && claim.sourceErrors.length > 0) {
     claim.status = "malformed";
     claim.annotationErrors = claim.sourceErrors.flatMap((entry) =>
@@ -475,6 +571,22 @@ function finalizeClaim(claim: AnchorClaim): void {
   } else {
     claim.status = "unannotated";
   }
+}
+
+/** Resolve the single id shared across a claim's source rows, or report a conflict. */
+function claimLevelId(claim: AnchorClaim): { ok: true; id: string | undefined } | { ok: false; error: string } {
+  const ids = new Set(claim.sources.map((source) => source.id).filter((id): id is string => Boolean(id)));
+  if (ids.size <= 1) {
+    return { ok: true, id: [...ids][0] };
+  }
+  return {
+    ok: false,
+    error: `Claim "${truncateForError(claim.text)}" has conflicting ids across its source rows: ${[...ids].join(", ")}. A claim has exactly one id; put it on a single row.`,
+  };
+}
+
+function truncateForError(text: string): string {
+  return text.length > 80 ? `${text.slice(0, 77)}...` : text;
 }
 
 /**
@@ -531,15 +643,41 @@ export function carryClaimAnnotations(oldContent: string, newContent: string): C
   const carried: CarryResult["carried"] = [];
   const lost: CarryResult["lost"] = [];
   const insertions: { afterLine: number; sources: ClaimAnnotation[] }[] = [];
+  // Reworded-but-kept-id claims: replace by id (not line — insertions run
+  // first and can shift line numbers) against the post-insertion content.
+  const replacementsById: { id: string; sources: ClaimAnnotation[] }[] = [];
 
   for (const oldClaim of oldAnnotated) {
+    const oldSources = oldClaim.sources.map(sourceToAnnotation);
+
+    // Id match wins over text match (WP1 carry-by-id): a reworded claim that
+    // kept its id never loses provenance, even though the bullet text no
+    // longer matches byte-for-byte. Only unconsumed new claims are eligible.
+    const idMatchIndex = oldClaim.id
+      ? newClaims.findIndex((candidate, index) => !consumed.has(index) && candidate.id === oldClaim.id)
+      : -1;
+    if (idMatchIndex !== -1) {
+      consumed.add(idMatchIndex);
+      const match = newClaims[idMatchIndex];
+      if (match.text !== oldClaim.text) {
+        // Reworded-but-kept-id: replace whatever annotation rows are on the
+        // new claim with the full old source set (the id is already correct
+        // on the new claim, but other fields like src/observed/conf may be
+        // stale placeholders from a text-only edit).
+        replacementsById.push({ id: oldClaim.id as string, sources: oldSources });
+        carried.push({ text: match.text, annotation: oldClaim.annotation, sources: oldSources });
+      }
+      // Byte-identical text with a matching id needs no action: the claim's
+      // own annotation already carried with it.
+      continue;
+    }
+
     // Pair duplicates in document order: first unconsumed new claim with the
     // same section kind and byte-identical text.
     const matchIndex = newClaims.findIndex(
       (candidate, index) =>
         !consumed.has(index) && candidate.section === oldClaim.section && candidate.text === oldClaim.text,
     );
-    const oldSources = oldClaim.sources.map(sourceToAnnotation);
     if (matchIndex === -1) {
       lost.push({ text: oldClaim.text, annotation: oldClaim.annotation, sources: oldSources });
       continue;
@@ -553,23 +691,35 @@ export function carryClaimAnnotations(oldContent: string, newContent: string): C
     carried.push({ text: match.text, annotation: oldClaim.annotation, sources: oldSources });
   }
 
-  if (insertions.length === 0) {
+  if (insertions.length === 0 && replacementsById.length === 0) {
     return { content: newContent, carried, lost };
   }
 
-  const lines = newContent.split(/\r?\n/);
-  // Insert bottom-up so earlier insertions do not shift later line numbers.
-  insertions
-    .sort((left, right) => right.afterLine - left.afterLine)
-    .forEach((insertion) => {
-      lines.splice(
-        insertion.afterLine,
-        0,
-        ...insertion.sources.map((annotation) => `  ${formatAnnotationBody(annotation)}`),
-      );
-    });
+  let content = newContent;
+  if (insertions.length > 0) {
+    const lines = content.split(/\r?\n/);
+    // Insert bottom-up so earlier insertions do not shift later line numbers.
+    insertions
+      .sort((left, right) => right.afterLine - left.afterLine)
+      .forEach((insertion) => {
+        lines.splice(
+          insertion.afterLine,
+          0,
+          ...insertion.sources.map((annotation) => `  ${formatAnnotationBody(annotation)}`),
+        );
+      });
+    content = lines.join("\n");
+  }
 
-  return { content: lines.join("\n"), carried, lost };
+  for (const replacement of replacementsById) {
+    const target = extractClaims(content).find((claim) => claim.id === replacement.id);
+    if (!target) {
+      continue;
+    }
+    content = upsertClaimSources(content, { line: target.line }, replacement.sources);
+  }
+
+  return { content, carried, lost };
 }
 
 function sourceToAnnotation(source: ClaimSource): ClaimAnnotation {
@@ -602,6 +752,54 @@ export function newlyAddedUnannotatedClaims(
   return extractClaims(newContent).filter(
     (claim) => claim.status === "unannotated" && !existing.has(claim.text),
   );
+}
+
+export type MintedClaimId = { text: string; id: string };
+
+export type MintClaimIdsResult = {
+  content: string;
+  /** Every claim that received a freshly minted id, for the `claim_id_minted` WARN. */
+  minted: MintedClaimId[];
+};
+
+/**
+ * Mint a stable id for every annotated claim in `content` that lacks one
+ * (WP1 write pipeline). `existingIds` must contain every id already present
+ * elsewhere in the tree (and, if applicable, ids this same anchor already
+ * had) so minted ids are guaranteed tree-unique. Never touches unannotated
+ * or malformed claims — an id is added only where valid provenance exists.
+ */
+export function mintMissingClaimIds(content: string, existingIds: ReadonlySet<string>): MintClaimIdsResult {
+  const claims = extractClaims(content);
+  const candidates = claims.filter((claim) => claim.status === "annotated" && !claim.id);
+  if (candidates.length === 0) {
+    return { content, minted: [] };
+  }
+
+  const usedIds = new Set(existingIds);
+  const minted: MintedClaimId[] = [];
+  let updated = content;
+
+  // Mint bottom-up (highest line first) via line-targeted upsert so each
+  // mutation's line numbers stay valid for the next.
+  for (const claim of [...candidates].sort((left, right) => right.line - left.line)) {
+    const id = mintClaimId(usedIds);
+    usedIds.add(id);
+    const sources: ClaimAnnotation[] = claim.sources.map((source) => ({
+      src: source.src,
+      observed: source.observed,
+      conf: source.conf,
+      ...(source.kind ? { kind: source.kind } : {}),
+      ...(source.person ? { person: source.person } : {}),
+    }));
+    if (sources.length > 0) {
+      sources[0] = { ...sources[0], id };
+    }
+    updated = upsertClaimSources(updated, { line: claim.line }, sources);
+    minted.push({ text: claim.text, id });
+  }
+
+  return { content: updated, minted: minted.reverse() };
 }
 
 export type ClaimLocation =
@@ -724,8 +922,25 @@ export function upsertClaimSources(
     });
 
   if (sources.length > 0) {
-    lines.splice(bulletIndex + 1, 0, ...sources.map((source) => `  ${formatAnnotationBody(source)}`));
+    lines.splice(bulletIndex + 1, 0, ...normalizeIdPlacement(sources).map((source) => `  ${formatAnnotationBody(source)}`));
   }
 
   return lines.join("\n");
+}
+
+/**
+ * Claim-level ids live on the first source row when serialized (WP1): find
+ * the (single, by construction) id across the rows and re-attach it only to
+ * the first row, stripping it from the rest, so multi-row writes never
+ * accidentally scatter or duplicate the id.
+ */
+function normalizeIdPlacement(sources: readonly ClaimAnnotation[]): ClaimAnnotation[] {
+  const id = sources.map((source) => source.id).find((value): value is string => Boolean(value));
+  if (!id || sources.length === 0) {
+    return [...sources];
+  }
+  return sources.map((source, index) => {
+    const { id: _drop, ...rest } = source;
+    return index === 0 ? { ...rest, id } : rest;
+  });
 }
