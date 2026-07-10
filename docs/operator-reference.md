@@ -272,6 +272,25 @@ on the file's git commit, so resolution does not re-read it on every request.
   overridden for other hosts (e.g. GitLab `{url}/-/blob/{branch}/{path}`). The
   `repoFileUrl(repo, path, line?)` helper substitutes `{url}`/`{branch}`/`{path}` and
   appends `#L<line>`.
+- `externalLinkTemplates` optionally makes tenant-specific references in rendered anchor
+  prose clickable without baking a tenant into the product. `confluencePage` supports
+  `{space}` and `{pageId}` (for `Confluence SPACE/pages/123`), while `slackChannel`
+  supports `{channel}` (for `#channel-name`) when your workspace needs a custom deep
+  link. For example:
+
+  ```json
+  {
+    "externalLinkTemplates": {
+      "confluencePage": "https://your-domain.atlassian.net/wiki/spaces/{space}/pages/{pageId}",
+      "slackChannel": "https://slack.com/app_redirect?channel={channel}&team=TEAM_ID"
+    }
+  }
+  ```
+
+  Google Doc references written as `Google Doc "Title" (doc id <id>)` and Slack channel
+  references such as `#incident-room` link directly without configuration. Bare `PR #123`
+  references link when the containing project resolves to exactly one mapped repository
+  with a web URL.
 - A repo match boosts the project; a file path that falls under a configured path
   boosts it further, so a path-narrowed project ranks above a whole-repo match.
 - An unrecognized repo degrades gracefully: candidates derived from matching paths are
