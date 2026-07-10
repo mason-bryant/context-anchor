@@ -228,6 +228,13 @@ type MilestoneListRow = {
   tasks?: MilestoneTaskMeta[];
 };
 
+/** Precomputed inputs for resolving a claim's source links, built once per request and reused so claim enrichment never reloads the whole tree per claim. */
+type ClaimResolutionInputs = {
+  mappings: ProjectMappings;
+  anchorNames: Set<string>;
+  peopleIndex: PeopleIndex;
+};
+
 export class AnchorService {
   private _peopleRegistry: PeopleRegistry | undefined;
   /** Git commit the cached registry was parsed from; used to detect out-of-band changes (e.g. AutoSync rebases). */
@@ -3889,7 +3896,21 @@ None.
       limit,
     });
 
-    const enrichedNodes = await Promise.all(nodes.map((node) => this.enrichGraphNeighborNode(node, metaByName)));
+    // Enrich claim nodes with resolved provenance. Build the shared resolution
+    // inputs ONCE (reusing the anchorNames/peopleIndex already computed above,
+    // plus project mappings) and cache resolved claims per anchor for the rest
+    // of this request, so each anchor's content is read/parsed at most once even
+    // when a traversal returns many claim nodes from the same anchor. The cache
+    // stores promises so concurrent Promise.all lookups of the same anchor share
+    // one read instead of racing.
+    const hasClaimNode = nodes.some((node) => node.type === "claim");
+    const claimInputs: ClaimResolutionInputs | undefined = hasClaimNode
+      ? { mappings: await this.loadProjectMappings(), anchorNames, peopleIndex }
+      : undefined;
+    const resolvedClaimsByAnchor = new Map<string, Promise<AnchorClaim[] | undefined>>();
+    const enrichedNodes = await Promise.all(
+      nodes.map((node) => this.enrichGraphNeighborNode(node, metaByName, claimInputs, resolvedClaimsByAnchor)),
+    );
 
     return { resolvedNode: resolution.resolved, nodes: enrichedNodes, edges };
   }
@@ -3911,6 +3932,8 @@ None.
   private async enrichGraphNeighborNode(
     node: GraphNeighborsResultNode,
     metaByName: Map<string, AnchorMeta>,
+    claimInputs: ClaimResolutionInputs | undefined,
+    resolvedClaimsByAnchor: Map<string, Promise<AnchorClaim[] | undefined>>,
   ): Promise<GraphNeighborsResultNode> {
     if (node.display) {
       return node;
@@ -3920,27 +3943,60 @@ None.
       const meta = metaByName.get(anchorName);
       return meta?.title ? { ...node, display: meta.title } : node;
     }
-    if (node.type === "claim") {
-      return this.attachClaimProvenanceToNode(node);
+    if (node.type === "claim" && claimInputs) {
+      return this.attachClaimProvenanceToNode(node, claimInputs, resolvedClaimsByAnchor);
     }
     return node;
   }
 
-  private async attachClaimProvenanceToNode(node: GraphNeighborsResultNode): Promise<GraphNeighborsResultNode> {
+  private async attachClaimProvenanceToNode(
+    node: GraphNeighborsResultNode,
+    claimInputs: ClaimResolutionInputs,
+    resolvedClaimsByAnchor: Map<string, Promise<AnchorClaim[] | undefined>>,
+  ): Promise<GraphNeighborsResultNode> {
     const parsed = parseClaimNodeId(node.id);
     if (!parsed) {
       return node;
     }
-    const content = await this.repo.readRaw(parsed.anchorName);
-    if (content === undefined) {
-      return node;
-    }
-    const claims = await this.extractResolvedClaims(parsed.anchorName, content);
-    const claim = claims.find((candidate) => candidate.id === parsed.claimId);
+    const claims = await this.resolveAnchorClaimsCached(parsed.anchorName, claimInputs, resolvedClaimsByAnchor);
+    const claim = claims?.find((candidate) => candidate.id === parsed.claimId);
     if (!claim) {
       return node;
     }
     return { ...node, display: node.display ?? claim.text, claim };
+  }
+
+  /**
+   * Read and resolve one anchor's claims at most once per request. Reuses the
+   * caller's precomputed mappings/anchorNames/peopleIndex (no per-call reload of
+   * the whole tree) and memoizes the in-flight promise so concurrent lookups of
+   * the same anchor share a single read/parse.
+   */
+  private resolveAnchorClaimsCached(
+    anchorName: string,
+    claimInputs: ClaimResolutionInputs,
+    cache: Map<string, Promise<AnchorClaim[] | undefined>>,
+  ): Promise<AnchorClaim[] | undefined> {
+    let resolved = cache.get(anchorName);
+    if (!resolved) {
+      resolved = (async () => {
+        const content = await this.repo.readRaw(anchorName);
+        if (content === undefined) {
+          return undefined;
+        }
+        return extractClaims(content).map((claim) =>
+          this.withResolvedSourceLinks(
+            anchorName,
+            claim,
+            claimInputs.mappings,
+            claimInputs.anchorNames,
+            claimInputs.peopleIndex,
+          ),
+        );
+      })();
+      cache.set(anchorName, resolved);
+    }
+    return resolved;
   }
 
   async migrateRoadmapGoalIds(input: {

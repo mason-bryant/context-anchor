@@ -2,7 +2,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { AnchorService } from "../src/anchorService.js";
 import { AnchorRepository } from "../src/git/repo.js";
@@ -240,6 +240,39 @@ describe("graphNeighbors: source reverse query", () => {
     }
 
     expect(result.edges.every((edge) => edge.type === "claim_source")).toBe(true);
+  });
+
+  it("reads an anchor's claims once when a result has several claims from that anchor (no per-claim reload)", async () => {
+    const repo = new AnchorRepository({ repoPath: tmpDir });
+    await repo.ensureReady();
+    await seedRepo(repo);
+    const service = makeService(repo);
+
+    // Warm the graph so the initial build's reads do not count against enrichment.
+    await service.graphNeighbors({ node: "pr:repo-a#55", direction: "reverse", edgeTypes: ["claim_source"], depth: 1 });
+
+    const readSpy = vi.spyOn(repo, "readRaw");
+    const result = await service.graphNeighbors({
+      node: "pr:repo-a#55",
+      direction: "reverse",
+      edgeTypes: ["claim_source"],
+      depth: 1,
+    });
+    if ("candidates" in result) {
+      throw new Error("expected a resolved node, got candidates");
+    }
+
+    // Both claims live in demo-project-context.md; enrichment must read+parse it
+    // once for the whole result, not once per claim node (the N+1 that reloaded
+    // mappings/anchors/people-index per claim).
+    const claimNodes = result.nodes.filter((node) => node.type === "claim");
+    expect(claimNodes.length).toBe(2);
+    const contextReads = readSpy.mock.calls.filter(
+      (call) => call[0] === "projects/demo/demo-project-context.md",
+    ).length;
+    expect(contextReads).toBe(1);
+
+    readSpy.mockRestore();
   });
 
   it("resolves <anchor>#<claim-id> input directly to the claim node", async () => {
