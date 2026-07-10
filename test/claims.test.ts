@@ -353,6 +353,27 @@ describe("mintClaimId / collectClaimIds / mintMissingClaimIds", () => {
     expect(result.minted).toEqual([]);
     expect(result.content).toBe(doc);
   });
+
+  it("does not mint an id that collides with a legacy/manual id already in the same document", () => {
+    // A legacy id lives on another claim in the same content, but is NOT in
+    // the tree-id set passed in. mintMissingClaimIds must fold in-document
+    // ids into its uniqueness set so the mint never collides, leaving the
+    // resulting document free of duplicate ids (no false duplicate later).
+    const doc = `## Current State
+
+- Claim with a manual id.
+  {src: PR #1; observed: 2026-01-01; conf: high; id: c-legacy}
+- Claim needing a minted id.
+  {src: PR #2; observed: 2026-01-02; conf: medium}
+`;
+    const result = mintMissingClaimIds(doc, new Set());
+    expect(result.minted).toHaveLength(1);
+    expect(result.minted[0]?.id).not.toBe("c-legacy");
+    const ids = collectClaimIds(extractClaims(result.content));
+    expect(ids.size).toBe(2); // two distinct ids, no collision
+    expect(ids.has("c-legacy")).toBe(true);
+    expect(ids.has(result.minted[0]?.id as string)).toBe(true);
+  });
 });
 
 describe("locateClaim / upsertClaimAnnotation", () => {
@@ -411,6 +432,35 @@ describe("locateClaim / upsertClaimAnnotation", () => {
     expect(updated).toContain(
       "- Legacy claim with no provenance.\n  {src: src/a.ts; observed: 2026-07-07; conf: high}\n  {src: PR #55; observed: 2026-07-08; conf: medium}",
     );
+  });
+
+  it("collapses a single id onto the first row when replacing sources", () => {
+    const updated = upsertClaimSources(DOC, { line: 12 }, [
+      { src: "src/a.ts", observed: "2026-07-07", conf: "high" },
+      { src: "PR #55", observed: "2026-07-08", conf: "medium", id: "c-single" },
+    ]);
+    // The id moves to the first serialized row, stripped from the second.
+    expect(updated).toContain(
+      "- Legacy claim with no provenance.\n  {src: src/a.ts; observed: 2026-07-07; conf: high; id: c-single}\n  {src: PR #55; observed: 2026-07-08; conf: medium}",
+    );
+    const claim = extractClaims(updated).find((entry) => entry.text === "Legacy claim with no provenance.");
+    expect(claim?.status).toBe("annotated");
+    expect(claim?.id).toBe("c-single");
+  });
+
+  it("does not silently collapse conflicting ids: >1 distinct id stays malformed", () => {
+    // If a caller supplies two distinct ids across a claim's rows,
+    // normalizeIdPlacement must leave them in place so the parser flags the
+    // claim malformed rather than hiding the authoring conflict.
+    const updated = upsertClaimSources(DOC, { line: 12 }, [
+      { src: "src/a.ts", observed: "2026-07-07", conf: "high", id: "c-aaaaaa" },
+      { src: "PR #55", observed: "2026-07-08", conf: "medium", id: "c-bbbbbb" },
+    ]);
+    expect(updated).toContain("id: c-aaaaaa");
+    expect(updated).toContain("id: c-bbbbbb");
+    const claim = extractClaims(updated).find((entry) => entry.text === "Legacy claim with no provenance.");
+    expect(claim?.status).toBe("malformed");
+    expect(claim?.annotationErrors?.join(" ")).toContain("conflicting ids");
   });
 
   it("replaces claim text while preserving attached sources", () => {
@@ -1323,6 +1373,33 @@ None.
     const listed = await service.listClaims({ name: "projects/demo/claims-demo", status: "annotated" });
     expect(listed.claims.length).toBeGreaterThan(0);
     expect(listed.claims.every((claim) => Boolean(claim.id))).toBe(true);
+  });
+
+  it("mints alongside a legacy id in the same document without a false duplicate block", async () => {
+    // First claim carries a manual legacy id; second annotated claim has no
+    // id and must be minted. The mint must not collide with the legacy id,
+    // and the write must not spuriously BLOCK as claim_id_duplicate.
+    const content = anchorContent(
+      "\n- A second annotated claim needing a mint.\n  {src: PR #61; observed: 2026-07-08; conf: high}",
+    ).replace(
+      "- Annotated claim about the system.\n  {src: PR #54; observed: 2026-07-07; conf: high}",
+      "- Annotated claim about the system.\n  {src: PR #54; observed: 2026-07-07; conf: high; id: manual-legacy-id}",
+    );
+    const write = await service.writeAnchor({
+      name: "projects/demo/claims-demo",
+      content,
+      message: "test: legacy id plus a mint",
+    });
+    expect(write.version).toBeTruthy();
+    expect(write.warnings.some((warning) => warning.code === "claim_id_duplicate")).toBe(false);
+    expect(write.warnings.some((warning) => warning.code === "claim_id_minted")).toBe(true);
+
+    const listed = await service.listClaims({ name: "projects/demo/claims-demo", status: "annotated" });
+    const legacy = listed.claims.find((claim) => claim.text === "Annotated claim about the system.");
+    const minted = listed.claims.find((claim) => claim.text === "A second annotated claim needing a mint.");
+    expect(legacy?.id).toBe("manual-legacy-id");
+    expect(minted?.id).toMatch(/^c-[a-z0-9]{6,8}$/);
+    expect(minted?.id).not.toBe("manual-legacy-id");
   });
 
   it("does not re-mint an id for a claim that already has one", async () => {

@@ -764,10 +764,12 @@ export type MintClaimIdsResult = {
 
 /**
  * Mint a stable id for every annotated claim in `content` that lacks one
- * (WP1 write pipeline). `existingIds` must contain every id already present
- * elsewhere in the tree (and, if applicable, ids this same anchor already
- * had) so minted ids are guaranteed tree-unique. Never touches unannotated
- * or malformed claims — an id is added only where valid provenance exists.
+ * (WP1 write pipeline). `existingIds` should contain every id already present
+ * elsewhere in the tree so minted ids are tree-unique. Ids already present in
+ * `content` itself (a legacy/manual id on another claim in the same document)
+ * are also folded into the uniqueness set, so a freshly minted id never
+ * collides with an id already in this document. Never touches unannotated or
+ * malformed claims — an id is added only where valid provenance exists.
  */
 export function mintMissingClaimIds(content: string, existingIds: ReadonlySet<string>): MintClaimIdsResult {
   const claims = extractClaims(content);
@@ -776,7 +778,12 @@ export function mintMissingClaimIds(content: string, existingIds: ReadonlySet<st
     return { content, minted: [] };
   }
 
+  // Seed with tree ids AND the ids already present in this document, so a
+  // mint can never collide with a legacy/manual id on a sibling claim here.
   const usedIds = new Set(existingIds);
+  for (const id of collectClaimIds(claims)) {
+    usedIds.add(id);
+  }
   const minted: MintedClaimId[] = [];
   let updated = content;
 
@@ -929,13 +936,22 @@ export function upsertClaimSources(
 }
 
 /**
- * Claim-level ids live on the first source row when serialized (WP1): find
- * the (single, by construction) id across the rows and re-attach it only to
- * the first row, stripping it from the rest, so multi-row writes never
- * accidentally scatter or duplicate the id.
+ * Claim-level ids live on the first source row when serialized (WP1): move the
+ * single id to the first row, stripping it from the rest, so multi-row writes
+ * never accidentally scatter or duplicate the id.
+ *
+ * Guard: if callers supply *more than one distinct* id across a claim's rows
+ * (possible via setClaimSources / tool input), do NOT collapse them — write
+ * the rows through unchanged so the parser flags the claim malformed
+ * ("conflicting ids across its source rows"), per the WP1 spec. Silently
+ * picking one would hide an authoring error the writer needs to see.
  */
 function normalizeIdPlacement(sources: readonly ClaimAnnotation[]): ClaimAnnotation[] {
-  const id = sources.map((source) => source.id).find((value): value is string => Boolean(value));
+  const distinctIds = new Set(sources.map((source) => source.id).filter((value): value is string => Boolean(value)));
+  if (distinctIds.size > 1) {
+    return [...sources];
+  }
+  const id = [...distinctIds][0];
   if (!id || sources.length === 0) {
     return [...sources];
   }
