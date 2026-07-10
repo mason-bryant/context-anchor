@@ -41,16 +41,27 @@ export const validateClaimSourceSections: Validator = async (
 
   // parseClaimSource needs section titles synchronously, so resolve every
   // section-reference row's target anchor first and pre-fetch its H2 titles.
+  // Collect the unique targets, then read them in parallel — a write with many
+  // section references across many anchors should not pay one sequential
+  // readRaw round-trip per anchor.
   const sectionTitlesByAnchor = new Map<string, ReadonlySet<string>>();
-  const sourcesFlat = claims.flatMap((claim) => claim.sources);
-  for (const source of sourcesFlat) {
+  const targetAnchors = new Set<string>();
+  for (const source of claims.flatMap((claim) => claim.sources)) {
     const targetAnchor = sectionReferenceTargetAnchor(source.src, context.name, resolveAnchorName);
-    if (!targetAnchor || sectionTitlesByAnchor.has(targetAnchor)) {
-      continue;
+    if (targetAnchor) {
+      targetAnchors.add(targetAnchor);
     }
-    const content = targetAnchor === context.name ? context.newContent : await context.repo.readRaw(targetAnchor);
-    sectionTitlesByAnchor.set(targetAnchor, new Set(content !== undefined ? extractH2Sections(content).keys() : []));
   }
+  await Promise.all(
+    [...targetAnchors].map(async (targetAnchor) => {
+      const content =
+        targetAnchor === context.name ? context.newContent : await context.repo.readRaw(targetAnchor);
+      sectionTitlesByAnchor.set(
+        targetAnchor,
+        new Set(content !== undefined ? extractH2Sections(content).keys() : []),
+      );
+    }),
+  );
 
   const ctx: ParseClaimSourceContext = {
     anchorName: context.name,

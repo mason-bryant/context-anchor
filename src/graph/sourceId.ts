@@ -24,7 +24,7 @@
  */
 
 import { normalizeSectionTitle } from "../anchorPatch.js";
-import { TRUST_ME_BRO_KIND, TRUST_ME_BRO_SOURCE, type ClaimSource } from "../claims.js";
+import { TRUST_ME_BRO_SOURCE, type ClaimSource } from "../claims.js";
 import type { ProjectMappings, ProjectRepoMapping } from "../types.js";
 import {
   isHttpUrl,
@@ -42,7 +42,7 @@ export type ParseClaimSourceContext = {
   anchorName: string;
   /** All known anchor names, for anchor-name / section-anchor resolution. Accepts a resolver so callers can reuse existing normalization. */
   anchorNames: ReadonlySet<string>;
-  /** Resolve a possibly-unnormalized anchor name (e.g. without `.md`) to its canonical stored name, or undefined if it does not resolve to a path inside the tree. */
+  /** Resolve a possibly-unnormalized anchor name (e.g. without `.md`) to its canonical stored name, or undefined when the value does not resolve to an anchor that exists in the tree (both a bad path and a well-formed name with no matching anchor return undefined). */
   resolveAnchorName: (value: string) => string | undefined;
   /** Registered H2 section titles for a given (already-resolved) anchor name, or undefined if the anchor cannot be read. */
   getAnchorSectionTitles: (anchorName: string) => ReadonlySet<string> | undefined;
