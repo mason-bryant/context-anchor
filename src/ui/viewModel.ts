@@ -10,6 +10,7 @@ import { isProjectMilestoneType } from "../schema/milestoneTypes.js";
 import { parseAnchor } from "../storage/markdown.js";
 import type { AnchorMeta, AnchorRead, MilestonePlannerMeta, ValidationSeverity } from "../types.js";
 import type { AnchorClaim } from "../claims.js";
+import type { MermaidBlock } from "../mermaidBlocks.js";
 import type { AnchorQuestion } from "../questions.js";
 
 const REQUIRED_SECTIONS = ["Current State", "Decisions", "Constraints", "PRs"] as const;
@@ -43,6 +44,7 @@ export type AnchorUiDetail = AnchorRead & {
     health: AnchorUiHealth;
     sections: RequiredSectionStatus;
     claims: (AnchorClaim & { anchor: string })[];
+    mermaidBlocks: (MermaidBlock & { anchor: string })[];
     questions: (AnchorQuestion & { anchor: string })[];
   };
 };
@@ -62,6 +64,7 @@ export function toAnchorUiDetail(
   meta?: AnchorMeta,
   claims: (AnchorClaim & { anchor: string })[] = [],
   questions: (AnchorQuestion & { anchor: string })[] = [],
+  mermaidBlocks: (MermaidBlock & { anchor: string })[] = [],
 ): AnchorUiDetail {
   const displayMeta = meta ?? anchorReadToMeta(anchor);
   const sections = requiredSectionStatus(anchor.content);
@@ -73,6 +76,7 @@ export function toAnchorUiDetail(
       health: summarizeAnchorHealth(displayMeta, sections),
       sections,
       claims,
+      mermaidBlocks,
       questions,
     },
   };

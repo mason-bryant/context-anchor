@@ -149,6 +149,12 @@ import {
 import { candidateBoostMap, isWithinPath, resolveCandidateProjects } from "./projectResolution.js";
 import { parseProjectMappings, repoFileUrl, repoPullRequestUrl } from "./projectMappings.js";
 import { buildPeopleIndex, parsePeopleRegistry, type PeopleIndex } from "./peopleRegistry.js";
+import {
+  extractMermaidBlocks,
+  replaceMermaidBlockText,
+  upsertMermaidBlockSources,
+  type MermaidBlock,
+} from "./mermaidBlocks.js";
 import { runValidators } from "./validators/pipeline.js";
 import {
   carryClaimAnnotations,
@@ -1921,6 +1927,34 @@ None.
     };
   }
 
+  private withResolvedMermaidSourceLinks(
+    anchorName: string,
+    block: MermaidBlock,
+    mappings: ProjectMappings,
+    anchorNames: Set<string>,
+    peopleIndex: PeopleIndex,
+  ): MermaidBlock {
+    const sources = block.sources.map((source) => {
+      const person = source.person
+        ? peopleIndex.getPersonById(source.person) ?? peopleIndex.getPerson(source.person)
+        : undefined;
+      const href =
+        source.kind === TRUST_ME_BRO_KIND
+          ? undefined
+          : this.resolveClaimSourceHref(anchorName, source.src, mappings, anchorNames);
+      return {
+        ...source,
+        ...(person ? { person: person.id, personName: person.displayName } : {}),
+        ...(href ? { href } : {}),
+      };
+    });
+    return {
+      ...block,
+      sources,
+      ...(sources[0] ? { annotation: sources[0] } : {}),
+    };
+  }
+
   private async withOptionalClaimProvenance(
     read: AnchorRead,
     mode: ClaimProvenanceMode,
@@ -2200,6 +2234,90 @@ None.
       // resurrect cleared annotations or block intentional source changes.
       carryClaimAnnotations: false,
       mutate: (old) => upsertClaimSources(old, target, normalizedSources.sources),
+    });
+  }
+
+  async listMermaidBlocks(input: { name: string }): Promise<{ blocks: (MermaidBlock & { anchor: string })[] }> {
+    const content = await this.repo.readRaw(input.name);
+    if (content === undefined) {
+      return { blocks: [] };
+    }
+    const mappings = await this.loadProjectMappings();
+    const anchorNames = new Set((await this.repo.listAnchors()).map((meta) => meta.name));
+    const peopleIndex = buildPeopleIndex(await this.loadPeopleRegistry());
+    return {
+      blocks: extractMermaidBlocks(content).map((block) => ({
+        ...this.withResolvedMermaidSourceLinks(input.name, block, mappings, anchorNames, peopleIndex),
+        anchor: input.name,
+      })),
+    };
+  }
+
+  async setMermaidBlockSources(input: {
+    name: string;
+    line: number;
+    sources: Array<{ src?: string; observed?: string; conf?: string; id?: string; kind?: string; person?: string }>;
+    message?: string;
+    approved?: boolean;
+    coAuthor?: string;
+    expectedFileCommit?: string;
+  }): Promise<WriteAnchorResult> {
+    const parsedSources = parseClaimSourceInputs(input.sources);
+    if (!parsedSources.ok) {
+      return {
+        warnings: parsedSources.errors.map((error) => ({
+          severity: "BLOCK" as const,
+          code: "claim_annotation_invalid",
+          message: error,
+        })),
+      };
+    }
+    const normalizedSources = await this.normalizeClaimSources(parsedSources.sources);
+    if (!normalizedSources.ok) {
+      return {
+        warnings: normalizedSources.errors.map((error) => ({
+          severity: "BLOCK" as const,
+          code: "claim_annotation_invalid",
+          message: error,
+        })),
+      };
+    }
+
+    return this.applyAnchorContentPatch({
+      name: input.name,
+      message:
+        input.message ??
+        (normalizedSources.sources.length === 0
+          ? `chore: clear Mermaid provenance in ${input.name}`
+          : `chore: set Mermaid provenance in ${input.name}`),
+      approved: input.approved,
+      coAuthor: input.coAuthor,
+      expectedFileCommit: input.expectedFileCommit,
+      carryClaimAnnotations: false,
+      mutate: (old) => upsertMermaidBlockSources(old, input.line, normalizedSources.sources),
+    });
+  }
+
+  async updateMermaidBlockText(input: {
+    name: string;
+    line: number;
+    text?: string;
+    message?: string;
+    approved?: boolean;
+    coAuthor?: string;
+    expectedFileCommit?: string;
+  }): Promise<WriteAnchorResult> {
+    const text = input.text?.trim();
+    if (!text) {
+      return AnchorService.blockResult("mermaid_text_missing", "Mermaid diagram text is required.");
+    }
+    return this.applyAnchorContentPatch({
+      name: input.name,
+      message: input.message ?? `chore: update Mermaid diagram in ${input.name}`,
+      approved: input.approved,
+      coAuthor: input.coAuthor,
+      expectedFileCommit: input.expectedFileCommit,
+      mutate: (old) => replaceMermaidBlockText(old, input.line, text),
     });
   }
 

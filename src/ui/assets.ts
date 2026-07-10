@@ -1127,7 +1127,34 @@ textarea {
   border-bottom: 0;
 }
 
-.markdown .mermaid {
+.markdown .mermaid-block {
+  position: relative;
+  margin: 1em 0;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: #ffffff;
+}
+
+.markdown .mermaid-block-toolbar {
+  display: flex;
+  gap: 6px;
+  justify-content: flex-end;
+  padding: 6px 8px 0;
+}
+
+.markdown .mermaid-block .mermaid {
+  overflow: auto;
+  margin: 0;
+  padding: 14px;
+  border: 0;
+  border-radius: 0 0 7px 7px;
+  background: #ffffff;
+  color: #1f2937;
+  text-align: center;
+  white-space: pre-wrap;
+}
+
+.markdown > .mermaid {
   overflow: auto;
   margin: 1em 0;
   padding: 14px;
@@ -1675,7 +1702,8 @@ textarea {
   justify-content: center;
 }
 .claim-text-edit-button,
-.bullet-text-edit-button {
+.bullet-text-edit-button,
+.mermaid-text-edit-button {
   width: 24px;
   height: 24px;
   min-width: 24px;
@@ -1690,7 +1718,8 @@ textarea {
 }
 .claim-epistemology-button svg,
 .claim-text-edit-button svg,
-.bullet-text-edit-button svg {
+.bullet-text-edit-button svg,
+.mermaid-text-edit-button svg {
   width: 15px;
   height: 15px;
 }
@@ -2510,6 +2539,7 @@ export const UI_JS = `(function () {
     claimSourceModal: null,
     claimTextEditor: null,
     bulletTextEditor: null,
+    mermaidTextEditor: null,
     claimPersonMatchCache: [],
     claimPersonSearchTimer: null,
     claimPersonSearchSeq: 0,
@@ -4520,6 +4550,31 @@ export const UI_JS = `(function () {
     });
   }
 
+  function wireMermaidBlockControls(container, anchor, readOnly) {
+    var blocks = (anchor.ui && anchor.ui.mermaidBlocks) || [];
+    container.querySelectorAll(".mermaid-source-button[data-mermaid-line]").forEach(function (button) {
+      button.addEventListener("click", function () {
+        var line = Number(button.dataset.mermaidLine || "0");
+        var block = blocks.find(function (entry) { return entry.line === line; });
+        if (block) {
+          openMermaidSourceModal(block, readOnly, anchor);
+        }
+      });
+    });
+    container.querySelectorAll(".mermaid-text-edit-button[data-mermaid-line]").forEach(function (button) {
+      button.disabled = !!readOnly;
+      button.title = readOnly ? SERVER_RULE_READ_ONLY_MESSAGE : "Edit Mermaid diagram";
+      button.addEventListener("click", function () {
+        if (readOnly) return;
+        var line = Number(button.dataset.mermaidLine || "0");
+        var block = blocks.find(function (entry) { return entry.line === line; });
+        if (block) {
+          openMermaidTextEditor(button, block, anchor);
+        }
+      });
+    });
+  }
+
   function closeClaimTextEditor() {
     var editor = state.claimTextEditor;
     if (!editor) return;
@@ -4531,6 +4586,17 @@ export const UI_JS = `(function () {
     state.claimTextEditor = null;
   }
 
+  function closeMermaidTextEditor() {
+    var editor = state.mermaidTextEditor;
+    if (!editor) return;
+    if (editor.diagramEl) editor.diagramEl.hidden = false;
+    if (editor.editorEl && editor.editorEl.parentNode) {
+      editor.editorEl.parentNode.removeChild(editor.editorEl);
+    }
+    if (editor.button) editor.button.disabled = false;
+    state.mermaidTextEditor = null;
+  }
+
   function closeBulletTextEditor() {
     var editor = state.bulletTextEditor;
     if (!editor) return;
@@ -4540,6 +4606,66 @@ export const UI_JS = `(function () {
     }
     if (editor.button) editor.button.disabled = false;
     state.bulletTextEditor = null;
+  }
+
+  function openMermaidTextEditor(button, block, anchor) {
+    closeClaimTextEditor();
+    closeBulletTextEditor();
+    closeMermaidTextEditor();
+    var wrapper = button.closest(".mermaid-block");
+    var diagramEl = wrapper ? wrapper.querySelector(".mermaid") : null;
+    if (!wrapper || !diagramEl) return;
+    button.disabled = true;
+    diagramEl.hidden = true;
+    var editorEl = document.createElement("div");
+    editorEl.className = "claim-text-editor";
+    editorEl.innerHTML = "<textarea class=\\"claim-text-input\\" rows=\\"8\\"></textarea>"
+      + "<span class=\\"claim-text-editor-actions\\">"
+      + "<button type=\\"button\\" class=\\"mermaid-text-update\\">Update</button>"
+      + "<button type=\\"button\\" class=\\"mermaid-text-cancel\\">Cancel</button>"
+      + "<span class=\\"claim-text-editor-result\\"></span>"
+      + "</span>";
+    wrapper.appendChild(editorEl);
+    var input = editorEl.querySelector(".claim-text-input");
+    input.value = block.text || "";
+    input.focus();
+    input.select();
+    state.mermaidTextEditor = { anchor: anchor, block: block, button: button, diagramEl: diagramEl, editorEl: editorEl };
+    editorEl.querySelector(".mermaid-text-cancel").addEventListener("click", closeMermaidTextEditor);
+    editorEl.querySelector(".mermaid-text-update").addEventListener("click", function () {
+      saveMermaidTextEditor().catch(function (error) {
+        editorEl.querySelector(".claim-text-editor-result").textContent = error.message;
+      });
+    });
+  }
+
+  async function saveMermaidTextEditor() {
+    var editor = state.mermaidTextEditor;
+    if (!editor) return;
+    var resultEl = editor.editorEl.querySelector(".claim-text-editor-result");
+    var input = editor.editorEl.querySelector(".claim-text-input");
+    var nextText = (input.value || "").trim();
+    if (!nextText) {
+      resultEl.textContent = "Mermaid diagram text is required.";
+      return;
+    }
+    resultEl.textContent = "Updating...";
+    var payload = {
+      name: editor.anchor.name,
+      line: editor.block.line,
+      text: nextText,
+      approved: true
+    };
+    if (editor.anchor.fileCommit) payload.expectedFileCommit = editor.anchor.fileCommit;
+    var res = await apiPost("/api/ui/mermaid-text", payload);
+    if (res.warnings && res.warnings.some(function (warning) { return warning.severity === "BLOCK"; })) {
+      resultEl.textContent = res.warnings.map(function (warning) { return warning.message; }).join("; ");
+      return;
+    }
+    closeMermaidTextEditor();
+    if (state.selectedName === editor.anchor.name) {
+      selectAnchor(editor.anchor.name, { skipLocationUpdate: true });
+    }
   }
 
   function openClaimTextEditor(button, claim, anchor) {
@@ -7143,6 +7269,9 @@ export const UI_JS = `(function () {
     showTab("detail");
     setBanner("Loading anchor detail...", "info");
     try {
+      if (!state.projectMappings && !state.projectMappingsLoading) {
+        await loadProjectMappings();
+      }
       var detail = await api("/api/ui/anchor?name=" + encodeURIComponent(name));
       renderDetail(detail.anchor, { focusTask: opts.focusTask });
       setBanner("", "info");
@@ -7190,11 +7319,13 @@ export const UI_JS = `(function () {
     el("detail-rendered").innerHTML = renderMarkdown(body, {
       claims: anchor.ui.claims || [],
       questions: anchor.ui.questions || [],
+      mermaidBlocks: anchor.ui.mermaidBlocks || [],
       lineOffset: markdownBodyLineOffset(anchor.content || ""),
       claimControls: true
     });
     decorateAnchorLinks(el("detail-rendered"));
     wireClaimEpistemologyControls(el("detail-rendered"), anchor, readOnly);
+    wireMermaidBlockControls(el("detail-rendered"), anchor, readOnly);
     wireEditableBulletControls(el("detail-rendered"), anchor, readOnly);
     renderMermaidDiagrams(el("detail-rendered"));
     el("detail-raw").textContent = anchor.content || "";
@@ -7294,6 +7425,7 @@ export const UI_JS = `(function () {
     var lineOffset = opts.lineOffset || 0;
     var claimsByLine = {};
     var questionsByLine = {};
+    var mermaidByLine = {};
     var sourceLines = {};
     (opts.claims || []).forEach(function (claim) {
       claimsByLine[claim.line] = claim;
@@ -7311,6 +7443,19 @@ export const UI_JS = `(function () {
     (opts.questions || []).forEach(function (question) {
       questionsByLine[question.line] = question;
     });
+    (opts.mermaidBlocks || []).forEach(function (block) {
+      mermaidByLine[block.line] = block;
+      claimSources(block).forEach(function (source) {
+        if (source.line && !source.inline) {
+          sourceLines[source.line] = true;
+        }
+      });
+      (block.sourceErrors || []).forEach(function (entry) {
+        if (entry.line && !entry.inline) {
+          sourceLines[entry.line] = true;
+        }
+      });
+    });
     var html = "";
     var paragraph = [];
     var inList = false;
@@ -7318,6 +7463,7 @@ export const UI_JS = `(function () {
     var codeFence = null;
     var code = [];
     var codeLanguage = "";
+    var codeStartLine = 0;
     var currentSection = "";
 
     function flushParagraph() {
@@ -7336,12 +7482,13 @@ export const UI_JS = `(function () {
       if (code.length || inCode) {
         var codeText = code.join("\\n");
         if (codeLanguage === "mermaid") {
-          html += "<div class=\\"mermaid\\">" + escapeHtml(codeText) + "</div>";
+          html += renderMermaidBlock(codeText, mermaidByLine[codeStartLine], opts);
         } else {
           html += "<pre><code>" + escapeHtml(codeText) + "</code></pre>";
         }
         code = [];
         codeLanguage = "";
+        codeStartLine = 0;
       }
     }
 
@@ -7363,6 +7510,7 @@ export const UI_JS = `(function () {
           inCode = true;
           codeFence = fence;
           codeLanguage = firstFenceLanguage(fence.info);
+          codeStartLine = originalLine;
         }
         continue;
       }
@@ -7436,6 +7584,26 @@ export const UI_JS = `(function () {
       flushCode();
     }
     return html;
+  }
+
+  function renderMermaidBlock(codeText, block, opts) {
+    if (!opts.claimControls || !block) {
+      return "<div class=\\"mermaid\\">" + escapeHtml(codeText) + "</div>";
+    }
+    var strength = claimStrengthValue(block);
+    var count = claimSources(block).length;
+    var title = count ? count + " source" + (count === 1 ? "" : "s") + ", " + strength + " strength" : "No provenance sources";
+    return "<div class=\\"mermaid-block\\" data-mermaid-line=\\"" + escapeHtml(String(block.line)) + "\\">"
+      + "<div class=\\"mermaid-block-toolbar\\">"
+      + "<button type=\\"button\\" class=\\"claim-epistemology-button mermaid-source-button claim-strength-" + escapeHtml(strength) + "\\" data-mermaid-line=\\"" + escapeHtml(String(block.line)) + "\\" title=\\"" + escapeHtml(title) + "\\" aria-label=\\"Edit diagram sources\\">"
+      + "<svg class=\\"icon\\" aria-hidden=\\"true\\"><use href=\\"#icon-object-graph\\"></use></svg>"
+      + "</button>"
+      + "<button type=\\"button\\" class=\\"mermaid-text-edit-button\\" data-mermaid-line=\\"" + escapeHtml(String(block.line)) + "\\" title=\\"Edit Mermaid diagram\\" aria-label=\\"Edit Mermaid diagram\\">"
+      + "<svg class=\\"icon\\" aria-hidden=\\"true\\"><use href=\\"#icon-pencil\\"></use></svg>"
+      + "</button>"
+      + "</div>"
+      + "<div class=\\"mermaid\\">" + escapeHtml(codeText) + "</div>"
+      + "</div>";
   }
 
   function firstFenceLanguage(info) {
@@ -7759,16 +7927,122 @@ export const UI_JS = `(function () {
 
   function inlineMarkdown(value) {
     var tick = String.fromCharCode(96);
-    return escapeHtml(value)
+    return linkifyRepoFileReferences(escapeHtml(value)
       .replace(/\\*\\*(.+?)\\*\\*/g, "<strong>$1</strong>")
-      .replace(new RegExp(tick + "([^" + tick + "]+)" + tick, "g"), "<code>$1</code>")
+      .replace(new RegExp(tick + "([^" + tick + "]+)" + tick, "g"), function (_match, code) {
+        var linked = repoFileReferenceLink(code);
+        return linked || "<code>" + code + "</code>";
+      })
       .replace(/\\[([^\\]]+)\\]\\(([^)]+)\\)/g, function (_match, label, href) {
         var safeHref = sanitizeLinkHref(href);
         if (!safeHref) {
           return "<span class=\\"unsafe-link\\" title=\\"Unsafe link removed\\">" + label + "</span>";
         }
         return "<a href=\\"" + escapeHtml(safeHref) + "\\" target=\\"_blank\\" rel=\\"noreferrer\\">" + label + "</a>";
+      }));
+  }
+
+  function repoFileReferenceLink(label) {
+    var match = /^((?:\\.\\/)?(?:[A-Za-z0-9_.-]+\\/)+[A-Za-z0-9_.-]+\\.[A-Za-z0-9_.-]+):(\\d+)(?:-(\\d+))?$/.exec(String(label || ""));
+    if (!match) {
+      return null;
+    }
+    var href = repoFileReferenceHref(match[1], match[2], match[3]);
+    if (!href) {
+      return null;
+    }
+    return "<a href=\\"" + escapeHtml(href) + "\\" target=\\"_blank\\" rel=\\"noreferrer\\"><code>" + escapeHtml(label) + "</code></a>";
+  }
+
+  function linkifyRepoFileReferences(html) {
+    if (!state.projectMappings || !state.selectedAnchor) {
+      return html;
+    }
+    return String(html || "").replace(/(^|[\\s(])((?:\\.\\/)?(?:[A-Za-z0-9_.-]+\\/)+[A-Za-z0-9_.-]+\\.[A-Za-z0-9_.-]+):(\\d+)(?:-(\\d+))?(?=([\\s).,;:]|$))/g, function (match, prefix, path, start, end) {
+      var href = repoFileReferenceHref(path, start, end);
+      if (!href) {
+        return match;
+      }
+      var label = path + ":" + start + (end ? "-" + end : "");
+      return prefix + "<a href=\\"" + escapeHtml(href) + "\\" target=\\"_blank\\" rel=\\"noreferrer\\">" + escapeHtml(label) + "</a>";
+    });
+  }
+
+  function repoFileReferenceHref(path, start, end) {
+    var project = projectOf(state.selectedAnchor);
+    if (!project || !state.projectMappings || !Array.isArray(state.projectMappings.projects)) {
+      return null;
+    }
+    var mapping = state.projectMappings.projects.find(function (entry) {
+      return entry && String(entry.project || "").toLowerCase() === String(project).toLowerCase();
+    });
+    if (!mapping || !Array.isArray(mapping.repos)) {
+      return null;
+    }
+    var repo = selectMappedWebRepo(mapping.repos, path);
+    if (!repo) {
+      return null;
+    }
+    return repoFileUrl(repo, path, Number(start), end ? Number(end) : undefined);
+  }
+
+  function selectMappedWebRepo(repos, filePath) {
+    var webRepos = repos.filter(function (repo) {
+      return repo && repo.web && repo.web.url;
+    });
+    if (!webRepos.length) {
+      return null;
+    }
+    var pathMatches = webRepos.filter(function (repo) {
+      return Array.isArray(repo.paths) && repo.paths.length > 0 && repo.paths.some(function (dirPath) {
+        return isWithinPath(filePath, dirPath);
       });
+    });
+    if (pathMatches.length === 1) {
+      return pathMatches[0];
+    }
+    return webRepos.length === 1 ? webRepos[0] : null;
+  }
+
+  function repoFileUrl(repo, filePath, startLine, endLine) {
+    var web = repo && repo.web;
+    if (!web || !web.url) {
+      return null;
+    }
+    var cleanPath = String(filePath || "").trim().replace(/^\\.\\/+/, "").replace(/^\\/+/, "");
+    if (!cleanPath) {
+      return null;
+    }
+    var base = String(web.url || "").trim().replace(/\\/+$/, "");
+    var branch = String(web.branch || "main").trim() || "main";
+    var template = String(web.fileTemplate || "{url}/blob/{branch}/{path}").trim();
+    var url = template
+      .replace(/\\{url\\}/g, base)
+      .replace(/\\{branch\\}/g, encodeRefOrPath(branch))
+      .replace(/\\{path\\}/g, encodeRefOrPath(cleanPath));
+    if (Number.isFinite(startLine) && startLine > 0) {
+      url += "#L" + Math.floor(startLine);
+      if (Number.isFinite(endLine) && endLine > startLine) {
+        url += "-L" + Math.floor(endLine);
+      }
+    }
+    return url;
+  }
+
+  function encodeRefOrPath(value) {
+    return String(value || "").split("/").map(function (segment) {
+      return encodeURIComponent(segment);
+    }).join("/");
+  }
+
+  function isWithinPath(filePath, dirPath) {
+    var file = normalizePathForMatch(filePath);
+    var dir = normalizePathForMatch(dirPath);
+    return !!dir && (file === dir || file.indexOf(dir + "/") === 0);
+  }
+
+  function normalizePathForMatch(value) {
+    return String(value || "").trim().replace(/^\\.\\/+/, "").replace(/^\\/+/, "").replace(/\\/+$/, "").toLowerCase();
   }
 
   function sanitizeLinkHref(href) {
@@ -8310,6 +8584,7 @@ export const UI_JS = `(function () {
     window.__ANCHOR_MCP_UI_TEST_HOOKS__.setMappingsTestState = function (anchors, projectMappings) {
       state.anchors = anchors || [];
       state.projectMappings = projectMappings || null;
+      state.selectedAnchor = state.anchors[0] || null;
     };
     window.__ANCHOR_MCP_UI_TEST_HOOKS__.buildJudgePrompt = buildJudgePrompt;
     window.__ANCHOR_MCP_UI_TEST_HOOKS__.formatPreview = formatPreview;

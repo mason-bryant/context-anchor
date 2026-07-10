@@ -95,7 +95,8 @@ export function registerUiRoutes(
       const anchor = await service.readAnchor(name);
       const claims = await service.listClaims({ name });
       const questions = await service.listQuestions({ name });
-      return { anchor: toAnchorUiDetail(anchor, undefined, claims.claims, questions.questions) };
+      const mermaidBlocks = await service.listMermaidBlocks({ name });
+      return { anchor: toAnchorUiDetail(anchor, undefined, claims.claims, questions.questions, mermaidBlocks.blocks) };
     }),
   );
 
@@ -539,6 +540,48 @@ export function registerUiRoutes(
         line,
         text: optionalBodyString(body, "text"),
         delete: booleanBody(body, "delete") === true,
+        message: optionalBodyString(body, "message"),
+        approved: booleanBody(body, "approved"),
+        coAuthor: optionalBodyString(body, "coAuthor"),
+        expectedFileCommit: optionalBodyString(body, "expectedFileCommit"),
+      });
+    }),
+  );
+
+  app.post(
+    "/api/ui/mermaid-sources",
+    ...protect,
+    jsonRoute(async (req) => {
+      const body = bodyRecord(req);
+      const sources = bodyArray(body, "sources").map((source, index) => ({
+        src: requiredObjectString(source, "src", `sources[${index}].src`),
+        observed: requiredObjectString(source, "observed", `sources[${index}].observed`),
+        conf: requiredObjectString(source, "conf", `sources[${index}].conf`),
+        ...(optionalObjectString(source, "id") ? { id: optionalObjectString(source, "id") } : {}),
+        ...(optionalObjectString(source, "kind") ? { kind: optionalObjectString(source, "kind") } : {}),
+        ...(optionalObjectString(source, "person") ? { person: optionalObjectString(source, "person") } : {}),
+      }));
+      return service.setMermaidBlockSources({
+        name: requiredBodyString(body, "name"),
+        line: positiveBodyLine(body, "line"),
+        sources,
+        message: optionalBodyString(body, "message"),
+        approved: booleanBody(body, "approved"),
+        coAuthor: optionalBodyString(body, "coAuthor"),
+        expectedFileCommit: optionalBodyString(body, "expectedFileCommit"),
+      });
+    }),
+  );
+
+  app.post(
+    "/api/ui/mermaid-text",
+    ...protect,
+    jsonRoute(async (req) => {
+      const body = bodyRecord(req);
+      return service.updateMermaidBlockText({
+        name: requiredBodyString(body, "name"),
+        line: positiveBodyLine(body, "line"),
+        text: optionalBodyString(body, "text"),
         message: optionalBodyString(body, "message"),
         approved: booleanBody(body, "approved"),
         coAuthor: optionalBodyString(body, "coAuthor"),
@@ -1037,6 +1080,14 @@ function optionalBodyNumber(body: Record<string, unknown>, key: string): number 
     return value;
   }
   throw new UiHttpError(400, `Invalid ${key}: expected a number`);
+}
+
+function positiveBodyLine(body: Record<string, unknown>, key: string): number {
+  const value = optionalBodyNumber(body, key);
+  if (value === undefined || !Number.isInteger(value) || value < 1) {
+    throw new UiHttpError(400, `Invalid ${key}: expected a positive integer`);
+  }
+  return value;
 }
 
 function bodyObject(body: Record<string, unknown>, key: string): Record<string, unknown> {

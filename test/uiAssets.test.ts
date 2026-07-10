@@ -836,6 +836,89 @@ describe("UI browser assets", () => {
     expect(html).not.toContain("onclick=");
   });
 
+  it("links mapped repo file references in rendered prose", () => {
+    const hooks = loadHooks();
+    hooks.setMappingsTestState(
+      [{ name: "projects/udf-framework/udf.md", projectSlug: "udf-framework" }],
+      {
+        projects: [
+          {
+            project: "udf-framework",
+            repos: [
+              {
+                repo: "rippling-main",
+                paths: ["app/hub_platform"],
+                web: { url: "https://github.com/Rippling/rippling-main", branch: "master" },
+              },
+            ],
+          },
+        ],
+      },
+    );
+
+    const html = hooks.renderMarkdown(
+      "Typed vtables are dynamic models (app/hub_platform/rql/docs/translation/vtables.md:5-22).",
+    );
+
+    expect(html).toContain(
+      'href="https://github.com/Rippling/rippling-main/blob/master/app/hub_platform/rql/docs/translation/vtables.md#L5-L22"',
+    );
+    expect(html).toContain(">app/hub_platform/rql/docs/translation/vtables.md:5-22</a>");
+  });
+
+  it("links mapped repo file references inside inline code spans", () => {
+    const hooks = loadHooks();
+    hooks.setMappingsTestState(
+      [{ name: "projects/udf-framework/udf.md", projectSlug: "udf-framework" }],
+      {
+        projects: [
+          {
+            project: "udf-framework",
+            repos: [
+              {
+                repo: "rippling-main",
+                paths: ["app"],
+                web: { url: "https://github.com/Rippling/rippling-main", branch: "master" },
+              },
+            ],
+          },
+        ],
+      },
+    );
+
+    const html = hooks.renderMarkdown(
+      "Typed vtables are dynamic models (`app/hub_platform/rql/docs/translation/vtables.md:5-22`).",
+    );
+
+    expect(html).toContain(
+      'href="https://github.com/Rippling/rippling-main/blob/master/app/hub_platform/rql/docs/translation/vtables.md#L5-L22"',
+    );
+    expect(html).toContain("<code>app/hub_platform/rql/docs/translation/vtables.md:5-22</code></a>");
+  });
+
+  it("does not link repo file references when mappings are ambiguous", () => {
+    const hooks = loadHooks();
+    hooks.setMappingsTestState(
+      [{ name: "projects/demo/demo.md", projectSlug: "demo" }],
+      {
+        projects: [
+          {
+            project: "demo",
+            repos: [
+              { repo: "one", paths: [], web: { url: "https://github.com/acme/one" } },
+              { repo: "two", paths: [], web: { url: "https://github.com/acme/two" } },
+            ],
+          },
+        ],
+      },
+    );
+
+    const html = hooks.renderMarkdown("See app/service/file.ts:10.");
+
+    expect(html).toContain("app/service/file.ts:10");
+    expect(html).not.toContain("github.com/acme");
+  });
+
   it("renders claim epistemology controls while hiding source annotation lines", () => {
     const hooks = loadHooks();
     const html = hooks.renderMarkdown(
