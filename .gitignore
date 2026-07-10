@@ -2,6 +2,7 @@ docs/managed-context-test-agent-prompt.md
 scripts/start-managed-context-test.sh
 
 cursor-output
+.claude/
 node_modules/
 dist/
 coverage/
