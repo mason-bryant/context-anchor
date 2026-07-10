@@ -58,6 +58,7 @@
     "cors": "^2.8.5",
     "express": "^5.1.0",
     "gray-matter": "^4.0.3",
+    "mermaid": "^11.16.0",
     "simple-git": "^3.28.0",
     "winston": "^3.19.0",
     "winston-daily-rotate-file": "^5.0.0",

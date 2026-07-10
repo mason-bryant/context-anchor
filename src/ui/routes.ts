@@ -1,4 +1,7 @@
-import type { NextFunction, Request, Response, Express } from "express";
+import path from "node:path";
+import { createRequire } from "node:module";
+
+import express, { type NextFunction, type Request, type Response, type Express } from "express";
 
 import type { AnchorService } from "../anchorService.js";
 import { PeopleRegistryConflictError, ProjectMappingsConflictError } from "../git/repo.js";
@@ -17,6 +20,9 @@ import { toAnchorUiDetail, toAnchorUiMeta } from "./viewModel.js";
 
 type UiAuthMiddleware = (req: Request, res: Response, next: NextFunction) => void;
 type UiAnchorSort = "name" | "updated" | "created" | "priority";
+
+const require = createRequire(import.meta.url);
+const MERMAID_DIST_DIR = path.dirname(require.resolve("mermaid/dist/mermaid.esm.min.mjs"));
 
 export function registerUiRoutes(
   app: Express,
@@ -39,6 +45,13 @@ export function registerUiRoutes(
   app.get("/ui/app.js", (_req, res) => {
     res.type("js").send(UI_JS);
   });
+  app.use(
+    "/ui/vendor/mermaid",
+    express.static(MERMAID_DIST_DIR, {
+      fallthrough: false,
+      index: false,
+    }),
+  );
 
   const protect = options.authMiddleware ? [options.authMiddleware] : [];
 
@@ -81,7 +94,9 @@ export function registerUiRoutes(
       const name = requiredQueryString(req, "name");
       const anchor = await service.readAnchor(name);
       const claims = await service.listClaims({ name });
-      return { anchor: toAnchorUiDetail(anchor, undefined, claims.claims) };
+      const questions = await service.listQuestions({ name });
+      const mermaidBlocks = await service.listMermaidBlocks({ name });
+      return { anchor: toAnchorUiDetail(anchor, undefined, claims.claims, questions.questions, mermaidBlocks.blocks) };
     }),
   );
 
@@ -438,6 +453,30 @@ export function registerUiRoutes(
   );
 
   app.post(
+    "/api/ui/question-text",
+    ...protect,
+    jsonRoute(async (req) => {
+      const body = bodyRecord(req);
+      const line = optionalBodyNumber(body, "line");
+      if (line !== undefined && (!Number.isInteger(line) || line < 1)) {
+        throw new UiHttpError(400, "Invalid line: expected a positive integer");
+      }
+      return service.updateQuestionText({
+        name: requiredBodyString(body, "name"),
+        line,
+        id: optionalBodyString(body, "id"),
+        question: optionalBodyString(body, "question"),
+        text: optionalBodyString(body, "text"),
+        delete: booleanBody(body, "delete") === true,
+        message: optionalBodyString(body, "message"),
+        approved: booleanBody(body, "approved"),
+        coAuthor: optionalBodyString(body, "coAuthor"),
+        expectedFileCommit: optionalBodyString(body, "expectedFileCommit"),
+      });
+    }),
+  );
+
+  app.post(
     "/api/ui/claim-annotation",
     ...protect,
     jsonRoute(async (req) => {
@@ -498,6 +537,70 @@ export function registerUiRoutes(
       return service.updateClaimText({
         name: requiredBodyString(body, "name"),
         claim: optionalBodyString(body, "claim"),
+        line,
+        text: optionalBodyString(body, "text"),
+        delete: booleanBody(body, "delete") === true,
+        message: optionalBodyString(body, "message"),
+        approved: booleanBody(body, "approved"),
+        coAuthor: optionalBodyString(body, "coAuthor"),
+        expectedFileCommit: optionalBodyString(body, "expectedFileCommit"),
+      });
+    }),
+  );
+
+  app.post(
+    "/api/ui/mermaid-sources",
+    ...protect,
+    jsonRoute(async (req) => {
+      const body = bodyRecord(req);
+      const sources = bodyArray(body, "sources").map((source, index) => ({
+        src: requiredObjectString(source, "src", `sources[${index}].src`),
+        observed: requiredObjectString(source, "observed", `sources[${index}].observed`),
+        conf: requiredObjectString(source, "conf", `sources[${index}].conf`),
+        ...(optionalObjectString(source, "id") ? { id: optionalObjectString(source, "id") } : {}),
+        ...(optionalObjectString(source, "kind") ? { kind: optionalObjectString(source, "kind") } : {}),
+        ...(optionalObjectString(source, "person") ? { person: optionalObjectString(source, "person") } : {}),
+      }));
+      return service.setMermaidBlockSources({
+        name: requiredBodyString(body, "name"),
+        line: positiveBodyLine(body, "line"),
+        sources,
+        message: optionalBodyString(body, "message"),
+        approved: booleanBody(body, "approved"),
+        coAuthor: optionalBodyString(body, "coAuthor"),
+        expectedFileCommit: optionalBodyString(body, "expectedFileCommit"),
+      });
+    }),
+  );
+
+  app.post(
+    "/api/ui/mermaid-text",
+    ...protect,
+    jsonRoute(async (req) => {
+      const body = bodyRecord(req);
+      return service.updateMermaidBlockText({
+        name: requiredBodyString(body, "name"),
+        line: positiveBodyLine(body, "line"),
+        text: optionalBodyString(body, "text"),
+        message: optionalBodyString(body, "message"),
+        approved: booleanBody(body, "approved"),
+        coAuthor: optionalBodyString(body, "coAuthor"),
+        expectedFileCommit: optionalBodyString(body, "expectedFileCommit"),
+      });
+    }),
+  );
+
+  app.post(
+    "/api/ui/bullet-text",
+    ...protect,
+    jsonRoute(async (req) => {
+      const body = bodyRecord(req);
+      const line = optionalBodyNumber(body, "line");
+      if (line === undefined || !Number.isInteger(line) || line < 1) {
+        throw new UiHttpError(400, "Invalid line: expected a positive integer");
+      }
+      return service.updateBulletText({
+        name: requiredBodyString(body, "name"),
         line,
         text: optionalBodyString(body, "text"),
         delete: booleanBody(body, "delete") === true,
@@ -977,6 +1080,14 @@ function optionalBodyNumber(body: Record<string, unknown>, key: string): number 
     return value;
   }
   throw new UiHttpError(400, `Invalid ${key}: expected a number`);
+}
+
+function positiveBodyLine(body: Record<string, unknown>, key: string): number {
+  const value = optionalBodyNumber(body, key);
+  if (value === undefined || !Number.isInteger(value) || value < 1) {
+    throw new UiHttpError(400, `Invalid ${key}: expected a positive integer`);
+  }
+  return value;
 }
 
 function bodyObject(body: Record<string, unknown>, key: string): Record<string, unknown> {

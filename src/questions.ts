@@ -125,6 +125,32 @@ export function setQuestionStatus(
   return lines.join("\n");
 }
 
+export function replaceQuestionText(content: string, target: QuestionTarget, text: string): string {
+  const location = locateQuestion(content, target);
+  if (!location.ok) {
+    throw questionTargetError(location, target);
+  }
+
+  const question = { ...location.question, text };
+  const lines = content.split(/\r?\n/);
+  const bulletIndex = question.line - 1;
+  lines[bulletIndex] = formatQuestionBullet(question, question.status);
+  return lines.join("\n");
+}
+
+export function deleteQuestion(content: string, target: QuestionTarget): string {
+  const location = locateQuestion(content, target);
+  if (!location.ok) {
+    throw questionTargetError(location, target);
+  }
+
+  const lines = content.split(/\r?\n/);
+  const bulletIndex = location.question.line - 1;
+  const endIndex = questionBlockEndIndex(lines, bulletIndex);
+  lines.splice(bulletIndex, endIndex - bulletIndex);
+  return lines.join("\n");
+}
+
 function parseQuestionBullet(raw: string): ParsedQuestionBullet {
   let body = raw.trim();
   let status: QuestionStatus | undefined;
@@ -221,6 +247,16 @@ function questionLocationFromHits(hits: AnchorQuestion[]): QuestionLocation {
     code: "question_ambiguous",
     candidates: hits.map((question) => question.text).slice(0, 10),
   };
+}
+
+function questionTargetError(location: Exclude<QuestionLocation, { ok: true }>, target: QuestionTarget): Error {
+  const targetLabel =
+    "line" in target ? `line ${target.line}` : "id" in target ? `id "${target.id}"` : `"${target.question}"`;
+  return new Error(
+    location.code === "question_not_found"
+      ? `No question matching ${targetLabel}.`
+      : `Question match ${targetLabel} is ambiguous (${location.candidates.length}+ matches).`,
+  );
 }
 
 function isQuestionSection(section: string): boolean {

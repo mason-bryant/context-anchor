@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { AnchorService } from "../src/anchorService.js";
 import { AnchorRepository } from "../src/git/repo.js";
-import { extractQuestions, setQuestionStatus } from "../src/questions.js";
+import { deleteQuestion, extractQuestions, replaceQuestionText, setQuestionStatus } from "../src/questions.js";
 
 const QUESTION_DOC = `---
 type: context-anchor
@@ -79,6 +79,18 @@ describe("questions", () => {
     );
     expect(ownerPreserved).toContain("  Owner: platform");
   });
+
+  it("edits and deletes question text while preserving structured markers", () => {
+    const edited = replaceQuestionText(QUESTION_DOC, { id: "Q-1" }, "Which storage backend should own questions?");
+
+    expect(edited).toContain("- [ ] Q-1: Which storage backend should own questions?");
+    expect(edited).not.toContain("Which storage backend owns questions?");
+
+    const deleted = deleteQuestion(edited, { id: "Q-2" });
+    expect(deleted).not.toContain("Q-2");
+    expect(deleted).not.toContain("Resolution: Yes, they remain useful");
+    expect(extractQuestions(deleted).map((question) => question.id)).toEqual(["Q-1", "Q-3", "Q-4"]);
+  });
 });
 
 describe("AnchorService questions", () => {
@@ -137,6 +149,37 @@ describe("AnchorService questions", () => {
     const q1 = afterReopen.questions.find((question) => question.id === "Q-1");
     expect(q1).toMatchObject({ status: "open" });
     expect(q1?.resolution).toBeUndefined();
+
+    const edited = await service.updateQuestionText({
+      name: "projects/demo/questions-demo.md",
+      line: afterReopen.questions.find((question) => question.id === "Q-2")?.line,
+      id: "Q-1",
+      text: "Should open questions be editable in the UI?",
+      approved: true,
+    });
+    expect(edited.warnings.filter((warning) => warning.severity === "BLOCK")).toEqual([]);
+    const afterEdit = await service.listQuestions({ name: "projects/demo/questions-demo.md", q: "editable" });
+    expect(afterEdit.questions[0]).toMatchObject({ id: "Q-1", text: "Should open questions be editable in the UI?" });
+    const q2AfterEdit = (await service.listQuestions({ name: "projects/demo/questions-demo.md", q: "resolved questions" }))
+      .questions.find((question) => question.id === "Q-2");
+    expect(q2AfterEdit).toMatchObject({ id: "Q-2", text: "Should resolved questions remain queryable?" });
+
+    const deleteBlocked = await service.updateQuestionText({
+      name: "projects/demo/questions-demo.md",
+      id: "Q-1",
+      delete: true,
+    });
+    expect(deleteBlocked.warnings[0]?.code).toBe("requires_approval");
+
+    const deleted = await service.updateQuestionText({
+      name: "projects/demo/questions-demo.md",
+      id: "Q-1",
+      delete: true,
+      approved: true,
+    });
+    expect(deleted.warnings.filter((warning) => warning.severity === "BLOCK")).toEqual([]);
+    const afterDelete = await service.listQuestions({ name: "projects/demo/questions-demo.md" });
+    expect(afterDelete.questions.map((question) => question.id)).toEqual(["Q-2", undefined]);
   });
 
   it("returns typed blocks for missing or ambiguous question targets", async () => {

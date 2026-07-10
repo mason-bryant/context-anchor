@@ -77,6 +77,16 @@ describe("UI HTTP routes", () => {
     expect(html).toContain("/ui/app.js");
   });
 
+  it("serves the local Mermaid browser bundle without API auth", async () => {
+    const response = await fetch(`${baseUrl}/ui/vendor/mermaid/mermaid.esm.min.mjs`);
+    const js = await response.text();
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toContain("javascript");
+    expect(js).toContain("export{");
+    expect(js).toContain("default");
+  });
+
   it("redirects anchor markdown paths back into the UI", async () => {
     const response = await fetch(`${baseUrl}/server-rules/acceptance-criteria.md`, {
       redirect: "manual",
@@ -472,6 +482,8 @@ describe("UI HTTP routes", () => {
     const restoreAppend = stubAnchorServiceMethod("appendToAnchorSection", vi.fn(async () => ({ version: "v3", warnings: [] })));
     const restoreDeleteSection = stubAnchorServiceMethod("deleteAnchorSection", vi.fn(async () => ({ version: "v4", warnings: [] })));
     const restoreClaimText = stubAnchorServiceMethod("updateClaimText", vi.fn(async () => ({ version: "vc", warnings: [] })));
+    const restoreQuestionText = stubAnchorServiceMethod("updateQuestionText", vi.fn(async () => ({ version: "vq", warnings: [] })));
+    const restoreBulletText = stubAnchorServiceMethod("updateBulletText", vi.fn(async () => ({ version: "vb", warnings: [] })));
 
     try {
       await postJson("/api/ui/anchor-frontmatter", {
@@ -508,6 +520,21 @@ describe("UI HTTP routes", () => {
         line: 12,
         claim: "Old claim",
         text: "Updated claim",
+        approved: true,
+        expectedFileCommit: "abc123",
+      });
+      await postJson("/api/ui/question-text", {
+        name: "projects/demo/demo.md",
+        line: 20,
+        id: "Q-1",
+        text: "Updated question?",
+        approved: true,
+        expectedFileCommit: "abc123",
+      });
+      await postJson("/api/ui/bullet-text", {
+        name: "projects/demo/demo.md",
+        line: 7,
+        text: "Updated summary bullet.",
         approved: true,
         expectedFileCommit: "abc123",
       });
@@ -554,6 +581,30 @@ describe("UI HTTP routes", () => {
           coAuthor: undefined,
           expectedFileCommit: "abc123",
         });
+      expect((AnchorService.prototype as unknown as { updateQuestionText: ReturnType<typeof vi.fn> }).updateQuestionText)
+        .toHaveBeenCalledWith({
+          name: "projects/demo/demo.md",
+          id: "Q-1",
+          line: 20,
+          question: undefined,
+          text: "Updated question?",
+          delete: false,
+          message: undefined,
+          approved: true,
+          coAuthor: undefined,
+          expectedFileCommit: "abc123",
+        });
+      expect((AnchorService.prototype as unknown as { updateBulletText: ReturnType<typeof vi.fn> }).updateBulletText)
+        .toHaveBeenCalledWith({
+          name: "projects/demo/demo.md",
+          line: 7,
+          text: "Updated summary bullet.",
+          delete: false,
+          message: undefined,
+          approved: true,
+          coAuthor: undefined,
+          expectedFileCommit: "abc123",
+        });
       expect((AnchorService.prototype as unknown as { appendToAnchorSection: ReturnType<typeof vi.fn> }).appendToAnchorSection)
         .toHaveBeenCalledWith({
           name: "projects/demo/demo.md",
@@ -582,6 +633,8 @@ describe("UI HTTP routes", () => {
       restoreAppend();
       restoreDeleteSection();
       restoreClaimText();
+      restoreQuestionText();
+      restoreBulletText();
     }
   });
 
@@ -1088,10 +1141,17 @@ describe("UI HTTP routes", () => {
   it("lists and updates questions through the UI routes", async () => {
     type QuestionWrite = { version?: string; warnings: { severity: string; code?: string }[] };
     type QuestionsResult = {
-      questions: Array<{ id?: string; text: string; status: string; resolution?: string }>;
+      questions: Array<{ id?: string; line: number; text: string; status: string; resolution?: string }>;
       summary: { total: number; open: number; resolved: number; deferred: number; "wont-answer": number };
     };
     const content = projectAnchorContent().replace(
+      "# Demo Anchor",
+      `# Demo Anchor
+
+## tl-dr
+
+- Questions can be edited from the rendered view.`,
+    ).replace(
       "## PRs",
       `## Open Questions
 
@@ -1140,6 +1200,69 @@ describe("UI HTTP routes", () => {
     const afterReopen = await fetchJson<QuestionsResult>("/api/ui/questions?name=projects%2Fdemo%2Fquestions.md&q=structured");
     expect(afterReopen.questions[0]).toMatchObject({ id: "Q-1", status: "open" });
     expect(afterReopen.questions[0]?.resolution).toBeUndefined();
+
+    const editedQuestion = await postJson<QuestionWrite>("/api/ui/question-text", {
+      name: "projects/demo/questions.md",
+      id: "Q-1",
+      text: "Should rendered questions be editable?",
+      approved: true,
+    });
+    expect(editedQuestion.warnings.filter((warning) => warning.severity === "BLOCK")).toEqual([]);
+    const afterQuestionEdit = await fetchJson<QuestionsResult>(
+      "/api/ui/questions?name=projects%2Fdemo%2Fquestions.md&q=rendered",
+    );
+    expect(afterQuestionEdit.questions[0]).toMatchObject({
+      id: "Q-1",
+      text: "Should rendered questions be editable?",
+    });
+
+    const blockedDelete = await postJson<QuestionWrite>("/api/ui/question-text", {
+      name: "projects/demo/questions.md",
+      id: "Q-1",
+      delete: true,
+    });
+    expect(blockedDelete.warnings[0]?.code).toBe("requires_approval");
+
+    const deletedQuestion = await postJson<QuestionWrite>("/api/ui/question-text", {
+      name: "projects/demo/questions.md",
+      id: "Q-1",
+      delete: true,
+      approved: true,
+    });
+    expect(deletedQuestion.warnings.filter((warning) => warning.severity === "BLOCK")).toEqual([]);
+    const afterQuestionDelete = await fetchJson<QuestionsResult>("/api/ui/questions?name=projects%2Fdemo%2Fquestions.md");
+    expect(afterQuestionDelete.questions.map((question) => question.id)).toEqual(["Q-2"]);
+
+    const readAfterQuestions = await service.readAnchor("projects/demo/questions.md");
+    const summaryLine = readAfterQuestions.content
+      .split(/\r?\n/)
+      .findIndex((line) => line === "- Questions can be edited from the rendered view.") + 1;
+    const editedBullet = await postJson<QuestionWrite>("/api/ui/bullet-text", {
+      name: "projects/demo/questions.md",
+      line: summaryLine,
+      text: "Rendered summary bullets can be edited.",
+      approved: true,
+    });
+    expect(editedBullet.warnings.filter((warning) => warning.severity === "BLOCK")).toEqual([]);
+    const afterBulletEdit = await service.readAnchor("projects/demo/questions.md");
+    expect(afterBulletEdit.content).toContain("- Rendered summary bullets can be edited.");
+
+    const blockedBulletDelete = await postJson<QuestionWrite>("/api/ui/bullet-text", {
+      name: "projects/demo/questions.md",
+      line: afterBulletEdit.content.split(/\r?\n/).findIndex((line) => line === "- Rendered summary bullets can be edited.") + 1,
+      delete: true,
+    });
+    expect(blockedBulletDelete.warnings[0]?.code).toBe("requires_approval");
+
+    const deletedBullet = await postJson<QuestionWrite>("/api/ui/bullet-text", {
+      name: "projects/demo/questions.md",
+      line: afterBulletEdit.content.split(/\r?\n/).findIndex((line) => line === "- Rendered summary bullets can be edited.") + 1,
+      delete: true,
+      approved: true,
+    });
+    expect(deletedBullet.warnings.filter((warning) => warning.severity === "BLOCK")).toEqual([]);
+    const afterBulletDelete = await service.readAnchor("projects/demo/questions.md");
+    expect(afterBulletDelete.content).not.toContain("Rendered summary bullets can be edited.");
   });
 
   it("blocks task creation with a due date but no date confidence", async () => {

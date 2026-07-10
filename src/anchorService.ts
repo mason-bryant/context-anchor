@@ -124,6 +124,8 @@ import type {
   DeleteTaskInput,
   ResolveQuestionInput,
   ReopenQuestionInput,
+  UpdateBulletTextInput,
+  UpdateQuestionTextInput,
   UpdateProjectPriorityInput,
   UpdateTaskDueInput,
   UpdateTaskOwnerInput,
@@ -147,6 +149,12 @@ import {
 import { candidateBoostMap, isWithinPath, resolveCandidateProjects } from "./projectResolution.js";
 import { parseProjectMappings, repoFileUrl, repoPullRequestUrl } from "./projectMappings.js";
 import { buildPeopleIndex, parsePeopleRegistry, type PeopleIndex } from "./peopleRegistry.js";
+import {
+  extractMermaidBlocks,
+  replaceMermaidBlockText,
+  upsertMermaidBlockSources,
+  type MermaidBlock,
+} from "./mermaidBlocks.js";
 import { runValidators } from "./validators/pipeline.js";
 import {
   carryClaimAnnotations,
@@ -169,12 +177,15 @@ import {
   type ClaimStatus,
 } from "./claims.js";
 import {
+  deleteQuestion,
   extractQuestions,
   locateQuestion,
+  replaceQuestionText,
   setQuestionStatus,
   type QuestionStatus,
   type QuestionTarget,
 } from "./questions.js";
+import { deleteEditableBullet, locateEditableBullet, replaceEditableBulletText } from "./editableBullets.js";
 
 const BM25_INDEX_READ_CONCURRENCY = 8;
 
@@ -1776,6 +1787,118 @@ None.
     });
   }
 
+  async updateQuestionText(input: UpdateQuestionTextInput): Promise<WriteAnchorResult> {
+    const target = questionTextTargetFromInput(input);
+    if (!target) {
+      return AnchorService.blockResult(
+        "question_target_missing",
+        "updateQuestionText requires a line number, question id, or question text fragment.",
+      );
+    }
+    if (input.delete && !input.approved) {
+      return {
+        warnings: [
+          {
+            severity: "BLOCK",
+            code: "requires_approval",
+            message:
+              "updateQuestionText delete removes a question bullet and its attached metadata lines; retry with approved: true after explicit confirmation.",
+          },
+        ],
+        requiresApproval: true,
+      };
+    }
+
+    const text = input.text?.trim();
+    if (!input.delete) {
+      if (!text) {
+        return AnchorService.blockResult("question_text_missing", "Question text is required.");
+      }
+      if (/[\r\n]/.test(text)) {
+        return AnchorService.blockResult("question_text_multiline", "Question text must be a single line.");
+      }
+    }
+
+    const existing = await this.repo.readRaw(input.name);
+    if (existing !== undefined) {
+      const location = locateQuestion(existing, target);
+      if (!location.ok) {
+        return questionLocationBlock(input.name, target, location);
+      }
+    }
+
+    return this.applyAnchorContentPatch({
+      name: input.name,
+      message:
+        input.message ??
+        (input.delete ? `chore: delete question in ${input.name}` : `chore: update question text in ${input.name}`),
+      approved: input.approved,
+      coAuthor: input.coAuthor,
+      expectedFileCommit: input.expectedFileCommit,
+      mutate: (old) => (input.delete ? deleteQuestion(old, target) : replaceQuestionText(old, target, text as string)),
+    });
+  }
+
+  async updateBulletText(input: UpdateBulletTextInput): Promise<WriteAnchorResult> {
+    if (!Number.isInteger(input.line) || input.line < 1) {
+      return AnchorService.blockResult("editable_bullet_line_invalid", "Line must be a positive integer.");
+    }
+    if (input.delete && !input.approved) {
+      return {
+        warnings: [
+          {
+            severity: "BLOCK",
+            code: "requires_approval",
+            message:
+              "updateBulletText delete removes a rendered bullet and its attached continuation lines; retry with approved: true after explicit confirmation.",
+          },
+        ],
+        requiresApproval: true,
+      };
+    }
+
+    const text = input.text?.trim();
+    if (!input.delete) {
+      if (!text) {
+        return AnchorService.blockResult("editable_bullet_text_missing", "Bullet text is required.");
+      }
+      if (/[\r\n]/.test(text)) {
+        return AnchorService.blockResult("editable_bullet_text_multiline", "Bullet text must be a single line.");
+      }
+    }
+
+    const existing = await this.repo.readRaw(input.name);
+    if (existing !== undefined) {
+      const location = locateEditableBullet(existing, input.line);
+      if (!location.ok) {
+        return {
+          warnings: [
+            {
+              severity: "BLOCK",
+              code: location.code,
+              message:
+                location.code === "editable_bullet_not_allowed"
+                  ? `Line ${input.line} in ${input.name} is not in an editable rendered-bullet section.`
+                  : `No editable rendered bullet found at line ${input.line} in ${input.name}.`,
+            },
+          ],
+        };
+      }
+    }
+
+    return this.applyAnchorContentPatch({
+      name: input.name,
+      message:
+        input.message ??
+        (input.delete ? `chore: delete rendered bullet in ${input.name}` : `chore: update rendered bullet in ${input.name}`),
+      approved: input.approved,
+      coAuthor: input.coAuthor,
+      expectedFileCommit: input.expectedFileCommit,
+      mutate: (old) =>
+        input.delete ? deleteEditableBullet(old, input.line) : replaceEditableBulletText(old, input.line, text as string),
+    });
+  }
+
   private withResolvedSourceLinks(
     anchorName: string,
     claim: AnchorClaim,
@@ -1799,6 +1922,34 @@ None.
     });
     return {
       ...claim,
+      sources,
+      ...(sources[0] ? { annotation: sources[0] } : {}),
+    };
+  }
+
+  private withResolvedMermaidSourceLinks(
+    anchorName: string,
+    block: MermaidBlock,
+    mappings: ProjectMappings,
+    anchorNames: Set<string>,
+    peopleIndex: PeopleIndex,
+  ): MermaidBlock {
+    const sources = block.sources.map((source) => {
+      const person = source.person
+        ? peopleIndex.getPersonById(source.person) ?? peopleIndex.getPerson(source.person)
+        : undefined;
+      const href =
+        source.kind === TRUST_ME_BRO_KIND
+          ? undefined
+          : this.resolveClaimSourceHref(anchorName, source.src, mappings, anchorNames);
+      return {
+        ...source,
+        ...(person ? { person: person.id, personName: person.displayName } : {}),
+        ...(href ? { href } : {}),
+      };
+    });
+    return {
+      ...block,
       sources,
       ...(sources[0] ? { annotation: sources[0] } : {}),
     };
@@ -2083,6 +2234,90 @@ None.
       // resurrect cleared annotations or block intentional source changes.
       carryClaimAnnotations: false,
       mutate: (old) => upsertClaimSources(old, target, normalizedSources.sources),
+    });
+  }
+
+  async listMermaidBlocks(input: { name: string }): Promise<{ blocks: (MermaidBlock & { anchor: string })[] }> {
+    const content = await this.repo.readRaw(input.name);
+    if (content === undefined) {
+      return { blocks: [] };
+    }
+    const mappings = await this.loadProjectMappings();
+    const anchorNames = new Set((await this.repo.listAnchors()).map((meta) => meta.name));
+    const peopleIndex = buildPeopleIndex(await this.loadPeopleRegistry());
+    return {
+      blocks: extractMermaidBlocks(content).map((block) => ({
+        ...this.withResolvedMermaidSourceLinks(input.name, block, mappings, anchorNames, peopleIndex),
+        anchor: input.name,
+      })),
+    };
+  }
+
+  async setMermaidBlockSources(input: {
+    name: string;
+    line: number;
+    sources: Array<{ src?: string; observed?: string; conf?: string; id?: string; kind?: string; person?: string }>;
+    message?: string;
+    approved?: boolean;
+    coAuthor?: string;
+    expectedFileCommit?: string;
+  }): Promise<WriteAnchorResult> {
+    const parsedSources = parseClaimSourceInputs(input.sources);
+    if (!parsedSources.ok) {
+      return {
+        warnings: parsedSources.errors.map((error) => ({
+          severity: "BLOCK" as const,
+          code: "claim_annotation_invalid",
+          message: error,
+        })),
+      };
+    }
+    const normalizedSources = await this.normalizeClaimSources(parsedSources.sources);
+    if (!normalizedSources.ok) {
+      return {
+        warnings: normalizedSources.errors.map((error) => ({
+          severity: "BLOCK" as const,
+          code: "claim_annotation_invalid",
+          message: error,
+        })),
+      };
+    }
+
+    return this.applyAnchorContentPatch({
+      name: input.name,
+      message:
+        input.message ??
+        (normalizedSources.sources.length === 0
+          ? `chore: clear Mermaid provenance in ${input.name}`
+          : `chore: set Mermaid provenance in ${input.name}`),
+      approved: input.approved,
+      coAuthor: input.coAuthor,
+      expectedFileCommit: input.expectedFileCommit,
+      carryClaimAnnotations: false,
+      mutate: (old) => upsertMermaidBlockSources(old, input.line, normalizedSources.sources),
+    });
+  }
+
+  async updateMermaidBlockText(input: {
+    name: string;
+    line: number;
+    text?: string;
+    message?: string;
+    approved?: boolean;
+    coAuthor?: string;
+    expectedFileCommit?: string;
+  }): Promise<WriteAnchorResult> {
+    const text = input.text?.trim();
+    if (!text) {
+      return AnchorService.blockResult("mermaid_text_missing", "Mermaid diagram text is required.");
+    }
+    return this.applyAnchorContentPatch({
+      name: input.name,
+      message: input.message ?? `chore: update Mermaid diagram in ${input.name}`,
+      approved: input.approved,
+      coAuthor: input.coAuthor,
+      expectedFileCommit: input.expectedFileCommit,
+      mutate: (old) => replaceMermaidBlockText(old, input.line, text),
     });
   }
 
@@ -3777,6 +4012,23 @@ function questionTargetFromInput(input: {
   }
   if (input.id?.trim()) {
     return { id: input.id.trim() };
+  }
+  if (input.question?.trim()) {
+    return { question: input.question.trim() };
+  }
+  return undefined;
+}
+
+function questionTextTargetFromInput(input: {
+  line?: number;
+  id?: string;
+  question?: string;
+}): QuestionTarget | undefined {
+  if (input.id?.trim()) {
+    return { id: input.id.trim() };
+  }
+  if (input.line !== undefined) {
+    return { line: input.line };
   }
   if (input.question?.trim()) {
     return { question: input.question.trim() };
