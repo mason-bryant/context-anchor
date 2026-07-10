@@ -155,6 +155,18 @@ export type GraphEdgeType =
   | "milestone_goal"
   /** Containment: a `type: project-roadmap` anchor to each `goal:` node its headings define. The `from` side is an `anchor:` node, never a `milestone:` node — distinct from `milestone_goal` above. */
   | "roadmap_goal"
+  /**
+   * Containment: a `milestone:` node to each `task:` node its front-matter
+   * `tasks[]` defines (WP4 addition — the design doc's edge table does not
+   * list this row explicitly, but the implementation plan's own Phase-C
+   * acceptance note names "graphNeighbors on a milestone returns its goal,
+   * project, tasks, and owners" as the capability to verify, and without
+   * this edge a task node was reachable only in reverse, from its owner via
+   * `task_owner`, never forward from its milestone). Sourced the same way
+   * `task_owner` is: `normalizedTasksFromFm` on a `project-milestone`
+   * anchor's front matter.
+   */
+  | "milestone_task"
   | "task_owner"
   | "person_project"
   | "team_project"

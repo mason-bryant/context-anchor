@@ -470,6 +470,44 @@ the index when your workflow checks in that file.`,
     async ({ name, kind }) => jsonResult({ anchors: await service.getRelated(name, kind) }),
   );
 
+  const GraphEdgeTypeSchema = z.enum([
+    "anchor_project",
+    "milestone_anchor",
+    "milestone_goal",
+    "roadmap_goal",
+    "milestone_task",
+    "task_owner",
+    "person_project",
+    "team_project",
+    "project_repo",
+    "repo_path",
+    "anchor_anchor",
+    "claim_source",
+    "claim_person",
+    "claim_section",
+    "section_anchor",
+    "derived_from",
+    "contradicts",
+  ]);
+
+  server.registerTool(
+    "graphNeighbors",
+    {
+      title: "Graph Neighbors",
+      description:
+        "Traverse the derived knowledge graph from one node (anchor name, `G-###` goal id, `<anchor>#<claim-id>`, person/team name, or a canonical node id) out to `depth` hops (1-3, default 1). A generalization of `getRelated` covering every edge kind the server tracks: project/goal/milestone/task/owner structure, anchor links, and claim provenance (source, person, section). Answers the two canonical graph queries in <=2 hops: (1) \"which claims cite this source?\" — pass the source node (e.g. `pr:<repo>#<n>`) with `direction: reverse` to walk claim -> source edges backwards; (2) \"which claims are downstream of this source?\" — the same reverse query, extended to `derived_from` descendants once WP5 ships that edge type. Ambiguous input (e.g. a name matching multiple people or anchors) returns a `candidates` list instead of guessing — resolve to one candidate's node id and call again. Every edge in the response carries `type` and `sourceOfTruth`; every result node carries its hop path back to the origin and, for claim nodes, the same per-claim provenance shape `includeProvenance` sidecars use. Read-only.",
+      inputSchema: z.object({
+        node: z.string().min(1).describe("Anchor name, `G-###` goal id, `<anchor>#<claim-id>`, person/team name, or canonical node id (e.g. `pr:<repo>#<n>`, `anchor:<name>`)."),
+        depth: z.number().int().min(1).max(3).optional().describe("Hop count from the origin node, clamped 1-3. Default 1."),
+        edgeTypes: z.array(GraphEdgeTypeSchema).optional().describe("Restrict traversal to these edge types. Omit to follow every edge type."),
+        direction: z.enum(["forward", "reverse", "both"]).optional().describe("forward = follow edges FROM each node; reverse = follow edges TO each node (e.g. \"claims citing this source\"); both = either direction. Default both."),
+        limit: z.number().int().min(1).max(200).optional().describe("Maximum result nodes (origin excluded), clamped 1-200. Default 50."),
+      }),
+      annotations: { readOnlyHint: true },
+    },
+    async (input) => jsonResult(await service.graphNeighbors(input)),
+  );
+
   server.registerTool(
     "proposeChange",
     {

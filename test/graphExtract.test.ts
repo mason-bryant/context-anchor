@@ -153,7 +153,7 @@ describe("extractLiteralRelationsEdges", () => {
 });
 
 describe("extractMilestoneEdges", () => {
-  it("emits milestone -> anchor containment and task -> owner edges", () => {
+  it("emits milestone -> anchor containment, milestone -> task containment, and task -> owner edges", () => {
     const peopleRegistry: PeopleRegistry = { people: [{ id: "alice", displayName: "Alice" }], teams: [] };
     const ctx = makeCtx({ peopleRegistry });
     const d = doc({
@@ -172,6 +172,12 @@ describe("extractMilestoneEdges", () => {
         sourceOfTruth: "containment",
       },
       {
+        from: "milestone:projects/demo/milestones/m1.md",
+        to: "task:projects/demo/milestones/m1.md#T-1",
+        type: "milestone_task",
+        sourceOfTruth: "front-matter",
+      },
+      {
         from: "task:projects/demo/milestones/m1.md#T-1",
         to: "person:alice",
         type: "task_owner",
@@ -180,7 +186,7 @@ describe("extractMilestoneEdges", () => {
     ]);
   });
 
-  it("skips a task owner that does not resolve to a known person or team", () => {
+  it("still emits milestone -> task containment when a task owner does not resolve to a known person or team", () => {
     const ctx = makeCtx();
     const d = doc({
       anchorName: "projects/demo/milestones/m1.md",
@@ -196,6 +202,12 @@ describe("extractMilestoneEdges", () => {
         to: "anchor:projects/demo/milestones/m1.md",
         type: "milestone_anchor",
         sourceOfTruth: "containment",
+      },
+      {
+        from: "milestone:projects/demo/milestones/m1.md",
+        to: "task:projects/demo/milestones/m1.md#T-1",
+        type: "milestone_task",
+        sourceOfTruth: "front-matter",
       },
     ]);
   });

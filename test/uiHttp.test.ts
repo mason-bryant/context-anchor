@@ -1416,6 +1416,35 @@ describe("UI HTTP routes", () => {
     expect(response.status).toBe(400);
     expect(body.error.message).toContain("Invalid scope");
   });
+
+  it("requires auth and resolves an anchor node to its neighbors through /api/ui/graph-neighbors", async () => {
+    const unauthed = await fetch(`${baseUrl}/api/ui/graph-neighbors?node=${encodeURIComponent("projects/demo/demo.md")}`);
+    expect(unauthed.status).toBe(401);
+
+    type GraphNeighborsHttpResult = {
+      resolvedNode?: { nodeId: string; type: string; display?: string; via?: string };
+      nodes?: Array<{ id: string; type: string; depth: number }>;
+      edges?: Array<{ from: string; to: string; type: string; sourceOfTruth: string }>;
+      candidates?: Array<{ nodeId: string; type: string }>;
+    };
+
+    const result = await fetchJson<GraphNeighborsHttpResult>(
+      `/api/ui/graph-neighbors?node=${encodeURIComponent("projects/demo/demo.md")}&direction=forward&depth=1&limit=10`,
+    );
+    expect(result.resolvedNode).toMatchObject({ nodeId: "anchor:projects/demo/demo.md", type: "anchor" });
+    expect(result.nodes?.some((node) => node.id === "project:demo")).toBe(true);
+    expect(result.edges?.every((edge) => edge.type && edge.sourceOfTruth)).toBe(true);
+  });
+
+  it("rejects an out-of-range depth/limit for /api/ui/graph-neighbors with 400", async () => {
+    const response = await fetch(
+      `${baseUrl}/api/ui/graph-neighbors?node=${encodeURIComponent("projects/demo/demo.md")}&depth=5`,
+      { headers: { Authorization: `Bearer ${TOKEN}` } },
+    );
+    const body = (await response.json()) as { error: { message: string } };
+    expect(response.status).toBe(400);
+    expect(body.error.message).toContain("depth");
+  });
 });
 
 async function fetchJson<T>(pathSuffix: string): Promise<T> {

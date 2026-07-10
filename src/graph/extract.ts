@@ -161,9 +161,12 @@ export function extractRelationsEdges(doc: DocumentInput, ctx: ExtractDocumentEd
 // ---------------------------------------------------------------------------
 
 /**
- * `milestone -> anchor` containment edge (the milestone node's home anchor)
- * plus `task -> owner` edges resolved through the people index, for
- * `type: project-milestone` anchors.
+ * `milestone -> anchor` containment edge (the milestone node's home anchor),
+ * `milestone -> task` containment edges (one per front-matter `tasks[]`
+ * entry, regardless of whether it has an owner — WP4 addition, see
+ * `milestone_task`'s docstring in `src/graph/model.ts`), plus `task ->
+ * owner` edges resolved through the people index, for `type:
+ * project-milestone` anchors.
  */
 export function extractMilestoneEdges(doc: DocumentInput, ctx: ExtractDocumentEdgesContext): GraphEdge[] {
   if (!isProjectMilestoneType(doc.frontmatter.type)) {
@@ -181,6 +184,14 @@ export function extractMilestoneEdges(doc: DocumentInput, ctx: ExtractDocumentEd
 
   const tasks = normalizedTasksFromFm(doc.frontmatter as Record<string, unknown>) ?? [];
   for (const task of tasks) {
+    const taskId = taskNodeId(doc.anchorName, task.id);
+    edges.push({
+      from: milestoneId,
+      to: taskId,
+      type: "milestone_task",
+      sourceOfTruth: "front-matter",
+    });
+
     if (!task.owner) {
       continue;
     }
@@ -190,7 +201,7 @@ export function extractMilestoneEdges(doc: DocumentInput, ctx: ExtractDocumentEd
     }
     const to = match.kind === "person" ? personNodeId(match.person.id) : teamNodeId(match.team.id);
     edges.push({
-      from: taskNodeId(doc.anchorName, task.id),
+      from: taskId,
       to,
       type: "task_owner",
       sourceOfTruth: "front-matter",

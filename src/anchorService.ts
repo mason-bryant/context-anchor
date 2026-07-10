@@ -157,6 +157,16 @@ import {
 } from "./graph/sourceParsing.js";
 import { parseClaimSource, type ParseClaimSourceContext } from "./graph/sourceId.js";
 import { GraphIndex } from "./graph/index.js";
+import {
+  clampDepth,
+  clampLimit,
+  resolveGraphNode,
+  traverseGraphNeighbors,
+  type GraphNeighborsDirection,
+  type GraphNeighborsInput,
+  type GraphNeighborsResult,
+  type GraphNeighborsResultNode,
+} from "./graph/neighbors.js";
 import { buildPeopleIndex, parsePeopleRegistry, type PeopleIndex } from "./peopleRegistry.js";
 import {
   extractMermaidBlocks,
@@ -3813,6 +3823,126 @@ None.
     return getRelatedAnchors(this.repo, name, kind);
   }
 
+  /**
+   * Read-only traversal surface over the derived graph (WP4). Resolves
+   * `node` via `resolveGraphNode` (anchor name / `G-###` / `<anchor>#<claim-id>`
+   * / person-team fuzzy / canonical passthrough — ambiguous input returns
+   * `candidates` instead of guessing), then BFS-traverses the `GraphIndex`
+   * up to `depth` hops (clamped 1-3), optionally filtered by `edgeTypes` and
+   * `direction`, capped at `limit` result nodes (clamped 1-200, default 50).
+   * Every result node carries its hop path from the origin; claim nodes
+   * additionally embed the same per-claim provenance shape
+   * `includeProvenance` sidecars use (`buildAnchorClaimProvenance`'s
+   * resolved `AnchorClaim`), so a claim result is never just an opaque id.
+   */
+  async graphNeighbors(input: GraphNeighborsInput): Promise<GraphNeighborsResult> {
+    const graph = this.getGraphIndex();
+    await graph.ensureBuilt();
+
+    const metas = await this.repo.listAnchors();
+    const anchorNames = new Set(metas.map((meta) => meta.name));
+    const metaByName = new Map(metas.map((meta) => [meta.name, meta]));
+    const peopleRegistry = await this.loadPeopleRegistry();
+    const peopleIndex = buildPeopleIndex(peopleRegistry);
+
+    // Pre-read the ids of the one anchor a `<anchor>#<claim-id>` input might
+    // reference (resolveGraphNode's claim-ref branch needs a synchronous
+    // existence check). Anchor resolution runs the same normalization
+    // resolveGraphNode itself uses; a non-claim-shaped or unresolvable input
+    // leaves the cache empty and resolveGraphNode falls through to its next
+    // resolution strategy exactly as if this anchor had zero claim ids.
+    const claimIdCache = new Map<string, ReadonlySet<string>>();
+    const claimRefMatch = /^(.+)#([a-z0-9][a-z0-9-]*)$/i.exec(input.node.trim());
+    if (claimRefMatch) {
+      const resolvedAnchor = this.resolveAnchorNameOrUndefined(claimRefMatch[1].trim(), anchorNames);
+      if (resolvedAnchor) {
+        const content = await this.repo.readRaw(resolvedAnchor);
+        if (content !== undefined) {
+          claimIdCache.set(resolvedAnchor, collectClaimIds(extractClaims(content)));
+        }
+      }
+    }
+    const anchorHasClaimId = (anchorName: string, claimId: string): boolean =>
+      claimIdCache.get(anchorName)?.has(claimId) ?? false;
+
+    const resolution = resolveGraphNode(input.node, {
+      anchorNames,
+      resolveAnchorName: (value) => this.resolveAnchorNameOrUndefined(value, anchorNames),
+      anchorMetaByName: (name) => metaByName.get(name),
+      anchorHasClaimId,
+      peopleIndex,
+      peopleRegistry,
+    });
+
+    if ("candidates" in resolution) {
+      return { candidates: resolution.candidates };
+    }
+
+    const depth = clampDepth(input.depth);
+    const limit = clampLimit(input.limit);
+    const direction = normalizeGraphDirection(input.direction);
+
+    const { nodes, edges } = await traverseGraphNeighbors(graph, resolution.resolved, {
+      depth,
+      edgeTypes: input.edgeTypes,
+      direction,
+      limit,
+    });
+
+    const enrichedNodes = await Promise.all(nodes.map((node) => this.enrichGraphNeighborNode(node, metaByName)));
+
+    return { resolvedNode: resolution.resolved, nodes: enrichedNodes, edges };
+  }
+
+  /** Best-effort anchor-name resolution used by graph node resolution: normalizes and checks existence against the known anchor set, mirroring `GraphIndex`'s own `resolveAnchorName` context builder. */
+  private resolveAnchorNameOrUndefined(value: string, anchorNames: ReadonlySet<string>): string | undefined {
+    const trimmed = value.trim();
+    if (!trimmed) {
+      return undefined;
+    }
+    if (anchorNames.has(trimmed)) {
+      return trimmed;
+    }
+    const withMd = trimmed.endsWith(".md") ? trimmed : `${trimmed}.md`;
+    return anchorNames.has(withMd) ? withMd : undefined;
+  }
+
+  /** Fill in `display` for node kinds resolvable without another traversal, and attach claim provenance to claim nodes. Never throws on an unresolvable/unreadable node — the bare node id/type is still a valid, inspectable result. */
+  private async enrichGraphNeighborNode(
+    node: GraphNeighborsResultNode,
+    metaByName: Map<string, AnchorMeta>,
+  ): Promise<GraphNeighborsResultNode> {
+    if (node.display) {
+      return node;
+    }
+    if (node.type === "anchor" || node.type === "milestone") {
+      const anchorName = node.id.slice(node.id.indexOf(":") + 1);
+      const meta = metaByName.get(anchorName);
+      return meta?.title ? { ...node, display: meta.title } : node;
+    }
+    if (node.type === "claim") {
+      return this.attachClaimProvenanceToNode(node);
+    }
+    return node;
+  }
+
+  private async attachClaimProvenanceToNode(node: GraphNeighborsResultNode): Promise<GraphNeighborsResultNode> {
+    const parsed = parseClaimNodeId(node.id);
+    if (!parsed) {
+      return node;
+    }
+    const content = await this.repo.readRaw(parsed.anchorName);
+    if (content === undefined) {
+      return node;
+    }
+    const claims = await this.extractResolvedClaims(parsed.anchorName, content);
+    const claim = claims.find((candidate) => candidate.id === parsed.claimId);
+    if (!claim) {
+      return node;
+    }
+    return { ...node, display: node.display ?? claim.text, claim };
+  }
+
   async migrateRoadmapGoalIds(input: {
     project: string;
     startFrom?: number;
@@ -4597,4 +4727,22 @@ function duplicateClaimIdViolations(content: string, treeIdsExcludingThisAnchor:
     }
   }
   return violations;
+}
+
+/** `graphNeighbors` input's `direction` defaults to `"both"`; the traversal core (`src/graph/neighbors.ts`) uses `"forward"`/`"reverse"`/`"both"` naming to avoid the `to`/`from`-vs-`in`/`out` ambiguity edge objects already use. */
+function normalizeGraphDirection(direction: GraphNeighborsInput["direction"]): GraphNeighborsDirection {
+  return direction === "forward" || direction === "reverse" ? direction : "both";
+}
+
+/** Split a `claim:<anchor>#<id>` node id back into its parts. Undefined for any other node kind's id shape. */
+function parseClaimNodeId(nodeId: string): { anchorName: string; claimId: string } | undefined {
+  if (!nodeId.startsWith("claim:")) {
+    return undefined;
+  }
+  const withoutPrefix = nodeId.slice("claim:".length);
+  const hashIndex = withoutPrefix.lastIndexOf("#");
+  if (hashIndex === -1) {
+    return undefined;
+  }
+  return { anchorName: withoutPrefix.slice(0, hashIndex), claimId: withoutPrefix.slice(hashIndex + 1) };
 }
