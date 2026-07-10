@@ -202,6 +202,39 @@ describe("parseProjectMappings web info", () => {
   });
 });
 
+describe("parseProjectMappings localCheckoutPath (WP6 effective certainty)", () => {
+  it("keeps a configured local checkout path", () => {
+    const parsed = parseProjectMappings({
+      projects: [
+        {
+          project: "demo",
+          repos: [{ repo: "repo-alpha", paths: [], localCheckoutPath: "/Users/dev/code/repo-alpha" }],
+        },
+      ],
+    });
+    expect(parsed.projects[0]?.repos[0]?.localCheckoutPath).toBe("/Users/dev/code/repo-alpha");
+  });
+
+  it("omits localCheckoutPath when not configured", () => {
+    const parsed = parseProjectMappings({
+      projects: [{ project: "demo", repos: [{ repo: "repo-alpha", paths: [] }] }],
+    });
+    expect(parsed.projects[0]?.repos[0]?.localCheckoutPath).toBeUndefined();
+  });
+
+  it("merges a localCheckoutPath from a duplicate repo entry across project rows", () => {
+    const parsed = parseProjectMappings({
+      projects: [
+        { project: "demo", repos: [{ repo: "repo-alpha", paths: ["src"] }] },
+        { project: "demo", repos: [{ repo: "repo-alpha", paths: [], localCheckoutPath: "/checkout" }] },
+      ],
+    });
+    const repo = parsed.projects[0]?.repos.find((r) => r.repo === "repo-alpha");
+    expect(repo?.localCheckoutPath).toBe("/checkout");
+    expect(repo?.paths).toEqual(["src"]);
+  });
+});
+
 describe("repoFileUrl", () => {
   it("builds a GitHub-style file URL by default", () => {
     const repo = { web: { url: "https://github.com/owner/repo" } };

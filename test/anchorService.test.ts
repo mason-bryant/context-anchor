@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
@@ -1858,6 +1858,554 @@ describe("AnchorService people registry caching", () => {
     expect((await service.listPeople()).people.map((p) => p.id)).toEqual(["bob"]);
   });
 });
+
+describe("AnchorService effective certainty (WP6)", () => {
+  // AnchorService has no injectable clock (calls `new Date()` directly for
+  // certainty's `now`, matching the rest of the codebase's convention), so
+  // fixtures below use dates relative to the real wall clock (`today`/
+  // `daysAgo`) rather than a fixed calendar date, keeping the exact-value
+  // assertions deterministic without depending on wall-clock drift.
+  it("readAnchor's includeProvenance sidecar attaches effectiveCertainty with every per-row factor to each claim", async () => {
+    await service.writeAnchor({
+      name: "projects/demo/demo",
+      content: projectAnchorContent({
+        currentState: `- Storage stays git-backed.\n  {src: PR #55; observed: ${today()}; conf: high}`,
+      }),
+      message: "test: add annotated claim",
+    });
+
+    const read = await service.readAnchor("projects/demo/demo", undefined, { includeProvenance: "full" });
+    expect(read.claimProvenance?.mode).toBe("full");
+    const claim = read.claimProvenance?.claims?.find((c) => c.text === "Storage stays git-backed.");
+    expect(claim).toBeDefined();
+    expect(claim?.effectiveCertainty).toBeDefined();
+    const certainty = claim!.effectiveCertainty!;
+    // Same-day observation, high confidence, live PR source (no network check): base 0.9, decay 1, liveness 1.
+    expect(certainty.aggregation).toBe("average");
+    expect(certainty.rows).toHaveLength(1);
+    expect(certainty.rows[0].base).toBe(0.9);
+    expect(certainty.rows[0].decay).toBeCloseTo(1, 10);
+    expect(certainty.rows[0].liveness).toBe(1);
+    // Reproducible by hand from the returned factors (G-039 acceptance criterion).
+    expect(certainty.certainty).toBeCloseTo(
+      certainty.rows[0].base * certainty.rows[0].decay * certainty.rows[0].liveness,
+      10,
+    );
+  });
+
+  it("weakestAncestor defaults to the claim itself when no derived_from edges exist (WP5 unmerged)", async () => {
+    await service.writeAnchor({
+      name: "projects/demo/demo",
+      content: projectAnchorContent({
+        currentState: `- Storage stays git-backed.\n  {src: PR #55; observed: ${today()}; conf: high}`,
+      }),
+      message: "test: add annotated claim",
+    });
+
+    const read = await service.readAnchor("projects/demo/demo", undefined, { includeProvenance: "full" });
+    const claim = read.claimProvenance?.claims?.find((c) => c.text === "Storage stays git-backed.");
+    expect(claim?.weakestAncestor).toBeDefined();
+    expect(claim?.weakestAncestor?.certainty).toBeCloseTo(claim!.effectiveCertainty!.certainty, 10);
+    expect(claim?.weakestAncestor?.path).toEqual([`claim:projects/demo/demo.md#${claim?.id}`]);
+  });
+
+  it("liveness: an anchor source referencing a real anchor is live (certainty unaffected by liveness)", async () => {
+    await service.writeAnchor({
+      name: "projects/demo/other",
+      content: projectAnchorContent({ project: "demo", summary: "Other anchor." }),
+      message: "test: add other anchor",
+    });
+    await service.writeAnchor({
+      name: "projects/demo/demo",
+      content: projectAnchorContent({
+        currentState: `- See the other anchor for detail.\n  {src: projects/demo/other; observed: ${today()}; conf: high}`,
+      }),
+      message: "test: add anchor-source claim",
+    });
+
+    const read = await service.readAnchor("projects/demo/demo", undefined, { includeProvenance: "full" });
+    const claim = read.claimProvenance?.claims?.find((c) => c.text === "See the other anchor for detail.");
+    expect(claim?.effectiveCertainty?.rows[0].liveness).toBe(1);
+    expect(claim?.effectiveCertainty?.certainty).toBeCloseTo(0.9, 10);
+  });
+
+  it("liveness: a section source whose anchor side does not resolve is dangling and zeroes that row's value", async () => {
+    // A bare nonexistent anchor name (no '#') is not distinguishable from a
+    // file path by parseClaimSource, so dangling-anchor liveness only shows
+    // up through the section-reference form, whose anchor-missing branch is
+    // treated the same as a missing heading (design doc part 1).
+    await service.writeAnchor({
+      name: "projects/demo/demo",
+      content: projectAnchorContent({
+        currentState: `- See the ghost anchor's section for detail.\n  {src: projects/demo/ghost#Decisions; observed: ${today()}; conf: high}`,
+      }),
+      message: "test: add dangling section-anchor claim",
+      approved: true,
+    });
+
+    const read = await service.readAnchor("projects/demo/demo", undefined, { includeProvenance: "full" });
+    const claim = read.claimProvenance?.claims?.find((c) => c.text === "See the ghost anchor's section for detail.");
+    expect(claim?.effectiveCertainty?.rows[0].liveness).toBe(0);
+    expect(claim?.effectiveCertainty?.certainty).toBe(0);
+  });
+
+  it("liveness: a section source referencing a real H2 heading is live", async () => {
+    await service.writeAnchor({
+      name: "projects/demo/demo",
+      content: projectAnchorContent({
+        currentState: `- See the Decisions section for detail.\n  {src: #Decisions; observed: ${today()}; conf: high}`,
+      }),
+      message: "test: add section-source claim",
+    });
+
+    const read = await service.readAnchor("projects/demo/demo", undefined, { includeProvenance: "full" });
+    const claim = read.claimProvenance?.claims?.find((c) => c.text === "See the Decisions section for detail.");
+    expect(claim?.effectiveCertainty?.rows[0].liveness).toBe(1);
+  });
+
+  it("liveness: a section source referencing a nonexistent heading is dangling and zeroes that row's value", async () => {
+    await service.writeAnchor({
+      name: "projects/demo/demo",
+      content: projectAnchorContent({
+        currentState: `- See the ghost section for detail.\n  {src: #Ghost Section; observed: ${today()}; conf: high}`,
+      }),
+      message: "test: add dangling section-source claim",
+      approved: true,
+    });
+
+    const read = await service.readAnchor("projects/demo/demo", undefined, { includeProvenance: "full" });
+    const claim = read.claimProvenance?.claims?.find((c) => c.text === "See the ghost section for detail.");
+    expect(claim?.effectiveCertainty?.rows[0].liveness).toBe(0);
+    expect(claim?.effectiveCertainty?.certainty).toBe(0);
+  });
+
+  it("liveness: a file source defaults to live when no local checkout is configured for the repo", async () => {
+    await service.writeProjectMappings({
+      mappings: { projects: [{ project: "demo", repos: [{ repo: "repo-alpha", paths: [] }] }] },
+    });
+    await service.writeAnchor({
+      name: "projects/demo/demo",
+      content: projectAnchorContent({
+        currentState: `- See src/index.ts for detail.\n  {src: repo-alpha:src/index.ts; observed: ${today()}; conf: high}`,
+      }),
+      message: "test: add file-source claim, no checkout configured",
+    });
+
+    const read = await service.readAnchor("projects/demo/demo", undefined, { includeProvenance: "full" });
+    const claim = read.claimProvenance?.claims?.find((c) => c.text === "See src/index.ts for detail.");
+    expect(claim?.effectiveCertainty?.rows[0].liveness).toBe(1);
+  });
+
+  it("liveness: a file source is live when the local checkout path has the file", async () => {
+    const checkoutDir = await mkdtemp(path.join(os.tmpdir(), "anchor-mcp-checkout-"));
+    await mkdir(path.join(checkoutDir, "src"), { recursive: true });
+    await writeFile(path.join(checkoutDir, "src", "index.ts"), "export {};\n");
+    try {
+      await service.writeProjectMappings({
+        mappings: {
+          projects: [{ project: "demo", repos: [{ repo: "repo-alpha", paths: [], localCheckoutPath: checkoutDir }] }],
+        },
+      });
+      await service.writeAnchor({
+        name: "projects/demo/demo",
+        content: projectAnchorContent({
+          currentState: `- See src/index.ts for detail.\n  {src: repo-alpha:src/index.ts; observed: ${today()}; conf: high}`,
+        }),
+        message: "test: add file-source claim, checkout has the file",
+      });
+
+      const read = await service.readAnchor("projects/demo/demo", undefined, { includeProvenance: "full" });
+      const claim = read.claimProvenance?.claims?.find((c) => c.text === "See src/index.ts for detail.");
+      expect(claim?.effectiveCertainty?.rows[0].liveness).toBe(1);
+    } finally {
+      await rm(checkoutDir, { recursive: true, force: true });
+    }
+  });
+
+  it("liveness: a file source is dangling (zeroes that row's value) when the local checkout does NOT have the file", async () => {
+    const checkoutDir = await mkdtemp(path.join(os.tmpdir(), "anchor-mcp-checkout-"));
+    try {
+      await service.writeProjectMappings({
+        mappings: {
+          projects: [{ project: "demo", repos: [{ repo: "repo-alpha", paths: [], localCheckoutPath: checkoutDir }] }],
+        },
+      });
+      await service.writeAnchor({
+        name: "projects/demo/demo",
+        content: projectAnchorContent({
+          currentState: `- See src/gone.ts for detail.\n  {src: repo-alpha:src/gone.ts; observed: ${today()}; conf: high}`,
+        }),
+        message: "test: add file-source claim, checkout missing the file",
+        approved: true,
+      });
+
+      const read = await service.readAnchor("projects/demo/demo", undefined, { includeProvenance: "full" });
+      const claim = read.claimProvenance?.claims?.find((c) => c.text === "See src/gone.ts for detail.");
+      expect(claim?.effectiveCertainty?.rows[0].liveness).toBe(0);
+      expect(claim?.effectiveCertainty?.certainty).toBe(0);
+    } finally {
+      await rm(checkoutDir, { recursive: true, force: true });
+    }
+  });
+
+  it("liveness: a path-traversal file source never escapes the configured checkout (fails closed to live, not an existence oracle)", async () => {
+    const checkoutDir = await mkdtemp(path.join(os.tmpdir(), "anchor-mcp-checkout-"));
+    try {
+      // A file that genuinely exists just outside the checkout root, so a
+      // vulnerable implementation would report it as "live" via `../` escape.
+      await writeFile(path.join(checkoutDir, "..", "outside-marker.txt"), "exists");
+      await service.writeProjectMappings({
+        mappings: {
+          projects: [{ project: "demo", repos: [{ repo: "repo-alpha", paths: [], localCheckoutPath: checkoutDir }] }],
+        },
+      });
+      await service.writeAnchor({
+        name: "projects/demo/demo",
+        content: projectAnchorContent({
+          currentState: `- Escaping claim.\n  {src: repo-alpha:../outside-marker.txt; observed: ${today()}; conf: high}`,
+        }),
+        message: "test: add path-traversal file-source claim",
+        approved: true,
+      });
+
+      const read = await service.readAnchor("projects/demo/demo", undefined, { includeProvenance: "full" });
+      const claim = read.claimProvenance?.claims?.find((c) => c.text === "Escaping claim.");
+      // Fails closed to "cannot determine locally" (live=1), never reports
+      // the escaped path's real existence as a liveness signal.
+      expect(claim?.effectiveCertainty?.rows[0].liveness).toBe(1);
+    } finally {
+      await rm(path.join(checkoutDir, "..", "outside-marker.txt"), { force: true });
+      await rm(checkoutDir, { recursive: true, force: true });
+    }
+  });
+
+  it("half-life category: an agent-rules claim decays slower than an equivalently-aged projects claim", async () => {
+    const observedLongAgo = daysAgo(180);
+    await service.writeAnchor({
+      name: "agent-rules/codex",
+      content: sharedAnchorContent({
+        currentState: `- Agents must follow the house style.\n  {src: PR #1; observed: ${observedLongAgo}; conf: high}`,
+      }),
+      message: "test: add agent-rules claim",
+    });
+    await service.writeAnchor({
+      name: "projects/demo/demo",
+      content: projectAnchorContent({
+        currentState: `- Storage stays git-backed.\n  {src: PR #1; observed: ${observedLongAgo}; conf: high}`,
+      }),
+      message: "test: add projects claim",
+    });
+
+    const agentRulesRead = await service.readAnchor("agent-rules/codex", undefined, { includeProvenance: "full" });
+    const projectsRead = await service.readAnchor("projects/demo/demo", undefined, { includeProvenance: "full" });
+    const agentRulesClaim = agentRulesRead.claimProvenance?.claims?.find(
+      (c) => c.text === "Agents must follow the house style.",
+    );
+    const projectsClaim = projectsRead.claimProvenance?.claims?.find((c) => c.text === "Storage stays git-backed.");
+
+    expect(agentRulesClaim?.effectiveCertainty?.rows[0].halfLifeDays).toBe(180);
+    expect(projectsClaim?.effectiveCertainty?.rows[0].halfLifeDays).toBe(60);
+    expect(agentRulesClaim?.effectiveCertainty?.certainty).toBeGreaterThan(
+      projectsClaim?.effectiveCertainty?.certainty ?? 0,
+    );
+  });
+
+  it("half-life category: a milestone anchor uses the milestones half-life, distinct from a plain project anchor", async () => {
+    await service.writeAnchor({
+      name: "projects/demo/demo-roadmap",
+      content: roadmapAnchorContentForCertainty(),
+      message: "test: add sibling roadmap",
+      approved: true,
+    });
+    await service.writeAnchor({
+      name: "projects/demo/milestones/m1",
+      content: milestoneAnchorContentForCertainty({
+        currentState: `- Milestone claim under test.\n  {src: PR #1; observed: ${today()}; conf: high}`,
+      }),
+      message: "test: add milestone claim",
+    });
+
+    const read = await service.readAnchor("projects/demo/milestones/m1", undefined, { includeProvenance: "full" });
+    const claim = read.claimProvenance?.claims?.find((c) => c.text === "Milestone claim under test.");
+    expect(claim?.effectiveCertainty?.rows[0].halfLifeDays).toBe(45);
+  });
+
+  it("listClaims attaches effectiveCertainty to every annotated claim by default", async () => {
+    await service.writeAnchor({
+      name: "projects/demo/demo",
+      content: projectAnchorContent({
+        currentState: `- Storage stays git-backed.\n  {src: PR #55; observed: ${today()}; conf: high}`,
+      }),
+      message: "test: add claim",
+    });
+
+    const { claims } = await service.listClaims({});
+    const annotated = claims.find((c) => c.status === "annotated");
+    expect(annotated?.effectiveCertainty).toBeDefined();
+    expect(annotated?.effectiveCertainty?.certainty).toBeCloseTo(0.9, 10);
+  });
+
+  it("listClaims sortByCertainty orders annotated claims ascending, unscored claims last", async () => {
+    await service.writeAnchor({
+      name: "projects/demo/demo",
+      content: projectAnchorContent({
+        currentState: [
+          "- Weak old claim.",
+          `  {src: PR #1; observed: ${daysAgo(180)}; conf: low}`,
+          "- Strong fresh claim.",
+          `  {src: PR #2; observed: ${today()}; conf: high}`,
+          "- No provenance at all.",
+        ].join("\n"),
+      }),
+      message: "test: add mixed-strength claims",
+      approved: true,
+    });
+
+    const { claims } = await service.listClaims({ sortByCertainty: true });
+    const texts = claims.map((c) => c.text);
+    // Weakest annotated claim first, strongest annotated claim next, unscored (unannotated) claim last.
+    expect(texts.indexOf("Weak old claim.")).toBeLessThan(texts.indexOf("Strong fresh claim."));
+    expect(texts.indexOf("Strong fresh claim.")).toBeLessThan(texts.indexOf("No provenance at all."));
+  });
+
+  it("listClaims certaintyBelow filters annotated claims to those under the threshold (status: unannotated/malformed pass through, as they have no score to filter on)", async () => {
+    await service.writeAnchor({
+      name: "projects/demo/demo",
+      content: projectAnchorContent({
+        currentState: [
+          "- Weak old claim.",
+          `  {src: PR #1; observed: ${daysAgo(180)}; conf: low}`,
+          "- Strong fresh claim.",
+          `  {src: PR #2; observed: ${today()}; conf: high}`,
+        ].join("\n"),
+      }),
+      message: "test: add mixed-strength claims",
+    });
+
+    // Combine with status: annotated (the normal re-verification-queue usage)
+    // to scope out the fixture's own unannotated Decisions/Constraints bullets.
+    const { claims } = await service.listClaims({ certaintyBelow: 0.5, status: "annotated" });
+    expect(claims.map((c) => c.text)).toEqual(["Weak old claim."]);
+  });
+
+  it("planContextBundle reports a missingContext warning for bundle claims below the certainty threshold", async () => {
+    await service.writeAnchor({
+      name: "projects/demo/demo",
+      content: projectAnchorContent({
+        currentState: `- Very stale claim about write validation.\n  {src: PR #1; observed: ${daysAgo(400)}; conf: low}`,
+      }),
+      message: "test: add stale low-confidence claim",
+      approved: true,
+    });
+
+    const plan = await service.planContextBundle({ task: "demo" });
+    const signal = plan.missingContext.find((line) => line.includes("below effective certainty"));
+    expect(signal).toBeDefined();
+    expect(signal).toContain("projects/demo/demo.md");
+    expect(signal).toContain("Very stale claim about write validation.");
+  });
+
+  it("planContextBundle reports no certainty warning when all bundle claims are strong", async () => {
+    await service.writeAnchor({
+      name: "projects/demo/demo",
+      content: projectAnchorContent({
+        currentState: `- Fresh strong claim.\n  {src: PR #1; observed: ${today()}; conf: high}`,
+      }),
+      message: "test: add strong claim",
+    });
+
+    const plan = await service.planContextBundle({ task: "demo" });
+    expect(plan.missingContext.some((line) => line.includes("below effective certainty"))).toBe(false);
+  });
+
+  it("startTask surfaces the same certainty threshold warning via planContextBundle", async () => {
+    await service.writeAnchor({
+      name: "projects/demo/demo",
+      content: projectAnchorContent({
+        currentState: `- Very stale claim about write validation.\n  {src: PR #1; observed: ${daysAgo(400)}; conf: low}`,
+      }),
+      message: "test: add stale low-confidence claim",
+      approved: true,
+    });
+
+    const result = await service.startTask({ task: "demo", project: "demo" });
+    expect(result.plan.missingContext.some((line) => line.includes("below effective certainty"))).toBe(true);
+  });
+
+  it("certainty config is overridable via AnchorService options (half-lives and threshold)", async () => {
+    const customService = new AnchorService(repo, {
+      pushOnWrite: false,
+      migrationWarnOnly: false,
+      staleAfterDays: 45,
+      certainty: {
+        base: { high: 1, medium: 1, low: 1 },
+        halfLifeDays: { "agent-rules": 999, projects: 999, milestones: 999 },
+        defaultHalfLifeDays: 999,
+        missingContextThreshold: 0.99,
+      },
+    });
+    await customService.writeAnchor({
+      name: "projects/demo/demo",
+      content: projectAnchorContent({
+        currentState: `- Storage stays git-backed.\n  {src: PR #1; observed: ${today()}; conf: low}`,
+      }),
+      message: "test: add claim",
+    });
+
+    const read = await customService.readAnchor("projects/demo/demo", undefined, { includeProvenance: "full" });
+    const claim = read.claimProvenance?.claims?.find((c) => c.text === "Storage stays git-backed.");
+    // base overridden to 1 regardless of stated conf (low), and a same-day
+    // observation has zero decay regardless of half-life.
+    expect(claim?.effectiveCertainty?.rows[0].base).toBe(1);
+    expect(claim?.effectiveCertainty?.certainty).toBeGreaterThan(0.9);
+  });
+
+  it("spawns zero git subprocesses while computing effective certainty (hard acceptance criterion)", async () => {
+    await service.writeAnchor({
+      name: "projects/demo/other",
+      content: projectAnchorContent({ project: "demo", summary: "Other anchor." }),
+      message: "test: add other anchor",
+    });
+    await service.writeAnchor({
+      name: "projects/demo/demo",
+      content: projectAnchorContent({
+        currentState: [
+          "- Storage stays git-backed.",
+          `  {src: PR #55; observed: ${today()}; conf: high}`,
+          "- See the other anchor for detail.",
+          `  {src: projects/demo/other; observed: ${today()}; conf: high}`,
+          "- See the Decisions section for detail.",
+          `  {src: #Decisions; observed: ${today()}; conf: medium}`,
+        ].join("\n"),
+      }),
+      message: "test: add mixed-source claims",
+    });
+
+    // Warm the repo's own caches first (matches graphIndex.test.ts's zero-git
+    // -subprocess pattern) so the assertion below is attributable to the
+    // certainty computation itself, not AnchorRepository's first-ever walk.
+    await service.listClaims({});
+
+    const spies = [
+      vi.spyOn(repo.git, "init"),
+      vi.spyOn(repo.git, "show"),
+      vi.spyOn(repo.git, "add"),
+      vi.spyOn(repo.git, "status"),
+      vi.spyOn(repo.git, "raw"),
+      vi.spyOn(repo.git, "log"),
+      vi.spyOn(repo.git, "diff"),
+      vi.spyOn(repo.git, "revparse"),
+      vi.spyOn(repo.git, "pull"),
+      vi.spyOn(repo.git, "push"),
+    ];
+
+    // Exercise every certainty-computing surface: the includeProvenance
+    // sidecar (readAnchor), listClaims (sortByCertainty/certaintyBelow), and
+    // the planner's missingContext threshold warning.
+    await service.readAnchor("projects/demo/demo", undefined, { includeProvenance: "full" });
+    await service.listClaims({ sortByCertainty: true, certaintyBelow: 0.9 });
+    await service.planContextBundle({ task: "demo" });
+
+    for (const spy of spies) {
+      expect(spy).not.toHaveBeenCalled();
+    }
+  });
+});
+
+/** Today's date (YYYY-MM-DD, UTC) — for certainty fixtures that need a same-day, zero-decay observation. */
+function today(): string {
+  return new Date().toISOString().slice(0, 10);
+}
+
+/** `n` days before today (YYYY-MM-DD, UTC) — for certainty fixtures that need a specific decayed age. */
+function daysAgo(n: number): string {
+  const date = new Date();
+  date.setUTCDate(date.getUTCDate() - n);
+  return date.toISOString().slice(0, 10);
+}
+
+function roadmapAnchorContentForCertainty(): string {
+  return `---
+project:
+  - demo
+type: project-roadmap
+tags:
+  - roadmap
+summary: "Demo roadmap for certainty half-life tests."
+read_this_if:
+  - "Testing certainty half-life."
+last_validated: 2026-07-10
+---
+
+# Demo roadmap
+
+## Goals
+
+### Goal G-001 -- Demo goal
+
+#### Acceptance Criteria
+
+#### Approved
+
+- [x] AC-001: Demo. Evidence: test.
+
+## Current State
+
+- Exists.
+
+## Decisions
+
+- None.
+
+## Constraints
+
+- None.
+
+## PRs
+
+None.
+`;
+}
+
+function milestoneAnchorContentForCertainty(overrides: { currentState?: string } = {}): string {
+  return `---
+project:
+  - demo
+type: project-milestone
+schema_version: 1
+tags: [milestone]
+summary: "Demo milestone."
+read_this_if:
+  - "Testing certainty half-life."
+last_validated: 2026-07-10
+milestone_id: M1
+sequence: 1
+theme: Demo milestone theme
+status: active
+relations:
+  goal_ids:
+    - G-001
+---
+
+# Demo Milestone
+
+## Current State
+
+${overrides.currentState ?? "- Milestone exists."}
+
+## Decisions
+
+- None yet.
+
+## Constraints
+
+- None yet.
+
+## PRs
+
+None.
+`;
+}
 
 function roadmapAnchorContent(options: { extraFm?: string } = {}): string {
   const extraLine = options.extraFm ? `${options.extraFm}\n` : "";

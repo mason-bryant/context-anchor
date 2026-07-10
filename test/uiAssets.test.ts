@@ -16,11 +16,15 @@ type UiClaim = {
   strength?: string;
   annotation?: { src: string; observed: string; conf: string; href?: string; kind?: string; person?: string; personName?: string };
   sources?: Array<{ src: string; observed: string; conf: string; href?: string; line?: number; inline?: boolean; kind?: string; person?: string; personName?: string }>;
+  effectiveCertainty?: { certainty: number; rows: unknown[]; aggregation: string };
 };
 
 type UiAssetHooks = {
   claimStrengthValue(claim: UiClaim): string;
+  claimCertaintyValue(claim: UiClaim): number | null;
+  sortClaimsByCertainty(claims: UiClaim[]): UiClaim[];
   renderClaimInline(claim: UiClaim): string;
+  renderClaimPopover(claim: UiClaim): string;
   claimSourceRowHtml(source: Record<string, unknown>, index: number, readOnly: boolean): string;
   renderMarkdown(markdown: string, options?: Record<string, unknown>): string;
   renderMermaidDiagrams(container: { querySelectorAll(selector: string): unknown[] }): Promise<void>;
@@ -1741,6 +1745,118 @@ describe("inline claim rendering", () => {
       ],
     }));
     expect(html).toContain("Design Proposal: docs/design.md");
+  });
+
+  it("claimCertaintyValue reads effectiveCertainty.certainty when present", () => {
+    const hooks = loadHooks();
+    const withCertainty = claim({
+      status: "annotated",
+      effectiveCertainty: { certainty: 0.42, rows: [], aggregation: "average" },
+    });
+    expect(hooks.claimCertaintyValue(withCertainty)).toBe(0.42);
+  });
+
+  it("claimCertaintyValue is null for a claim with no effectiveCertainty (unannotated/malformed)", () => {
+    const hooks = loadHooks();
+    expect(hooks.claimCertaintyValue(claim({ status: "unannotated" }))).toBeNull();
+  });
+
+  it("renderClaimPopover includes the effective certainty score when present", () => {
+    const hooks = loadHooks();
+    const withCertainty = claim({
+      status: "annotated",
+      sources: [{ src: "a.md", observed: "2026-01-01", conf: "high" }],
+      effectiveCertainty: { certainty: 0.756, rows: [], aggregation: "average" },
+    });
+    const html = hooks.renderClaimPopover(withCertainty);
+    expect(html).toContain("effective certainty 0.76");
+  });
+
+  it("renderClaimPopover omits the certainty phrase when effectiveCertainty is absent", () => {
+    const hooks = loadHooks();
+    const noCertainty = claim({
+      status: "annotated",
+      sources: [{ src: "a.md", observed: "2026-01-01", conf: "high" }],
+    });
+    expect(hooks.renderClaimPopover(noCertainty)).not.toContain("effective certainty");
+  });
+
+  it("sortClaimsByCertainty orders ascending, least-trustworthy first (the re-verification queue)", () => {
+    const hooks = loadHooks();
+    const weak = claim({
+      anchor: "a.md",
+      line: 1,
+      text: "weak",
+      status: "annotated",
+      effectiveCertainty: { certainty: 0.2, rows: [], aggregation: "average" },
+    });
+    const strong = claim({
+      anchor: "a.md",
+      line: 2,
+      text: "strong",
+      status: "annotated",
+      effectiveCertainty: { certainty: 0.9, rows: [], aggregation: "average" },
+    });
+    const sorted = hooks.sortClaimsByCertainty([strong, weak]);
+    expect(sorted.map((c) => c.text)).toEqual(["weak", "strong"]);
+  });
+
+  it("sortClaimsByCertainty sorts unscored (unannotated/malformed) claims after every scored claim", () => {
+    const hooks = loadHooks();
+    const scored = claim({
+      anchor: "a.md",
+      line: 1,
+      text: "scored",
+      status: "annotated",
+      effectiveCertainty: { certainty: 0.1, rows: [], aggregation: "average" },
+    });
+    const unscored = claim({ anchor: "a.md", line: 2, text: "unscored", status: "unannotated" });
+    const sorted = hooks.sortClaimsByCertainty([unscored, scored]);
+    expect(sorted.map((c) => c.text)).toEqual(["scored", "unscored"]);
+  });
+
+  it("sortClaimsByCertainty never mutates the input array", () => {
+    const hooks = loadHooks();
+    const weak = claim({
+      anchor: "a.md",
+      line: 1,
+      text: "weak",
+      status: "annotated",
+      effectiveCertainty: { certainty: 0.2, rows: [], aggregation: "average" },
+    });
+    const strong = claim({
+      anchor: "a.md",
+      line: 2,
+      text: "strong",
+      status: "annotated",
+      effectiveCertainty: { certainty: 0.9, rows: [], aggregation: "average" },
+    });
+    const original = [strong, weak];
+    hooks.sortClaimsByCertainty(original);
+    expect(original).toEqual([strong, weak]);
+  });
+
+  it("sortClaimsByCertainty is stable (deterministic tiebreak) for equal scores", () => {
+    const hooks = loadHooks();
+    const first = claim({
+      anchor: "a.md",
+      line: 1,
+      text: "first",
+      status: "annotated",
+      effectiveCertainty: { certainty: 0.5, rows: [], aggregation: "average" },
+    });
+    const second = claim({
+      anchor: "b.md",
+      line: 1,
+      text: "second",
+      status: "annotated",
+      effectiveCertainty: { certainty: 0.5, rows: [], aggregation: "average" },
+    });
+    const sortedOnce = hooks.sortClaimsByCertainty([second, first]);
+    const sortedTwice = hooks.sortClaimsByCertainty([second, first]);
+    expect(sortedOnce.map((c) => c.text)).toEqual(sortedTwice.map((c) => c.text));
+    // Deterministic tiebreak by anchor#line: "a.md#1" sorts before "b.md#1".
+    expect(sortedOnce.map((c) => c.text)).toEqual(["first", "second"]);
   });
 });
 
