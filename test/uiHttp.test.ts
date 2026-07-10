@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AnchorService } from "../src/anchorService.js";
 import { AnchorRepository } from "../src/git/repo.js";
 import { startHttpServer } from "../src/http/server.js";
+import { resolveMermaidDistDir } from "../src/ui/routes.js";
 
 let tmpDir: string;
 let server: Server | undefined;
@@ -85,6 +86,16 @@ describe("UI HTTP routes", () => {
     expect(response.headers.get("content-type")).toContain("javascript");
     expect(js).toContain("export{");
     expect(js).toContain("default");
+  });
+
+  it("does not fail service startup when the optional Mermaid browser bundle is missing", () => {
+    const missingMermaid = Object.assign(new Error("Cannot find module"), { code: "MODULE_NOT_FOUND" });
+
+    expect(
+      resolveMermaidDistDir(() => {
+        throw missingMermaid;
+      }),
+    ).toBeUndefined();
   });
 
   it("redirects anchor markdown paths back into the UI", async () => {
