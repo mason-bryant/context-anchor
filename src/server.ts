@@ -232,7 +232,7 @@ indented annotation line \`  {src: <PR #N | repo path | anchor name | URL | pers
 conf: high|medium|low}\`. Omit \`kind\` for ordinary URL evidence. Trust-me-bro developer assertions use \`{src: trust me bro; kind: trust-me-bro; person: <id>; observed: <YYYY-MM-DD>; conf: high}\`. conf semantics: high = observed directly (code you read, tests you ran) or a named trust-me-bro developer assertion, medium = read in a \
 doc or PR (all plain person:<id> told-by sources cap at medium), low = inferred. Writes that add claims without provenance \
 return a claim_annotation_missing WARN. You do not need to supply \`id\`: the server mints a stable, opaque claim id \
-(\`c-xxxxxx\`) for every annotated claim that lacks one, reported as a claim_id_minted WARN, so claims stay citable \
+(\`c-\` plus 6-8 lowercase base36 chars, e.g. \`c-a1b2c3\`) for every annotated claim that lacks one, reported as a claim_id_minted WARN, so claims stay citable \
 across anchors as \`<anchor>#<id>\` and survive rewording. Use annotateClaim to add or fix a single annotation afterwards, and \
 listClaims({ status: "unannotated" }) to find the legacy backlog.
 

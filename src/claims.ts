@@ -628,6 +628,12 @@ export type CarryResult = {
  * A new claim that already carries its own (valid or malformed) annotation is
  * never touched: the writer supplied provenance deliberately. Malformed old
  * annotations are neither carried nor protected — dropping them is cleanup.
+ *
+ * One exception (WP1 carry-by-id): a claim that kept its id but was reworded
+ * has its source rows refreshed from the old set, since a text-only edit can
+ * leave stale placeholder rows behind the correct id. A reworded claim whose
+ * new annotation is malformed is still left untouched, so the malformed error
+ * surfaces instead of being masked.
  */
 export function carryClaimAnnotations(oldContent: string, newContent: string): CarryResult {
   const oldAnnotated = extractClaims(oldContent).filter(
@@ -659,7 +665,7 @@ export function carryClaimAnnotations(oldContent: string, newContent: string): C
     if (idMatchIndex !== -1) {
       consumed.add(idMatchIndex);
       const match = newClaims[idMatchIndex];
-      if (match.text !== oldClaim.text) {
+      if (match.text !== oldClaim.text && match.status !== "malformed") {
         // Reworded-but-kept-id: replace whatever annotation rows are on the
         // new claim with the full old source set (the id is already correct
         // on the new claim, but other fields like src/observed/conf may be
@@ -667,8 +673,10 @@ export function carryClaimAnnotations(oldContent: string, newContent: string): C
         replacementsById.push({ id: oldClaim.id as string, sources: oldSources });
         carried.push({ text: match.text, annotation: oldClaim.annotation, sources: oldSources });
       }
-      // Byte-identical text with a matching id needs no action: the claim's
-      // own annotation already carried with it.
+      // Byte-identical text needs no action (the claim's own annotation carried
+      // with it), and a malformed new annotation is left untouched so its error
+      // surfaces (claim_annotation_invalid) rather than being silently
+      // overwritten by the old sources.
       continue;
     }
 

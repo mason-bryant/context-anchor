@@ -742,9 +742,15 @@ export class AnchorService {
     // minting or duplicate-checking (no annotated-without-id claims and no
     // ids present at all) so ordinary writes stay cheap.
     const contentClaims = extractClaims(content);
-    const needsIdWork = contentClaims.some(
-      (claim) => (claim.status === "annotated" && !claim.id) || Boolean(claim.id),
-    );
+    // Only pay the tree-wide id walk when this write actually changes id state:
+    // an annotated claim still needs minting, or an id appears in `content`
+    // that was not already committed (so it needs a cross-tree duplicate
+    // check). Frontmatter-only or unrelated-section edits leave the id set
+    // untouched and skip the walk entirely, even once most anchors carry ids.
+    const priorIds = oldContent !== undefined ? collectClaimIds(extractClaims(oldContent)) : new Set<string>();
+    const needsMint = contentClaims.some((claim) => claim.status === "annotated" && !claim.id);
+    const hasNewOrChangedId = [...collectClaimIds(contentClaims)].some((id) => !priorIds.has(id));
+    const needsIdWork = needsMint || hasNewOrChangedId;
     if (needsIdWork) {
       // Uniqueness set is every id already in the tree, this anchor excluded
       // (its own ids come from `content`, which reflects the in-flight write).
@@ -2282,6 +2288,23 @@ None.
         };
       }
       existingId = location.claim.id;
+    }
+
+    // Stable claim ids are immutable (WP1): re-supplying the same id or
+    // omitting it (preserved below) is fine, but changing an existing id would
+    // break already-published `<anchor>#<id>` references. Block an attempted
+    // change; the sanctioned way to drop an id is to clear the provenance
+    // (`sources: []`) first and then re-add.
+    if (existingId && normalizedSources.sources.some((source) => source.id && source.id !== existingId)) {
+      return {
+        warnings: [
+          {
+            severity: "BLOCK",
+            code: "claim_id_immutable",
+            message: `Claim already has stable id "${existingId}"; ids are immutable so cross-anchor "<anchor>#<id>" references stay valid. To change it, clear the provenance (sources: []) first, then re-add.`,
+          },
+        ],
+      };
     }
 
     // Preserve the claim's existing id across a source replacement (WP1):

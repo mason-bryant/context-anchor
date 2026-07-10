@@ -2,7 +2,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { AnchorService } from "../src/anchorService.js";
 import { AnchorRepository } from "../src/git/repo.js";
@@ -650,6 +650,32 @@ describe("carryClaimAnnotations", () => {
     const result = carryClaimAnnotations(oldDoc, newDoc);
     expect(result.carried).toEqual([]);
     expect(result.lost.map((entry) => entry.text)).toEqual(["Original wording, dropped id."]);
+  });
+
+  it("does not overwrite a reworded-but-kept-id claim whose new annotation is malformed", () => {
+    // The kept id sits on a valid row, so the claim still exposes its id even
+    // though a sibling row is malformed. Carry-by-id must NOT replace the rows
+    // here, or it would mask the malformed annotation the writer must fix.
+    const oldDoc = `## Current State
+
+- Original wording, kept id.
+  {src: PR #1; observed: 2026-01-01; conf: high; id: c-malf}
+`;
+    const newDoc = `## Current State
+
+- Reworded text, same id but a malformed sibling row.
+  {src: PR #2; observed: 2026-01-02; conf: high; id: c-malf}
+  {src: PR #3; observed: not-a-date; conf: high}
+`;
+    const result = carryClaimAnnotations(oldDoc, newDoc);
+    expect(result.carried).toEqual([]);
+    // The old source (PR #1) is not injected; the writer's malformed rows stand.
+    expect(result.content).not.toContain("PR #1");
+    const reworded = extractClaims(result.content).find(
+      (claim) => claim.text === "Reworded text, same id but a malformed sibling row.",
+    );
+    expect(reworded?.status).toBe("malformed");
+    expect(reworded?.id).toBe("c-malf");
   });
 });
 
@@ -1550,6 +1576,82 @@ None.
     const claim = listed.claims.find((entry) => entry.text === "Annotated claim about the system.");
     expect(claim?.id).toBe(mintedId);
     expect(claim?.sources[0]?.src).toBe("PR #70");
+  });
+
+  it("setClaimSources blocks an attempt to change an existing claim id (ids are immutable)", async () => {
+    const initial = await service.writeAnchor({
+      name: "projects/demo/claims-demo",
+      content: anchorContent(),
+      message: "test: add claims demo",
+    });
+    const mintedId = initial.warnings.find((warning) => warning.code === "claim_id_minted")?.message.match(
+      /Minted claim id (\S+)/,
+    )?.[1];
+    expect(mintedId).toBeTruthy();
+
+    // Re-supplying the SAME id is fine.
+    const same = await service.setClaimSources({
+      name: "projects/demo/claims-demo",
+      claim: "Annotated claim about the system",
+      sources: [{ src: "PR #71", observed: "2026-07-09", conf: "medium", id: mintedId }],
+    });
+    expect(same.warnings.filter((warning) => warning.severity === "BLOCK")).toEqual([]);
+
+    // Supplying a DIFFERENT id is blocked so published <anchor>#<id> refs stay valid.
+    const changed = await service.setClaimSources({
+      name: "projects/demo/claims-demo",
+      claim: "Annotated claim about the system",
+      sources: [{ src: "PR #72", observed: "2026-07-09", conf: "medium", id: "c-different" }],
+    });
+    const block = changed.warnings.find((warning) => warning.severity === "BLOCK");
+    expect(block?.code).toBe("claim_id_immutable");
+
+    // The id is unchanged after the rejected write.
+    const listed = await service.listClaims({ name: "projects/demo/claims-demo", status: "annotated" });
+    const claim = listed.claims.find((entry) => entry.text === "Annotated claim about the system.");
+    expect(claim?.id).toBe(mintedId);
+  });
+
+  it("skips the tree-wide id walk on a write that changes no claim ids", async () => {
+    const initial = await service.writeAnchor({
+      name: "projects/demo/claims-demo",
+      content: anchorContent(),
+      message: "test: add claims demo",
+    });
+    expect(initial.warnings.some((warning) => warning.code === "claim_id_minted")).toBe(true);
+
+    const walk = vi.spyOn(
+      service as unknown as { collectTreeClaimIds: (name: string) => Promise<Set<string>> },
+      "collectTreeClaimIds",
+    );
+
+    // Edit only the PRs section of the COMMITTED content (which already carries
+    // the minted ids): no claim is added/changed/reworded and no id is
+    // introduced, so the expensive cross-tree walk must be skipped.
+    const committed = await service.readAnchor("projects/demo/claims-demo");
+    const prsEdit = await service.writeAnchor({
+      name: "projects/demo/claims-demo",
+      content: committed.content.replace("None.", "- [PR Something - #100](https://example.com/pull/100)"),
+      message: "test: edit PRs section only",
+    });
+    expect(prsEdit.warnings.filter((warning) => warning.severity === "BLOCK")).toEqual([]);
+    expect(prsEdit.warnings.some((warning) => warning.code === "claim_id_minted")).toBe(false);
+    expect(walk).not.toHaveBeenCalled();
+
+    // A write that adds a new annotated claim DOES need the walk (mint + dup-check).
+    walk.mockClear();
+    const afterPrs = await service.readAnchor("projects/demo/claims-demo");
+    await service.writeAnchor({
+      name: "projects/demo/claims-demo",
+      content: afterPrs.content.replace(
+        "## Decisions",
+        "- A newly added annotated claim.\n  {src: PR #200; observed: 2026-07-09; conf: high}\n\n## Decisions",
+      ),
+      message: "test: add a new annotated claim",
+    });
+    expect(walk).toHaveBeenCalled();
+
+    walk.mockRestore();
   });
 
   it("annotateClaim clear removes the id along with the rest of the provenance", async () => {
