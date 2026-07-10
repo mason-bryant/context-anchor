@@ -22,7 +22,17 @@ type UiAuthMiddleware = (req: Request, res: Response, next: NextFunction) => voi
 type UiAnchorSort = "name" | "updated" | "created" | "priority";
 
 const require = createRequire(import.meta.url);
-const MERMAID_DIST_DIR = path.dirname(require.resolve("mermaid/dist/mermaid.esm.min.mjs"));
+
+export function resolveMermaidDistDir(resolveModule: (id: string) => string = require.resolve): string | undefined {
+  try {
+    return path.dirname(resolveModule("mermaid/dist/mermaid.esm.min.mjs"));
+  } catch (error) {
+    if (error && typeof error === "object" && "code" in error && error.code === "MODULE_NOT_FOUND") {
+      return undefined;
+    }
+    throw error;
+  }
+}
 
 export function registerUiRoutes(
   app: Express,
@@ -45,13 +55,16 @@ export function registerUiRoutes(
   app.get("/ui/app.js", (_req, res) => {
     res.type("js").send(UI_JS);
   });
-  app.use(
-    "/ui/vendor/mermaid",
-    express.static(MERMAID_DIST_DIR, {
-      fallthrough: false,
-      index: false,
-    }),
-  );
+  const mermaidDistDir = resolveMermaidDistDir();
+  if (mermaidDistDir) {
+    app.use(
+      "/ui/vendor/mermaid",
+      express.static(mermaidDistDir, {
+        fallthrough: false,
+        index: false,
+      }),
+    );
+  }
 
   const protect = options.authMiddleware ? [options.authMiddleware] : [];
 

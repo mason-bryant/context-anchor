@@ -684,6 +684,15 @@ export type ProjectMappings = {
   projects: ProjectMapping[];
   /** Configurable provenance source types shown in claim-source editors. */
   claimSourceTypes: ClaimSourceType[];
+  /** Optional tenant-specific templates for external references in anchor prose. */
+  externalLinkTemplates?: ExternalLinkTemplates;
+};
+
+export type ExternalLinkTemplates = {
+  /** For `Confluence SPACE/pages/123` references. Supports `{space}` and `{pageId}`. */
+  confluencePage?: string;
+  /** For `#channel-name` references. Supports `{channel}` without the leading `#`. */
+  slackChannel?: string;
 };
 
 export type ClaimSourceType = {

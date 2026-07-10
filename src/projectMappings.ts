@@ -1,4 +1,11 @@
-import type { ClaimSourceType, ProjectMapping, ProjectMappings, ProjectRepoMapping, ProjectRepoWeb } from "./types.js";
+import type {
+  ClaimSourceType,
+  ExternalLinkTemplates,
+  ProjectMapping,
+  ProjectMappings,
+  ProjectRepoMapping,
+  ProjectRepoWeb,
+} from "./types.js";
 
 export const DEFAULT_CLAIM_SOURCE_TYPES: ClaimSourceType[] = [
   { id: "url", label: "URL" },
@@ -20,9 +27,27 @@ export function parseProjectMappings(raw: unknown): ProjectMappings {
     return { projects: [], claimSourceTypes: defaultClaimSourceTypes() };
   }
   const obj = raw as Record<string, unknown>;
+  const externalLinkTemplates = parseExternalLinkTemplates(obj.externalLinkTemplates);
   return {
     projects: parseProjectsArray(obj.projects),
     claimSourceTypes: parseClaimSourceTypes(obj.claimSourceTypes),
+    ...(externalLinkTemplates ? { externalLinkTemplates } : {}),
+  };
+}
+
+function parseExternalLinkTemplates(raw: unknown): ExternalLinkTemplates | undefined {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    return undefined;
+  }
+  const obj = raw as Record<string, unknown>;
+  const confluencePage = stringValue(obj.confluencePage);
+  const slackChannel = stringValue(obj.slackChannel);
+  if (!confluencePage && !slackChannel) {
+    return undefined;
+  }
+  return {
+    ...(confluencePage ? { confluencePage } : {}),
+    ...(slackChannel ? { slackChannel } : {}),
   };
 }
 

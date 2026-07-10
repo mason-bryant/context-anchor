@@ -140,6 +140,22 @@ describe("parseProjectMappings", () => {
 });
 
 describe("parseProjectMappings web info", () => {
+  it("keeps external reference link templates and drops unknown values", () => {
+    const parsed = parseProjectMappings({
+      projects: [],
+      externalLinkTemplates: {
+        confluencePage: "https://acme.atlassian.net/wiki/spaces/{space}/pages/{pageId}",
+        slackChannel: "https://acme.slack.com/archives/{channel}",
+        secret: "discarded",
+      },
+    });
+
+    expect(parsed.externalLinkTemplates).toEqual({
+      confluencePage: "https://acme.atlassian.net/wiki/spaces/{space}/pages/{pageId}",
+      slackChannel: "https://acme.slack.com/archives/{channel}",
+    });
+  });
+
   it("keeps web url, branch, and templates", () => {
     const parsed = parseProjectMappings({
       projects: [

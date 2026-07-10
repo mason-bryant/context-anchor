@@ -427,6 +427,14 @@ export const UI_HTML = `<!doctype html>
             </div>
             <p class="registry-hint">Every project under management is listed below. A project can live in any number of repos; each repo can be narrowed to directory paths (one per line), or left blank to match the whole repo.</p>
             <div class="metadata-box claim-source-type-config">
+              <h3>External Reference Links</h3>
+              <p class="registry-hint">Google Doc IDs and Slack channel names link directly. Add a Confluence tenant URL template; optionally override Slack's default deep link with a workspace-specific one.</p>
+              <div class="form-grid">
+                <label>Confluence page template<input id="external-link-confluence" type="url" placeholder="https://your-domain.atlassian.net/wiki/spaces/{space}/pages/{pageId}"></label>
+                <label>Slack channel template (optional)<input id="external-link-slack" type="url" placeholder="https://slack.com/app_redirect?channel={channel}&amp;team=TEAM_ID"></label>
+              </div>
+            </div>
+            <div class="metadata-box claim-source-type-config">
               <h3>Claim Source Types</h3>
               <div id="claim-source-types-list" class="claim-source-types-list"></div>
               <button id="claim-source-type-add" type="button">+ Add Source Type</button>
@@ -6287,7 +6295,8 @@ export const UI_JS = `(function () {
       var result = await api("/api/ui/project-mappings");
       state.projectMappings = {
         projects: result.projects || [],
-        claimSourceTypes: normalizeClaimSourceTypes(result.claimSourceTypes)
+        claimSourceTypes: normalizeClaimSourceTypes(result.claimSourceTypes),
+        externalLinkTemplates: result.externalLinkTemplates || undefined
       };
       state.projectMappingsFileCommit = result.fileCommit || null;
       renderMappings();
@@ -6348,6 +6357,7 @@ export const UI_JS = `(function () {
       return;
     }
     renderClaimSourceTypeRows();
+    renderExternalLinkTemplateInputs();
     var display = mappingsForDisplay();
     el("mappings-empty").hidden = display.managed.length + display.orphans.length > 0;
     var html = "";
@@ -6365,6 +6375,13 @@ export const UI_JS = `(function () {
     el("mappings-summary").textContent = mappedCount + " of " + display.managed.length
       + " projects mapped to repos and paths"
       + (display.orphans.length ? " · " + display.orphans.length + " orphaned" : "") + ".";
+  }
+
+  function renderExternalLinkTemplateInputs() {
+    if (!state.projectMappings) return;
+    var templates = state.projectMappings.externalLinkTemplates || {};
+    el("external-link-confluence").value = templates.confluencePage || "";
+    el("external-link-slack").value = templates.slackChannel || "";
   }
 
   function normalizeClaimSourceTypes(types) {
@@ -6520,7 +6537,15 @@ export const UI_JS = `(function () {
       }
       projects.push({ project: slug, repos: repos });
     }
-    return { projects: projects, claimSourceTypes: readClaimSourceTypesFromDom() };
+    var confluencePage = (el("external-link-confluence").value || "").trim();
+    var slackChannel = (el("external-link-slack").value || "").trim();
+    var externalLinkTemplates = {};
+    if (confluencePage) { externalLinkTemplates.confluencePage = confluencePage; }
+    if (slackChannel) { externalLinkTemplates.slackChannel = slackChannel; }
+    return Object.assign(
+      { projects: projects, claimSourceTypes: readClaimSourceTypesFromDom() },
+      Object.keys(externalLinkTemplates).length ? { externalLinkTemplates: externalLinkTemplates } : {}
+    );
   }
 
   function readClaimSourceTypesFromDom() {
@@ -7927,7 +7952,7 @@ export const UI_JS = `(function () {
 
   function inlineMarkdown(value) {
     var tick = String.fromCharCode(96);
-    return linkifyRepoFileReferences(escapeHtml(value)
+    return linkifyTextReferences(linkifyRepoFileReferences(escapeHtml(value)
       .replace(/\\*\\*(.+?)\\*\\*/g, "<strong>$1</strong>")
       .replace(new RegExp(tick + "([^" + tick + "]+)" + tick, "g"), function (_match, code) {
         var linked = repoFileReferenceLink(code);
@@ -7939,7 +7964,94 @@ export const UI_JS = `(function () {
           return "<span class=\\"unsafe-link\\" title=\\"Unsafe link removed\\">" + label + "</span>";
         }
         return "<a href=\\"" + escapeHtml(safeHref) + "\\" target=\\"_blank\\" rel=\\"noreferrer\\">" + label + "</a>";
-      }));
+      })));
+  }
+
+  // Link recognizable references only in text nodes so user-authored Markdown
+  // links and inline-code spans never get nested or rewritten.
+  function linkifyTextReferences(html) {
+    var insideAnchor = false;
+    var insideCode = false;
+    return String(html || "").split(/(<[^>]+>)/).map(function (part) {
+      if (part.charAt(0) === "<") {
+        if (/^<a(?:\\s|>)/i.test(part)) insideAnchor = true;
+        if (/^<\\/a\\s*>/i.test(part)) insideAnchor = false;
+        if (/^<code(?:\\s|>)/i.test(part)) insideCode = true;
+        if (/^<\\/code\\s*>/i.test(part)) insideCode = false;
+        return part;
+      }
+      return insideAnchor || insideCode ? part : linkifyReferenceText(part);
+    }).join("");
+  }
+
+  function linkifyReferenceText(text) {
+    return String(text || "").split(/(https?:\\/\\/[^\\s<]+)/gi).map(function (part, index) {
+      return index % 2 === 1 ? linkifyBareUrl(part) : linkifyNonUrlReferences(part);
+    }).join("");
+  }
+
+  function linkifyNonUrlReferences(text) {
+    return String(text || "")
+      .replace(/(Google Doc\\s+&quot;.+?&quot;\\s+\\(doc id\\s+)([A-Za-z0-9_-]+)(\\))/gi, function (_match, prefix, docId, suffix) {
+        return externalReferenceAnchor(googleDocHref(docId), prefix + docId) + suffix;
+      })
+      .replace(/(Confluence\\s+)([A-Za-z0-9_-]+)\\/pages\\/(\\d+)/gi, function (match, prefix, space, pageId) {
+        var href = externalTemplateHref("confluencePage", { space: space, pageId: pageId });
+        return href ? prefix + externalReferenceAnchor(href, space + "/pages/" + pageId) : match;
+      })
+      .replace(/\\bPR\\s+#(\\d+)\\b/gi, function (match, number) {
+        var href = mappedPullRequestHref(Number(number));
+        return href ? externalReferenceAnchor(href, match) : match;
+      })
+      .replace(/(^|[^A-Za-z0-9_])#([A-Za-z][A-Za-z0-9_-]*)\\b/g, function (match, prefix, channel) {
+        var href = externalTemplateHref("slackChannel", { channel: channel });
+        return href ? prefix + externalReferenceAnchor(href, "#" + channel) : match;
+      });
+  }
+
+  function linkifyBareUrl(encodedUrl) {
+    var trailing = encodedUrl.match(/[.,;:!?]+$/);
+    var label = trailing ? encodedUrl.slice(0, -trailing[0].length) : encodedUrl;
+    var href = decodeHtmlEntities(label);
+    return externalReferenceAnchor(sanitizeLinkHref(href), label) + (trailing ? trailing[0] : "");
+  }
+
+  function decodeHtmlEntities(value) {
+    return String(value || "").replace(/&amp;/gi, "&");
+  }
+
+  function externalReferenceAnchor(href, label) {
+    return href ? "<a href=\\\"" + escapeHtml(href) + "\\\" target=\\\"_blank\\\" rel=\\\"noreferrer\\\">" + label + "</a>" : label;
+  }
+
+  function googleDocHref(docId) {
+    return "https://docs.google.com/document/d/" + encodeURIComponent(docId) + "/edit";
+  }
+
+  function externalTemplateHref(templateName, values) {
+    var templates = state.projectMappings && state.projectMappings.externalLinkTemplates;
+    var template = templates && templates[templateName];
+    if (!template && templateName === "slackChannel") {
+      template = "https://slack.com/app_redirect?channel={channel}";
+    }
+    if (!template) return null;
+    var href = String(template).replace(/\\{(space|pageId|channel)\\}/g, function (_match, key) {
+      return encodeURIComponent(values[key] || "");
+    });
+    return sanitizeLinkHref(href);
+  }
+
+  function mappedPullRequestHref(number) {
+    var project = projectOf(state.selectedAnchor);
+    if (!project || !state.projectMappings || !Array.isArray(state.projectMappings.projects)) return null;
+    var mapping = state.projectMappings.projects.find(function (entry) {
+      return entry && String(entry.project || "").toLowerCase() === String(project).toLowerCase();
+    });
+    var repo = mapping && selectMappedWebRepo(mapping.repos || []);
+    if (!repo || !repo.web || !repo.web.url || !Number.isFinite(number) || number <= 0) return null;
+    var base = String(repo.web.url).trim().replace(/\\/+$/, "");
+    var template = String(repo.web.pullRequestTemplate || "{url}/pull/{number}").trim();
+    return sanitizeLinkHref(template.replace(/\\{url\\}/g, base).replace(/\\{number\\}/g, String(Math.floor(number))));
   }
 
   function repoFileReferenceLink(label) {
