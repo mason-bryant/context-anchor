@@ -1118,4 +1118,114 @@ None.
     });
     expect(clean.warnings.filter((warning) => warning.severity === "BLOCK")).toEqual([]);
   });
+
+  describe("section-reference claim sources (WP2)", () => {
+    it("does not warn or block on a valid cross-anchor section reference", async () => {
+      await service.writeAnchor({
+        name: "projects/demo/other-anchor",
+        content: anchorContent(),
+        message: "test: add other anchor",
+      });
+      const write = await service.writeAnchor({
+        name: "projects/demo/claims-demo",
+        content: anchorContent(
+          "\n- A cross-anchor sourced claim.\n  {src: projects/demo/other-anchor#Current State; observed: 2026-07-08; conf: medium}",
+        ),
+        message: "test: add section-referenced claim",
+      });
+      expect(write.warnings.filter((warning) => warning.severity === "BLOCK")).toEqual([]);
+      expect(write.warnings.some((warning) => warning.code === "claim_source_section_missing")).toBe(false);
+    });
+
+    it("resolves same-anchor #heading shorthand against the containing anchor", async () => {
+      const write = await service.writeAnchor({
+        name: "projects/demo/claims-demo",
+        content: anchorContent(
+          "\n- A same-anchor sourced claim.\n  {src: #Decisions; observed: 2026-07-08; conf: medium}",
+        ),
+        message: "test: add same-anchor section reference",
+      });
+      expect(write.warnings.filter((warning) => warning.severity === "BLOCK")).toEqual([]);
+      expect(write.warnings.some((warning) => warning.code === "claim_source_section_missing")).toBe(false);
+    });
+
+    it("warns (never blocks) when a section reference's heading does not exist", async () => {
+      await service.writeAnchor({
+        name: "projects/demo/other-anchor",
+        content: anchorContent(),
+        message: "test: add other anchor",
+      });
+      const write = await service.writeAnchor({
+        name: "projects/demo/claims-demo",
+        content: anchorContent(
+          "\n- A dangling-heading claim.\n  {src: projects/demo/other-anchor#Nonexistent Heading; observed: 2026-07-08; conf: medium}",
+        ),
+        message: "test: add dangling section reference",
+      });
+      expect(write.warnings.filter((warning) => warning.severity === "BLOCK")).toEqual([]);
+      const warning = write.warnings.find((entry) => entry.code === "claim_source_section_missing");
+      expect(warning?.severity).toBe("WARN");
+      expect(warning?.message).toContain("Nonexistent Heading");
+      expect(write.version).toBeTruthy();
+    });
+
+    it("warns (never blocks) when a section reference's anchor does not exist", async () => {
+      const write = await service.writeAnchor({
+        name: "projects/demo/claims-demo",
+        content: anchorContent(
+          "\n- A dangling-anchor claim.\n  {src: projects/demo/ghost-anchor#Current State; observed: 2026-07-08; conf: medium}",
+        ),
+        message: "test: add dangling anchor section reference",
+      });
+      expect(write.warnings.filter((warning) => warning.severity === "BLOCK")).toEqual([]);
+      const warning = write.warnings.find((entry) => entry.code === "claim_source_section_missing");
+      expect(warning?.severity).toBe("WARN");
+      expect(write.version).toBeTruthy();
+    });
+
+    it("resolves a section-reference source to a /ui?anchor= deep link", async () => {
+      await service.writeAnchor({
+        name: "projects/demo/other-anchor",
+        content: anchorContent(),
+        message: "test: add other anchor",
+      });
+      await service.writeAnchor({
+        name: "projects/demo/claims-demo",
+        content: anchorContent(
+          "\n- A cross-anchor sourced claim.\n  {src: projects/demo/other-anchor#Current State; observed: 2026-07-08; conf: medium}",
+        ),
+        message: "test: add section-referenced claim",
+      });
+
+      const listed = await service.listClaims({ name: "projects/demo/claims-demo", q: "cross-anchor" });
+      const claim = listed.claims.find((entry) => entry.text === "A cross-anchor sourced claim.");
+      expect(claim?.sources[0]?.href).toBe("/ui?anchor=" + encodeURIComponent("projects/demo/other-anchor.md"));
+    });
+
+    it("deep-links to the correct anchor when the referenced heading itself contains a #", async () => {
+      // A heading like "C# Notes" leaves a `#` inside the section node id
+      // (`section:<anchor>#C# Notes`); the deep-link resolver must split on the
+      // FIRST `#` (anchor names never contain `#`) to recover the anchor name.
+      // Splitting on the last `#` would truncate to `<anchor>#C`.
+      await service.writeAnchor({
+        name: "projects/demo/other-anchor",
+        content: anchorContent() + "\n## C# Notes\n\n- A note about C#.\n",
+        message: "test: add other anchor with a hash heading",
+      });
+      await service.writeAnchor({
+        name: "projects/demo/claims-demo",
+        content: anchorContent(
+          "\n- A hash-heading sourced claim.\n  {src: projects/demo/other-anchor#C# Notes; observed: 2026-07-08; conf: medium}",
+        ),
+        message: "test: add hash-heading section reference",
+      });
+
+      const listed = await service.listClaims({ name: "projects/demo/claims-demo", q: "hash-heading" });
+      const claim = listed.claims.find((entry) => entry.text === "A hash-heading sourced claim.");
+      // href must point at the anchor, not a truncated/garbled path.
+      expect(claim?.sources[0]?.href).toBe("/ui?anchor=" + encodeURIComponent("projects/demo/other-anchor.md"));
+      // The heading resolves, so there is no dangling-section warning either.
+      expect(claim?.status).toBe("annotated");
+    });
+  });
 });
