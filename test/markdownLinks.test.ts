@@ -27,4 +27,9 @@ describe("suggestMarkdownLinks", () => {
     expect(result.suggestions).toEqual([]);
     expect(result.suggestedContent).toContain("`#project`");
   });
+
+  it("escapes Markdown metacharacters in suggested labels", () => {
+    const result = suggestMarkdownLinks('`Google Doc "[Draft] \\ plan" (doc id abc123)`\n{src: https://docs.google.com/document/d/abc123/edit;}');
+    expect(result.suggestedContent).toContain('[\\[Draft\\] \\\\ plan](https://docs.google.com/document/d/abc123/edit)');
+  });
 });

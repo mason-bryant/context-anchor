@@ -169,7 +169,7 @@ import {
   type GraphNeighborsResultNode,
 } from "./graph/neighbors.js";
 import { buildPeopleIndex, parsePeopleRegistry, type PeopleIndex } from "./peopleRegistry.js";
-import { suggestMarkdownLinks } from "./markdownLinks.js";
+import { findMarkdownLinkSuggestions, suggestMarkdownLinks } from "./markdownLinks.js";
 import {
   extractMermaidBlocks,
   replaceMermaidBlockText,
@@ -818,7 +818,7 @@ export class AnchorService {
       }
     }
 
-    const linkSuggestions = suggestMarkdownLinks(content).suggestions;
+    const linkSuggestions = findMarkdownLinkSuggestions(content);
     if (linkSuggestions.length > 0) {
       const shown = linkSuggestions.slice(0, 3).map((item) => `\`${item.reference}\``).join(", ");
       const more = linkSuggestions.length > 3 ? ` (and ${linkSuggestions.length - 3} more)` : "";
