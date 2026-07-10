@@ -11,7 +11,7 @@ export type PathCommitMetadata = {
 const COMMIT_MARKER = "\u0001";
 const HASH_PATTERN = /^[0-9a-f]{40,64}$/i;
 
-type FsHeadResolution = { ok: true; head: string | undefined } | { ok: false };
+export type FsHeadResolution = { ok: true; head: string | undefined } | { ok: false };
 
 /**
  * HEAD-keyed cache of per-path git metadata (last commit touching a path,
@@ -280,7 +280,14 @@ function recordOccurrence(
   byPath.set(filePath, { lastCommit: commit, ...(commitDate ? { firstCommitDate: commitDate } : {}) });
 }
 
-async function resolveHeadFromFs(repoPath: string): Promise<FsHeadResolution> {
+/**
+ * Resolve repo HEAD purely from the filesystem: `.git/HEAD` (following a
+ * worktree's `gitdir:` pointer and `commondir`), loose refs, then
+ * `packed-refs`. No git subprocess. Exported so other HEAD-keyed caches
+ * (`GraphIndex`, `src/graph/index.ts`) share this single implementation
+ * instead of duplicating filesystem-HEAD-resolution logic.
+ */
+export async function resolveHeadFromFs(repoPath: string): Promise<FsHeadResolution> {
   try {
     const gitPath = path.join(repoPath, ".git");
     let gitDir = gitPath;
