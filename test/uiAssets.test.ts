@@ -896,6 +896,57 @@ describe("UI browser assets", () => {
     expect(html).toContain("<code>app/hub_platform/rql/docs/translation/vtables.md:5-22</code></a>");
   });
 
+  it("links Google Docs, configured Confluence and Slack references, and mapped PRs in prose", () => {
+    const hooks = loadHooks();
+    hooks.setMappingsTestState(
+      [{ name: "projects/reporting/context.md", projectSlug: "reporting" }],
+      {
+        externalLinkTemplates: {
+          confluencePage: "https://acme.atlassian.net/wiki/spaces/{space}/pages/{pageId}",
+          slackChannel: "https://acme.slack.com/archives/{channel}",
+        },
+        projects: [
+          {
+            project: "reporting",
+            repos: [{ repo: "main", paths: [], web: { url: "https://github.com/acme/main" } }],
+          },
+        ],
+      },
+    );
+
+    const html = hooks.renderMarkdown(
+      'Google Doc "Removing Current Balance From Reports V1" (doc id 1s9cR-JFozYQzs0LGqnd4oOnn-Bp4-TY2fpnUsGdTFoo). '
+      + 'Confluence PLATFORM/pages/6251708783. PR #526011. #inc-2026-07-01-current-balance-recipe-is-broken.',
+    );
+
+    expect(html).toContain('href="https://docs.google.com/document/d/1s9cR-JFozYQzs0LGqnd4oOnn-Bp4-TY2fpnUsGdTFoo/edit"');
+    expect(html).toContain('href="https://acme.atlassian.net/wiki/spaces/PLATFORM/pages/6251708783"');
+    expect(html).toContain('href="https://github.com/acme/main/pull/526011"');
+    expect(html).toContain('href="https://acme.slack.com/archives/inc-2026-07-01-current-balance-recipe-is-broken"');
+  });
+
+  it("does not link external references through an unsafe configured template", () => {
+    const hooks = loadHooks();
+    hooks.setMappingsTestState(
+      [{ name: "projects/reporting/context.md", projectSlug: "reporting" }],
+      { externalLinkTemplates: { slackChannel: "javascript:alert({channel})" }, projects: [] },
+    );
+
+    const html = hooks.renderMarkdown("The incident is #inc-6191.");
+
+    expect(html).not.toContain("javascript:");
+    expect(html).toContain("#inc-6191");
+  });
+
+  it("links Slack channel names through Slack's default deep-link endpoint", () => {
+    const hooks = loadHooks();
+    hooks.setMappingsTestState([{ name: "projects/reporting/context.md", projectSlug: "reporting" }], { projects: [] });
+
+    const html = hooks.renderMarkdown("The incident is #inc-6191.");
+
+    expect(html).toContain('href="https://slack.com/app_redirect?channel=inc-6191"');
+  });
+
   it("does not link repo file references when mappings are ambiguous", () => {
     const hooks = loadHooks();
     hooks.setMappingsTestState(
