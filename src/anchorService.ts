@@ -59,7 +59,7 @@ import {
 } from "./proposedChanges.js";
 import { getRelatedAnchors } from "./relations/index.js";
 import { isProjectMilestoneType } from "./schema/milestoneTypes.js";
-import { countCompletedRows, extractH2Sections, parseAnchor } from "./storage/markdown.js";
+import { countCompletedRows, parseAnchor } from "./storage/markdown.js";
 import {
   SERVER_RULES_DISCOVERY_CATEGORY,
   classifyAnchorPath,
@@ -4269,10 +4269,15 @@ function dedupePreserveOrder(names: string[]): string[] {
   return result;
 }
 
-/** Extract the anchor name from a `section:<anchor>#<heading>` canonical node id. */
+/**
+ * Extract the anchor name from a `section:<anchor>#<heading>` canonical node id.
+ * Anchor names never contain `#`, so the anchor is everything up to the FIRST
+ * `#` after the `section:` prefix — splitting on the last `#` would break for a
+ * heading that itself contains `#` (e.g. "C# Notes").
+ */
 function sectionNodeAnchorName(nodeId: string): string {
   const withoutPrefix = nodeId.slice("section:".length);
-  const hashIndex = withoutPrefix.lastIndexOf("#");
+  const hashIndex = withoutPrefix.indexOf("#");
   return hashIndex === -1 ? withoutPrefix : withoutPrefix.slice(0, hashIndex);
 }
 

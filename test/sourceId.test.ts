@@ -103,7 +103,7 @@ describe("parseClaimSource — person and trust-me-bro rows", () => {
     expect(result.warning).toBeUndefined();
   });
 
-  it("resolves legacy person:<id> src form the same way as the structured key", () => {
+  it("resolves the legacy person:<id> src value the same way as the structured key", () => {
     const ctx = makeContext({ resolvePersonId: (raw) => (raw === "carol" ? "carol" : undefined) });
     const result = parseClaimSource({ src: "person:carol" }, ctx);
     expect(result.node).toEqual({ nodeId: "person:carol", type: "person" });
