@@ -59,7 +59,7 @@ import {
 } from "./proposedChanges.js";
 import { getRelatedAnchors } from "./relations/index.js";
 import { isProjectMilestoneType } from "./schema/milestoneTypes.js";
-import { countCompletedRows, parseAnchor } from "./storage/markdown.js";
+import { countCompletedRows, extractH2Sections, parseAnchor } from "./storage/markdown.js";
 import {
   SERVER_RULES_DISCOVERY_CATEGORY,
   classifyAnchorPath,
@@ -90,6 +90,7 @@ import type {
   ApplyProposedChangeInput,
   ApplyProposedChangeResult,
   ProjectFilterResolution,
+  ProjectMapping,
   ProjectMappings,
   ProjectMappingsWithCommit,
   ProjectRepoMapping,
@@ -148,6 +149,13 @@ import {
 } from "./projectAliases.js";
 import { candidateBoostMap, isWithinPath, resolveCandidateProjects } from "./projectResolution.js";
 import { parseProjectMappings, repoFileUrl, repoPullRequestUrl } from "./projectMappings.js";
+import {
+  isHttpUrl,
+  parseFileSource,
+  parsePullRequestSource,
+  parseRepoPrefixedSource,
+} from "./graph/sourceParsing.js";
+import { parseClaimSource, type ParseClaimSourceContext } from "./graph/sourceId.js";
 import { buildPeopleIndex, parsePeopleRegistry, type PeopleIndex } from "./peopleRegistry.js";
 import {
   extractMermaidBlocks,
@@ -1913,7 +1921,7 @@ None.
       const href =
         source.kind === TRUST_ME_BRO_KIND
           ? undefined
-          : this.resolveClaimSourceHref(anchorName, source.src, mappings, anchorNames);
+          : this.resolveClaimSourceHref(anchorName, source.src, mappings, anchorNames, peopleIndex);
       return {
         ...source,
         ...(person ? { person: person.id, personName: person.displayName } : {}),
@@ -1941,7 +1949,7 @@ None.
       const href =
         source.kind === TRUST_ME_BRO_KIND
           ? undefined
-          : this.resolveClaimSourceHref(anchorName, source.src, mappings, anchorNames);
+          : this.resolveClaimSourceHref(anchorName, source.src, mappings, anchorNames, peopleIndex);
       return {
         ...source,
         ...(person ? { person: person.id, personName: person.displayName } : {}),
@@ -2034,47 +2042,108 @@ None.
     };
   }
 
+  /**
+   * Resolve a claim source's UI/API href. Delegates node classification to
+   * `parseClaimSource` (the single source-string classifier, `src/graph/sourceId.ts`)
+   * so links and canonical node ids can never diverge; this method only turns
+   * the resulting node into a concrete href (repo web URL, or a `/ui?anchor=`
+   * deep link for anchor/section nodes).
+   */
   private resolveClaimSourceHref(
     anchorName: string,
     src: string,
     mappings: ProjectMappings,
     anchorNames: Set<string>,
+    peopleIndex?: PeopleIndex,
   ): string | undefined {
     const value = src.trim();
     if (!value) {
       return undefined;
     }
-    if (isHttpUrl(value)) {
-      return value;
+
+    const parsed = parseClaimSource(
+      { src: value },
+      this.claimSourceContext(anchorName, mappings, anchorNames, peopleIndex),
+    );
+    const node = parsed.node;
+    if (!node) {
+      return undefined;
     }
 
-    const resolvedAnchor = this.resolveSourceAnchorName(value, anchorNames);
-    if (resolvedAnchor) {
-      return `/ui?anchor=${encodeURIComponent(resolvedAnchor)}`;
+    switch (node.type) {
+      case "url":
+        return isHttpUrl(value) ? value : undefined;
+      case "anchor":
+        return `/ui?anchor=${encodeURIComponent(node.nodeId.slice("anchor:".length))}`;
+      case "section":
+        return `/ui?anchor=${encodeURIComponent(sectionNodeAnchorName(node.nodeId))}`;
+      case "pr": {
+        const projectMapping = this.projectMappingForAnchorName(anchorName, mappings);
+        if (!projectMapping) {
+          return undefined;
+        }
+        const prefixed = parseRepoPrefixedSource(value);
+        const prNumber = parsePullRequestSource(prefixed.path);
+        if (prNumber === undefined) {
+          return undefined;
+        }
+        const repo = this.selectMappedRepo(projectMapping.repos, prefixed.repo, undefined);
+        return repo ? repoPullRequestUrl(repo, prNumber) : undefined;
+      }
+      case "file": {
+        const projectMapping = this.projectMappingForAnchorName(anchorName, mappings);
+        if (!projectMapping) {
+          return undefined;
+        }
+        const prefixed = parseRepoPrefixedSource(value);
+        const parsedFile = parseFileSource(prefixed.path);
+        if (!parsedFile) {
+          return undefined;
+        }
+        const repo = this.selectMappedRepo(projectMapping.repos, prefixed.repo, parsedFile.path);
+        return repo ? repoFileUrl(repo, parsedFile.path, parsedFile.line) : undefined;
+      }
+      case "person":
+        return undefined;
     }
+  }
 
+  private projectMappingForAnchorName(
+    anchorName: string,
+    mappings: ProjectMappings,
+  ): ProjectMapping | undefined {
     const anchorClassification = classifyAnchorPath(anchorName);
     const anchorProject = anchorClassification.kind === "anchor" ? anchorClassification.projectSlug : undefined;
-    const projectMapping = anchorProject
+    return anchorProject
       ? mappings.projects.find((mapping) => mapping.project.toLowerCase() === anchorProject.toLowerCase())
       : undefined;
-    if (!projectMapping) {
-      return undefined;
-    }
+  }
 
-    const prefixed = parseRepoPrefixedSource(value);
-    const prNumber = parsePullRequestSource(prefixed.path);
-    if (prNumber !== undefined) {
-      const repo = this.selectMappedRepo(projectMapping.repos, prefixed.repo, undefined);
-      return repo ? repoPullRequestUrl(repo, prNumber) : undefined;
-    }
-
-    const parsedFile = parseFileSource(prefixed.path);
-    if (!parsedFile) {
-      return undefined;
-    }
-    const repo = this.selectMappedRepo(projectMapping.repos, prefixed.repo, parsedFile.path);
-    return repo ? repoFileUrl(repo, parsedFile.path, parsedFile.line) : undefined;
+  /**
+   * Build the shared `parseClaimSource` context for one anchor's claim sources.
+   * `sectionTitlesByAnchor` is an optional pre-loaded map (resolved anchor name
+   * -> its H2 section titles) for callers that need dangling-heading detection
+   * (the write-path validator); read-path link resolution omits it since a
+   * dangling heading still links to the anchor page.
+   */
+  private claimSourceContext(
+    anchorName: string,
+    mappings: ProjectMappings,
+    anchorNames: Set<string>,
+    peopleIndex?: PeopleIndex,
+    sectionTitlesByAnchor?: ReadonlyMap<string, ReadonlySet<string>>,
+  ): ParseClaimSourceContext {
+    return {
+      anchorName,
+      anchorNames,
+      resolveAnchorName: (value: string) => this.resolveSourceAnchorName(value, anchorNames),
+      getAnchorSectionTitles: (resolvedAnchorName: string) => sectionTitlesByAnchor?.get(resolvedAnchorName),
+      mappings,
+      resolvePersonId: (rawPerson: string) => {
+        const person = peopleIndex?.getPersonById(rawPerson) ?? peopleIndex?.getPerson(rawPerson);
+        return person?.id;
+      },
+    };
   }
 
   private resolveSourceAnchorName(value: string, anchorNames: Set<string>): string | undefined {
@@ -4200,44 +4269,11 @@ function dedupePreserveOrder(names: string[]): string[] {
   return result;
 }
 
-function isHttpUrl(value: string): boolean {
-  try {
-    const parsed = new URL(value);
-    return parsed.protocol === "http:" || parsed.protocol === "https:";
-  } catch {
-    return false;
-  }
-}
-
-function parseRepoPrefixedSource(value: string): { repo?: string; path: string } {
-  const trimmed = value.trim();
-  if (trimmed.toLowerCase().startsWith("person:")) {
-    return { path: trimmed };
-  }
-  const match = /^([A-Za-z0-9_.-]+):(.+)$/.exec(trimmed);
-  if (!match) {
-    return { path: trimmed };
-  }
-  return { repo: match[1], path: match[2].trim() };
-}
-
-function parsePullRequestSource(value: string): number | undefined {
-  const match = /^PR\s+#?(\d+)$/i.exec(value.trim());
-  return match ? Number(match[1]) : undefined;
-}
-
-function parseFileSource(value: string): { path: string; line?: number } | undefined {
-  const trimmed = value.trim();
-  if (!trimmed || trimmed.includes("://") || trimmed.startsWith("person:")) {
-    return undefined;
-  }
-  const lineMatch = /^(.*)#L(\d+)$/i.exec(trimmed);
-  const path = (lineMatch ? lineMatch[1] : trimmed).trim();
-  if (!path || /\s/.test(path) || path.startsWith("#")) {
-    return undefined;
-  }
-  const line = lineMatch ? Number(lineMatch[2]) : undefined;
-  return { path, ...(line !== undefined ? { line } : {}) };
+/** Extract the anchor name from a `section:<anchor>#<heading>` canonical node id. */
+function sectionNodeAnchorName(nodeId: string): string {
+  const withoutPrefix = nodeId.slice("section:".length);
+  const hashIndex = withoutPrefix.lastIndexOf("#");
+  return hashIndex === -1 ? withoutPrefix : withoutPrefix.slice(0, hashIndex);
 }
 
 function parseClaimSourceInputs(
