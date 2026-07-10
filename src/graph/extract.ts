@@ -490,7 +490,7 @@ function dedupeEdges(edges: GraphEdge[]): GraphEdge[] {
   const seen = new Set<string>();
   const out: GraphEdge[] = [];
   for (const edge of edges) {
-    const key = `${edge.from} ${edge.to} ${edge.type} ${edge.sourceOfTruth}`;
+    const key = `${edge.from}\u001f${edge.to}\u001f${edge.type}\u001f${edge.sourceOfTruth}`;
     if (seen.has(key)) {
       continue;
     }

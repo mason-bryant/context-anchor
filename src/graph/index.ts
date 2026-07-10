@@ -173,6 +173,10 @@ export class GraphIndex {
     if (!read || isBuiltInAnchorName(anchorName)) {
       this.anchorMetaByName.delete(anchorName);
       this.sectionTitlesByAnchor.delete(anchorName);
+      // The write that triggered this invalidation has already advanced HEAD;
+      // adopt it so the next query treats the folded-in change as current
+      // instead of discarding this work with a full rebuild.
+      this.head = await this.resolveHead();
       return;
     }
 
@@ -203,6 +207,13 @@ export class GraphIndex {
     };
     this.byDocument.set(anchorName, group);
     indexGroup(group, this.forward, this.reverse, this.literalRelationsReverse);
+
+    // The write that triggered this invalidation has already advanced HEAD
+    // (invalidateGraphDocument runs after commitAnchor). Adopt the new HEAD so
+    // the next query sees the graph as current and keeps this incremental
+    // update instead of discarding it with a full rebuild — which would negate
+    // per-document invalidation entirely.
+    this.head = await this.resolveHead();
   }
 
   /** Drop everything; the next access rebuilds from the current HEAD. */

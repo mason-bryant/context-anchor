@@ -247,6 +247,37 @@ describe("GraphIndex invalidateDocument", () => {
     expect(milestoneEdgesAfter).toEqual(milestoneEdgesBefore);
   });
 
+  it("adopts the advanced HEAD so the next query keeps the incremental update instead of full-rebuilding", async () => {
+    const repo = new AnchorRepository({ repoPath: tmpDir });
+    await repo.ensureReady();
+    await seedRepo(repo);
+
+    const graph = new GraphIndex(repo, graphDeps(repo));
+    await graph.allEdges(); // first query builds the graph (HEAD = H0)
+
+    const rebuildSpy = vi.spyOn(
+      graph as unknown as { rebuild: (head: string | undefined, generation: number) => Promise<void> },
+      "rebuild",
+    );
+
+    // A write advances HEAD, then the change is folded in per-document.
+    const newContent = PROJECT_CONTEXT.replace(
+      "## Decisions\n\nNone.",
+      "## Decisions\n\n- Another claim.\n  {src: PR #99; observed: 2026-07-08; conf: medium; id: c-head01}",
+    );
+    await repo.commitAnchor({ name: "projects/demo/demo-project-context.md", content: newContent });
+    await graph.invalidateDocument("projects/demo/demo-project-context.md");
+
+    // The next query must be served from the incrementally-updated graph, not a
+    // full rebuild: invalidateDocument adopted the new HEAD. Without that, a
+    // HEAD mismatch would discard the per-document work every write.
+    const edges = await graph.allEdges();
+    expect(rebuildSpy).not.toHaveBeenCalled();
+    expect(edges.some((edge) => edge.from.includes("c-head01"))).toBe(true);
+
+    rebuildSpy.mockRestore();
+  });
+
   it("removes a document's edges entirely when the document is deleted", async () => {
     const repo = new AnchorRepository({ repoPath: tmpDir });
     await repo.ensureReady();
