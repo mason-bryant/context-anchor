@@ -947,6 +947,18 @@ describe("UI browser assets", () => {
     expect(html).toContain('href="https://slack.com/app_redirect?channel=inc-6191"');
   });
 
+  it("preserves encoded URL query parameters and does not treat URL fragments as Slack channels", () => {
+    const hooks = loadHooks();
+    hooks.setMappingsTestState([{ name: "projects/reporting/context.md", projectSlug: "reporting" }], { projects: [] });
+
+    const html = hooks.renderMarkdown("See https://example.test/report?one=1&two=2#incident and #inc-6191.");
+
+    expect(html).toContain('href="https://example.test/report?one=1&amp;two=2#incident"');
+    expect(html).not.toContain("amp;amp;");
+    expect(html).not.toContain('https://slack.com/app_redirect?channel=incident');
+    expect(html).toContain('href="https://slack.com/app_redirect?channel=inc-6191"');
+  });
+
   it("does not link repo file references when mappings are ambiguous", () => {
     const hooks = loadHooks();
     hooks.setMappingsTestState(

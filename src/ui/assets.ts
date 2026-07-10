@@ -7985,6 +7985,12 @@ export const UI_JS = `(function () {
   }
 
   function linkifyReferenceText(text) {
+    return String(text || "").split(/(https?:\\/\\/[^\\s<]+)/gi).map(function (part, index) {
+      return index % 2 === 1 ? linkifyBareUrl(part) : linkifyNonUrlReferences(part);
+    }).join("");
+  }
+
+  function linkifyNonUrlReferences(text) {
     return String(text || "")
       .replace(/(Google Doc\\s+&quot;.+?&quot;\\s+\\(doc id\\s+)([A-Za-z0-9_-]+)(\\))/gi, function (_match, prefix, docId, suffix) {
         return externalReferenceAnchor(googleDocHref(docId), prefix + docId) + suffix;
@@ -8000,12 +8006,18 @@ export const UI_JS = `(function () {
       .replace(/(^|[^A-Za-z0-9_])#([A-Za-z][A-Za-z0-9_-]*)\\b/g, function (match, prefix, channel) {
         var href = externalTemplateHref("slackChannel", { channel: channel });
         return href ? prefix + externalReferenceAnchor(href, "#" + channel) : match;
-      })
-      .replace(/https?:\\/\\/[^\\s<]+/gi, function (url) {
-        var trailing = url.match(/[.,;:!?]+$/);
-        var href = trailing ? url.slice(0, -trailing[0].length) : url;
-        return externalReferenceAnchor(sanitizeLinkHref(href), href) + (trailing ? trailing[0] : "");
       });
+  }
+
+  function linkifyBareUrl(encodedUrl) {
+    var trailing = encodedUrl.match(/[.,;:!?]+$/);
+    var label = trailing ? encodedUrl.slice(0, -trailing[0].length) : encodedUrl;
+    var href = decodeHtmlEntities(label);
+    return externalReferenceAnchor(sanitizeLinkHref(href), label) + (trailing ? trailing[0] : "");
+  }
+
+  function decodeHtmlEntities(value) {
+    return String(value || "").replace(/&amp;/gi, "&");
   }
 
   function externalReferenceAnchor(href, label) {
