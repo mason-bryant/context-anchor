@@ -166,12 +166,14 @@ import {
 import { runValidators } from "./validators/pipeline.js";
 import {
   carryClaimAnnotations,
+  collectClaimIds,
   deleteClaim,
   extractClaims,
   formatAnnotationBody,
   locateClaim,
   locateClaimByLine,
   mergeClaimProvenanceSummaries,
+  mintMissingClaimIds,
   newlyAddedUnannotatedClaims,
   parseAnnotationBody,
   replaceClaimText,
@@ -737,6 +739,48 @@ export class AnchorService {
           code: "claim_annotation_missing",
           message: `This write adds ${missing.length} claim(s) without provenance: ${shown}${more}. Record where each fact came from while you still have the source: append "  {src: <PR #N | repo path | anchor name | URL | person:<id>>; observed: <YYYY-MM-DD>; conf: high|medium|low}" or "  {src: trust me bro; kind: trust-me-bro; person: <id>; observed: <YYYY-MM-DD>; conf: high}" under the bullet, or use annotateClaim afterwards.`,
         });
+      }
+    }
+
+    // Stable claim ids (WP1): every annotated claim leaves a write with an
+    // immutable, tree-unique id. Mint one for any annotated claim that still
+    // lacks it after carry — carried-by-id claims already have one, so this
+    // only mints for genuinely new or never-annotated-before rows. Skip the
+    // tree-wide walk entirely when this write touches no claims that need
+    // minting or duplicate-checking (no annotated-without-id claims and no
+    // ids present at all) so ordinary writes stay cheap.
+    const contentClaims = extractClaims(content);
+    // Only pay the tree-wide id walk when this write actually changes id state:
+    // an annotated claim still needs minting, or an id appears in `content`
+    // that was not already committed (so it needs a cross-tree duplicate
+    // check). Frontmatter-only or unrelated-section edits leave the id set
+    // untouched and skip the walk entirely, even once most anchors carry ids.
+    const priorIds = oldContent !== undefined ? collectClaimIds(extractClaims(oldContent)) : new Set<string>();
+    const needsMint = contentClaims.some((claim) => claim.status === "annotated" && !claim.id);
+    const hasNewOrChangedId = [...collectClaimIds(contentClaims)].some((id) => !priorIds.has(id));
+    const needsIdWork = needsMint || hasNewOrChangedId;
+    if (needsIdWork) {
+      // Uniqueness set is every id already in the tree, this anchor excluded
+      // (its own ids come from `content`, which reflects the in-flight write).
+      const treeIdsExcludingThisAnchor = await this.collectTreeClaimIds(resolved.name);
+      const mintResult = mintMissingClaimIds(content, treeIdsExcludingThisAnchor);
+      content = mintResult.content;
+      for (const entry of mintResult.minted) {
+        carryWarnings.push({
+          severity: "WARN",
+          code: "claim_id_minted",
+          message: `Minted claim id ${entry.id} for claim "${truncateClaimText(entry.text)}" (no id was present after this write).`,
+        });
+      }
+
+      // Duplicate ids block: within this write's own content, or colliding
+      // with an id that already exists elsewhere in the tree.
+      const idBlocks = duplicateClaimIdViolations(content, treeIdsExcludingThisAnchor);
+      if (idBlocks.length > 0) {
+        return {
+          warnings: [...idBlocks, ...carryWarnings],
+          requiresApproval: false,
+        };
       }
     }
 
@@ -1598,6 +1642,30 @@ None.
     return { tasks: rows };
   }
 
+  /**
+   * Every claim id currently in the tree, for id-minting uniqueness checks
+   * (WP1). Walks all anchors the same way `listClaims` does. `excludeAnchor`
+   * skips one anchor's on-disk content (the anchor currently being written,
+   * whose ids the caller supplies separately from its in-flight content).
+   */
+  private async collectTreeClaimIds(excludeAnchor?: string): Promise<Set<string>> {
+    const metas = await this.repo.listAnchors();
+    const ids = new Set<string>();
+    for (const meta of metas) {
+      if (isBuiltInAnchorName(meta.name) || meta.name === excludeAnchor) {
+        continue;
+      }
+      const content = await this.repo.readRaw(meta.name);
+      if (content === undefined) {
+        continue;
+      }
+      for (const id of collectClaimIds(extractClaims(content))) {
+        ids.add(id);
+      }
+    }
+    return ids;
+  }
+
   async listClaims(input: {
     name?: string;
     project?: string;
@@ -2267,6 +2335,7 @@ None.
     }
 
     const content = await this.repo.readRaw(input.name);
+    let existingId: string | undefined;
     if (content !== undefined) {
       const location = "line" in target ? locateClaimByLine(content, target.line) : locateClaim(content, target.claim);
       if (!location.ok) {
@@ -2287,7 +2356,35 @@ None.
           ],
         };
       }
+      existingId = location.claim.id;
     }
+
+    // Stable claim ids are immutable (WP1): re-supplying the same id or
+    // omitting it (preserved below) is fine, but changing an existing id would
+    // break already-published `<anchor>#<id>` references. Block an attempted
+    // change; the sanctioned way to drop an id is to clear the provenance
+    // (`sources: []`) first and then re-add.
+    if (existingId && normalizedSources.sources.some((source) => source.id && source.id !== existingId)) {
+      return {
+        warnings: [
+          {
+            severity: "BLOCK",
+            code: "claim_id_immutable",
+            message: `Claim already has stable id "${existingId}"; ids are immutable so cross-anchor "<anchor>#<id>" references stay valid. To change it, clear the provenance (sources: []) first, then re-add.`,
+          },
+        ],
+      };
+    }
+
+    // Preserve the claim's existing id across a source replacement (WP1):
+    // setClaimSources overwrites the full row set, so an id the caller did
+    // not resupply must be re-attached rather than silently dropped and
+    // re-minted as a new (different) id. An explicit empty `sources: []`
+    // (clear) still drops the id with the rest of the provenance by design.
+    const sourcesWithId =
+      existingId && normalizedSources.sources.length > 0 && !normalizedSources.sources.some((source) => source.id)
+        ? [{ ...normalizedSources.sources[0], id: existingId }, ...normalizedSources.sources.slice(1)]
+        : normalizedSources.sources;
 
     return this.applyAnchorContentPatch({
       name: input.name,
@@ -2302,7 +2399,7 @@ None.
       // This is the sanctioned source editor: carry/loss guarding would
       // resurrect cleared annotations or block intentional source changes.
       carryClaimAnnotations: false,
-      mutate: (old) => upsertClaimSources(old, target, normalizedSources.sources),
+      mutate: (old) => upsertClaimSources(old, target, sourcesWithId),
     });
   }
 
@@ -4405,4 +4502,41 @@ function claimSourceKindId(source: Pick<ClaimAnnotation, "kind" | "src">): strin
 
 function truncateClaimText(text: string): string {
   return text.length > 80 ? `${text.slice(0, 77)}...` : text;
+}
+
+/**
+ * BLOCK validations for claim ids (WP1): a duplicate id within this write's
+ * own content, or one that collides with an id already present elsewhere in
+ * the tree. Distinct from `claim_annotation_invalid` (malformed format),
+ * which the parser/validator pipeline already blocks.
+ */
+function duplicateClaimIdViolations(content: string, treeIdsExcludingThisAnchor: ReadonlySet<string>): ValidationViolation[] {
+  const claims = extractClaims(content).filter((claim) => claim.id);
+  const seen = new Map<string, string[]>();
+  for (const claim of claims) {
+    const id = claim.id as string;
+    const texts = seen.get(id) ?? [];
+    texts.push(claim.text);
+    seen.set(id, texts);
+  }
+
+  const violations: ValidationViolation[] = [];
+  for (const [id, texts] of seen) {
+    if (texts.length > 1) {
+      violations.push({
+        severity: "BLOCK",
+        code: "claim_id_duplicate",
+        message: `Claim id "${id}" is used by ${texts.length} claims in this write: ${texts.map((text) => `"${truncateClaimText(text)}"`).join("; ")}. Claim ids must be unique.`,
+      });
+      continue;
+    }
+    if (treeIdsExcludingThisAnchor.has(id)) {
+      violations.push({
+        severity: "BLOCK",
+        code: "claim_id_duplicate",
+        message: `Claim id "${id}" on claim "${truncateClaimText(texts[0])}" already exists elsewhere in the tree. Claim ids must be unique.`,
+      });
+    }
+  }
+  return violations;
 }
