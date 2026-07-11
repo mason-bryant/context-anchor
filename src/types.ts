@@ -127,6 +127,18 @@ export type ValidationViolation = {
   path?: string;
 };
 
+export type MarkdownLinkSuggestion = {
+  line: number;
+  reference: string;
+  replacement: string;
+  url: string;
+};
+
+export type MarkdownLinkSuggestionResult = {
+  suggestions: MarkdownLinkSuggestion[];
+  suggestedContent: string;
+};
+
 export type WriteAnchorResult = {
   version?: string;
   warnings: ValidationViolation[];
@@ -1068,7 +1080,23 @@ export type ServerConfig = {
   migrationWarnOnly: boolean;
   /** Flag included planner anchors when last_validated is older than this many days. */
   staleAfterDays: number;
+  /** WP7 planner graph-proximity scoring signal — config-gated, off by default. */
+  graphScoring: GraphScoringConfig;
   logging?: LoggingConfig;
+};
+
+/**
+ * Config for the planner's graph-proximity scoring signal (WP7 of the claim
+ * knowledge graph plan). `enabled` defaults to false: with the flag off,
+ * `buildContextBundlePlan` never receives a graph-proximity boost map and its
+ * output is byte-identical to the pre-WP7 planner (hard, test-enforced
+ * acceptance criterion). `maxBoost` bounds every single anchor's graph boost
+ * so BM25 stays the primary signal; see `GRAPH_SCORING_MAX_BOOST_CEILING` in
+ * `src/graph/proximity.ts` for the hard ceiling this is clamped to.
+ */
+export type GraphScoringConfig = {
+  enabled: boolean;
+  maxBoost: number;
 };
 
 export type LoggingConfig = {

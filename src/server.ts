@@ -210,6 +210,8 @@ optimistic concurrency across sessions.
 
 Use full writeAnchor when restructuring an entire anchor or when bulk-replacing the file is simpler.
 
+Write reader-facing citations as Markdown links, for example \`[Design doc](https://example.com/doc)\` or \`[#project-channel](https://slack.com/app_redirect?channel=C123)\`. Use backticks only for literal code, commands, paths, and identifiers; inline-code references intentionally remain non-clickable. When an existing anchor has a known URL but backtick-wrapped prose, call \`suggestMarkdownLinks\` to get a read-only, reviewable replacement before applying it through writeAnchor or proposeChange.
+
 \`deleteAnchor\` and \`renameAnchor\` remove or move entire anchor files as git commits; they always require \
 \`approved: true\` after explicit user confirmation, independent of validator-driven approval on ordinary writes.
 
@@ -470,6 +472,44 @@ the index when your workflow checks in that file.`,
     async ({ name, kind }) => jsonResult({ anchors: await service.getRelated(name, kind) }),
   );
 
+  const GraphEdgeTypeSchema = z.enum([
+    "anchor_project",
+    "milestone_anchor",
+    "milestone_goal",
+    "roadmap_goal",
+    "milestone_task",
+    "task_owner",
+    "person_project",
+    "team_project",
+    "project_repo",
+    "repo_path",
+    "anchor_anchor",
+    "claim_source",
+    "claim_person",
+    "claim_section",
+    "section_anchor",
+    "derived_from",
+    "contradicts",
+  ]);
+
+  server.registerTool(
+    "graphNeighbors",
+    {
+      title: "Graph Neighbors",
+      description:
+        "Traverse the derived knowledge graph from one node (anchor name, `G-###` goal id, `<anchor>#<claim-id>`, person/team name, or a canonical node id) out to `depth` hops (1-3, default 1). A generalization of `getRelated` covering every edge kind the server tracks: project/goal/milestone/task/owner structure, anchor links, and claim provenance (source, person, section). Answers the two canonical graph queries in <=2 hops: (1) \"which claims cite this source?\" — pass the source node (e.g. `pr:<repo>#<n>`) with `direction: reverse` to walk claim -> source edges backwards; (2) \"which claims are downstream of this source?\" — the same reverse query, extended along `derived_from` claim -> claim edges to reach descendant claims. Ambiguous input (e.g. a name matching multiple people or anchors) returns a `candidates` list instead of guessing — resolve to one candidate's node id and call again. Every edge in the response carries `type` and `sourceOfTruth`; every result node carries its hop path back to the origin and, for claim nodes, the same per-claim provenance shape `includeProvenance` sidecars use. Read-only.",
+      inputSchema: z.object({
+        node: z.string().min(1).describe("Anchor name, `G-###` goal id, `<anchor>#<claim-id>`, person/team name, or canonical node id (e.g. `pr:<repo>#<n>`, `anchor:<name>`)."),
+        depth: z.number().int().min(1).max(3).optional().describe("Hop count from the origin node, clamped 1-3. Default 1."),
+        edgeTypes: z.array(GraphEdgeTypeSchema).optional().describe("Restrict traversal to these edge types. Omit to follow every edge type."),
+        direction: z.enum(["forward", "reverse", "both"]).optional().describe("forward = follow edges FROM each node; reverse = follow edges TO each node (e.g. \"claims citing this source\"); both = either direction. Default both."),
+        limit: z.number().int().min(1).max(200).optional().describe("Maximum result nodes (origin excluded), clamped 1-200. Default 50."),
+      }),
+      annotations: { readOnlyHint: true },
+    },
+    async (input) => jsonResult(await service.graphNeighbors(input)),
+  );
+
   server.registerTool(
     "proposeChange",
     {
@@ -613,6 +653,17 @@ the index when your workflow checks in that file.`,
       annotations: { readOnlyHint: true },
     },
     async ({ query, scope }) => jsonResult({ hits: await service.searchAnchors(query, scope) }),
+  );
+
+  server.registerTool(
+    "suggestMarkdownLinks",
+    {
+      title: "Suggest Markdown Links",
+      description: "Read one anchor and propose explicit Markdown links for inline-code Google Doc, Confluence, or Slack references only when exactly one supporting URL already exists in that anchor. Read-only: review suggestedContent, then apply it through writeAnchor or proposeChange.",
+      inputSchema: z.object({ name: z.string() }),
+      annotations: { readOnlyHint: true },
+    },
+    async ({ name }) => jsonResult(await service.suggestMarkdownLinks(name)),
   );
 
   server.registerTool(
@@ -1001,6 +1052,9 @@ the index when your workflow checks in that file.`,
   );
 
   const ClaimConfidenceSchema = z.enum(["high", "medium", "low"]);
+  const ClaimEdgeTargetSchema = z
+    .string()
+    .regex(/^[^#]*#[a-z0-9]+(?:-[a-z0-9]+)*$/, 'must be "<anchor>#<claim-id>" or the same-anchor shorthand "#<claim-id>"');
   const ClaimSourceSchema = z.object({
     src: z.string().min(1),
     observed: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
@@ -1008,6 +1062,12 @@ the index when your workflow checks in that file.`,
     id: z.string().optional(),
     kind: z.string().optional(),
     person: z.string().optional(),
+    derivedFrom: ClaimEdgeTargetSchema.optional().describe(
+      "Claim -> claim `derived_from` edge target: `<anchor>#<claim-id>` or same-anchor `#<claim-id>`. A well-formed target that resolves to no existing claim warns (claim_edge_target_missing) rather than blocking.",
+    ),
+    contradicts: ClaimEdgeTargetSchema.optional().describe(
+      "Claim -> claim `contradicts` edge target, same shape as derivedFrom.",
+    ),
   });
 
   server.registerTool(
@@ -1052,7 +1112,7 @@ the index when your workflow checks in that file.`,
     {
       title: "Annotate Claim Provenance",
       description:
-        "Set or clear the provenance annotation ({src; observed; conf[; id; kind; person]}) on one claim without rewriting the anchor. Locate the claim with a unique substring of its bullet text. src may be a PR reference, repo file path, anchor name, URL, or person:<id> (plain person-sourced claims cap at conf: medium). kind is an optional claim source type configured in project-mappings.json; defaults include url, misc, design-doc, adr, and trust-me-bro. For a high-confidence named developer assertion, pass src: \"trust me bro\", kind: \"trust-me-bro\", person: <person id/name>, observed, and conf: high. id is normally omitted: the server mints and preserves a stable opaque id (c-xxxxxx) automatically, reported as a claim_id_minted WARN. Pass clear: true to remove an annotation (and its id).",
+        "Set or clear the provenance annotation ({src; observed; conf[; id; kind; person; derived_from; contradicts]}) on one claim without rewriting the anchor. Locate the claim with a unique substring of its bullet text. src may be a PR reference, repo file path, anchor name, URL, or person:<id> (plain person-sourced claims cap at conf: medium). kind is an optional claim source type configured in project-mappings.json; defaults include url, misc, design-doc, adr, and trust-me-bro. For a high-confidence named developer assertion, pass src: \"trust me bro\", kind: \"trust-me-bro\", person: <person id/name>, observed, and conf: high. id is normally omitted: the server mints and preserves a stable opaque id (c-xxxxxx) automatically, reported as a claim_id_minted WARN. derivedFrom/contradicts point at another claim (`<anchor>#<claim-id>` or same-anchor `#<claim-id>`) to record a claim -> claim graph edge; a target claim id that doesn't exist warns (claim_edge_target_missing) rather than blocking. Pass clear: true to remove an annotation (and its id).",
       inputSchema: z.object({
         name: z.string().describe("Anchor containing the claim."),
         claim: z.string().min(1).describe("Unique substring of the claim's bullet text."),
@@ -1062,6 +1122,10 @@ the index when your workflow checks in that file.`,
         id: z.string().optional().describe("Usually omit this: the server mints and preserves a stable opaque claim id (c-xxxxxx) automatically. Only pass it to intentionally set a specific id."),
         kind: z.string().optional().describe("Optional configured source kind, such as url, misc, design-doc, adr, or trust-me-bro."),
         person: z.string().optional().describe("Person id, display name, or alias for a person-backed source kind."),
+        derivedFrom: ClaimEdgeTargetSchema.optional().describe(
+          "Claim -> claim `derived_from` edge target: `<anchor>#<claim-id>` or same-anchor `#<claim-id>`.",
+        ),
+        contradicts: ClaimEdgeTargetSchema.optional().describe("Claim -> claim `contradicts` edge target, same shape as derivedFrom."),
         clear: z.boolean().optional().describe("When true, remove the claim's annotation."),
         message: z.string().optional(),
         approved: z.boolean().default(false),
@@ -1070,7 +1134,7 @@ the index when your workflow checks in that file.`,
       }),
       annotations: { destructiveHint: false, idempotentHint: false },
     },
-    async ({ name, claim, src, observed, conf, id, kind, person, clear, message, approved, coAuthor, expectedFileCommit }) => {
+    async ({ name, claim, src, observed, conf, id, kind, person, derivedFrom, contradicts, clear, message, approved, coAuthor, expectedFileCommit }) => {
       const result = await service.annotateClaim({
         name,
         claim,
@@ -1080,6 +1144,8 @@ the index when your workflow checks in that file.`,
         id,
         kind,
         person,
+        derivedFrom,
+        contradicts,
         clear,
         message,
         approved,
@@ -1095,7 +1161,7 @@ the index when your workflow checks in that file.`,
     {
       title: "Set Claim Provenance Sources",
       description:
-        "Replace all provenance sources on one claim. Locate the claim by a 1-based bullet line or by a unique substring of its bullet text. Each source is {src, observed, conf[, id, kind, person]}; kind is a configurable claim source type in project-mappings.json with built-in defaults url, misc, design-doc, adr, and trust-me-bro. Use {src:\"trust me bro\", kind:\"trust-me-bro\", person:\"<person>\", observed, conf:\"high\"} for a named developer assertion. The claim's existing stable id (c-xxxxxx) is preserved automatically across the replacement unless you pass an empty sources array to clear provenance, which drops the id with it.",
+        "Replace all provenance sources on one claim. Locate the claim by a 1-based bullet line or by a unique substring of its bullet text. Each source is {src, observed, conf[, id, kind, person, derivedFrom, contradicts]}; kind is a configurable claim source type in project-mappings.json with built-in defaults url, misc, design-doc, adr, and trust-me-bro. Use {src:\"trust me bro\", kind:\"trust-me-bro\", person:\"<person>\", observed, conf:\"high\"} for a named developer assertion. derivedFrom/contradicts on a row record a claim -> claim graph edge to `<anchor>#<claim-id>` (or same-anchor `#<claim-id>`); repeat across rows to cite multiple edge targets. A well-formed target claim id that does not exist warns (claim_edge_target_missing) rather than blocking. The claim's existing stable id (c-xxxxxx) is preserved automatically across the replacement unless you pass an empty sources array to clear provenance, which drops the id with it.",
       inputSchema: z.object({
         name: z.string().describe("Anchor containing the claim."),
         claim: z.string().min(1).optional().describe("Unique substring of the claim's bullet text."),

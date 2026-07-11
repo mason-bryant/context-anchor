@@ -141,12 +141,11 @@ export function claimNodeId(anchorName: string, claimId: string): string {
  * which kind of source it is, so the edge type itself does not need to
  * proliferate.
  *
- * `derived_from` and `contradicts` are reserved now so WP4/WP5 never need to
- * touch this enum again, even though nothing extracts them yet — WP5 adds the
- * `derived_from`/`contradicts` annotation grammar keys; `src/claims.ts` has
- * no such keys today (verified: `ANNOTATION_KEYS` is
- * `src/observed/conf/id/kind/person` only), so WP3 cannot and does not
- * extract edges for a grammar that doesn't exist yet.
+ * `derived_from` and `contradicts` are the two claim-to-claim edge types
+ * (design doc part 3 "Exactly two claim-to-claim edge types"), authored via
+ * the `derived_from`/`contradicts` annotation grammar keys (`src/claims.ts`,
+ * WP5) and emitted by `extractClaimEdges` (`src/graph/extract.ts`). WP3
+ * reserved the union entries; WP5 filled in the grammar and extraction.
  */
 export type GraphEdgeType =
   | "anchor_project"
@@ -155,6 +154,18 @@ export type GraphEdgeType =
   | "milestone_goal"
   /** Containment: a `type: project-roadmap` anchor to each `goal:` node its headings define. The `from` side is an `anchor:` node, never a `milestone:` node — distinct from `milestone_goal` above. */
   | "roadmap_goal"
+  /**
+   * Containment: a `milestone:` node to each `task:` node its front-matter
+   * `tasks[]` defines (WP4 addition — the design doc's edge table does not
+   * list this row explicitly, but the implementation plan's own Phase-C
+   * acceptance note names "graphNeighbors on a milestone returns its goal,
+   * project, tasks, and owners" as the capability to verify, and without
+   * this edge a task node was reachable only in reverse, from its owner via
+   * `task_owner`, never forward from its milestone). Sourced the same way
+   * `task_owner` is: `normalizedTasksFromFm` on a `project-milestone`
+   * anchor's front matter.
+   */
+  | "milestone_task"
   | "task_owner"
   | "person_project"
   | "team_project"

@@ -26,6 +26,7 @@ type UiAssetHooks = {
   renderClaimInline(claim: UiClaim): string;
   renderClaimPopover(claim: UiClaim): string;
   claimSourceRowHtml(source: Record<string, unknown>, index: number, readOnly: boolean): string;
+  neighborsPanelHtml(result: Record<string, unknown>): string;
   renderMarkdown(markdown: string, options?: Record<string, unknown>): string;
   renderMermaidDiagrams(container: { querySelectorAll(selector: string): unknown[] }): Promise<void>;
   sanitizeLinkHref(href: string): string | null;
@@ -215,7 +216,14 @@ describe("UI browser assets", () => {
       ],
     });
     const html = hooks.claimSourceRowHtml(
-      { src: "https://example.test/source", kind: "source", observed: "2026-07-08", conf: "medium" },
+      {
+        src: "https://example.test/source",
+        kind: "source",
+        observed: "2026-07-08",
+        conf: "medium",
+        derivedFrom: "projects/demo/b.md#c-up0001",
+        contradicts: "#c-rival1",
+      },
       0,
       false,
     );
@@ -228,6 +236,11 @@ describe("UI browser assets", () => {
     expect(html).toContain('value="url" selected');
     expect(html).toContain('class="claim-source-delete danger-button"');
     expect(html).toContain('<use href="#icon-trash"></use>');
+    // WP5 edge-key inputs, pre-filled from the source row.
+    expect(html).toContain('class="claim-source-derived-from"');
+    expect(html).toContain('value="projects/demo/b.md#c-up0001"');
+    expect(html).toContain('class="claim-source-contradicts"');
+    expect(html).toContain('value="#c-rival1"');
   });
 
   it("labels the detail tab as a disabled selected-anchor tab", () => {
@@ -1857,6 +1870,66 @@ describe("inline claim rendering", () => {
     expect(sortedOnce.map((c) => c.text)).toEqual(sortedTwice.map((c) => c.text));
     // Deterministic tiebreak by anchor#line: "a.md#1" sorts before "b.md#1".
     expect(sortedOnce.map((c) => c.text)).toEqual(["first", "second"]);
+  });
+});
+
+describe("graph neighbors panel (WP5)", () => {
+  it("groups edges by type and deep-links each target to its anchor", () => {
+    const hooks = loadHooks();
+    const html = hooks.neighborsPanelHtml({
+      resolvedNode: { nodeId: "anchor:projects/demo/a.md", type: "anchor" },
+      nodes: [
+        { id: "anchor:projects/demo/a.md", type: "anchor", depth: 0 },
+        { id: "project:demo", type: "project", display: "demo", depth: 1 },
+        { id: "anchor:projects/demo/b.md", type: "anchor", display: "Anchor B", depth: 1 },
+        { id: "claim:projects/demo/b.md#c-up0001", type: "claim", display: "Upstream claim", depth: 1 },
+      ],
+      edges: [
+        { from: "anchor:projects/demo/a.md", to: "project:demo", type: "anchor_project", sourceOfTruth: "front-matter" },
+        { from: "anchor:projects/demo/a.md", to: "anchor:projects/demo/b.md", type: "anchor_anchor", sourceOfTruth: "body-link" },
+        {
+          from: "claim:projects/demo/a.md#c-down01",
+          to: "claim:projects/demo/b.md#c-up0001",
+          type: "derived_from",
+          sourceOfTruth: "claim-annotation",
+        },
+      ],
+    });
+    // Grouped headings, one per edge type.
+    expect(html).toContain("Project");
+    expect(html).toContain("Linked anchors");
+    expect(html).toContain("Derived from");
+    // Deep link to the linked anchor uses SPA data-anchor-name routing.
+    expect(html).toContain('data-anchor-name="projects/demo/b.md"');
+    expect(html).toContain("Anchor B");
+    // The derived_from target is a claim node; it links to the claim's anchor.
+    expect(html).toContain("Upstream claim");
+    // The non-linkable project node renders its display label without a link.
+    expect(html).toContain(">demo<");
+  });
+
+  it("renders an empty state when there are no edges", () => {
+    const hooks = loadHooks();
+    const html = hooks.neighborsPanelHtml({
+      resolvedNode: { nodeId: "anchor:projects/demo/a.md", type: "anchor" },
+      nodes: [{ id: "anchor:projects/demo/a.md", type: "anchor", depth: 0 }],
+      edges: [],
+    });
+    expect(html).toContain("neighbors-empty");
+    expect(html).toContain("No graph edges");
+  });
+
+  it("surfaces candidates for an ambiguous node resolution", () => {
+    const hooks = loadHooks();
+    const html = hooks.neighborsPanelHtml({
+      candidates: [
+        { nodeId: "anchor:projects/demo/a.md", type: "anchor", display: "Anchor A" },
+        { nodeId: "anchor:projects/demo/aa.md", type: "anchor", display: "Anchor AA" },
+      ],
+    });
+    expect(html).toContain("Ambiguous");
+    expect(html).toContain("Anchor A");
+    expect(html).toContain("Anchor AA");
   });
 });
 

@@ -23,6 +23,21 @@ afterEach(async () => {
 });
 
 describe("AnchorService", () => {
+  it("suggests explicit Markdown links and warns on a write without rewriting prose", async () => {
+    const content = projectAnchorContent({
+      currentState: "- See `Google Doc \"Design\" (doc id abc123)`.\n  {src: https://docs.google.com/document/d/abc123/edit; observed: 2026-07-10; conf: high}",
+    });
+    const written = await service.writeAnchor({ name: "projects/demo/demo", content });
+    expect(written.warnings.map((warning) => warning.code)).toContain("markdown_link_suggested");
+
+    const result = await service.suggestMarkdownLinks("projects/demo/demo");
+    expect(result.suggestions).toHaveLength(1);
+    expect(result.suggestedContent).toContain("[Design](https://docs.google.com/document/d/abc123/edit)");
+
+    const read = await service.readAnchor("projects/demo/demo");
+    expect(read.content).toContain('`Google Doc "Design" (doc id abc123)`');
+  });
+
   it("writes a valid anchor as a git commit", async () => {
     const result = await service.writeAnchor({
       name: "projects/demo/demo",

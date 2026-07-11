@@ -9,6 +9,7 @@ import type { BM25Index } from "./bm25.js";
 import { discoveryCategoryIndex, SERVER_RULES_DISCOVERY_CATEGORY } from "./taxonomy.js";
 import { anchorMatchesProject } from "./projectAliases.js";
 import { anchorCandidateBoost } from "./projectResolution.js";
+import type { GraphProximityBoost } from "./graph/proximity.js";
 
 const DEFAULT_BUDGET_TOKENS = 4000;
 const DEFAULT_MAX_ANCHORS = 12;
@@ -125,6 +126,16 @@ export function buildContextBundlePlan(
   staleAfterDays = DEFAULT_STALE_AFTER_DAYS,
   now = new Date(),
   candidateBoosts?: Map<string, number>,
+  /**
+   * WP7 graph-proximity signal, config-gated (`graphScoring.enabled`,
+   * default false). Undefined (the default, and always the case with the
+   * flag off) means "no graph signal" — every anchor's score and reason are
+   * byte-identical to the pre-WP7 planner. When present, it is a plain,
+   * already-computed, per-anchor map (`AnchorService.planContextBundle`
+   * resolves task signals and walks the `GraphIndex` before calling in), so
+   * this function itself stays synchronous and deterministic.
+   */
+  graphProximityBoosts?: Map<string, GraphProximityBoost>,
 ): PlanContextBundleResult {
   const budgetTokens = Math.max(1, Math.floor(input.budgetTokens ?? DEFAULT_BUDGET_TOKENS));
   const maxAnchors = Math.max(1, Math.floor(input.maxAnchors ?? DEFAULT_MAX_ANCHORS));
@@ -136,7 +147,20 @@ export function buildContextBundlePlan(
     : undefined;
 
   const scored = anchors
-    .map((anchor) => scoreAnchor(anchor, input, taskTerms, activeGoalIdsBySlug, bm25HitsById, bodyCharCounts, staleAfterDays, now, candidateBoosts))
+    .map((anchor) =>
+      scoreAnchor(
+        anchor,
+        input,
+        taskTerms,
+        activeGoalIdsBySlug,
+        bm25HitsById,
+        bodyCharCounts,
+        staleAfterDays,
+        now,
+        candidateBoosts,
+        graphProximityBoosts,
+      ),
+    )
     .sort((left, right) => compareScoredAnchors(left, right, taskTerms, activeGoalIdsBySlug));
 
   const included: ScoredAnchor[] = [];
@@ -220,6 +244,7 @@ function scoreAnchor(
   staleAfterDays = DEFAULT_STALE_AFTER_DAYS,
   now = new Date(),
   candidateBoosts?: Map<string, number>,
+  graphProximityBoosts?: Map<string, GraphProximityBoost>,
 ): ScoredAnchor {
   let score = 0;
   const matchedTerms = new Set<string>();
@@ -335,6 +360,20 @@ function scoreAnchor(
       score += contribution;
       reasons.push(`bm25 body match (score ${contribution})`);
     }
+  }
+
+  // WP7 graph-proximity signal — config-gated (graphScoring.enabled, default
+  // false). `graphProximityBoosts` is only ever set when the flag is on and
+  // AnchorService.planContextBundle resolved task signals to graph nodes and
+  // walked the GraphIndex; with the flag off this map is always undefined, so
+  // this block is a no-op and the plan stays byte-identical to pre-WP7
+  // output. The boost is bounded by graphScoring.maxBoost (enforced where the
+  // map is built) and the reason string is the full hop chain, so a reviewer
+  // can verify the boost by reading it — no opaque numbers.
+  const graphBoost = graphProximityBoosts?.get(anchor.name);
+  if (graphBoost) {
+    score += graphBoost.boost;
+    reasons.push(graphBoost.reason);
   }
 
   return {

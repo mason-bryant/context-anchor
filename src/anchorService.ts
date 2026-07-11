@@ -89,11 +89,13 @@ import type {
   StartTaskResult,
   ApplyProposedChangeInput,
   ApplyProposedChangeResult,
+  GraphScoringConfig,
   ProjectFilterResolution,
   ProjectMapping,
   ProjectMappings,
   ProjectMappingsWithCommit,
   ProjectRepoMapping,
+  ProjectResolution,
   ProjectUpdateMilestone,
   ProjectUpdateMilestoneStatus,
   ProjectUpdateSnapshot,
@@ -133,6 +135,7 @@ import type {
   UpdateTaskPriorityInput,
   UpdateTaskNotesInput,
   ValidationViolation,
+  MarkdownLinkSuggestionResult,
   WriteAnchorInput,
   WriteAnchorResult,
   Person,
@@ -172,7 +175,24 @@ import {
 } from "./certainty.js";
 import { existsSync } from "node:fs";
 import path from "node:path";
+import {
+  clampDepth,
+  clampLimit,
+  resolveGraphNode,
+  traverseGraphNeighbors,
+  type GraphNeighborsDirection,
+  type GraphNeighborsInput,
+  type GraphNeighborsResult,
+  type GraphNeighborsResultNode,
+} from "./graph/neighbors.js";
 import { buildPeopleIndex, parsePeopleRegistry, type PeopleIndex } from "./peopleRegistry.js";
+import { findMarkdownLinkSuggestions, suggestMarkdownLinks } from "./markdownLinks.js";
+import {
+  computeGraphProximityBoosts,
+  resolveTaskSignalNodes,
+  clampGraphScoringMaxBoost,
+  type GraphProximityBoost,
+} from "./graph/proximity.js";
 import {
   extractMermaidBlocks,
   replaceMermaidBlockText,
@@ -233,6 +253,13 @@ type MilestoneListRow = {
   tasks?: MilestoneTaskMeta[];
 };
 
+/** Precomputed inputs for resolving a claim's source links, built once per request and reused so claim enrichment never reloads the whole tree per claim. */
+type ClaimResolutionInputs = {
+  mappings: ProjectMappings;
+  anchorNames: Set<string>;
+  peopleIndex: PeopleIndex;
+};
+
 export class AnchorService {
   private _peopleRegistry: PeopleRegistry | undefined;
   /** Git commit the cached registry was parsed from; used to detect out-of-band changes (e.g. AutoSync rebases). */
@@ -263,6 +290,8 @@ export class AnchorService {
        * plan's half-life defaults, flagged for operator confirmation.
        */
       certainty?: CertaintyConfig;
+      /** WP7 planner graph-proximity scoring signal. Optional for callers/tests that predate WP7; defaults to disabled. */
+      graphScoring?: GraphScoringConfig;
     },
   ) {}
 
@@ -313,6 +342,36 @@ export class AnchorService {
     if (this._graphIndex) {
       await this._graphIndex.invalidateDocument(anchorName);
     }
+  }
+
+  /**
+   * WP7 planner graph-proximity signal. Only called when
+   * `graphScoring.enabled` is true. Resolves the task signals
+   * `planContextBundle` already has in hand (candidate projects from
+   * file paths/repo, `G-###` mentions, person mentions) to graph nodes, then
+   * walks the `GraphIndex` up to 2 hops from each to find nearby anchors,
+   * returning a bounded per-anchor boost plus a hop-chain `reason` string.
+   * The graph index build/walk is the only async part of this signal; the
+   * planner itself stays synchronous by consuming the resulting plain map.
+   */
+  private async computeGraphProximityBoosts(
+    input: PlanContextBundleInput,
+    resolution: ProjectResolution | undefined,
+  ): Promise<Map<string, GraphProximityBoost> | undefined> {
+    const peopleRegistry = await this.loadPeopleRegistry();
+    const peopleIndex = buildPeopleIndex(peopleRegistry);
+    const signals = resolveTaskSignalNodes(
+      { task: input.task, projectResolution: resolution, project: input.project },
+      peopleIndex,
+    );
+    if (signals.length === 0) {
+      return undefined;
+    }
+    const graph = this.getGraphIndex();
+    // Clamp to the hard ceiling here too, so a programmatically constructed
+    // AnchorService (not just the CLI arg parser) can't exceed it.
+    const maxBoost = clampGraphScoringMaxBoost(this.options.graphScoring?.maxBoost);
+    return computeGraphProximityBoosts(graph, signals, maxBoost);
   }
 
   async listPeople(team?: string): Promise<{ people: Person[] }> {
@@ -701,6 +760,12 @@ export class AnchorService {
     return await this.withOptionalClaimProvenance(read, options.includeProvenance ?? "none", options.task);
   }
 
+  /** Return a reviewable Markdown-link rewrite without mutating the anchor. */
+  async suggestMarkdownLinks(name: string): Promise<MarkdownLinkSuggestionResult & { name: string; fileCommit?: string }> {
+    const read = await this.readAnchor(name);
+    return { name: read.name, ...(read.fileCommit ? { fileCommit: read.fileCommit } : {}), ...suggestMarkdownLinks(read.content) };
+  }
+
   readAnchorBatch(
     names: string[],
     options: { includeProvenance?: ClaimProvenanceMode; task?: string } = {},
@@ -817,6 +882,17 @@ export class AnchorService {
           message: `This write adds ${missing.length} claim(s) without provenance: ${shown}${more}. Record where each fact came from while you still have the source: append "  {src: <PR #N | repo path | anchor name | URL | person:<id>>; observed: <YYYY-MM-DD>; conf: high|medium|low}" or "  {src: trust me bro; kind: trust-me-bro; person: <id>; observed: <YYYY-MM-DD>; conf: high}" under the bullet, or use annotateClaim afterwards.`,
         });
       }
+    }
+
+    const linkSuggestions = findMarkdownLinkSuggestions(content);
+    if (linkSuggestions.length > 0) {
+      const shown = linkSuggestions.slice(0, 3).map((item) => `\`${item.reference}\``).join(", ");
+      const more = linkSuggestions.length > 3 ? ` (and ${linkSuggestions.length - 3} more)` : "";
+      carryWarnings.push({
+        severity: "WARN",
+        code: "markdown_link_suggested",
+        message: `Found ${linkSuggestions.length} inline-code reference(s) with an unambiguous URL already in this anchor: ${shown}${more}. Use suggestMarkdownLinks to preview explicit [label](url) replacements; inline code remains literal by design.`,
+      });
     }
 
     // Stable claim ids (WP1): every annotated claim leaves a write with an
@@ -2666,6 +2742,8 @@ None.
     id?: string;
     kind?: string;
     person?: string;
+    derivedFrom?: string;
+    contradicts?: string;
     clear?: boolean;
     message?: string;
     approved?: boolean;
@@ -2685,6 +2763,8 @@ None.
               ...(input.id ? { id: input.id } : {}),
               ...(input.kind ? { kind: input.kind } : {}),
               ...(input.person ? { person: input.person } : {}),
+              ...(input.derivedFrom ? { derivedFrom: input.derivedFrom } : {}),
+              ...(input.contradicts ? { contradicts: input.contradicts } : {}),
             },
           ],
       message: input.message,
@@ -2698,7 +2778,16 @@ None.
     name: string;
     claim?: string;
     line?: number;
-    sources: Array<{ src?: string; observed?: string; conf?: string; id?: string; kind?: string; person?: string }>;
+    sources: Array<{
+      src?: string;
+      observed?: string;
+      conf?: string;
+      id?: string;
+      kind?: string;
+      person?: string;
+      derivedFrom?: string;
+      contradicts?: string;
+    }>;
     message?: string;
     approved?: boolean;
     coAuthor?: string;
@@ -3747,6 +3836,17 @@ None.
       : undefined;
     const candidateBoosts = candidateBoostMap(resolution);
 
+    // WP7 graph-proximity signal — config-gated, off by default. With the
+    // flag off (the default), graphProximityBoosts stays undefined and
+    // buildContextBundlePlan's output is byte-identical to the pre-WP7
+    // planner (hard acceptance criterion). Resolving task signals and
+    // walking the graph happens here, not inside the planner, so the planner
+    // itself stays synchronous and deterministic — it only ever consumes an
+    // already-computed plain map.
+    const graphProximityBoosts = this.options.graphScoring?.enabled
+      ? await this.computeGraphProximityBoosts(effectiveInput, resolution)
+      : undefined;
+
     const { index: bm25Index, bodyCharCounts } = await this.buildBM25SearchIndex(anchors);
     const plan = buildContextBundlePlan(
       anchors,
@@ -3758,6 +3858,7 @@ None.
       this.options.staleAfterDays,
       new Date(),
       candidateBoosts,
+      graphProximityBoosts,
     );
     const names = plan.loadContext.names;
     const includeProvenance = input.includeProvenance ?? "summary";
@@ -4167,6 +4268,175 @@ None.
 
   getRelated(name: string, kind?: string): Promise<AnchorRead[]> {
     return getRelatedAnchors(this.repo, name, kind);
+  }
+
+  /**
+   * Read-only traversal surface over the derived graph (WP4). Resolves
+   * `node` via `resolveGraphNode` (anchor name / `G-###` / `<anchor>#<claim-id>`
+   * / person-team fuzzy / canonical passthrough — ambiguous input returns
+   * `candidates` instead of guessing), then BFS-traverses the `GraphIndex`
+   * up to `depth` hops (clamped 1-3), optionally filtered by `edgeTypes` and
+   * `direction`, capped at `limit` result nodes (clamped 1-200, default 50).
+   * Every result node carries its hop path from the origin; claim nodes
+   * additionally embed the same per-claim provenance shape
+   * `includeProvenance` sidecars use (`buildAnchorClaimProvenance`'s
+   * resolved `AnchorClaim`), so a claim result is never just an opaque id.
+   */
+  async graphNeighbors(input: GraphNeighborsInput): Promise<GraphNeighborsResult> {
+    const graph = this.getGraphIndex();
+    await graph.ensureBuilt();
+
+    const metas = await this.repo.listAnchors();
+    const anchorNames = new Set(metas.map((meta) => meta.name));
+    const metaByName = new Map(metas.map((meta) => [meta.name, meta]));
+    const peopleRegistry = await this.loadPeopleRegistry();
+    const peopleIndex = buildPeopleIndex(peopleRegistry);
+
+    // Pre-read the ids of the one anchor a `<anchor>#<claim-id>` input might
+    // reference (resolveGraphNode's claim-ref branch needs a synchronous
+    // existence check). Anchor resolution runs the same normalization
+    // resolveGraphNode itself uses; a non-claim-shaped or unresolvable input
+    // leaves the cache empty and resolveGraphNode falls through to its next
+    // resolution strategy exactly as if this anchor had zero claim ids.
+    const claimIdCache = new Map<string, ReadonlySet<string>>();
+    const claimRefMatch = /^(.+)#([a-z0-9][a-z0-9-]*)$/i.exec(input.node.trim());
+    if (claimRefMatch) {
+      const resolvedAnchor = this.resolveAnchorNameOrUndefined(claimRefMatch[1].trim(), anchorNames);
+      if (resolvedAnchor) {
+        const content = await this.repo.readRaw(resolvedAnchor);
+        if (content !== undefined) {
+          claimIdCache.set(resolvedAnchor, collectClaimIds(extractClaims(content)));
+        }
+      }
+    }
+    const anchorHasClaimId = (anchorName: string, claimId: string): boolean =>
+      claimIdCache.get(anchorName)?.has(claimId) ?? false;
+
+    const resolution = resolveGraphNode(input.node, {
+      anchorNames,
+      resolveAnchorName: (value) => this.resolveAnchorNameOrUndefined(value, anchorNames),
+      anchorMetaByName: (name) => metaByName.get(name),
+      anchorHasClaimId,
+      peopleIndex,
+      peopleRegistry,
+    });
+
+    if ("candidates" in resolution) {
+      return { candidates: resolution.candidates };
+    }
+
+    const depth = clampDepth(input.depth);
+    const limit = clampLimit(input.limit);
+    const direction = normalizeGraphDirection(input.direction);
+
+    const { nodes, edges } = await traverseGraphNeighbors(graph, resolution.resolved, {
+      depth,
+      edgeTypes: input.edgeTypes,
+      direction,
+      limit,
+    });
+
+    // Enrich claim nodes with resolved provenance. Build the shared resolution
+    // inputs ONCE (reusing the anchorNames/peopleIndex already computed above,
+    // plus project mappings) and cache resolved claims per anchor for the rest
+    // of this request, so each anchor's content is read/parsed at most once even
+    // when a traversal returns many claim nodes from the same anchor. The cache
+    // stores promises so concurrent Promise.all lookups of the same anchor share
+    // one read instead of racing.
+    const hasClaimNode = nodes.some((node) => node.type === "claim");
+    const claimInputs: ClaimResolutionInputs | undefined = hasClaimNode
+      ? { mappings: await this.loadProjectMappings(), anchorNames, peopleIndex }
+      : undefined;
+    const resolvedClaimsByAnchor = new Map<string, Promise<AnchorClaim[] | undefined>>();
+    const enrichedNodes = await Promise.all(
+      nodes.map((node) => this.enrichGraphNeighborNode(node, metaByName, claimInputs, resolvedClaimsByAnchor)),
+    );
+
+    return { resolvedNode: resolution.resolved, nodes: enrichedNodes, edges };
+  }
+
+  /** Best-effort anchor-name resolution used by graph node resolution: normalizes and checks existence against the known anchor set, mirroring `GraphIndex`'s own `resolveAnchorName` context builder. */
+  private resolveAnchorNameOrUndefined(value: string, anchorNames: ReadonlySet<string>): string | undefined {
+    const trimmed = value.trim();
+    if (!trimmed) {
+      return undefined;
+    }
+    if (anchorNames.has(trimmed)) {
+      return trimmed;
+    }
+    const withMd = trimmed.endsWith(".md") ? trimmed : `${trimmed}.md`;
+    return anchorNames.has(withMd) ? withMd : undefined;
+  }
+
+  /** Fill in `display` for node kinds resolvable without another traversal, and attach claim provenance to claim nodes. Never throws on an unresolvable/unreadable node — the bare node id/type is still a valid, inspectable result. */
+  private async enrichGraphNeighborNode(
+    node: GraphNeighborsResultNode,
+    metaByName: Map<string, AnchorMeta>,
+    claimInputs: ClaimResolutionInputs | undefined,
+    resolvedClaimsByAnchor: Map<string, Promise<AnchorClaim[] | undefined>>,
+  ): Promise<GraphNeighborsResultNode> {
+    if (node.display) {
+      return node;
+    }
+    if (node.type === "anchor" || node.type === "milestone") {
+      const anchorName = node.id.slice(node.id.indexOf(":") + 1);
+      const meta = metaByName.get(anchorName);
+      return meta?.title ? { ...node, display: meta.title } : node;
+    }
+    if (node.type === "claim" && claimInputs) {
+      return this.attachClaimProvenanceToNode(node, claimInputs, resolvedClaimsByAnchor);
+    }
+    return node;
+  }
+
+  private async attachClaimProvenanceToNode(
+    node: GraphNeighborsResultNode,
+    claimInputs: ClaimResolutionInputs,
+    resolvedClaimsByAnchor: Map<string, Promise<AnchorClaim[] | undefined>>,
+  ): Promise<GraphNeighborsResultNode> {
+    const parsed = parseClaimNodeId(node.id);
+    if (!parsed) {
+      return node;
+    }
+    const claims = await this.resolveAnchorClaimsCached(parsed.anchorName, claimInputs, resolvedClaimsByAnchor);
+    const claim = claims?.find((candidate) => candidate.id === parsed.claimId);
+    if (!claim) {
+      return node;
+    }
+    return { ...node, display: node.display ?? claim.text, claim };
+  }
+
+  /**
+   * Read and resolve one anchor's claims at most once per request. Reuses the
+   * caller's precomputed mappings/anchorNames/peopleIndex (no per-call reload of
+   * the whole tree) and memoizes the in-flight promise so concurrent lookups of
+   * the same anchor share a single read/parse.
+   */
+  private resolveAnchorClaimsCached(
+    anchorName: string,
+    claimInputs: ClaimResolutionInputs,
+    cache: Map<string, Promise<AnchorClaim[] | undefined>>,
+  ): Promise<AnchorClaim[] | undefined> {
+    let resolved = cache.get(anchorName);
+    if (!resolved) {
+      resolved = (async () => {
+        const content = await this.repo.readRaw(anchorName);
+        if (content === undefined) {
+          return undefined;
+        }
+        return extractClaims(content).map((claim) =>
+          this.withResolvedSourceLinks(
+            anchorName,
+            claim,
+            claimInputs.mappings,
+            claimInputs.anchorNames,
+            claimInputs.peopleIndex,
+          ),
+        );
+      })();
+      cache.set(anchorName, resolved);
+    }
+    return resolved;
   }
 
   async migrateRoadmapGoalIds(input: {
@@ -4793,31 +5063,6 @@ function sectionNodeAnchorName(nodeId: string): string {
 }
 
 /**
- * Parse a `claim:<anchor>#<id>` canonical node id (WP3, `graph/model.ts`'s
- * `claimNodeId`) back into its anchor/id parts, for WP6's weakest-link
- * `derived_from` traversal. Splits on the FIRST `#` so an anchor name can
- * never be misread past a claim id that happens to contain one (claim ids
- * are base36/kebab and never contain `#`, but anchor names are the source of
- * truth here, same rationale as `sectionNodeAnchorName` above).
- */
-function parseClaimNodeId(nodeId: string): { anchorName: string; claimId: string } | undefined {
-  if (!nodeId.startsWith("claim:")) {
-    return undefined;
-  }
-  const rest = nodeId.slice("claim:".length);
-  const hashIndex = rest.indexOf("#");
-  if (hashIndex === -1) {
-    return undefined;
-  }
-  const anchorName = rest.slice(0, hashIndex);
-  const claimId = rest.slice(hashIndex + 1);
-  if (!anchorName || !claimId) {
-    return undefined;
-  }
-  return { anchorName, claimId };
-}
-
-/**
  * Parse a `file:<repo>:<path>` canonical node id (WP2, `graph/sourceId.ts`)
  * back into its repo/path parts, for WP6's local-checkout liveness check.
  * `file:?:<path>` (unmapped repo) has no repo to check a checkout against,
@@ -4841,7 +5086,16 @@ function parseFileNodeId(nodeId: string): { repo: string; filePath: string } | u
 }
 
 function parseClaimSourceInputs(
-  sources: Array<{ src?: string; observed?: string; conf?: string; id?: string; kind?: string; person?: string }>,
+  sources: Array<{
+    src?: string;
+    observed?: string;
+    conf?: string;
+    id?: string;
+    kind?: string;
+    person?: string;
+    derivedFrom?: string;
+    contradicts?: string;
+  }>,
 ): { ok: true; sources: ClaimAnnotation[] } | { ok: false; errors: string[] } {
   const parsedSources: ClaimAnnotation[] = [];
   const errors: string[] = [];
@@ -4854,6 +5108,8 @@ function parseClaimSourceInputs(
       `observed: ${source.observed ?? ""}`,
       `conf: ${source.conf ?? ""}`,
       source.id ? `id: ${source.id}` : undefined,
+      source.derivedFrom ? `derived_from: ${source.derivedFrom}` : undefined,
+      source.contradicts ? `contradicts: ${source.contradicts}` : undefined,
     ]
       .filter(Boolean)
       .join("; ");
@@ -5006,4 +5262,22 @@ function duplicateClaimIdViolations(content: string, treeIdsExcludingThisAnchor:
     }
   }
   return violations;
+}
+
+/** `graphNeighbors` input's `direction` defaults to `"both"`; the traversal core (`src/graph/neighbors.ts`) uses `"forward"`/`"reverse"`/`"both"` naming to avoid the `to`/`from`-vs-`in`/`out` ambiguity edge objects already use. */
+function normalizeGraphDirection(direction: GraphNeighborsInput["direction"]): GraphNeighborsDirection {
+  return direction === "forward" || direction === "reverse" ? direction : "both";
+}
+
+/** Split a `claim:<anchor>#<id>` node id back into its parts. Undefined for any other node kind's id shape. */
+function parseClaimNodeId(nodeId: string): { anchorName: string; claimId: string } | undefined {
+  if (!nodeId.startsWith("claim:")) {
+    return undefined;
+  }
+  const withoutPrefix = nodeId.slice("claim:".length);
+  const hashIndex = withoutPrefix.lastIndexOf("#");
+  if (hashIndex === -1) {
+    return undefined;
+  }
+  return { anchorName: withoutPrefix.slice(0, hashIndex), claimId: withoutPrefix.slice(hashIndex + 1) };
 }

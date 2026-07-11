@@ -313,6 +313,25 @@ per-candidate reasons.
 
 ## Writing Anchors
 
+### Reader-facing external links
+
+Use explicit Markdown links for citations a reader should be able to open. Keep provenance
+annotations as evidence metadata; they do not make the surrounding prose clickable.
+
+```md
+- Coordinate in [#project-channel](https://slack.com/app_redirect?channel=C123).
+- Read [Design document](https://docs.google.com/document/d/ID/edit).
+
+  {src: https://docs.google.com/document/d/ID/edit; observed: 2026-07-10; conf: high}
+```
+
+Use backticks only for literal code, paths, commands, and IDs. `suggestMarkdownLinks` is a
+read-only migration helper: it only proposes replacements for backtick-wrapped Google Doc,
+Confluence, and Slack references when the anchor already contains exactly one supporting URL.
+Review its `suggestedContent`, then apply it deliberately through `writeAnchor` or a proposed
+change. Ordinary writes return a non-blocking `markdown_link_suggested` warning when such a
+replacement is available.
+
 The server instructions tell agents to write back durable discoveries, not only answer
 in chat, and to avoid editing anchor files under `--repo` directly on disk. Use MCP
 write tools so validation and server-side commits stay aligned.

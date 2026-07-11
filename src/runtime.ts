@@ -34,12 +34,15 @@ export async function createAnchorRuntime(
     pushOnWrite: config.pushOnWrite,
     migrationWarnOnly: config.migrationWarnOnly,
     staleAfterDays: config.staleAfterDays,
+    graphScoringEnabled: config.graphScoring.enabled,
+    graphScoringMaxBoost: config.graphScoring.maxBoost,
   });
 
   const service = new AnchorService(repo, {
     pushOnWrite: config.pushOnWrite,
     migrationWarnOnly: config.migrationWarnOnly,
     staleAfterDays: config.staleAfterDays,
+    graphScoring: config.graphScoring,
   });
   const mcpServer = createAnchorMcpServer(service, { requestLogger });
   const autoSync = new AutoSync(repo, config.syncIntervalMs, logger);
