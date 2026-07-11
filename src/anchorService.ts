@@ -173,7 +173,7 @@ import { buildPeopleIndex, parsePeopleRegistry, type PeopleIndex } from "./peopl
 import {
   computeGraphProximityBoosts,
   resolveTaskSignalNodes,
-  DEFAULT_GRAPH_SCORING_MAX_BOOST,
+  clampGraphScoringMaxBoost,
   type GraphProximityBoost,
 } from "./graph/proximity.js";
 import {
@@ -340,7 +340,9 @@ export class AnchorService {
       return undefined;
     }
     const graph = this.getGraphIndex();
-    const maxBoost = this.options.graphScoring?.maxBoost ?? DEFAULT_GRAPH_SCORING_MAX_BOOST;
+    // Clamp to the hard ceiling here too, so a programmatically constructed
+    // AnchorService (not just the CLI arg parser) can't exceed it.
+    const maxBoost = clampGraphScoringMaxBoost(this.options.graphScoring?.maxBoost);
     return computeGraphProximityBoosts(graph, signals, maxBoost);
   }
 

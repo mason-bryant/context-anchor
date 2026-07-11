@@ -160,8 +160,9 @@ type HopStep = { nodeId: string; edge: GraphEdge };
  * boost (never exceeding `maxBoost`) and a reason string reporting the full
  * hop chain that reached it. Deterministic: signal nodes and each node's
  * outgoing/incoming edges are visited in a fixed order (the order the graph
- * index and caller supply them in), and only the first (shortest, earliest)
- * path found to a given anchor is kept.
+ * index and caller supply them in), and the strongest (closest-hop) boost
+ * across all signals is kept for a given anchor, with ties broken toward the
+ * earlier-resolved signal.
  */
 export async function computeGraphProximityBoosts(
   graph: GraphIndex,
@@ -173,8 +174,11 @@ export async function computeGraphProximityBoosts(
     return boosts;
   }
 
+  // Enforce the hard ceiling for every caller (CLI, programmatic, tests), not
+  // only the CLI arg parser.
+  const boundedMaxBoost = clampGraphScoringMaxBoost(maxBoost);
   for (const signal of signals) {
-    await walkFromSignal(graph, signal, maxBoost, boosts);
+    await walkFromSignal(graph, signal, boundedMaxBoost, boosts);
   }
 
   return boosts;
@@ -206,8 +210,13 @@ async function walkFromSignal(
 
         if (targetId.startsWith("anchor:")) {
           const anchorName = targetId.slice("anchor:".length);
-          if (!boosts.has(anchorName)) {
-            const points = pointsForHop(hop, maxBoost);
+          const points = pointsForHop(hop, maxBoost);
+          const existing = boosts.get(anchorName);
+          // Keep the strongest (closest-hop) boost across all signals: a later
+          // signal that reaches this anchor in fewer hops should win over an
+          // earlier, farther one. Ties keep the earlier-resolved signal, so the
+          // result stays deterministic.
+          if (!existing || points > existing.boost) {
             boosts.set(anchorName, {
               boost: points,
               reason: `graph: ${signal.label} ${formatHopPath(hopPath)} (+${points})`,

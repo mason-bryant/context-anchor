@@ -385,4 +385,42 @@ describe("computeGraphProximityBoosts (against a minimal stub graph)", () => {
       expect(boost.boost).toBeLessThanOrEqual(4);
     }
   });
+
+  it("clamps maxBoost to the hard ceiling for direct callers (not just the CLI)", async () => {
+    const boosts = await computeGraphProximityBoosts(
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      stubGraph as any,
+      [{ nodeId: "project:demo", label: "file path -> project demo" }],
+      100, // far above GRAPH_SCORING_MAX_BOOST_CEILING (15)
+    );
+    for (const boost of boosts.values()) {
+      expect(boost.boost).toBeLessThanOrEqual(15);
+    }
+  });
+
+  it("keeps the strongest boost when a later signal reaches an anchor in fewer hops", async () => {
+    // target.md is 1 hop from project:p but 2 hops from person:alice.
+    const keepMaxEdges = [
+      { from: "anchor:target.md", to: "project:p", type: "anchor_project", sourceOfTruth: "front-matter" },
+      { from: "person:alice", to: "project:p", type: "person_project", sourceOfTruth: "registry" },
+    ];
+    const keepMaxGraph = {
+      edgesFrom: async (nodeId: string) => keepMaxEdges.filter((edge) => edge.from === nodeId),
+      edgesTo: async (nodeId: string) => keepMaxEdges.filter((edge) => edge.to === nodeId),
+    };
+    const boosts = await computeGraphProximityBoosts(
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      keepMaxGraph as any,
+      [
+        { nodeId: "person:alice", label: "person alice" }, // far (hop 2), resolved first
+        { nodeId: "project:p", label: "project p" }, // near (hop 1), resolved second
+      ],
+      8,
+    );
+    const hit = boosts.get("target.md");
+    expect(hit).toBeDefined();
+    // The closer hop-1 boost (== maxBoost) wins over the earlier, farther hop-2 boost.
+    expect(hit!.boost).toBe(8);
+    expect(hit!.reason).toContain("project p");
+  });
 });
