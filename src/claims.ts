@@ -55,6 +55,16 @@ export type ClaimAnnotation = {
   id?: string;
   kind?: ClaimSourceKind;
   person?: string;
+  /**
+   * Claim-to-claim edge target (WP5, claim knowledge graph design part 3
+   * "Exactly two claim-to-claim edge types"): `<anchor>#<claim-id>`, or the
+   * same-anchor shorthand `#<claim-id>`. One target per row; a claim cites
+   * multiple `derived_from` targets by repeating the key across its stacked
+   * source rows (mirrors how multiple `src` rows already stack).
+   */
+  derivedFrom?: string;
+  /** Same shape and repeat-across-rows convention as `derivedFrom`. */
+  contradicts?: string;
 };
 
 export type ClaimSource = ClaimAnnotation & {
@@ -87,6 +97,15 @@ export type AnchorClaim = {
   id?: string;
   /** Valid provenance sources attached to this claim. */
   sources: ClaimSource[];
+  /**
+   * Every `derived_from` target across this claim's source rows, deduplicated,
+   * in row order (WP5). Empty when the claim cites none. Lets callers (e.g.
+   * `listClaims`'s "has contradictions"/"has derived_from" filters, the UI
+   * neighbors panel) read edge targets off the claim without a second parse.
+   */
+  derivedFrom: string[];
+  /** Every `contradicts` target across this claim's source rows, deduplicated, in row order (WP5). */
+  contradicts: string[];
   /** Combined strength derived from valid sources. */
   strength: ClaimConfidence;
   /** Average numeric confidence score: low=1, medium=2, high=3. */
@@ -121,13 +140,25 @@ export type ClaimProvenanceSummary = {
   newestObserved?: string;
 };
 
-const ANNOTATION_KEYS = new Set(["src", "observed", "conf", "id", "kind", "person"]);
+const ANNOTATION_KEYS = new Set(["src", "observed", "conf", "id", "kind", "person", "derived_from", "contradicts"]);
 const OBSERVED_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 /** Any legacy kebab-case slug or a server-minted `c-xxxxxx[xx]` id (grandfather clause; see module docstring). */
 const ID_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 /** Format the server mints: `c-` + 6 base36 chars, grown to 8 on collision. Never author-supplied by convention. */
 const MINTED_ID_PATTERN = /^c-[a-z0-9]{6,8}$/;
 const SOURCE_KIND_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+/**
+ * `derived_from`/`contradicts` target format (WP5): `<anchor-path>#<claim-id>`
+ * or the same-anchor shorthand `#<claim-id>`. The anchor part (when present)
+ * is any non-empty string without `#`; the claim-id part must match the same
+ * shape `ID_PATTERN` accepts (minted `c-xxxxxx` ids or legacy kebab slugs) so
+ * a malformed id half is caught here rather than surfacing later as a dangling
+ * reference. This checks FORMAT only — whether the target claim actually
+ * exists is a tree-wide, write-path concern (`claim_edge_target_missing`
+ * WARN), not something this parser can resolve.
+ */
+/** Format of a `derived_from`/`contradicts` target: `<anchor-path>#<claim-id>` (or same-anchor `#<claim-id>`). Exported so the graph extractor and the write-path validator classify targets identically to the parser (single source of truth). */
+export const EDGE_TARGET_PATTERN = /^([^#]*)#([a-z0-9]+(?:-[a-z0-9]+)*)$/;
 const STANDALONE_ANNOTATION_PATTERN = /^(\s+)\{([^{}]*)\}\s*$/;
 const TRAILING_ANNOTATION_PATTERN = /^(- .*?)\s*\{([^{}]*)\}\s*$/;
 
@@ -137,7 +168,7 @@ export type AnnotationParseResult =
 
 /** True when a brace block's inner text is attempting the annotation grammar. */
 export function looksLikeAnnotationBody(inner: string): boolean {
-  return /(^|;)\s*(src|observed|conf|kind|person)\s*:/.test(inner);
+  return /(^|;)\s*(src|observed|conf|kind|person|derived_from|contradicts)\s*:/.test(inner);
 }
 
 export function stripClaimAnnotations(content: string): string {
@@ -179,7 +210,9 @@ export function parseAnnotationBody(inner: string): AnnotationParseResult {
     const key = part.slice(0, colon).trim();
     const value = part.slice(colon + 1).trim();
     if (!ANNOTATION_KEYS.has(key)) {
-      errors.push(`Unknown annotation key "${key}" (allowed: src, observed, conf, id, kind, person).`);
+      errors.push(
+        `Unknown annotation key "${key}" (allowed: src, observed, conf, id, kind, person, derived_from, contradicts).`,
+      );
       continue;
     }
     if (fields.has(key)) {
@@ -195,6 +228,8 @@ export function parseAnnotationBody(inner: string): AnnotationParseResult {
   const id = fields.get("id");
   const rawKind = fields.get("kind");
   const rawPerson = fields.get("person");
+  const derivedFrom = fields.get("derived_from");
+  const contradicts = fields.get("contradicts");
   const kind = normalizeClaimSourceKind(rawKind, src);
 
   if (rawKind !== undefined && kind === undefined) {
@@ -215,6 +250,16 @@ export function parseAnnotationBody(inner: string): AnnotationParseResult {
   }
   if (id !== undefined && !ID_PATTERN.test(id)) {
     errors.push(`id must be kebab-case, got "${id}".`);
+  }
+  if (derivedFrom !== undefined && !EDGE_TARGET_PATTERN.test(derivedFrom)) {
+    errors.push(
+      `derived_from must be "<anchor>#<claim-id>" or the same-anchor shorthand "#<claim-id>", got "${derivedFrom}".`,
+    );
+  }
+  if (contradicts !== undefined && !EDGE_TARGET_PATTERN.test(contradicts)) {
+    errors.push(
+      `contradicts must be "<anchor>#<claim-id>" or the same-anchor shorthand "#<claim-id>", got "${contradicts}".`,
+    );
   }
   if (kind === TRUST_ME_BRO_KIND) {
     if (!rawPerson) {
@@ -242,6 +287,8 @@ export function parseAnnotationBody(inner: string): AnnotationParseResult {
       ...(id !== undefined ? { id } : {}),
       ...(kind && kind !== "evidence" ? { kind } : {}),
       ...(rawPerson ? { person: rawPerson } : {}),
+      ...(derivedFrom !== undefined ? { derivedFrom } : {}),
+      ...(contradicts !== undefined ? { contradicts } : {}),
     },
   };
 }
@@ -285,6 +332,12 @@ export function formatAnnotationBody(annotation: ClaimAnnotation): string {
   parts.push(`observed: ${annotation.observed}`, `conf: ${annotation.conf}`);
   if (annotation.id) {
     parts.push(`id: ${annotation.id}`);
+  }
+  if (annotation.derivedFrom) {
+    parts.push(`derived_from: ${annotation.derivedFrom}`);
+  }
+  if (annotation.contradicts) {
+    parts.push(`contradicts: ${annotation.contradicts}`);
   }
   return `{${parts.join("; ")}}`;
 }
@@ -500,6 +553,8 @@ export function extractClaims(content: string): AnchorClaim[] {
       text: line.slice(2).trim(),
       status: "unannotated",
       sources: [],
+      derivedFrom: [],
+      contradicts: [],
       strength: "low",
       strengthScore: 1,
     };
@@ -547,6 +602,14 @@ function finalizeClaim(claim: AnchorClaim): void {
   claim.strength = claimStrength(claim.sources);
   claim.strengthScore = claimStrengthScore(claim.sources);
 
+  // Claim-to-claim edge targets (WP5): collect every `derived_from` /
+  // `contradicts` value across the claim's source rows, deduplicated, in row
+  // order. Unlike `id` (one value, conflict on mismatch), these are
+  // deliberately repeatable — a claim may derive from or contradict several
+  // targets by stacking the key across rows.
+  claim.derivedFrom = dedupeInOrder(claim.sources.map((source) => source.derivedFrom).filter(isDefined));
+  claim.contradicts = dedupeInOrder(claim.sources.map((source) => source.contradicts).filter(isDefined));
+
   // `id` is claim-level (WP1): accept it on any source row, but two rows of
   // the same claim carrying *different* ids is a malformed annotation.
   const idConflict = claimLevelId(claim);
@@ -587,6 +650,22 @@ function claimLevelId(claim: AnchorClaim): { ok: true; id: string | undefined } 
 
 function truncateForError(text: string): string {
   return text.length > 80 ? `${text.slice(0, 77)}...` : text;
+}
+
+function isDefined<T>(value: T | undefined): value is T {
+  return value !== undefined;
+}
+
+function dedupeInOrder(values: readonly string[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const value of values) {
+    if (!seen.has(value)) {
+      seen.add(value);
+      out.push(value);
+    }
+  }
+  return out;
 }
 
 /**
@@ -738,6 +817,8 @@ function sourceToAnnotation(source: ClaimSource): ClaimAnnotation {
     ...(source.id ? { id: source.id } : {}),
     ...(source.kind ? { kind: source.kind } : {}),
     ...(source.person ? { person: source.person } : {}),
+    ...(source.derivedFrom ? { derivedFrom: source.derivedFrom } : {}),
+    ...(source.contradicts ? { contradicts: source.contradicts } : {}),
   };
 }
 
@@ -800,13 +881,10 @@ export function mintMissingClaimIds(content: string, existingIds: ReadonlySet<st
   for (const claim of [...candidates].sort((left, right) => right.line - left.line)) {
     const id = mintClaimId(usedIds);
     usedIds.add(id);
-    const sources: ClaimAnnotation[] = claim.sources.map((source) => ({
-      src: source.src,
-      observed: source.observed,
-      conf: source.conf,
-      ...(source.kind ? { kind: source.kind } : {}),
-      ...(source.person ? { person: source.person } : {}),
-    }));
+    // Candidates are filtered to `!claim.id` above, so no row carries an
+    // existing id to strip; sourceToAnnotation carries every other field
+    // (including derivedFrom/contradicts, WP5) through unmolested.
+    const sources: ClaimAnnotation[] = claim.sources.map(sourceToAnnotation);
     if (sources.length > 0) {
       sources[0] = { ...sources[0], id };
     }

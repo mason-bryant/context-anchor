@@ -112,6 +112,70 @@ describe("parseAnnotationBody", () => {
     });
   });
 
+  it("parses and round-trips derived_from / contradicts edge targets (WP5)", () => {
+    const body = "src: PR #55; observed: 2026-07-08; conf: high; id: c-abc123; derived_from: projects/demo/other.md#c-def456; contradicts: #c-ghi789";
+    const result = parseAnnotationBody(body);
+    expect(result).toEqual({
+      ok: true,
+      annotation: {
+        src: "PR #55",
+        observed: "2026-07-08",
+        conf: "high",
+        id: "c-abc123",
+        derivedFrom: "projects/demo/other.md#c-def456",
+        contradicts: "#c-ghi789",
+      },
+    });
+    // Serialize round-trip: formatAnnotationBody emits both keys.
+    if (result.ok) {
+      const reserialized = formatAnnotationBody(result.annotation);
+      expect(reserialized).toContain("derived_from: projects/demo/other.md#c-def456");
+      expect(reserialized).toContain("contradicts: #c-ghi789");
+      // And the re-parse is byte-stable.
+      const inner = reserialized.slice(1, -1);
+      expect(parseAnnotationBody(inner)).toEqual(result);
+    }
+  });
+
+  it("accepts the same-anchor shorthand #<claim-id> for edge targets", () => {
+    const result = parseAnnotationBody("src: PR #1; observed: 2026-07-08; conf: medium; derived_from: #c-parent1");
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.annotation.derivedFrom).toBe("#c-parent1");
+    }
+  });
+
+  it("BLOCKS a malformed edge-target FORMAT (no #, empty id, or bad id shape)", () => {
+    const noHash = parseAnnotationBody("src: PR #1; observed: 2026-07-08; conf: low; derived_from: projects/demo/other.md");
+    expect(noHash.ok).toBe(false);
+    if (!noHash.ok) {
+      expect(noHash.errors.join(" ")).toContain("derived_from must be");
+    }
+    const emptyId = parseAnnotationBody("src: PR #1; observed: 2026-07-08; conf: low; contradicts: anchor#");
+    expect(emptyId.ok).toBe(false);
+    if (!emptyId.ok) {
+      expect(emptyId.errors.join(" ")).toContain("contradicts must be");
+    }
+    const badId = parseAnnotationBody("src: PR #1; observed: 2026-07-08; conf: low; derived_from: anchor#Not_Valid");
+    expect(badId.ok).toBe(false);
+  });
+
+  it("collects derived_from / contradicts across a multi-row claim onto the claim (WP5)", () => {
+    const content = [
+      "## Current State",
+      "",
+      "- A downstream claim.",
+      "  {src: PR #1; observed: 2026-07-08; conf: high; id: c-multi1; derived_from: #c-parent1}",
+      "  {src: docs/a.md; observed: 2026-07-08; conf: medium; derived_from: #c-parent2; contradicts: #c-rival1}",
+      "",
+    ].join("\n");
+    const [claim] = extractClaims(content);
+    expect(claim.status).toBe("annotated");
+    expect(claim.id).toBe("c-multi1");
+    expect(claim.derivedFrom).toEqual(["#c-parent1", "#c-parent2"]);
+    expect(claim.contradicts).toEqual(["#c-rival1"]);
+  });
+
   it("keeps person fields for configurable person-backed evidence kinds", () => {
     const result = parseAnnotationBody(
       "src: engineer-attestation; kind: engineer-attestation; person: Alice Example; observed: 2026-07-08; conf: high",
@@ -614,6 +678,27 @@ describe("carryClaimAnnotations", () => {
     expect(reworded?.id).toBe("c-keepid");
     expect(reworded?.sources.map((source) => source.src)).toEqual(["PR #1", "src/a.ts"]);
     expect(reworded?.status).toBe("annotated");
+  });
+
+  it("keeps derived_from across a reword that keeps its id (WP5)", () => {
+    const oldDoc = `## Current State
+
+- Original wording, kept id, has an edge.
+  {src: PR #1; observed: 2026-01-01; conf: high; id: c-keepid; derived_from: #c-parent1}
+`;
+    // Reworded text; the new annotation dropped the derived_from key entirely.
+    const newDoc = `## Current State
+
+- Reworded but keeps id, edge dropped from the new annotation.
+  {src: PR #1; observed: 2026-01-01; conf: high; id: c-keepid}
+`;
+    const result = carryClaimAnnotations(oldDoc, newDoc);
+    expect(result.lost).toEqual([]);
+    const reworded = extractClaims(result.content).find((claim) => claim.id === "c-keepid");
+    expect(reworded?.status).toBe("annotated");
+    // Carry-by-id re-applies the full old source set, so the derived_from edge
+    // survives the reword even though the new annotation omitted it.
+    expect(reworded?.derivedFrom).toEqual(["#c-parent1"]);
   });
 
   it("leaves a reworded claim alone when its kept id already carries the full old source set", () => {
@@ -1850,6 +1935,89 @@ None.
       expect(claim?.sources[0]?.href).toBe("/ui?anchor=" + encodeURIComponent("projects/demo/other-anchor.md"));
       // The heading resolves, so there is no dangling-section warning either.
       expect(claim?.status).toBe("annotated");
+    });
+  });
+
+  describe("derived_from / contradicts claim edges (WP5)", () => {
+    // Write an anchor whose Current State has one annotated claim, then return
+    // its server-minted claim id so downstream claims can cite it.
+    async function seedParentClaim(): Promise<{ anchor: string; parentId: string }> {
+      const write = await service.writeAnchor({
+        name: "projects/demo/parent-anchor",
+        content: anchorContent(),
+        message: "test: seed parent claim",
+      });
+      expect(write.warnings.filter((warning) => warning.severity === "BLOCK")).toEqual([]);
+      const listed = await service.listClaims({ name: "projects/demo/parent-anchor", status: "annotated" });
+      const parent = listed.claims.find((claim) => claim.text === "Annotated claim about the system.");
+      expect(parent?.id).toBeTruthy();
+      return { anchor: "projects/demo/parent-anchor.md", parentId: parent!.id! };
+    }
+
+    it("warns (never blocks) on a well-formed but dangling edge target", async () => {
+      const write = await service.writeAnchor({
+        name: "projects/demo/claims-demo",
+        content: anchorContent(
+          "\n- A downstream claim citing a ghost.\n  {src: PR #1; observed: 2026-07-08; conf: high; derived_from: projects/demo/claims-demo.md#c-nonexist}",
+        ),
+        message: "test: dangling edge target",
+      });
+      expect(write.warnings.filter((warning) => warning.severity === "BLOCK")).toEqual([]);
+      const warning = write.warnings.find((entry) => entry.code === "claim_edge_target_missing");
+      expect(warning?.severity).toBe("WARN");
+      expect(warning?.message).toContain("c-nonexist");
+      expect(write.version).toBeTruthy();
+    });
+
+    it("blocks a malformed edge-target FORMAT (claim_annotation_invalid)", async () => {
+      const write = await service.writeAnchor({
+        name: "projects/demo/claims-demo",
+        content: anchorContent(
+          "\n- A downstream claim with a malformed edge.\n  {src: PR #1; observed: 2026-07-08; conf: high; derived_from: projects/demo/claims-demo.md}",
+        ),
+        message: "test: malformed edge target",
+      });
+      const block = write.warnings.find((entry) => entry.code === "claim_annotation_invalid");
+      expect(block?.severity).toBe("BLOCK");
+      expect(write.version).toBeUndefined();
+    });
+
+    it("authoring a derived_from produces a traversable edge in graphNeighbors", async () => {
+      const { anchor: parentAnchor, parentId } = await seedParentClaim();
+
+      const write = await service.writeAnchor({
+        name: "projects/demo/claims-demo",
+        content: anchorContent(
+          `\n- A downstream derived claim.\n  {src: PR #2; observed: 2026-07-08; conf: high; derived_from: ${parentAnchor}#${parentId}}`,
+        ),
+        message: "test: author a derived_from edge",
+      });
+      expect(write.warnings.filter((warning) => warning.severity === "BLOCK")).toEqual([]);
+      // The target claim exists, so no dangling-target warning fires.
+      expect(write.warnings.some((warning) => warning.code === "claim_edge_target_missing")).toBe(false);
+      expect(write.version).toBeTruthy();
+
+      // Find the downstream claim's minted node id.
+      const listed = await service.listClaims({ name: "projects/demo/claims-demo", status: "annotated" });
+      const downstream = listed.claims.find((claim) => claim.text === "A downstream derived claim.");
+      expect(downstream?.id).toBeTruthy();
+      expect(downstream?.derivedFrom).toEqual([`${parentAnchor}#${parentId}`]);
+
+      const result = await service.graphNeighbors({
+        node: `projects/demo/claims-demo.md#${downstream!.id}`,
+        edgeTypes: ["derived_from"],
+        direction: "forward",
+        depth: 1,
+      });
+      if ("candidates" in result) {
+        throw new Error("expected a resolved node, got candidates");
+      }
+      const edge = result.edges.find((entry) => entry.type === "derived_from");
+      expect(edge).toBeTruthy();
+      expect(edge?.from).toBe(`claim:projects/demo/claims-demo.md#${downstream!.id}`);
+      expect(edge?.to).toBe(`claim:${parentAnchor}#${parentId}`);
+      // The parent claim node is reachable in one hop.
+      expect(result.nodes.some((node) => node.id === `claim:${parentAnchor}#${parentId}`)).toBe(true);
     });
   });
 });
