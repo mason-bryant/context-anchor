@@ -89,11 +89,13 @@ import type {
   StartTaskResult,
   ApplyProposedChangeInput,
   ApplyProposedChangeResult,
+  GraphScoringConfig,
   ProjectFilterResolution,
   ProjectMapping,
   ProjectMappings,
   ProjectMappingsWithCommit,
   ProjectRepoMapping,
+  ProjectResolution,
   ProjectUpdateMilestone,
   ProjectUpdateMilestoneStatus,
   ProjectUpdateSnapshot,
@@ -168,6 +170,12 @@ import {
   type GraphNeighborsResultNode,
 } from "./graph/neighbors.js";
 import { buildPeopleIndex, parsePeopleRegistry, type PeopleIndex } from "./peopleRegistry.js";
+import {
+  computeGraphProximityBoosts,
+  resolveTaskSignalNodes,
+  DEFAULT_GRAPH_SCORING_MAX_BOOST,
+  type GraphProximityBoost,
+} from "./graph/proximity.js";
 import {
   extractMermaidBlocks,
   replaceMermaidBlockText,
@@ -258,6 +266,8 @@ export class AnchorService {
       pushOnWrite: boolean;
       migrationWarnOnly: boolean;
       staleAfterDays: number;
+      /** WP7 planner graph-proximity scoring signal. Optional for callers/tests that predate WP7; defaults to disabled. */
+      graphScoring?: GraphScoringConfig;
     },
   ) {}
 
@@ -304,6 +314,34 @@ export class AnchorService {
     if (this._graphIndex) {
       await this._graphIndex.invalidateDocument(anchorName);
     }
+  }
+
+  /**
+   * WP7 planner graph-proximity signal. Only called when
+   * `graphScoring.enabled` is true. Resolves the task signals
+   * `planContextBundle` already has in hand (candidate projects from
+   * file paths/repo, `G-###` mentions, person mentions) to graph nodes, then
+   * walks the `GraphIndex` up to 2 hops from each to find nearby anchors,
+   * returning a bounded per-anchor boost plus a hop-chain `reason` string.
+   * The graph index build/walk is the only async part of this signal; the
+   * planner itself stays synchronous by consuming the resulting plain map.
+   */
+  private async computeGraphProximityBoosts(
+    input: PlanContextBundleInput,
+    resolution: ProjectResolution | undefined,
+  ): Promise<Map<string, GraphProximityBoost> | undefined> {
+    const peopleRegistry = await this.loadPeopleRegistry();
+    const peopleIndex = buildPeopleIndex(peopleRegistry);
+    const signals = resolveTaskSignalNodes(
+      { task: input.task, projectResolution: resolution, project: input.project },
+      peopleIndex,
+    );
+    if (signals.length === 0) {
+      return undefined;
+    }
+    const graph = this.getGraphIndex();
+    const maxBoost = this.options.graphScoring?.maxBoost ?? DEFAULT_GRAPH_SCORING_MAX_BOOST;
+    return computeGraphProximityBoosts(graph, signals, maxBoost);
   }
 
   async listPeople(team?: string): Promise<{ people: Person[] }> {
@@ -3410,6 +3448,17 @@ None.
       : undefined;
     const candidateBoosts = candidateBoostMap(resolution);
 
+    // WP7 graph-proximity signal — config-gated, off by default. With the
+    // flag off (the default), graphProximityBoosts stays undefined and
+    // buildContextBundlePlan's output is byte-identical to the pre-WP7
+    // planner (hard acceptance criterion). Resolving task signals and
+    // walking the graph happens here, not inside the planner, so the planner
+    // itself stays synchronous and deterministic — it only ever consumes an
+    // already-computed plain map.
+    const graphProximityBoosts = this.options.graphScoring?.enabled
+      ? await this.computeGraphProximityBoosts(effectiveInput, resolution)
+      : undefined;
+
     const { index: bm25Index, bodyCharCounts } = await this.buildBM25SearchIndex(anchors);
     const plan = buildContextBundlePlan(
       anchors,
@@ -3421,6 +3470,7 @@ None.
       this.options.staleAfterDays,
       new Date(),
       candidateBoosts,
+      graphProximityBoosts,
     );
     const names = plan.loadContext.names;
     const includeProvenance = input.includeProvenance ?? "summary";
