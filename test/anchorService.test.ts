@@ -1909,6 +1909,25 @@ describe("AnchorService effective certainty (WP6)", () => {
     expect(claim?.weakestAncestor?.path).toEqual([`claim:projects/demo/demo.md#${claim?.id}`]);
   });
 
+  it("attaches no effectiveCertainty to an unannotated claim (no score, not certainty 0)", async () => {
+    await service.writeAnchor({
+      name: "projects/demo/demo",
+      content: projectAnchorContent({
+        currentState: `- An annotated claim.\n  {src: PR #55; observed: ${today()}; conf: high}\n- A legacy claim with no provenance.`,
+      }),
+      message: "test: mixed annotated + unannotated claims",
+    });
+
+    const read = await service.readAnchor("projects/demo/demo", undefined, { includeProvenance: "full" });
+    const annotated = read.claimProvenance?.claims?.find((c) => c.text === "An annotated claim.");
+    const unannotated = read.claimProvenance?.claims?.find((c) => c.text === "A legacy claim with no provenance.");
+    expect(annotated?.effectiveCertainty).toBeDefined();
+    expect(unannotated?.status).toBe("unannotated");
+    // Unscoreable claims carry no score at all — never a misleading certainty 0.
+    expect(unannotated?.effectiveCertainty).toBeUndefined();
+    expect(unannotated?.weakestAncestor).toBeUndefined();
+  });
+
   it("liveness: an anchor source referencing a real anchor is live (certainty unaffected by liveness)", async () => {
     await service.writeAnchor({
       name: "projects/demo/other",

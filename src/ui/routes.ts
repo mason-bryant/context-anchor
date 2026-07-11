@@ -392,7 +392,12 @@ export function registerUiRoutes(
       const certaintyBelowRaw = optionalQueryString(req, "certaintyBelow");
       const certaintyBelowNum = certaintyBelowRaw ? Number(certaintyBelowRaw) : undefined;
       const certaintyBelow =
-        certaintyBelowNum !== undefined && Number.isFinite(certaintyBelowNum) ? certaintyBelowNum : undefined;
+        certaintyBelowNum !== undefined &&
+        Number.isFinite(certaintyBelowNum) &&
+        certaintyBelowNum >= 0 &&
+        certaintyBelowNum <= 1
+          ? certaintyBelowNum
+          : undefined;
       return service.listClaims({
         ...(name ? { name } : {}),
         ...(project ? { project } : {}),

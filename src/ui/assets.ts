@@ -7885,7 +7885,8 @@ export const UI_JS = `(function () {
   }
 
   // Ascending-certainty sort — the re-verification queue: least-trustworthy
-  // (or unscored) claims first. Mirrors sortTasksForDisplay's style: a
+  // scored claims first, with unscored (null) claims sorted last. Mirrors
+  // sortTasksForDisplay's style: a
   // .slice().sort() that never mutates the input, primary key first, then a
   // deterministic tiebreak so repeated sorts of the same data are stable.
   function sortClaimsByCertainty(claims) {

@@ -2237,6 +2237,13 @@ None.
     const peopleIndex = buildPeopleIndex(await this.loadPeopleRegistry());
     const out: ClaimWithCertainty[] = [];
     for (const claim of claims) {
+      // Only annotated claims are scoreable; unannotated/malformed claims carry
+      // no effectiveCertainty — the API/UI contract treats them as "no score",
+      // never as certainty 0.
+      if (claim.status !== "annotated") {
+        out.push(claim);
+        continue;
+      }
       const effectiveCertaintyResult = await this.computeClaimCertainty(
         anchorName,
         claim,

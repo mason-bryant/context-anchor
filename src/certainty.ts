@@ -348,8 +348,11 @@ export async function weakestAncestorCertainty(
   // turns out weakest, not an arbitrary DFS-discovery-order chain.
   const queue: { claim: string; path: string[] }[] = [{ claim: originClaim, path: [originClaim] }];
 
-  while (queue.length > 0) {
-    const current = queue.shift() as { claim: string; path: string[] };
+  // Index-based queue head rather than Array.shift() (O(n) per pop, which makes
+  // the BFS quadratic on large derived_from graphs).
+  let head = 0;
+  while (head < queue.length) {
+    const current = queue[head++];
     const ancestors = await lookup(current.claim);
     for (const ancestor of ancestors) {
       if (visited.has(ancestor.claim)) {
