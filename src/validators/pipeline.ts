@@ -2,6 +2,7 @@ import type { ValidationViolation } from "../types.js";
 import { validateAcceptanceCriteriaWriteGate } from "./acceptanceCriteriaWriteGate.js";
 import { validateApprovalGate } from "./approval.js";
 import { validateClaimAnnotations } from "./claimAnnotations.js";
+import { validateClaimEdgeTargets } from "./claimEdgeTargets.js";
 import { validateClaimSourceSections } from "./claimSourceSections.js";
 import { validateCompactionThresholds } from "./compactionThresholds.js";
 import { validateDirectoryTaxonomy } from "./directoryTaxonomy.js";
@@ -32,6 +33,7 @@ const VALIDATORS: Validator[] = [
   validateSectionShape,
   validateClaimAnnotations,
   validateClaimSourceSections,
+  validateClaimEdgeTargets,
   validatePrFormat,
   validateLastValidatedBump,
   validatePriorityApproval,

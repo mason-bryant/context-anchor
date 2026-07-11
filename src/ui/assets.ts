@@ -521,6 +521,13 @@ export const UI_HTML = `<!doctype html>
               <article id="detail-rendered" class="markdown"></article>
               <pre id="detail-raw" class="raw-view" hidden></pre>
               <pre id="detail-frontmatter" class="raw-view" hidden></pre>
+              <section id="detail-neighbors" class="metadata-box detail-neighbors">
+                <h3>Graph Neighbors</h3>
+                <div class="action-row">
+                  <button id="load-neighbors" type="button">Load Neighbors</button>
+                </div>
+                <div id="neighbors-body" class="neighbors-body">Load neighbors to see this anchor's graph edges (claim provenance, derived_from / contradicts, links, structure).</div>
+              </section>
               <section id="history-actions" class="metadata-box history-actions">
                 <h3>History and Actions</h3>
                 <div class="action-row">
@@ -1877,6 +1884,38 @@ textarea {
 .danger-button:hover {
   border-color: var(--block);
   background: rgba(199, 53, 45, 0.14);
+}
+.detail-neighbors {
+  margin-top: 16px;
+}
+.neighbors-body {
+  margin-top: 8px;
+  color: var(--muted);
+}
+.neighbors-group {
+  margin-top: 12px;
+}
+.neighbors-group-title {
+  margin: 0 0 4px;
+  font-size: 0.85rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+.neighbors-list {
+  margin: 0;
+  padding-left: 18px;
+}
+.neighbors-row {
+  margin: 2px 0;
+  color: var(--text);
+}
+.neighbors-empty {
+  color: var(--muted);
+  margin: 8px 0 0;
+}
+.claim-source-edge-label {
+  grid-column: 1 / -1;
 }
 .claim-source-rows {
   display: grid;
@@ -4907,6 +4946,8 @@ export const UI_JS = `(function () {
       }).join("")
       + "</select></label>"
       + "<label>ID<input class=\\"claim-source-id\\" type=\\"text\\" value=\\"" + escapeHtml(source.id || "") + "\\" placeholder=\\"optional\\"" + disabled + "></label>"
+      + "<label class=\\"claim-source-edge-label\\">Derived from<input class=\\"claim-source-derived-from\\" type=\\"text\\" value=\\"" + escapeHtml(source.derivedFrom || "") + "\\" placeholder=\\"anchor#claim-id or #claim-id\\"" + disabled + "></label>"
+      + "<label class=\\"claim-source-edge-label\\">Contradicts<input class=\\"claim-source-contradicts\\" type=\\"text\\" value=\\"" + escapeHtml(source.contradicts || "") + "\\" placeholder=\\"anchor#claim-id or #claim-id\\"" + disabled + "></label>"
       + "<button class=\\"claim-source-delete danger-button\\" type=\\"button\\"" + disabled + "><span class=\\"icon-label\\"><svg class=\\"icon\\" aria-hidden=\\"true\\"><use href=\\"#icon-trash\\"></use></svg><span>Delete</span></span></button>"
       + "</div>";
   }
@@ -4993,9 +5034,17 @@ export const UI_JS = `(function () {
       var observed = row.querySelector(".claim-source-observed").value || "";
       var conf = row.querySelector(".claim-source-conf").value || "medium";
       var id = (row.querySelector(".claim-source-id").value || "").trim();
-      if (!type.requiresPerson && !src && !observed && !id) {
+      var derivedFromEl = row.querySelector(".claim-source-derived-from");
+      var contradictsEl = row.querySelector(".claim-source-contradicts");
+      var derivedFrom = (derivedFromEl && derivedFromEl.value || "").trim();
+      var contradicts = (contradictsEl && contradictsEl.value || "").trim();
+      if (!type.requiresPerson && !src && !observed && !id && !derivedFrom && !contradicts) {
         continue;
       }
+      var edges = {};
+      if (id) edges.id = id;
+      if (derivedFrom) edges.derivedFrom = derivedFrom;
+      if (contradicts) edges.contradicts = contradicts;
       if (type.requiresPerson) {
         var person = claimPersonAssignmentValue(personRaw);
         if (!person) {
@@ -5010,7 +5059,7 @@ export const UI_JS = `(function () {
           person: person,
           observed: observed,
           conf: type.lockedConfidence || conf
-        }, id ? { id: id } : {}));
+        }, edges));
         continue;
       }
       if (!src) {
@@ -5019,7 +5068,7 @@ export const UI_JS = `(function () {
       if (!observed) {
         return { ok: false, message: "Last checked is required for every row." };
       }
-      sources.push(Object.assign({ src: src, kind: kind, observed: observed, conf: type.lockedConfidence || conf }, id ? { id: id } : {}));
+      sources.push(Object.assign({ src: src, kind: kind, observed: observed, conf: type.lockedConfidence || conf }, edges));
     }
     return { ok: true, sources: sources };
   }
@@ -7362,7 +7411,215 @@ export const UI_JS = `(function () {
     el("history-diff").textContent = readOnly
       ? "Load history to inspect diffs. Built-in server rules cannot be renamed, deleted, edited, or reverted."
       : "Load history to inspect diffs or revert.";
+    resetNeighborsPanel();
     showDetailMode(state.detailMode);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Graph neighbors panel (WP5): a navigable "what is connected and why" list
+  // for the selected anchor, grouped by edge type, backed by
+  // /api/ui/graph-neighbors. No graph drawing — deep links only.
+  // ---------------------------------------------------------------------------
+
+  function resetNeighborsPanel() {
+    var body = safeEl("neighbors-body");
+    if (body) {
+      body.innerHTML = "Load neighbors to see this anchor's graph edges (claim provenance, derived_from / contradicts, links, structure).";
+    }
+    var button = safeEl("load-neighbors");
+    if (button) {
+      button.disabled = false;
+    }
+  }
+
+  // Human-readable label for each edge type the graph produces (WP1-WP5).
+  var NEIGHBOR_EDGE_LABELS = {
+    anchor_project: "Project",
+    milestone_anchor: "Milestone anchor",
+    milestone_goal: "Milestone → goal",
+    roadmap_goal: "Roadmap goals",
+    milestone_task: "Tasks",
+    task_owner: "Task owners",
+    person_project: "People → project",
+    team_project: "Teams → project",
+    project_repo: "Project repos",
+    repo_path: "Repo paths",
+    anchor_anchor: "Linked anchors",
+    claim_source: "Claim sources",
+    claim_person: "Claim people",
+    claim_section: "Claim sections",
+    section_anchor: "Section anchors",
+    derived_from: "Derived from",
+    contradicts: "Contradicts"
+  };
+
+  function neighborEdgeLabel(type) {
+    return NEIGHBOR_EDGE_LABELS[type] || String(type || "related");
+  }
+
+  // Turn a canonical node id into a UI deep link where one exists (anchor,
+  // milestone, section, and claim nodes all resolve to an anchor page; other
+  // node kinds have no first-party page yet and render as plain text).
+  function neighborNodeHref(nodeId) {
+    var raw = String(nodeId || "");
+    if (raw.indexOf("anchor:") === 0) {
+      return anchorHref(raw.slice("anchor:".length));
+    }
+    if (raw.indexOf("milestone:") === 0) {
+      return anchorHref(raw.slice("milestone:".length));
+    }
+    if (raw.indexOf("section:") === 0) {
+      var afterSection = raw.slice("section:".length);
+      var sectionHash = afterSection.indexOf("#");
+      return anchorHref(sectionHash === -1 ? afterSection : afterSection.slice(0, sectionHash));
+    }
+    if (raw.indexOf("claim:") === 0) {
+      var afterClaim = raw.slice("claim:".length);
+      var claimHash = afterClaim.indexOf("#");
+      return anchorHref(claimHash === -1 ? afterClaim : afterClaim.slice(0, claimHash));
+    }
+    return null;
+  }
+
+  // The anchor name a node's deep link targets, so the click handler can route
+  // through selectAnchor (SPA navigation) instead of a full page load.
+  function neighborNodeAnchorName(nodeId) {
+    var raw = String(nodeId || "");
+    if (raw.indexOf("anchor:") === 0) return raw.slice("anchor:".length);
+    if (raw.indexOf("milestone:") === 0) return raw.slice("milestone:".length);
+    if (raw.indexOf("section:") === 0 || raw.indexOf("claim:") === 0) {
+      var body = raw.slice(raw.indexOf(":") + 1);
+      var hash = body.indexOf("#");
+      return hash === -1 ? body : body.slice(0, hash);
+    }
+    return null;
+  }
+
+  function neighborNodeLabel(node, nodeId) {
+    if (node && node.display) {
+      return node.display;
+    }
+    if (node && node.claim && node.claim.text) {
+      return node.claim.text;
+    }
+    return String(nodeId || "");
+  }
+
+  function nodeDepth(nodeById, nodeId) {
+    var node = nodeById[nodeId];
+    return node && typeof node.depth === "number" ? node.depth : -1;
+  }
+
+  // The endpoint of an edge to display: the one that is NOT the origin (depth 1
+  // case), else whichever endpoint the traversal discovered farther from the
+  // origin, so a row always points away from the anchor being inspected.
+  function farEndpoint(edge, originId, nodeById) {
+    if (edge.from === originId) return edge.to;
+    if (edge.to === originId) return edge.from;
+    return nodeDepth(nodeById, edge.to) >= nodeDepth(nodeById, edge.from) ? edge.to : edge.from;
+  }
+
+  // Pure view-model: build the grouped-by-edge-type neighbors HTML from a
+  // /api/ui/graph-neighbors response. Exposed as a test hook.
+  function neighborsPanelHtml(result) {
+    if (result && result.candidates) {
+      if (!result.candidates.length) {
+        return "<p class=\\"neighbors-empty\\">No graph node matched this anchor.</p>";
+      }
+      return "<p class=\\"neighbors-empty\\">Ambiguous node; candidates: "
+        + result.candidates.map(function (candidate) {
+          return escapeHtml((candidate && (candidate.display || candidate.nodeId)) || "");
+        }).join(", ")
+        + "</p>";
+    }
+    var edges = (result && result.edges) || [];
+    var nodes = (result && result.nodes) || [];
+    if (!edges.length) {
+      return "<p class=\\"neighbors-empty\\">No graph edges for this anchor.</p>";
+    }
+    var originId = result && result.resolvedNode ? result.resolvedNode.nodeId : "";
+    var nodeById = {};
+    for (var n = 0; n < nodes.length; n += 1) {
+      if (nodes[n] && nodes[n].id) {
+        nodeById[nodes[n].id] = nodes[n];
+      }
+    }
+
+    // Group edges by type, preserving first-seen type order.
+    var groupOrder = [];
+    var groups = {};
+    for (var e = 0; e < edges.length; e += 1) {
+      var edge = edges[e];
+      if (!edge || !edge.type) continue;
+      if (!groups[edge.type]) {
+        groups[edge.type] = [];
+        groupOrder.push(edge.type);
+      }
+      // Show the endpoint FARTHER from the origin so every row links away from
+      // the anchor being inspected. At depth 1 the origin is one endpoint; on
+      // deeper hops neither endpoint is the origin, so fall back to the node
+      // with the greater discovered depth (ties / unknowns pick the "to" side).
+      groups[edge.type].push(farEndpoint(edge, originId, nodeById));
+    }
+
+    var html = "";
+    for (var g = 0; g < groupOrder.length; g += 1) {
+      var type = groupOrder[g];
+      var targets = groups[type];
+      var seen = {};
+      var rows = "";
+      for (var t = 0; t < targets.length; t += 1) {
+        var targetNodeId = targets[t];
+        if (seen[targetNodeId]) continue;
+        seen[targetNodeId] = true;
+        var node = nodeById[targetNodeId];
+        var label = neighborNodeLabel(node, targetNodeId);
+        var href = neighborNodeHref(targetNodeId);
+        var anchorName = neighborNodeAnchorName(targetNodeId);
+        if (href) {
+          rows += "<li class=\\"neighbors-row\\"><a href=\\"" + escapeHtml(href) + "\\""
+            + (anchorName ? " data-anchor-name=\\"" + escapeHtml(anchorName) + "\\"" : "")
+            + ">" + escapeHtml(label) + "</a></li>";
+        } else {
+          rows += "<li class=\\"neighbors-row\\"><span>" + escapeHtml(label) + "</span></li>";
+        }
+      }
+      html += "<div class=\\"neighbors-group\\"><h4 class=\\"neighbors-group-title\\">"
+        + escapeHtml(neighborEdgeLabel(type)) + "</h4><ul class=\\"neighbors-list\\">" + rows + "</ul></div>";
+    }
+    return html;
+  }
+
+  async function loadAnchorNeighbors(anchorName) {
+    var body = safeEl("neighbors-body");
+    var button = safeEl("load-neighbors");
+    if (!anchorName) {
+      return;
+    }
+    if (body) {
+      body.textContent = "Loading neighbors...";
+    }
+    if (button) {
+      button.disabled = true;
+    }
+    try {
+      var result = await api("/api/ui/graph-neighbors?node=" + encodeURIComponent(anchorName) + "&depth=1&limit=200");
+      if (state.selectedName !== anchorName) {
+        return;
+      }
+      if (body) {
+        body.innerHTML = neighborsPanelHtml(result);
+        decorateAnchorLinks(body);
+      }
+    } catch (error) {
+      if (body) {
+        body.textContent = error.message;
+      }
+    } finally {
+      if (button) {
+        button.disabled = false;
+      }
+    }
   }
 
   // Render the milestone's structured tasks frontmatter as a readable block,
@@ -8425,6 +8682,9 @@ export const UI_JS = `(function () {
     el("load-history").addEventListener("click", function () {
       loadAnchorHistory().catch(function (error) { setBanner(error.message, "error"); });
     });
+    el("load-neighbors").addEventListener("click", function () {
+      loadAnchorNeighbors(state.selectedName).catch(function (error) { setBanner(error.message, "error"); });
+    });
     el("history-list").addEventListener("click", function (event) {
       var diff = event.target.closest("[data-diff-index]");
       if (diff) {
@@ -8635,6 +8895,7 @@ export const UI_JS = `(function () {
     window.__ANCHOR_MCP_UI_TEST_HOOKS__.claimStrengthValue = claimStrengthValue;
     window.__ANCHOR_MCP_UI_TEST_HOOKS__.renderClaimInline = renderClaimInline;
     window.__ANCHOR_MCP_UI_TEST_HOOKS__.claimSourceRowHtml = claimSourceRowHtml;
+    window.__ANCHOR_MCP_UI_TEST_HOOKS__.neighborsPanelHtml = neighborsPanelHtml;
     window.__ANCHOR_MCP_UI_TEST_HOOKS__.renderMarkdown = renderMarkdown;
     window.__ANCHOR_MCP_UI_TEST_HOOKS__.renderMermaidDiagrams = renderMermaidDiagrams;
     window.__ANCHOR_MCP_UI_TEST_HOOKS__.sanitizeLinkHref = sanitizeLinkHref;

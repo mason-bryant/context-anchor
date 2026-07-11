@@ -549,6 +549,8 @@ export function registerUiRoutes(
         ...(optionalObjectString(source, "id") ? { id: optionalObjectString(source, "id") } : {}),
         ...(optionalObjectString(source, "kind") ? { kind: optionalObjectString(source, "kind") } : {}),
         ...(optionalObjectString(source, "person") ? { person: optionalObjectString(source, "person") } : {}),
+        ...(optionalObjectString(source, "derivedFrom") ? { derivedFrom: optionalObjectString(source, "derivedFrom") } : {}),
+        ...(optionalObjectString(source, "contradicts") ? { contradicts: optionalObjectString(source, "contradicts") } : {}),
       }));
       return service.setClaimSources({
         name: requiredBodyString(body, "name"),

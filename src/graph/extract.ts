@@ -356,9 +356,17 @@ function stripLinkFragmentAndQuery(target: string): string {
 /**
  * `claim -> source` (pr/file/anchor/person/url), `claim -> person`,
  * `claim -> section` + `section -> anchor` containment edges for every
- * `status === "annotated"` claim in the document. Section nodes are only
- * materialized when a claim actually cites one (never one node per H2
- * heading in every anchor).
+ * `status === "annotated"` claim in the document, plus `derived_from` /
+ * `contradicts` claim -> claim edges (WP5) parsed off the same rows. Section
+ * nodes are only materialized when a claim actually cites one (never one
+ * node per H2 heading in every anchor).
+ *
+ * Edge targets that don't resolve to a real anchor or claim id are silently
+ * skipped here — dangling targets are a write-time WARN
+ * (`claim_edge_target_missing`, `src/validators/claimEdgeTargets.ts`), not an
+ * extractor concern: a graph edge to a node that does not exist would be
+ * useless (and the malformed-shape case is already unreachable here, since a
+ * malformed target blocks the write and never reaches an extracted document).
  */
 export function extractClaimEdges(doc: DocumentInput, ctx: ExtractDocumentEdgesContext): GraphEdge[] {
   const claims = extractClaims(doc.content);
@@ -415,9 +423,54 @@ export function extractClaimEdges(doc: DocumentInput, ctx: ExtractDocumentEdgesC
         });
       }
     }
+
+    for (const target of claim.derivedFrom) {
+      const to = resolveClaimEdgeTarget(target, doc.anchorName, ctx);
+      if (to) {
+        edges.push({ from, to, type: "derived_from", sourceOfTruth: "claim-annotation" });
+      }
+    }
+    for (const target of claim.contradicts) {
+      const to = resolveClaimEdgeTarget(target, doc.anchorName, ctx);
+      if (to) {
+        edges.push({ from, to, type: "contradicts", sourceOfTruth: "claim-annotation" });
+      }
+    }
   }
 
   return edges;
+}
+
+const EDGE_TARGET_PATTERN = /^([^#]*)#([a-z0-9]+(?:-[a-z0-9]+)*)$/;
+
+/**
+ * Resolve a `derived_from`/`contradicts` target string (`<anchor>#<claim-id>`
+ * or same-anchor `#<claim-id>`) to a `claim:<anchor>#<id>` node id, or
+ * undefined when the anchor side doesn't resolve to a real anchor. Does NOT
+ * verify the claim id actually exists on the target anchor — that check needs
+ * to read the target anchor's content, which `extractClaimEdges` (pure,
+ * per-document) does not have for a different document; the write-path
+ * validator does that tree-wide check and reports dangling ids as a WARN.
+ * Pointing at a bare anchor id shape here would still be a stable,
+ * inspectable node id even before the target claim exists, so callers that
+ * only need the shape (not existence) are unaffected.
+ */
+function resolveClaimEdgeTarget(
+  target: string,
+  ownerAnchorName: string,
+  ctx: ExtractDocumentEdgesContext,
+): string | undefined {
+  const match = EDGE_TARGET_PATTERN.exec(target);
+  if (!match) {
+    return undefined;
+  }
+  const [, anchorPart, claimId] = match;
+  const resolvedAnchor =
+    anchorPart.trim() === "" ? ctx.resolveAnchorName(ownerAnchorName) : ctx.resolveAnchorName(anchorPart.trim());
+  if (!resolvedAnchor || !ctx.anchorNames.has(resolvedAnchor)) {
+    return undefined;
+  }
+  return claimNodeId(resolvedAnchor, claimId);
 }
 
 function sectionNodeAnchorName(sectionNodeId: string): string | undefined {

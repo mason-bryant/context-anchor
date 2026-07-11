@@ -2329,6 +2329,8 @@ None.
     id?: string;
     kind?: string;
     person?: string;
+    derivedFrom?: string;
+    contradicts?: string;
     clear?: boolean;
     message?: string;
     approved?: boolean;
@@ -2348,6 +2350,8 @@ None.
               ...(input.id ? { id: input.id } : {}),
               ...(input.kind ? { kind: input.kind } : {}),
               ...(input.person ? { person: input.person } : {}),
+              ...(input.derivedFrom ? { derivedFrom: input.derivedFrom } : {}),
+              ...(input.contradicts ? { contradicts: input.contradicts } : {}),
             },
           ],
       message: input.message,
@@ -2361,7 +2365,16 @@ None.
     name: string;
     claim?: string;
     line?: number;
-    sources: Array<{ src?: string; observed?: string; conf?: string; id?: string; kind?: string; person?: string }>;
+    sources: Array<{
+      src?: string;
+      observed?: string;
+      conf?: string;
+      id?: string;
+      kind?: string;
+      person?: string;
+      derivedFrom?: string;
+      contradicts?: string;
+    }>;
     message?: string;
     approved?: boolean;
     coAuthor?: string;
@@ -4623,7 +4636,16 @@ function sectionNodeAnchorName(nodeId: string): string {
 }
 
 function parseClaimSourceInputs(
-  sources: Array<{ src?: string; observed?: string; conf?: string; id?: string; kind?: string; person?: string }>,
+  sources: Array<{
+    src?: string;
+    observed?: string;
+    conf?: string;
+    id?: string;
+    kind?: string;
+    person?: string;
+    derivedFrom?: string;
+    contradicts?: string;
+  }>,
 ): { ok: true; sources: ClaimAnnotation[] } | { ok: false; errors: string[] } {
   const parsedSources: ClaimAnnotation[] = [];
   const errors: string[] = [];
@@ -4636,6 +4658,8 @@ function parseClaimSourceInputs(
       `observed: ${source.observed ?? ""}`,
       `conf: ${source.conf ?? ""}`,
       source.id ? `id: ${source.id}` : undefined,
+      source.derivedFrom ? `derived_from: ${source.derivedFrom}` : undefined,
+      source.contradicts ? `contradicts: ${source.contradicts}` : undefined,
     ]
       .filter(Boolean)
       .join("; ");
