@@ -210,6 +210,8 @@ optimistic concurrency across sessions.
 
 Use full writeAnchor when restructuring an entire anchor or when bulk-replacing the file is simpler.
 
+Write reader-facing citations as Markdown links, for example \`[Design doc](https://example.com/doc)\` or \`[#project-channel](https://slack.com/app_redirect?channel=C123)\`. Use backticks only for literal code, commands, paths, and identifiers; inline-code references intentionally remain non-clickable. When an existing anchor has a known URL but backtick-wrapped prose, call \`suggestMarkdownLinks\` to get a read-only, reviewable replacement before applying it through writeAnchor or proposeChange.
+
 \`deleteAnchor\` and \`renameAnchor\` remove or move entire anchor files as git commits; they always require \
 \`approved: true\` after explicit user confirmation, independent of validator-driven approval on ordinary writes.
 
@@ -651,6 +653,17 @@ the index when your workflow checks in that file.`,
       annotations: { readOnlyHint: true },
     },
     async ({ query, scope }) => jsonResult({ hits: await service.searchAnchors(query, scope) }),
+  );
+
+  server.registerTool(
+    "suggestMarkdownLinks",
+    {
+      title: "Suggest Markdown Links",
+      description: "Read one anchor and propose explicit Markdown links for inline-code Google Doc, Confluence, or Slack references only when exactly one supporting URL already exists in that anchor. Read-only: review suggestedContent, then apply it through writeAnchor or proposeChange.",
+      inputSchema: z.object({ name: z.string() }),
+      annotations: { readOnlyHint: true },
+    },
+    async ({ name }) => jsonResult(await service.suggestMarkdownLinks(name)),
   );
 
   server.registerTool(
