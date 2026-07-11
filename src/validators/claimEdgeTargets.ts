@@ -1,4 +1,4 @@
-import { collectClaimIds, extractClaims } from "../claims.js";
+import { EDGE_TARGET_PATTERN, collectClaimIds, extractClaims } from "../claims.js";
 import type { ValidationViolation } from "../types.js";
 import type { ValidationContext, Validator } from "./types.js";
 import { violation } from "./types.js";
@@ -113,8 +113,6 @@ export const validateClaimEdgeTargets: Validator = async (
 
   return results;
 };
-
-const EDGE_TARGET_PATTERN = /^([^#]*)#([a-z0-9]+(?:-[a-z0-9]+)*)$/;
 
 function parseEdgeTarget(target: string): { anchor: string; claimId: string } | undefined {
   const match = EDGE_TARGET_PATTERN.exec(target);

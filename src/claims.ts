@@ -157,7 +157,8 @@ const SOURCE_KIND_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
  * exists is a tree-wide, write-path concern (`claim_edge_target_missing`
  * WARN), not something this parser can resolve.
  */
-const EDGE_TARGET_PATTERN = /^([^#]*)#([a-z0-9]+(?:-[a-z0-9]+)*)$/;
+/** Format of a `derived_from`/`contradicts` target: `<anchor-path>#<claim-id>` (or same-anchor `#<claim-id>`). Exported so the graph extractor and the write-path validator classify targets identically to the parser (single source of truth). */
+export const EDGE_TARGET_PATTERN = /^([^#]*)#([a-z0-9]+(?:-[a-z0-9]+)*)$/;
 const STANDALONE_ANNOTATION_PATTERN = /^(\s+)\{([^{}]*)\}\s*$/;
 const TRAILING_ANNOTATION_PATTERN = /^(- .*?)\s*\{([^{}]*)\}\s*$/;
 

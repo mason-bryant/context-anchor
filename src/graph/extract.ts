@@ -35,7 +35,7 @@ import {
   type GraphEdge,
 } from "./model.js";
 import type { AnchorFrontmatter, PeopleRegistry, ProjectMappings } from "../types.js";
-import { extractClaims } from "../claims.js";
+import { EDGE_TARGET_PATTERN, extractClaims } from "../claims.js";
 
 /** Minimal per-document input every extractor needs. */
 export type DocumentInput = {
@@ -361,8 +361,10 @@ function stripLinkFragmentAndQuery(target: string): string {
  * nodes are only materialized when a claim actually cites one (never one
  * node per H2 heading in every anchor).
  *
- * Edge targets that don't resolve to a real anchor or claim id are silently
- * skipped here — dangling targets are a write-time WARN
+ * Edge targets whose anchor side doesn't resolve to a real anchor are silently
+ * skipped here; the extractor does NOT check whether the target claim id
+ * exists (that tree-wide check belongs to the write-time validator). Dangling
+ * targets are a write-time WARN
  * (`claim_edge_target_missing`, `src/validators/claimEdgeTargets.ts`), not an
  * extractor concern: a graph edge to a node that does not exist would be
  * useless (and the malformed-shape case is already unreachable here, since a
@@ -440,8 +442,6 @@ export function extractClaimEdges(doc: DocumentInput, ctx: ExtractDocumentEdgesC
 
   return edges;
 }
-
-const EDGE_TARGET_PATTERN = /^([^#]*)#([a-z0-9]+(?:-[a-z0-9]+)*)$/;
 
 /**
  * Resolve a `derived_from`/`contradicts` target string (`<anchor>#<claim-id>`
