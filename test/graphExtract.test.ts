@@ -399,6 +399,53 @@ type: context-anchor
     const d = doc({ anchorName: "projects/demo/a.md", content: noIdContent });
     expect(extractClaimEdges(d, ctx)).toEqual([]);
   });
+
+  it("emits derived_from and contradicts claim -> claim edges (WP5)", () => {
+    const anchorNames = new Set(["projects/demo/a.md", "projects/demo/b.md"]);
+    const ctx = makeCtx({ anchorNames });
+    const edgeContent = `---
+type: context-anchor
+---
+
+## Current State
+
+- Downstream claim with edges.
+  {src: PR #9; observed: 2026-07-08; conf: high; id: c-down01; derived_from: projects/demo/b.md#c-up0001; contradicts: #c-rival1}
+- The rival claim in the same anchor.
+  {src: PR #10; observed: 2026-07-08; conf: high; id: c-rival1}
+`;
+    const d = doc({ anchorName: "projects/demo/a.md", content: edgeContent });
+    const edges = extractClaimEdges(d, ctx);
+    expect(edges).toContainEqual({
+      from: "claim:projects/demo/a.md#c-down01",
+      to: "claim:projects/demo/b.md#c-up0001",
+      type: "derived_from",
+      sourceOfTruth: "claim-annotation",
+    });
+    // Same-anchor shorthand `#c-rival1` resolves against the owning anchor.
+    expect(edges).toContainEqual({
+      from: "claim:projects/demo/a.md#c-down01",
+      to: "claim:projects/demo/a.md#c-rival1",
+      type: "contradicts",
+      sourceOfTruth: "claim-annotation",
+    });
+  });
+
+  it("skips a derived_from edge whose anchor side does not resolve", () => {
+    const ctx = makeCtx({ anchorNames: new Set(["projects/demo/a.md"]) });
+    const content = `---
+type: context-anchor
+---
+
+## Current State
+
+- Cites a ghost anchor.
+  {src: PR #1; observed: 2026-07-08; conf: high; id: c-only01; derived_from: projects/demo/ghost.md#c-up0001}
+`;
+    const d = doc({ anchorName: "projects/demo/a.md", content });
+    const edges = extractClaimEdges(d, ctx);
+    expect(edges.some((edge) => edge.type === "derived_from")).toBe(false);
+  });
 });
 
 describe("extractDocumentEdges", () => {

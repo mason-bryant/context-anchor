@@ -141,12 +141,11 @@ export function claimNodeId(anchorName: string, claimId: string): string {
  * which kind of source it is, so the edge type itself does not need to
  * proliferate.
  *
- * `derived_from` and `contradicts` are reserved now so WP4/WP5 never need to
- * touch this enum again, even though nothing extracts them yet — WP5 adds the
- * `derived_from`/`contradicts` annotation grammar keys; `src/claims.ts` has
- * no such keys today (verified: `ANNOTATION_KEYS` is
- * `src/observed/conf/id/kind/person` only), so WP3 cannot and does not
- * extract edges for a grammar that doesn't exist yet.
+ * `derived_from` and `contradicts` are the two claim-to-claim edge types
+ * (design doc part 3 "Exactly two claim-to-claim edge types"), authored via
+ * the `derived_from`/`contradicts` annotation grammar keys (`src/claims.ts`,
+ * WP5) and emitted by `extractClaimEdges` (`src/graph/extract.ts`). WP3
+ * reserved the union entries; WP5 filled in the grammar and extraction.
  */
 export type GraphEdgeType =
   | "anchor_project"
