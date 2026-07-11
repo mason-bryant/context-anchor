@@ -140,6 +140,7 @@ function parseReposArray(raw: unknown): ProjectRepoMapping[] {
     }
     const paths = parsePaths(obj.paths);
     const web = parseWeb(obj.web);
+    const localCheckoutPath = stringValue(obj.localCheckoutPath);
     const key = repo.toLowerCase();
     const existing = byRepo.get(key);
     if (existing) {
@@ -147,8 +148,16 @@ function parseReposArray(raw: unknown): ProjectRepoMapping[] {
       if (!existing.web && web) {
         existing.web = web;
       }
+      if (!existing.localCheckoutPath && localCheckoutPath) {
+        existing.localCheckoutPath = localCheckoutPath;
+      }
     } else {
-      byRepo.set(key, { repo, paths, ...(web ? { web } : {}) });
+      byRepo.set(key, {
+        repo,
+        paths,
+        ...(web ? { web } : {}),
+        ...(localCheckoutPath ? { localCheckoutPath } : {}),
+      });
     }
   }
   return [...byRepo.values()];
@@ -196,8 +205,16 @@ function mergeRepos(left: ProjectRepoMapping[], right: ProjectRepoMapping[]): Pr
       if (!existing.web && entry.web) {
         existing.web = entry.web;
       }
+      if (!existing.localCheckoutPath && entry.localCheckoutPath) {
+        existing.localCheckoutPath = entry.localCheckoutPath;
+      }
     } else {
-      byRepo.set(key, { repo: entry.repo, paths: [...entry.paths], ...(entry.web ? { web: entry.web } : {}) });
+      byRepo.set(key, {
+        repo: entry.repo,
+        paths: [...entry.paths],
+        ...(entry.web ? { web: entry.web } : {}),
+        ...(entry.localCheckoutPath ? { localCheckoutPath: entry.localCheckoutPath } : {}),
+      });
     }
   }
   return [...byRepo.values()];

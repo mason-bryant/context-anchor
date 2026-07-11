@@ -389,6 +389,16 @@ export function registerUiRoutes(
       const observedBefore = observedBeforeRaw && isoDate.test(observedBeforeRaw) ? observedBeforeRaw : undefined;
       const observedAfterRaw = optionalQueryString(req, "observedAfter");
       const observedAfter = observedAfterRaw && isoDate.test(observedAfterRaw) ? observedAfterRaw : undefined;
+      const sortByCertainty = optionalQueryString(req, "sortByCertainty") === "true";
+      const certaintyBelowRaw = optionalQueryString(req, "certaintyBelow");
+      const certaintyBelowNum = certaintyBelowRaw ? Number(certaintyBelowRaw) : undefined;
+      const certaintyBelow =
+        certaintyBelowNum !== undefined &&
+        Number.isFinite(certaintyBelowNum) &&
+        certaintyBelowNum >= 0 &&
+        certaintyBelowNum <= 1
+          ? certaintyBelowNum
+          : undefined;
       return service.listClaims({
         ...(name ? { name } : {}),
         ...(project ? { project } : {}),
@@ -398,6 +408,8 @@ export function registerUiRoutes(
         ...(q ? { q } : {}),
         ...(observedBefore ? { observedBefore } : {}),
         ...(observedAfter ? { observedAfter } : {}),
+        ...(sortByCertainty ? { sortByCertainty } : {}),
+        ...(certaintyBelow !== undefined ? { certaintyBelow } : {}),
       });
     }),
   );

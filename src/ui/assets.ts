@@ -8129,6 +8129,47 @@ export const UI_JS = `(function () {
     return average < 1.5 ? "low" : average < 2.5 ? "medium" : "high";
   }
 
+  // WP6 (effective certainty): claims returned by listClaims / the /api/ui/claims
+  // and /api/ui/anchor routes carry a computed effectiveCertainty.certainty
+  // (base(conf) x decay x liveness, averaged across source rows) alongside the
+  // stated strength. Null for unannotated/malformed claims, which have no
+  // evidence to score.
+  function claimCertaintyValue(claim) {
+    if (!claim || !claim.effectiveCertainty || typeof claim.effectiveCertainty.certainty !== "number") {
+      return null;
+    }
+    return claim.effectiveCertainty.certainty;
+  }
+
+  // Ascending-certainty sort — the re-verification queue: least-trustworthy
+  // scored claims first, with unscored (null) claims sorted last. Mirrors
+  // sortTasksForDisplay's style: a
+  // .slice().sort() that never mutates the input, primary key first, then a
+  // deterministic tiebreak so repeated sorts of the same data are stable.
+  function sortClaimsByCertainty(claims) {
+    return (claims || []).slice().sort(function (left, right) {
+      var leftScore = claimCertaintyValue(left);
+      var rightScore = claimCertaintyValue(right);
+      if (leftScore === null && rightScore === null) {
+        return claimStableSortLabel(left).localeCompare(claimStableSortLabel(right));
+      }
+      if (leftScore === null) {
+        return 1;
+      }
+      if (rightScore === null) {
+        return -1;
+      }
+      if (leftScore !== rightScore) {
+        return leftScore - rightScore;
+      }
+      return claimStableSortLabel(left).localeCompare(claimStableSortLabel(right));
+    });
+  }
+
+  function claimStableSortLabel(claim) {
+    return ((claim && claim.anchor) || "") + "#" + ((claim && claim.line) || 0);
+  }
+
   function renderClaimInline(claim) {
     var strength = claimStrengthValue(claim);
     var count = claimSources(claim).length;
@@ -8159,11 +8200,13 @@ export const UI_JS = `(function () {
   function renderClaimPopover(claim) {
     var sources = claimSources(claim);
     var strength = claimStrengthValue(claim);
+    var certainty = claimCertaintyValue(claim);
+    var certaintyMeta = certainty === null ? "" : " · effective certainty " + certainty.toFixed(2);
     if (!sources.length) {
       return "<span class=\\"claim-popover\\" role=\\"tooltip\\"><span class=\\"claim-popover-title\\">No provenance sources</span><span class=\\"claim-popover-meta\\">Claim justification strength: " + escapeHtml(strength) + "</span></span>";
     }
     return "<span class=\\"claim-popover\\" role=\\"tooltip\\">"
-      + "<span class=\\"claim-popover-title\\">Claim justification strength: " + escapeHtml(strength) + "</span>"
+      + "<span class=\\"claim-popover-title\\">Claim justification strength: " + escapeHtml(strength) + escapeHtml(certaintyMeta) + "</span>"
       + sources.map(function (source) {
         return "<span class=\\"claim-popover-row\\">"
           + renderSourceLabel(source)
@@ -8893,7 +8936,10 @@ export const UI_JS = `(function () {
   if (window.__ANCHOR_MCP_UI_TEST_HOOKS__) {
     window.__ANCHOR_MCP_UI_TEST_HOOKS__.claimSources = claimSources;
     window.__ANCHOR_MCP_UI_TEST_HOOKS__.claimStrengthValue = claimStrengthValue;
+    window.__ANCHOR_MCP_UI_TEST_HOOKS__.claimCertaintyValue = claimCertaintyValue;
+    window.__ANCHOR_MCP_UI_TEST_HOOKS__.sortClaimsByCertainty = sortClaimsByCertainty;
     window.__ANCHOR_MCP_UI_TEST_HOOKS__.renderClaimInline = renderClaimInline;
+    window.__ANCHOR_MCP_UI_TEST_HOOKS__.renderClaimPopover = renderClaimPopover;
     window.__ANCHOR_MCP_UI_TEST_HOOKS__.claimSourceRowHtml = claimSourceRowHtml;
     window.__ANCHOR_MCP_UI_TEST_HOOKS__.neighborsPanelHtml = neighborsPanelHtml;
     window.__ANCHOR_MCP_UI_TEST_HOOKS__.renderMarkdown = renderMarkdown;

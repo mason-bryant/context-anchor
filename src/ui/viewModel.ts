@@ -9,7 +9,7 @@ import { analyzeRoadmapFromContent } from "../roadmap/analyzeRoadmap.js";
 import { isProjectMilestoneType } from "../schema/milestoneTypes.js";
 import { parseAnchor } from "../storage/markdown.js";
 import type { AnchorMeta, AnchorRead, MilestonePlannerMeta, ValidationSeverity } from "../types.js";
-import type { AnchorClaim } from "../claims.js";
+import type { ClaimWithCertainty } from "../certainty.js";
 import type { MermaidBlock } from "../mermaidBlocks.js";
 import type { AnchorQuestion } from "../questions.js";
 
@@ -43,7 +43,7 @@ export type AnchorUiDetail = AnchorRead & {
     label: string;
     health: AnchorUiHealth;
     sections: RequiredSectionStatus;
-    claims: (AnchorClaim & { anchor: string })[];
+    claims: (ClaimWithCertainty & { anchor: string })[];
     mermaidBlocks: (MermaidBlock & { anchor: string })[];
     questions: (AnchorQuestion & { anchor: string })[];
   };
@@ -62,7 +62,7 @@ export function toAnchorUiMeta(anchor: AnchorMeta): AnchorUiMeta {
 export function toAnchorUiDetail(
   anchor: AnchorRead,
   meta?: AnchorMeta,
-  claims: (AnchorClaim & { anchor: string })[] = [],
+  claims: (ClaimWithCertainty & { anchor: string })[] = [],
   questions: (AnchorQuestion & { anchor: string })[] = [],
   mermaidBlocks: (MermaidBlock & { anchor: string })[] = [],
 ): AnchorUiDetail {

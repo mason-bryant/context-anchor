@@ -168,6 +168,27 @@ describe("GraphIndex build", () => {
     expect(types.has("claim_source")).toBe(true);
   });
 
+  it("derived_from is a reserved edge type nothing extracts yet (WP5 unmerged) — WP6's weakest-link lookup degrades gracefully", async () => {
+    const repo = new AnchorRepository({ repoPath: tmpDir });
+    await repo.ensureReady();
+    await seedRepo(repo);
+
+    const graph = new GraphIndex(repo, graphDeps(repo));
+    const edges = await graph.allEdges();
+    // No extractor emits derived_from/contradicts today (src/claims.ts's
+    // ANNOTATION_KEYS has no such grammar keys yet), even though the type is
+    // reserved in the GraphEdgeType enum for WP5.
+    expect(edges.some((edge) => edge.type === "derived_from")).toBe(false);
+
+    // The claim node from PROJECT_CONTEXT's annotated bullet (id: c-7f3a9d)
+    // has zero derived_from out-edges — exactly the input WP6's
+    // weakestAncestorCertainty needs to degrade to "the origin is its own
+    // weakest ancestor" (see test/certainty.test.ts and
+    // AnchorService.derivedFromAncestors).
+    const claimEdges = await graph.edgesFrom("claim:projects/demo/demo-project-context.md#c-7f3a9d", "derived_from");
+    expect(claimEdges).toEqual([]);
+  });
+
   it("spawns zero git subprocesses during a full graph build", async () => {
     const repo = new AnchorRepository({ repoPath: tmpDir });
     await repo.ensureReady();

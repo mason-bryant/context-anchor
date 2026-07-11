@@ -1,4 +1,5 @@
-import type { AnchorClaim, ClaimProvenanceSummary } from "./claims.js";
+import type { ClaimProvenanceSummary } from "./claims.js";
+import type { ClaimWithCertainty } from "./certainty.js";
 import type { AnchorQuestion, QuestionStatus } from "./questions.js";
 import type { DiscoveryCategory } from "./taxonomy.js";
 
@@ -732,6 +733,16 @@ export type ProjectRepoMapping = {
   paths: string[];
   /** Optional remote/web info used to build links to specific files in the repo. */
   web?: ProjectRepoWeb;
+  /**
+   * Optional absolute filesystem path to a local checkout of this repo, used
+   * ONLY for the effective-certainty `liveness(src)` check on `file:` claim
+   * sources (WP6, claim knowledge graph part 2) — a cheap, local, synchronous
+   * `fs.existsSync` per checked path, never a network call or a git
+   * subprocess. Absent means "no locally-present checkout configured";
+   * `file:` liveness then defaults to live (1.0) rather than penalizing a
+   * claim for a checkout the server was never told about.
+   */
+  localCheckoutPath?: string;
 };
 
 export type ProjectRepoWeb = {
@@ -797,8 +808,13 @@ export type ClaimProvenanceMode = "none" | "summary" | "relevant" | "full";
 export type AnchorClaimProvenance = {
   mode: Exclude<ClaimProvenanceMode, "none">;
   summary: ClaimProvenanceSummary;
-  /** Present for `relevant` and `full`; `relevant` may be truncated. */
-  claims?: AnchorClaim[];
+  /**
+   * Present for `relevant` and `full`; `relevant` may be truncated. Each
+   * claim carries its computed `effectiveCertainty` (WP6, `certainty.ts`)
+   * and, when it has a stable id, its `weakestAncestor` flag over the
+   * `derived_from` ancestor path.
+   */
+  claims?: ClaimWithCertainty[];
   claimsTruncated?: boolean;
 };
 

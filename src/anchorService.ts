@@ -160,6 +160,21 @@ import {
 } from "./graph/sourceParsing.js";
 import { parseClaimSource, type ParseClaimSourceContext } from "./graph/sourceId.js";
 import { GraphIndex } from "./graph/index.js";
+import { claimNodeId } from "./graph/model.js";
+import {
+  DEFAULT_CERTAINTY_CONFIG,
+  effectiveCertainty,
+  halfLifeForCategory,
+  weakestAncestorCertainty,
+  type CertaintyConfig,
+  type CertaintyHalfLifeCategory,
+  type ClaimWithCertainty,
+  type EffectiveCertaintyResult,
+  type LivenessContext,
+  type LivenessInput,
+} from "./certainty.js";
+import { existsSync } from "node:fs";
+import path from "node:path";
 import {
   clampDepth,
   clampLimit,
@@ -268,10 +283,21 @@ export class AnchorService {
       pushOnWrite: boolean;
       migrationWarnOnly: boolean;
       staleAfterDays: number;
+      /**
+       * Effective-certainty config (WP6): base/decay/half-life/threshold
+       * defaults, overridable per deployment. Defaults to
+       * `DEFAULT_CERTAINTY_CONFIG` (`src/certainty.ts`) — the implementation
+       * plan's half-life defaults, flagged for operator confirmation.
+       */
+      certainty?: CertaintyConfig;
       /** WP7 planner graph-proximity scoring signal. Optional for callers/tests that predate WP7; defaults to disabled. */
       graphScoring?: GraphScoringConfig;
     },
   ) {}
+
+  private get certaintyConfig(): CertaintyConfig {
+    return this.options.certainty ?? DEFAULT_CERTAINTY_CONFIG;
+  }
 
   private async loadPeopleRegistry(): Promise<PeopleRegistry> {
     // Key the cache on the registry file's last commit so a background AutoSync
@@ -1806,8 +1832,18 @@ None.
     q?: string;
     observedBefore?: string;
     observedAfter?: string;
+    /**
+     * Sort annotated claims ascending by effective certainty (WP6): the
+     * re-verification queue — least-trustworthy claims first. Computing the
+     * score always attaches `effectiveCertainty` to every annotated claim
+     * returned, whether or not this sort is requested, so callers can
+     * inspect the factors either way.
+     */
+    sortByCertainty?: boolean;
+    /** Only include annotated claims whose effective certainty is below this threshold — the queue's filter half. */
+    certaintyBelow?: number;
   } = {}): Promise<{
-    claims: (AnchorClaim & { anchor: string })[];
+    claims: (ClaimWithCertainty & { anchor: string })[];
     summary: { total: number; annotated: number; unannotated: number; malformed: number };
     projectFilter?: ProjectFilterResolution;
   }> {
@@ -1851,7 +1887,7 @@ None.
     };
 
     const needle = input.q?.trim().toLowerCase();
-    const claims = allClaims.filter((claim) => {
+    const filtered = allClaims.filter((claim) => {
       if (input.status && claim.status !== input.status) {
         return false;
       }
@@ -1882,6 +1918,50 @@ None.
       }
       return true;
     });
+
+    // Effective certainty (WP6): computed for every annotated claim in the
+    // filtered result, whether or not sortByCertainty/certaintyBelow is set,
+    // so the score and its factors are always inspectable via listClaims —
+    // the re-verification queue's backend.
+    const needsCertainty = filtered.some((claim) => claim.status === "annotated");
+    let claims: (ClaimWithCertainty & { anchor: string })[] = filtered;
+    if (needsCertainty) {
+      const now = new Date();
+      claims = await Promise.all(
+        filtered.map(async (claim) => {
+          if (claim.status !== "annotated") {
+            return claim;
+          }
+          const result = await this.computeClaimCertainty(claim.anchor, claim, now, mappings, anchorNames, peopleIndex);
+          return { ...claim, effectiveCertainty: result };
+        }),
+      );
+      if (input.certaintyBelow !== undefined) {
+        const threshold = input.certaintyBelow;
+        claims = claims.filter(
+          (claim) => claim.status !== "annotated" || (claim.effectiveCertainty?.certainty ?? 0) < threshold,
+        );
+      }
+      if (input.sortByCertainty) {
+        claims = [...claims].sort((left, right) => {
+          const leftScore = left.effectiveCertainty?.certainty;
+          const rightScore = right.effectiveCertainty?.certainty;
+          // Unannotated/malformed claims (no score) sort after every scored
+          // claim — the queue is about re-verifying weak evidence, not about
+          // claims with no evidence to score at all.
+          if (leftScore === undefined && rightScore === undefined) {
+            return 0;
+          }
+          if (leftScore === undefined) {
+            return 1;
+          }
+          if (rightScore === undefined) {
+            return -1;
+          }
+          return leftScore - rightScore;
+        });
+      }
+    }
 
     return { claims, summary, ...(projectFilter ? { projectFilter } : {}) };
   }
@@ -2204,12 +2284,99 @@ None.
     }
 
     const selectedClaims = mode === "full" ? claims : selectRelevantProvenanceClaims(claims, task);
+    const withCertainty = await this.decorateClaimsWithCertainty(anchorName, selectedClaims);
     return {
       mode,
       summary,
-      claims: selectedClaims,
+      claims: withCertainty,
       ...(mode === "relevant" && selectedClaims.length < claims.length ? { claimsTruncated: true } : {}),
     };
+  }
+
+  /**
+   * Decorate a list of already-resolved claims (same anchor) with their
+   * effective certainty and weakest-`derived_from`-ancestor flag (WP6). Used
+   * by the `includeProvenance` sidecars (`readAnchor`, `readAnchorBatch`,
+   * `loadContext`) — the delivery surface the design doc specifies extending
+   * rather than adding a new response channel.
+   */
+  private async decorateClaimsWithCertainty(
+    anchorName: string,
+    claims: AnchorClaim[],
+  ): Promise<ClaimWithCertainty[]> {
+    if (claims.length === 0) {
+      return claims;
+    }
+    const now = new Date();
+    const mappings = await this.loadProjectMappings();
+    const anchorNames = new Set((await this.repo.listAnchors()).map((meta) => meta.name));
+    const peopleIndex = buildPeopleIndex(await this.loadPeopleRegistry());
+    const out: ClaimWithCertainty[] = [];
+    for (const claim of claims) {
+      // Only annotated claims are scoreable; unannotated/malformed claims carry
+      // no effectiveCertainty — the API/UI contract treats them as "no score",
+      // never as certainty 0.
+      if (claim.status !== "annotated") {
+        out.push(claim);
+        continue;
+      }
+      const effectiveCertaintyResult = await this.computeClaimCertainty(
+        anchorName,
+        claim,
+        now,
+        mappings,
+        anchorNames,
+        peopleIndex,
+      );
+      const decorated: ClaimWithCertainty = { ...claim, effectiveCertainty: effectiveCertaintyResult };
+      if (claim.id) {
+        decorated.weakestAncestor = await weakestAncestorCertainty(
+          claimNodeId(anchorName, claim.id),
+          effectiveCertaintyResult.certainty,
+          (claimLabel) => this.derivedFromAncestors(claimLabel, now, mappings, anchorNames, peopleIndex),
+        );
+      }
+      out.push(decorated);
+    }
+    return out;
+  }
+
+  /**
+   * `DerivedFromLookup` adapter (WP6 weakest-link): resolve one claim's
+   * `derived_from` targets via the graph index and compute each target's own
+   * effective certainty. `derived_from` edges do not exist in the tree until
+   * WP5 ships the annotation grammar keys that author them, so
+   * `edgesFrom(..., "derived_from")` returns `[]` today for every claim —
+   * `weakestAncestorCertainty` degrades gracefully to "the origin claim is
+   * its own weakest ancestor" in that case, with no special-casing needed
+   * here (see `certainty.ts`'s module docstring).
+   */
+  private async derivedFromAncestors(
+    claimLabel: string,
+    now: Date,
+    mappings: ProjectMappings,
+    anchorNames: Set<string>,
+    peopleIndex: PeopleIndex,
+  ): Promise<{ claim: string; certainty: number }[]> {
+    const edges = await this.getGraphIndex().edgesFrom(claimLabel, "derived_from");
+    const out: { claim: string; certainty: number }[] = [];
+    for (const edge of edges) {
+      const target = parseClaimNodeId(edge.to);
+      if (!target) {
+        continue;
+      }
+      const content = await this.repo.readRaw(target.anchorName);
+      if (content === undefined) {
+        continue;
+      }
+      const claim = extractClaims(content).find((candidate) => candidate.id === target.claimId);
+      if (!claim) {
+        continue;
+      }
+      const result = await this.computeClaimCertainty(target.anchorName, claim, now, mappings, anchorNames, peopleIndex);
+      out.push({ claim: edge.to, certainty: result.certainty });
+    }
+    return out;
   }
 
   private async extractResolvedClaims(anchorName: string, content: string): Promise<AnchorClaim[]> {
@@ -2219,6 +2386,144 @@ None.
     return extractClaims(content).map((claim) =>
       this.withResolvedSourceLinks(anchorName, claim, mappings, anchorNames, peopleIndex),
     );
+  }
+
+  /**
+   * Effective certainty (WP6). Computes `effectiveCertainty` for one claim
+   * using its containing anchor's half-life bucket (agent-rules / projects /
+   * milestones, derived from `classifyAnchorPath` — pure path parsing, no
+   * I/O) and a `SourceLivenessResolver` built from `parseClaimSource` (the
+   * single classifier, WP2) plus an optional local-checkout filesystem check
+   * for `file:` sources (synchronous `fs.existsSync`, never a network call
+   * or git subprocess — see `certainty.ts`'s module docstring).
+   *
+   * `parseClaimSource`'s dangling-section detection needs each cited
+   * anchor's H2 heading set, which is async to resolve (a read-path anchor
+   * read, cached like any other read — never a git subprocess). Since
+   * `effectiveCertainty`'s `SourceLivenessResolver` callback is synchronous
+   * (kept pure/testable in `certainty.ts`), this method resolves every row's
+   * `parseClaimSource` result up front in an async pass, then hands
+   * `effectiveCertainty` a synchronous lookup over the precomputed results.
+   */
+  private async computeClaimCertainty(
+    anchorName: string,
+    claim: Pick<AnchorClaim, "sources">,
+    now: Date,
+    mappings: ProjectMappings,
+    anchorNames: Set<string>,
+    peopleIndex: PeopleIndex,
+  ): Promise<EffectiveCertaintyResult> {
+    const halfLifeDays = this.halfLifeDaysForAnchor(anchorName);
+    const sectionTitlesByAnchor = await this.sectionTitlesForClaimSources(claim, anchorName, anchorNames);
+    const sourceCtx = this.claimSourceContext(anchorName, mappings, anchorNames, peopleIndex, sectionTitlesByAnchor);
+    const livenessCtx = this.buildLivenessContext(anchorName, mappings);
+    const precomputed = new Map<ClaimSource, LivenessInput>();
+    for (const source of claim.sources) {
+      const parsed = parseClaimSource(source, sourceCtx);
+      precomputed.set(source, { node: parsed.node, dangling: parsed.warning !== undefined });
+    }
+    const resolveLiveness: (source: ClaimSource) => LivenessInput = (source) =>
+      precomputed.get(source) ?? { node: undefined };
+    return effectiveCertainty(claim, now, this.certaintyConfig, halfLifeDays, resolveLiveness, livenessCtx);
+  }
+
+  /**
+   * Read (cached, no git subprocess) every anchor a claim's section-typed
+   * `src` rows might reference — same-anchor shorthand resolves against
+   * `anchorName` itself — and return their H2 heading sets, so
+   * `parseClaimSource` can flag a dangling section reference exactly like
+   * the write-path validator does. Anchors with no section-shaped rows never
+   * get read (most claims cite PRs/files/URLs, not sections).
+   */
+  private async sectionTitlesForClaimSources(
+    claim: Pick<AnchorClaim, "sources">,
+    anchorName: string,
+    anchorNames: Set<string>,
+  ): Promise<Map<string, ReadonlySet<string>>> {
+    const titles = new Map<string, ReadonlySet<string>>();
+    const candidateAnchors = new Set<string>();
+    for (const source of claim.sources) {
+      const src = source.src.trim();
+      const hashIndex = src.indexOf("#");
+      if (hashIndex === -1) {
+        continue;
+      }
+      const anchorPart = src.slice(0, hashIndex).trim();
+      const targetName = anchorPart === "" ? anchorName : this.resolveSourceAnchorName(anchorPart, anchorNames);
+      if (targetName) {
+        candidateAnchors.add(targetName);
+      }
+    }
+    for (const name of candidateAnchors) {
+      const content = await this.repo.readRaw(name);
+      if (content === undefined) {
+        continue;
+      }
+      titles.set(name, new Set(parseAnchor(content).sections.keys()));
+    }
+    return titles;
+  }
+
+  /** Resolve a claim's containing anchor to a certainty half-life bucket, purely from its path (no I/O). */
+  private halfLifeDaysForAnchor(anchorName: string): number {
+    const category = this.certaintyHalfLifeCategory(anchorName);
+    return halfLifeForCategory(category, this.certaintyConfig);
+  }
+
+  private certaintyHalfLifeCategory(anchorName: string): CertaintyHalfLifeCategory | undefined {
+    const classification = classifyAnchorPath(anchorName);
+    if (classification.kind !== "anchor") {
+      return undefined;
+    }
+    if (classification.category === "agent-rules") {
+      return "agent-rules";
+    }
+    if (classification.category === "projects") {
+      // Milestones live at projects/<slug>/milestones/<anchor>.md — a fourth
+      // path segment whose subdir is "milestones" (classifyAnchorPath already
+      // validated this is the only allowed reserved subdir).
+      const parts = anchorName.replace(/^\.?\/+/, "").split("/");
+      return parts[2] === "milestones" ? "milestones" : "projects";
+    }
+    return undefined;
+  }
+
+  /** Build the `LivenessContext` for `file:` source liveness: a synchronous, local-only checkout existence check. */
+  private buildLivenessContext(anchorName: string, mappings: ProjectMappings): LivenessContext {
+    const projectMapping = this.projectMappingForAnchorName(anchorName, mappings);
+    return {
+      fileExistsLocally: (fileNodeId: string) => {
+        const parsed = parseFileNodeId(fileNodeId);
+        if (!parsed) {
+          return undefined;
+        }
+        const repos = projectMapping?.repos ?? mappings.projects.flatMap((project) => project.repos);
+        const repo = repos.find((candidate) => candidate.repo.toLowerCase() === parsed.repo.toLowerCase());
+        if (!repo?.localCheckoutPath) {
+          // No configured local checkout for this repo: cannot determine
+          // locally, so liveness() treats it as live rather than penalizing
+          // the claim for a checkout the server was never told about.
+          return undefined;
+        }
+        // A claim `src` is author-controlled prose, not a trusted path — a
+        // `../`-laden filePath must never let this existence check escape
+        // the configured checkout onto arbitrary server filesystem paths.
+        // Fail closed to "cannot determine" (never live=false) so a
+        // malformed/adversarial path only ever costs a claim its liveness
+        // signal, never leaks whether some unrelated path exists.
+        const checkoutRoot = path.resolve(repo.localCheckoutPath);
+        const candidate = path.resolve(checkoutRoot, parsed.filePath);
+        const relative = path.relative(checkoutRoot, candidate);
+        if (relative.startsWith("..") || path.isAbsolute(relative)) {
+          return undefined;
+        }
+        try {
+          return existsSync(candidate);
+        } catch {
+          return undefined;
+        }
+      },
+    };
   }
 
   private async buildContextProvenanceSummary(names: string[]): Promise<ContextProvenanceSummary> {
@@ -2239,6 +2544,55 @@ None.
       summary: mergeClaimProvenanceSummaries(anchors.map((anchor) => anchor.summary)),
       anchors,
     };
+  }
+
+  /**
+   * `missingContext` warnings for bundle claims below the certainty
+   * threshold (WP6 step 3: "bundle includes N claims below certainty X —
+   * re-verify before relying on them"). Reports anchor, claim text, and
+   * score per the design doc's consumer note. Scoped to annotated claims
+   * only — an unannotated claim has no evidence to score and is already
+   * covered by the unannotated-claims provenance signal.
+   */
+  private async certaintyMissingContextSignals(names: string[]): Promise<string[]> {
+    const threshold = this.certaintyConfig.missingContextThreshold;
+    const now = new Date();
+    const mappings = await this.loadProjectMappings();
+    const anchorNames = new Set((await this.repo.listAnchors()).map((meta) => meta.name));
+    const peopleIndex = buildPeopleIndex(await this.loadPeopleRegistry());
+
+    const belowThreshold: { anchor: string; text: string; certainty: number }[] = [];
+    for (const name of names) {
+      if (isBuiltInAnchorName(name)) {
+        continue;
+      }
+      const content = await this.repo.readRaw(name);
+      if (content === undefined) {
+        continue;
+      }
+      for (const claim of extractClaims(content)) {
+        if (claim.status !== "annotated") {
+          continue;
+        }
+        const result = await this.computeClaimCertainty(name, claim, now, mappings, anchorNames, peopleIndex);
+        if (result.certainty < threshold) {
+          belowThreshold.push({ anchor: name, text: claim.text, certainty: result.certainty });
+        }
+      }
+    }
+
+    if (belowThreshold.length === 0) {
+      return [];
+    }
+
+    const examples = belowThreshold
+      .slice(0, 3)
+      .map((entry) => `${entry.anchor}: "${truncateClaimTextForSignal(entry.text)}" (${entry.certainty.toFixed(2)})`)
+      .join("; ");
+    const more = belowThreshold.length > 3 ? ` and ${belowThreshold.length - 3} more` : "";
+    return [
+      `Bundle includes ${belowThreshold.length} claim(s) below effective certainty ${threshold} — re-verify before relying on them: ${examples}${more}.`,
+    ];
   }
 
   /**
@@ -3522,6 +3876,7 @@ None.
               : `Repository "${resolution.unknownRepo}" is not mapped to any project; using file-path-derived candidate projects only.`,
           ]
         : [];
+    const certaintySignals = await this.certaintyMissingContextSignals(names);
 
     return {
       ...plan,
@@ -3531,6 +3886,7 @@ None.
         ...milestoneSignals,
         ...resolutionSignals,
         ...provenanceMissingContextSignals(provenance),
+        ...certaintySignals,
       ],
       loadContext: { ...plan.loadContext, names, includeProvenance: includeProvenance === "none" ? "none" : "summary" },
       ...(projectFilter ? { projectFilter } : {}),
@@ -4706,6 +5062,29 @@ function sectionNodeAnchorName(nodeId: string): string {
   return hashIndex === -1 ? withoutPrefix : withoutPrefix.slice(0, hashIndex);
 }
 
+/**
+ * Parse a `file:<repo>:<path>` canonical node id (WP2, `graph/sourceId.ts`)
+ * back into its repo/path parts, for WP6's local-checkout liveness check.
+ * `file:?:<path>` (unmapped repo) has no repo to check a checkout against,
+ * so it returns undefined — liveness then defaults to live.
+ */
+function parseFileNodeId(nodeId: string): { repo: string; filePath: string } | undefined {
+  if (!nodeId.startsWith("file:")) {
+    return undefined;
+  }
+  const rest = nodeId.slice("file:".length);
+  const colonIndex = rest.indexOf(":");
+  if (colonIndex === -1) {
+    return undefined;
+  }
+  const repo = rest.slice(0, colonIndex);
+  const filePath = rest.slice(colonIndex + 1);
+  if (!repo || repo === "?" || !filePath) {
+    return undefined;
+  }
+  return { repo, filePath };
+}
+
 function parseClaimSourceInputs(
   sources: Array<{
     src?: string;
@@ -4786,6 +5165,11 @@ function claimProvenanceSearchText(claim: AnchorClaim): string {
     .filter((value): value is string => typeof value === "string" && value.length > 0)
     .join(" ")
     .toLowerCase();
+}
+
+/** Keep claim text short in a `missingContext` signal string; full text is always available via `listClaims`/`readAnchor`. */
+function truncateClaimTextForSignal(text: string): string {
+  return text.length > 80 ? `${text.slice(0, 77)}...` : text;
 }
 
 function provenanceMissingContextSignals(provenance?: ContextProvenanceSummary): string[] {

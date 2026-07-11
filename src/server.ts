@@ -1075,7 +1075,7 @@ the index when your workflow checks in that file.`,
     {
       title: "List Claim Provenance",
       description:
-        "List claims (top-level bullets in Current State, Decisions, and Constraints sections) with their provenance annotations across one anchor or a project. Use status: unannotated to find legacy claims with no provenance, status: malformed to find broken annotations, conf plus observedBefore/observedAfter to build re-verification queues (e.g. low-confidence claims observed before a cutoff, or claims verified since a date), section to scope to one section kind, and q for text search over claim text, src, source kind, or person. The coverage summary always reflects the full scope; filters narrow only the returned list.",
+        "List claims (top-level bullets in Current State, Decisions, and Constraints sections) with their provenance annotations across one anchor or a project. Use status: unannotated to find legacy claims with no provenance, status: malformed to find broken annotations, conf plus observedBefore/observedAfter to build re-verification queues (e.g. low-confidence claims observed before a cutoff, or claims verified since a date), section to scope to one section kind, and q for text search over claim text, src, source kind, or person. Every annotated claim in the result carries its computed effectiveCertainty (base confidence x age decay x source liveness, averaged across source rows) with every factor, so the score is reproducible by hand; use sortByCertainty to order the re-verification queue least-trustworthy first, and certaintyBelow to filter to claims under a threshold. Re-verify a queued claim with annotateClaim (bumps observed, optionally conf) — no anchor rewrite needed. The coverage summary always reflects the full scope; filters narrow only the returned list.",
       inputSchema: z.object({
         name: z.string().optional().describe("Limit to one anchor by name."),
         project: z.string().optional().describe("Limit to a project slug (alias-aware)."),
@@ -1085,11 +1085,24 @@ the index when your workflow checks in that file.`,
         q: z.string().optional().describe("Case-insensitive text search over claim text, annotation src, source kind, or person."),
         observedBefore: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().describe("Only annotated claims observed before this date (exclusive) — a re-verification queue."),
         observedAfter: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().describe("Only annotated claims observed on or after this date."),
+        sortByCertainty: z.boolean().optional().describe("Sort annotated claims ascending by effective certainty (the re-verification queue, least-trustworthy first); unscoreable claims sort last."),
+        certaintyBelow: z.number().min(0).max(1).optional().describe("Only include annotated claims whose effective certainty is below this threshold (0..1)."),
       }),
       annotations: { destructiveHint: false, idempotentHint: true },
     },
-    async ({ name, project, status, section, conf, q, observedBefore, observedAfter }) => {
-      const result = await service.listClaims({ name, project, status, section, conf, q, observedBefore, observedAfter });
+    async ({ name, project, status, section, conf, q, observedBefore, observedAfter, sortByCertainty, certaintyBelow }) => {
+      const result = await service.listClaims({
+        name,
+        project,
+        status,
+        section,
+        conf,
+        q,
+        observedBefore,
+        observedAfter,
+        sortByCertainty,
+        certaintyBelow,
+      });
       return jsonResult(result, false);
     },
   );
