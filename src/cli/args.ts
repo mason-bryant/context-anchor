@@ -3,6 +3,7 @@ import path from "node:path";
 
 import type { FileLoggingConfig, LoggingConfig, RequestLoggingConfig, ServerConfig } from "../types.js";
 import { expandHome } from "../utils/path.js";
+import { DEFAULT_GRAPH_SCORING_ENABLED, DEFAULT_GRAPH_SCORING_MAX_BOOST, clampGraphScoringMaxBoost } from "../graph/proximity.js";
 
 export type CliOptions = {
   config: ServerConfig;
@@ -69,9 +70,24 @@ export function parseCliArgs(argv: string[], env: NodeJS.ProcessEnv = process.en
         numberFlag(flags, "sync-interval-ms") ?? numberEnv(env.ANCHOR_MCP_SYNC_INTERVAL_MS) ?? 45_000,
       migrationWarnOnly: booleanFlag(flags, "migration-warn-only"),
       staleAfterDays: numberFlag(flags, "stale-after-days") ?? numberEnv(env.ANCHOR_MCP_STALE_AFTER_DAYS) ?? 45,
+      graphScoring: {
+        enabled:
+          booleanFlag(flags, "graph-scoring-enabled") ||
+          booleanEnv(env.ANCHOR_MCP_GRAPH_SCORING_ENABLED) ||
+          DEFAULT_GRAPH_SCORING_ENABLED,
+        maxBoost: clampGraphScoringMaxBoost(
+          numberFlag(flags, "graph-scoring-max-boost") ??
+            numberEnv(env.ANCHOR_MCP_GRAPH_SCORING_MAX_BOOST) ??
+            DEFAULT_GRAPH_SCORING_MAX_BOOST,
+        ),
+      },
       logging: loggingConfigValue(fileConfig.logging, "logging"),
     },
   };
+}
+
+function booleanEnv(value: string | undefined): boolean {
+  return value === "true" || value === "1";
 }
 
 type CliConfigFile = {

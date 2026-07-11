@@ -40,6 +40,7 @@ beforeEach(async () => {
       syncIntervalMs: 0,
       migrationWarnOnly: false,
       staleAfterDays: 45,
+      graphScoring: { enabled: false, maxBoost: 8 },
     },
     {
       host: "127.0.0.1",
