@@ -516,6 +516,22 @@ describe("dry query classification", () => {
     expect(dry[0].reason).toBe("zero-hit");
   });
 
+  it("classifies a bundle that only listed index metadata as metadata-only, not nothing-delivered", () => {
+    const sessions = buildSessions([
+      baseEvent({ tool: "loadContext", traceId: "t-listed", ordinal: 0, timestamp: "2026-07-12T12:00:00.000Z", listed: ["a", "b"] }),
+      baseEvent({ tool: "readAnchor", traceId: "t-listed", ordinal: 1, timestamp: "2026-07-12T12:01:00.000Z", delivered: [{ name: "a", mode: "full" }] }),
+    ]);
+    const dry = findDryQueries(sessions);
+    expect(dry).toHaveLength(1);
+    expect(dry[0].reason).toBe("metadata-only");
+
+    // As the ambiguous thin case, it is gated behind the filter in a
+    // single-query session.
+    const solo = buildSessions([baseEvent({ tool: "loadContext", traceId: "t-listed-solo", listed: ["a"] })]);
+    expect(findDryQueries(solo)).toEqual([]);
+    expect(findDryQueries(solo, { thinNoFollowUp: true })).toHaveLength(1);
+  });
+
   it("does not treat metadata-only anchors as dry when structured projections were delivered", () => {
     const sessions = buildSessions([
       baseEvent({
@@ -608,6 +624,19 @@ describe("trace ratings store", () => {
     const all = await store.getAll();
     expect(Object.keys(all)).toEqual(["sess-good"]);
     expect(all["sess-good"].rating).toBe("well");
+  });
+
+  it("keeps __proto__ session ids as plain data keys without touching the prototype chain", async () => {
+    const tmpDir = await mkdtemp(path.join(os.tmpdir(), "anchor-mcp-ratings-"));
+    const store = new TraceRatingsStore(tmpDir);
+    await store.set("__proto__", "well");
+
+    expect(({} as Record<string, unknown>).rating).toBeUndefined();
+    expect((await store.get("__proto__"))?.rating).toBe("well");
+
+    const reloaded = new TraceRatingsStore(tmpDir);
+    expect((await reloaded.get("__proto__"))?.rating).toBe("well");
+    expect(({} as Record<string, unknown>).rating).toBeUndefined();
   });
 
   it("is inert (but does not throw on read) when constructed without a directory", async () => {

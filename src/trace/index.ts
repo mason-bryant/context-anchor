@@ -18,7 +18,11 @@ export type TraceSessionMeasures = {
   semanticFollowUpCount: number;
   /** Follow-up events that were pagination continuations. */
   paginationCount: number;
-  /** Events that matched nothing (zero-hit searches or empty bundles). */
+  /**
+   * Events the server flagged zero-hit: searches, discovery, and loadContext
+   * calls that matched nothing. startTask bundles never carry the flag; empty
+   * bundles surface through the dry-queries view instead.
+   */
   zeroHitCount: number;
   /** Total delivered items across every event in the session. */
   deliveredItemCount: number;
@@ -378,8 +382,12 @@ function classifyDryEvent(event: TraceEvent): TraceDryQuery["reason"] | undefine
   }
   const delivered = event.delivered ?? [];
   const structuredCount = event.structured?.ids.length ?? 0;
+  const listedCount = event.listed?.length ?? 0;
   if (delivered.length === 0 && structuredCount === 0) {
-    return "nothing-delivered";
+    // A bundle that exposed index metadata (listed entries) delivered thin
+    // content rather than nothing; classify it with the ambiguous
+    // metadata-only case so the single-query gate applies.
+    return listedCount > 0 ? "metadata-only" : "nothing-delivered";
   }
   // Structured projections (roadmap goals, milestone rows) are substantive
   // content, so their presence keeps a metadata-only anchor list from being dry.

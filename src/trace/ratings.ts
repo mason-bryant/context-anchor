@@ -46,7 +46,9 @@ export class TraceRatingsStore {
       return Promise.reject(new Error("Trace ratings are unavailable because trace logging is disabled."));
     }
     const write = this.writeQueue.then(async () => {
-      const ratings = { ...(await this.ensureLoaded()) };
+      // Null prototype so a sessionId like "__proto__" is a plain data key
+      // and cannot mutate the prototype chain.
+      const ratings: RatingsFile = Object.assign(Object.create(null), await this.ensureLoaded());
       if (rating === null) {
         delete ratings[sessionId];
       } else {
@@ -75,7 +77,7 @@ export class TraceRatingsStore {
 
   private async load(): Promise<RatingsFile> {
     if (!this.dirname) {
-      this.cache = {};
+      this.cache = Object.create(null) as RatingsFile;
       return this.cache;
     }
     try {
@@ -83,7 +85,7 @@ export class TraceRatingsStore {
       const parsed: unknown = JSON.parse(raw);
       this.cache = sanitizeRatingsFile(parsed);
     } catch {
-      this.cache = {};
+      this.cache = Object.create(null) as RatingsFile;
     }
     return this.cache;
   }
@@ -111,9 +113,11 @@ export class TraceRatingsStore {
  */
 function sanitizeRatingsFile(value: unknown): RatingsFile {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return {};
+    return Object.create(null) as RatingsFile;
   }
-  const ratings: RatingsFile = {};
+  // Null prototype: a hand-edited file containing a "__proto__" key must not
+  // reach the prototype chain when entries are assigned below.
+  const ratings: RatingsFile = Object.create(null) as RatingsFile;
   for (const [sessionId, entry] of Object.entries(value)) {
     if (typeof entry !== "object" || entry === null || Array.isArray(entry)) {
       continue;
