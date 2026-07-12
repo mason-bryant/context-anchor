@@ -221,6 +221,22 @@ None.
     expect(detail.ui.health.issues.map((issue) => issue.code)).toContain("project_slug_mismatch");
     expect(detail.ui.health.issues.map((issue) => issue.code)).toContain("required_section");
   });
+
+  it("surfaces design-header warnings before migration", () => {
+    const read = validRead();
+    read.warnings = [
+      {
+        severity: "WARN",
+        code: "design_header_section_missing",
+        message: "Project context anchor is missing design header section: ## Introduction.",
+      },
+    ];
+    const detail = toAnchorUiDetail(read);
+
+    expect(detail.ui.health.status).toBe("warn");
+    expect(detail.ui.designHeader.applies).toBe(true);
+    expect(detail.ui.designHeader.sections.Introduction).toBe(false);
+  });
 });
 
 function validMeta(overrides: Partial<AnchorMeta> = {}): AnchorMeta {

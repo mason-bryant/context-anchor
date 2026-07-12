@@ -183,6 +183,56 @@ function loadHooks(
 }
 
 describe("UI browser assets", () => {
+  it("migrates missing design headers instead of rendering a fake preview", () => {
+    expect(UI_HTML).not.toContain("Missing fields are shown as display-only placeholders");
+    expect(UI_HTML).not.toContain("Design Header Preview");
+    expect(UI_JS).toContain('apiPost("/api/ui/anchor-design-header", { name: name })');
+    expect(UI_JS).not.toContain('await post("/api/ui/anchor-design-header"');
+  });
+
+  it("renders visible, accessible definition tooltips for every configured heading level", () => {
+    const hooks = loadHooks();
+    const html = hooks.renderMarkdown("## Introduction\n\n### Purpose\n\n## Invariants\n\n## Constraints\n\n## PRs", {
+      sectionDefinitions: {
+        Introduction: "Project orientation.",
+        Purpose: "Why the project exists.",
+        Invariants: "Intentional guarantee.",
+        Constraints: "Environmental limit.",
+        PRs: "Related pull requests.",
+      },
+    });
+
+    expect(html).toContain('class="section-info-icon"');
+    expect(html).toContain('aria-label="About Constraints: Environmental limit."');
+    expect(html).toContain('<span class="section-info-tooltip" role="tooltip">Why the project exists.</span>');
+    expect(html).not.toContain('title="Intentional guarantee."');
+    expect((html.match(/section-info-icon/g) ?? [])).toHaveLength(5);
+    expect(html).toContain('<h3 class="defined-heading-empty">Purpose');
+    expect(html).not.toContain('<h2 class="defined-heading-empty">Introduction');
+    expect(UI_CSS).toContain(".section-info-icon:hover .section-info-tooltip");
+    expect(UI_CSS).toContain("visibility: visible");
+    expect(UI_CSS).toContain("left: calc(100% + 8px)");
+    expect(UI_CSS).toContain("h3.defined-heading-empty");
+  });
+
+  it("renders add-content controls on every defined H2 and H3 heading", () => {
+    const hooks = loadHooks();
+    const html = hooks.renderMarkdown("## Introduction\n\n### Purpose\n\n## Current State", {
+      sectionDefinitions: {
+        Introduction: "Project orientation.",
+        Purpose: "Why it exists.",
+        "Current State": "Facts today.",
+      },
+      sectionAddControls: true,
+    });
+
+    expect((html.match(/section-add-button/g) ?? [])).toHaveLength(3);
+    expect(html).toContain('data-section-heading="Purpose"');
+    expect(html).toContain('aria-label="Add content to Current State"');
+    expect(UI_JS).toContain('apiPost("/api/ui/anchor-structured-content", payload)');
+    expect(UI_CSS).toContain(".section-add-editor");
+  });
+
   it("provides a small monochrome icon library for core controls", () => {
     expect(UI_HTML).toContain('id="icon-home"');
     expect(UI_HTML).toContain('id="icon-anchor"');
@@ -1002,7 +1052,7 @@ describe("UI browser assets", () => {
   it("renders claim epistemology controls while hiding source annotation lines", () => {
     const hooks = loadHooks();
     const html = hooks.renderMarkdown(
-      "## Current State\n\n- Claim text.\n  {src: PR #42; observed: 2026-07-08; conf: high}",
+      "## Invariants\n\n- Claim text.\n  {src: PR #42; observed: 2026-07-08; conf: high}",
       {
         claimControls: true,
         lineOffset: 0,
@@ -1010,7 +1060,7 @@ describe("UI browser assets", () => {
           {
             anchor: "projects/demo/demo.md",
             line: 3,
-            section: "Current State",
+            section: "Invariants",
             text: "Claim text.",
             status: "annotated",
             strength: "high",

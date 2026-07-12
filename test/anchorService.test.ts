@@ -337,6 +337,41 @@ last_validated: 2026-05-10
     );
   });
 
+  it("warns agents on write and read when a project context design header is missing", async () => {
+    const written = await service.writeAnchor({
+      name: "projects/demo/demo",
+      content: projectContextAnchorContent(),
+      message: "test: add legacy project context",
+    });
+
+    expect(written.version).toMatch(/[a-f0-9]{40}/);
+    expect(written.warnings.filter((warning) => warning.code === "design_header_section_missing")).toHaveLength(2);
+    expect(written.warnings.filter((warning) => warning.severity === "BLOCK")).toEqual([]);
+
+    const read = await service.readAnchor("projects/demo/demo");
+    expect(read.warnings?.filter((warning) => warning.code === "design_header_section_missing")).toHaveLength(2);
+    expect(read.sectionDefinitions).toEqual(expect.objectContaining({
+      Invariants: "Intentional, architecture-level guarantees that must always remain true.",
+      Constraints: "Limits imposed by the current environment, technology, organization, or operating context.",
+      Purpose: "The problem the project exists to solve and why the work matters.",
+      PRs: "Related pull requests, grouped by status and linked with the required PR title and number format.",
+    }));
+
+    const loaded = await service.loadContext({ names: ["projects/demo/demo"], includeContent: "excerpt" });
+    expect(loaded.anchors[0]?.warnings?.filter((warning) => warning.code === "design_header_section_missing")).toHaveLength(2);
+    expect(loaded.anchors[0]?.sectionDefinitions).toEqual(read.sectionDefinitions);
+
+    const migration = await service.ensureDesignHeader("projects/demo/demo");
+    expect(migration.migrated).toBe(true);
+    expect(migration.version).toMatch(/[a-f0-9]{40}/);
+    const migrated = await service.readAnchor("projects/demo/demo");
+    expect(migrated.warnings).toBeUndefined();
+    expect(migrated.content.indexOf("## Introduction")).toBeLessThan(migrated.content.indexOf("## Invariants"));
+    expect(migrated.content.indexOf("## Invariants")).toBeLessThan(migrated.content.indexOf("## Current State"));
+    expect(migrated.content).not.toContain("Not documented");
+    expect((await service.ensureDesignHeader("projects/demo/demo")).migrated).toBe(false);
+  });
+
   it("blocks anchors outside the enforced taxonomy", async () => {
     const result = await service.writeAnchor({
       name: "demo",
@@ -502,6 +537,37 @@ last_validated: 2026-05-10
     const read = await service.readAnchor("projects/demo/demo");
     expect(read.frontmatter.last_validated).toBe("2026-05-14");
     expect(read.content).toContain("- Extra observation.");
+  });
+
+  it("adds structured content beneath H3 and approval-gated H2 headings", async () => {
+    const content = projectAnchorContent({ lastValidated: "1900-01-01" })
+      .replace("type: design", "type: context-anchor")
+      .replace(
+        "# Demo Anchor\n\n",
+        "# Demo Anchor\n\n## Introduction\n\n### Purpose\n\n### Goals\n\n### Users\n\n### Non-goals\n\n## Invariants\n\n- Stable ids remain stable.\n\n",
+      );
+    await service.writeAnchor({ name: "projects/demo/demo", content, message: "test: add structured anchor" });
+
+    const purpose = await service.addStructuredSectionContent({
+      name: "projects/demo/demo",
+      heading: "Purpose",
+      text: "Help reviewers understand the project.",
+      approved: true,
+    });
+    expect(purpose.warnings.filter((warning) => warning.severity === "BLOCK")).toEqual([]);
+
+    const invariant = await service.addStructuredSectionContent({
+      name: "projects/demo/demo",
+      heading: "Invariants",
+      text: "Raw Markdown remains the source of truth.",
+      approved: true,
+    });
+    expect(invariant.warnings.filter((warning) => warning.severity === "BLOCK")).toEqual([]);
+
+    const read = await service.readAnchor("projects/demo/demo");
+    expect(read.content).toContain("### Purpose\n\n- Help reviewers understand the project.");
+    expect(read.content).toContain("## Invariants\n\n- Raw Markdown remains the source of truth.");
+    expect(read.frontmatter.last_validated).toBe(todayDateKey());
   });
 
   it("deleteAnchor requires approval before removing a file", async () => {

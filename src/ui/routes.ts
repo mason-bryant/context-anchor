@@ -114,6 +114,15 @@ export function registerUiRoutes(
     }),
   );
 
+  app.post(
+    "/api/ui/anchor-design-header",
+    ...protect,
+    jsonRoute(async (req) => {
+      const body = bodyRecord(req);
+      return service.ensureDesignHeader(requiredBodyString(body, "name"));
+    }),
+  );
+
   app.get(
     "/api/ui/context-plan",
     ...protect,
@@ -377,7 +386,11 @@ export function registerUiRoutes(
         statusRaw === "annotated" || statusRaw === "unannotated" || statusRaw === "malformed" ? statusRaw : undefined;
       const sectionRaw = optionalQueryString(req, "section");
       const section =
-        sectionRaw === "Current State" || sectionRaw === "Decisions" || sectionRaw === "Constraints"
+        sectionRaw === "Introduction" ||
+        sectionRaw === "Invariants" ||
+        sectionRaw === "Current State" ||
+        sectionRaw === "Decisions" ||
+        sectionRaw === "Constraints"
           ? sectionRaw
           : undefined;
       const confRaw = optionalQueryString(req, "conf");
@@ -853,6 +866,23 @@ export function registerUiRoutes(
         heading: requiredBodyString(body, "heading"),
         content: requiredBodyString(body, "content"),
         lastValidated: optionalBodyString(body, "lastValidated"),
+        message: optionalBodyString(body, "message"),
+        approved: booleanBody(body, "approved"),
+        coAuthor: optionalBodyString(body, "coAuthor"),
+        expectedFileCommit: optionalBodyString(body, "expectedFileCommit"),
+      });
+    }),
+  );
+
+  app.post(
+    "/api/ui/anchor-structured-content",
+    ...protect,
+    jsonRoute(async (req) => {
+      const body = bodyRecord(req);
+      return service.addStructuredSectionContent({
+        name: requiredBodyString(body, "name"),
+        heading: requiredBodyString(body, "heading"),
+        text: requiredBodyString(body, "text"),
         message: optionalBodyString(body, "message"),
         approved: booleanBody(body, "approved"),
         coAuthor: optionalBodyString(body, "coAuthor"),

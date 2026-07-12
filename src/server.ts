@@ -3,6 +3,7 @@ import { McpServer } from "@modelcontextprotocol/server";
 import * as z from "zod/v4";
 
 import type { AnchorService } from "./anchorService.js";
+import { anchorSectionGuidance } from "./anchorStructure.js";
 import { PeopleRegistryConflictError, ProjectMappingsConflictError } from "./git/repo.js";
 import { errorMetadata, noopRequestLogger, type RequestLogger } from "./logger.js";
 import { isDiscoveryCategory, type DiscoveryCategory } from "./taxonomy.js";
@@ -30,6 +31,7 @@ const JsonStringSchema = z.string();
 const JsonRecordSchema = z.union([z.record(z.string(), z.unknown()), JsonStringSchema]);
 const StringArraySchema = z.union([z.array(z.string()), JsonStringSchema]);
 const NonEmptyStringArraySchema = z.union([z.array(z.string()).min(1), JsonStringSchema]);
+const SECTION_DEFINITION_GUIDANCE = anchorSectionGuidance();
 const ProposedChangeScopeObjectSchema = z.discriminatedUnion("kind", [
   z.object({
     kind: z.literal("project"),
@@ -226,7 +228,9 @@ If work reveals durable truth (what shipped, decisions, limits), persist it with
 on the relevant anchor — not only in chat. Section mapping: observable reality → ## Current State; settled choices → \
 ## Decisions; hard limits → ## Constraints; pull requests → ## PRs (use the enforced PR link text shape).
 
-Set last_validated (YYYY-MM-DD) to today's date whenever you materially edit Current State, Decisions, or Constraints; \
+Canonical section definitions: ${SECTION_DEFINITION_GUIDANCE} Treat Invariants as the authoritative guarantees and Constraints as contextual limits; flag conflicts instead of silently reconciling them.
+
+Set last_validated (YYYY-MM-DD) to today's date whenever you materially edit Introduction, Invariants, Current State, Decisions, or Constraints; \
 same-day substantive edits may reuse today's date.
 
 Cite provenance on the claims you add, while you still have the source in context: under the new bullet, append an \
@@ -238,7 +242,7 @@ return a claim_annotation_missing WARN. You do not need to supply \`id\`: the se
 across anchors as \`<anchor>#<id>\` and survive rewording. Use annotateClaim to add or fix a single annotation afterwards, and \
 listClaims({ status: "unannotated" }) to find the legacy backlog.
 
-Edits to Decisions or Constraints, or deleting existing bullets, need explicit human approval: retry the same write tool \
+Edits to Invariants, Decisions, or Constraints, or deleting existing bullets, need explicit human approval: retry the same write tool \
 with approved: true after the user confirms.
 
 ## Before wrap-up (ask the human)
@@ -292,7 +296,7 @@ the index when your workflow checks in that file.`,
     {
       title: "Read Anchor",
       description:
-        "Read one context anchor, optionally at a git version. Latest reads include `fileCommit` (last git commit touching the file) for optional `expectedFileCommit` on writes. Pass includeProvenance to add parsed claim provenance: summary, relevant, or full.",
+        `Read one context anchor, optionally at a git version. Latest reads include \`fileCommit\` (last git commit touching the file) for optional \`expectedFileCommit\` on writes and \`sectionDefinitions\` with canonical section definitions. Pass includeProvenance to add parsed claim provenance: summary, relevant, or full. Project context anchors return WARN entries when their Introduction design header or Invariants are incomplete. Treat that header as authoritative and flag conflicts with lower detail rather than silently choosing the detail. ${SECTION_DEFINITION_GUIDANCE}`,
       inputSchema: z.object({
         name: z.string(),
         version: z.string().optional(),
@@ -309,7 +313,7 @@ the index when your workflow checks in that file.`,
     "readAnchorBatch",
     {
       title: "Read Anchor Batch",
-      description: "Read multiple latest context anchors in one call. Pass includeProvenance to add parsed claim provenance sidecars.",
+      description: `Read multiple latest context anchors in one call. Each result includes \`sectionDefinitions\` with canonical definitions. Pass includeProvenance to add parsed claim provenance sidecars. ${SECTION_DEFINITION_GUIDANCE}`,
       inputSchema: z.object({
         names: NonEmptyStringArraySchema,
         includeProvenance: ClaimProvenanceModeSchema.optional(),
@@ -334,7 +338,8 @@ the index when your workflow checks in that file.`,
       description:
         "Session-start orchestration: plan a task-aware context bundle and load suggested anchor excerpts in one call. " +
         "Returns plan rationale, anchor excerpts, staleness flags, compact claim-provenance health, active milestones, and suggested readAnchor follow-ups. " +
-        "Pass repo and/or filePaths to resolve candidate projects when the project is not named directly.",
+        "Loaded anchors include canonical sectionDefinitions guidance. " +
+        `Pass repo and/or filePaths to resolve candidate projects when the project is not named directly. ${SECTION_DEFINITION_GUIDANCE}`,
       inputSchema: z.object({
         task: z.string().min(1),
         project: z.string().optional(),
@@ -356,7 +361,8 @@ the index when your workflow checks in that file.`,
       title: "Load Context",
       description:
         "One-call context load: context-root style index (entries + optional markdown) plus multiple anchor bodies. " +
-        "Supports filters, explicit names, excerpt/full/none content modes, byte and count limits, nextCursor continuation, and optional claim provenance sidecars via includeProvenance.",
+        "Loaded anchors include canonical sectionDefinitions guidance. " +
+        `Supports filters, explicit names, excerpt/full/none content modes, byte and count limits, nextCursor continuation, and optional claim provenance sidecars via includeProvenance. ${SECTION_DEFINITION_GUIDANCE}`,
       inputSchema: LoadContextInputSchema,
       annotations: { readOnlyHint: true },
     },
@@ -671,7 +677,7 @@ the index when your workflow checks in that file.`,
     {
       title: "Write Anchor",
       description:
-        "Validate, write, commit, and optionally push one context anchor. When adding claims (bullets in Current State/Decisions/Constraints), cite provenance with an indented '{src: ...; observed: YYYY-MM-DD; conf: high|medium|low}' line under the bullet; new claims without one return a claim_annotation_missing WARN.",
+        `Validate, write, commit, and optionally push one context anchor. Project context anchors should begin with Introduction (Purpose, Goals, Users, Non-goals) and Invariants; omissions return non-blocking WARN entries, and the design header is authoritative over lower detail. ${SECTION_DEFINITION_GUIDANCE} When adding claims (bullets in Introduction/Invariants/Current State/Decisions/Constraints), cite provenance with an indented '{src: ...; observed: YYYY-MM-DD; conf: high|medium|low}' line under the bullet; new claims without one return a claim_annotation_missing WARN.`,
       inputSchema: z.object({
         name: z.string(),
         content: z.string(),
@@ -1075,12 +1081,12 @@ the index when your workflow checks in that file.`,
     {
       title: "List Claim Provenance",
       description:
-        "List claims (top-level bullets in Current State, Decisions, and Constraints sections) with their provenance annotations across one anchor or a project. Use status: unannotated to find legacy claims with no provenance, status: malformed to find broken annotations, conf plus observedBefore/observedAfter to build re-verification queues (e.g. low-confidence claims observed before a cutoff, or claims verified since a date), section to scope to one section kind, and q for text search over claim text, src, source kind, or person. Every annotated claim in the result carries its computed effectiveCertainty (base confidence x age decay x source liveness, averaged across source rows) with every factor, so the score is reproducible by hand; use sortByCertainty to order the re-verification queue least-trustworthy first, and certaintyBelow to filter to claims under a threshold. Re-verify a queued claim with annotateClaim (bumps observed, optionally conf) — no anchor rewrite needed. The coverage summary always reflects the full scope; filters narrow only the returned list.",
+        "List claims (top-level bullets in Introduction, Invariants, Current State, Decisions, and Constraints sections) with their provenance annotations across one anchor or a project. Use status: unannotated to find legacy claims with no provenance, status: malformed to find broken annotations, conf plus observedBefore/observedAfter to build re-verification queues (e.g. low-confidence claims observed before a cutoff, or claims verified since a date), section to scope to one section kind, and q for text search over claim text, src, source kind, or person. Every annotated claim in the result carries its computed effectiveCertainty (base confidence x age decay x source liveness, averaged across source rows) with every factor, so the score is reproducible by hand; use sortByCertainty to order the re-verification queue least-trustworthy first, and certaintyBelow to filter to claims under a threshold. Re-verify a queued claim with annotateClaim (bumps observed, optionally conf) — no anchor rewrite needed. The coverage summary always reflects the full scope; filters narrow only the returned list.",
       inputSchema: z.object({
         name: z.string().optional().describe("Limit to one anchor by name."),
         project: z.string().optional().describe("Limit to a project slug (alias-aware)."),
         status: z.enum(["annotated", "unannotated", "malformed"]).optional().describe("Filter by provenance status."),
-        section: z.enum(["Current State", "Decisions", "Constraints"]).optional().describe("Filter by claim section."),
+        section: z.enum(["Introduction", "Invariants", "Current State", "Decisions", "Constraints"]).optional().describe("Filter by claim section."),
         conf: ClaimConfidenceSchema.optional().describe("Filter annotated claims by stated confidence."),
         q: z.string().optional().describe("Case-insensitive text search over claim text, annotation src, source kind, or person."),
         observedBefore: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().describe("Only annotated claims observed before this date (exclusive) — a re-verification queue."),
@@ -1332,7 +1338,7 @@ the index when your workflow checks in that file.`,
     {
       title: "Update Anchor Section",
       description:
-        "Replace the body of one ## H2 section (heading may be passed as \"## PRs\" or \"PRs\"). Content must not include the heading line. Pass lastValidated (YYYY-MM-DD) to refresh a stale validation date atomically in the same commit when editing a substantive section. When adding claims to Current State/Decisions/Constraints, cite provenance with an indented '{src: ...; observed: YYYY-MM-DD; conf: high|medium|low}' line under the bullet.",
+        "Replace the body of one ## H2 section (heading may be passed as \"## PRs\" or \"PRs\"). Content must not include the heading line. Pass lastValidated (YYYY-MM-DD) to refresh a stale validation date atomically in the same commit when editing a substantive section. When adding claims to Introduction/Invariants/Current State/Decisions/Constraints, cite provenance with an indented '{src: ...; observed: YYYY-MM-DD; conf: high|medium|low}' line under the bullet.",
       inputSchema: z
         .object({
           name: z.string(),
@@ -1363,7 +1369,7 @@ the index when your workflow checks in that file.`,
     {
       title: "Append To Anchor Section",
       description:
-        "Append markdown to the end of one ## H2 section body. Pass lastValidated (YYYY-MM-DD) to refresh a stale validation date atomically in the same commit when editing a substantive section. When adding claims to Current State/Decisions/Constraints, cite provenance with an indented '{src: ...; observed: YYYY-MM-DD; conf: high|medium|low}' line under the bullet.",
+        "Append markdown to the end of one ## H2 section body. Pass lastValidated (YYYY-MM-DD) to refresh a stale validation date atomically in the same commit when editing a substantive section. When adding claims to Introduction/Invariants/Current State/Decisions/Constraints, cite provenance with an indented '{src: ...; observed: YYYY-MM-DD; conf: high|medium|low}' line under the bullet.",
       inputSchema: z
         .object({
           name: z.string(),

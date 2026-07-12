@@ -1,9 +1,8 @@
 import { stripClaimAnnotations } from "../claims.js";
+import { SUBSTANTIVE_SECTIONS } from "../anchorStructure.js";
 import { parseAnchor } from "../storage/markdown.js";
 import type { Validator } from "./types.js";
 import { maybeMigrationBlock } from "./types.js";
-
-const SUBSTANTIVE_SECTIONS = ["Current State", "Decisions", "Constraints"];
 
 export const validateLastValidatedBump: Validator = (context) => {
   if (!context.oldContent) {
@@ -38,7 +37,13 @@ export const validateLastValidatedBump: Validator = (context) => {
 };
 
 function sectionForSubstantiveComparison(sectionBody: string | undefined): string | undefined {
-  return sectionBody === undefined ? undefined : stripClaimAnnotations(sectionBody);
+  if (sectionBody === undefined) return undefined;
+  const content = stripClaimAnnotations(sectionBody)
+    .split(/\r?\n/)
+    .filter((line) => !/^###\s+/.test(line))
+    .join("\n")
+    .trim();
+  return content || undefined;
 }
 
 function dateKey(value: unknown): unknown {

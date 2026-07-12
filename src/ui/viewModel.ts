@@ -12,10 +12,14 @@ import type { AnchorMeta, AnchorRead, MilestonePlannerMeta, ValidationSeverity }
 import type { ClaimWithCertainty } from "../certainty.js";
 import type { MermaidBlock } from "../mermaidBlocks.js";
 import type { AnchorQuestion } from "../questions.js";
-
-const REQUIRED_SECTIONS = ["Current State", "Decisions", "Constraints", "PRs"] as const;
-
-export type RequiredSectionName = (typeof REQUIRED_SECTIONS)[number];
+import {
+  ALWAYS_REQUIRED_SECTIONS,
+  ANCHOR_SECTION_DEFINITIONS,
+  designHeaderStatus,
+  type AlwaysRequiredSectionName,
+  type AnchorSectionName,
+  type DesignHeaderStatus,
+} from "../anchorStructure.js";
 export type AnchorHealthStatus = "ok" | "warn" | "block";
 
 export type AnchorHealthIssue = {
@@ -24,7 +28,7 @@ export type AnchorHealthIssue = {
   message: string;
 };
 
-export type RequiredSectionStatus = Record<RequiredSectionName, boolean>;
+export type RequiredSectionStatus = Record<AlwaysRequiredSectionName, boolean>;
 
 export type AnchorUiHealth = {
   status: AnchorHealthStatus;
@@ -43,6 +47,8 @@ export type AnchorUiDetail = AnchorRead & {
     label: string;
     health: AnchorUiHealth;
     sections: RequiredSectionStatus;
+    designHeader: DesignHeaderStatus;
+    sectionDefinitions: Record<AnchorSectionName, string>;
     claims: (ClaimWithCertainty & { anchor: string })[];
     mermaidBlocks: (MermaidBlock & { anchor: string })[];
     questions: (AnchorQuestion & { anchor: string })[];
@@ -73,8 +79,10 @@ export function toAnchorUiDetail(
     ...anchor,
     ui: {
       label: displayMeta.title || anchor.name,
-      health: summarizeAnchorHealth(displayMeta, sections),
+      health: summarizeAnchorHealth({ ...displayMeta, warnings: anchor.warnings }, sections),
       sections,
+      designHeader: designHeaderStatus(anchor.name, anchor.content),
+      sectionDefinitions: { ...ANCHOR_SECTION_DEFINITIONS },
       claims,
       mermaidBlocks,
       questions,
@@ -85,15 +93,15 @@ export function toAnchorUiDetail(
 export function requiredSectionStatus(content: string): RequiredSectionStatus {
   const sections = parseAnchor(content).sections;
 
-  return {
-    "Current State": sections.has("Current State"),
-    Decisions: sections.has("Decisions"),
-    Constraints: sections.has("Constraints"),
-    PRs: sections.has("PRs"),
-  };
+  return Object.fromEntries(
+    ALWAYS_REQUIRED_SECTIONS.map((section) => [section, sections.has(section)]),
+  ) as RequiredSectionStatus;
 }
 
-export function summarizeAnchorHealth(anchor: AnchorMeta, sections?: RequiredSectionStatus): AnchorUiHealth {
+export function summarizeAnchorHealth(
+  anchor: AnchorMeta & { warnings?: AnchorRead["warnings"] },
+  sections?: RequiredSectionStatus,
+): AnchorUiHealth {
   const issues: AnchorHealthIssue[] = [];
 
   if (!isNonEmptyString(anchor.summary)) {
@@ -148,7 +156,7 @@ export function summarizeAnchorHealth(anchor: AnchorMeta, sections?: RequiredSec
   }
 
   if (sections) {
-    for (const section of REQUIRED_SECTIONS) {
+    for (const section of ALWAYS_REQUIRED_SECTIONS) {
       if (!sections[section]) {
         issues.push({
           severity: "BLOCK",
@@ -156,6 +164,12 @@ export function summarizeAnchorHealth(anchor: AnchorMeta, sections?: RequiredSec
           message: `Missing required section: ## ${section}.`,
         });
       }
+    }
+  }
+
+  for (const warning of anchor.warnings ?? []) {
+    if (!issues.some((issue) => issue.code === warning.code && issue.message === warning.message)) {
+      issues.push(warning);
     }
   }
 

@@ -347,6 +347,24 @@ describe("UI HTTP routes", () => {
     expect(detail.anchor.ui.health.status).toBe("ok");
   });
 
+  it("persists a missing design header through the UI migration route", async () => {
+    const legacy = projectAnchorContent("legacy").replace(/\n## Introduction[\s\S]*?\n## Current State/, "\n## Current State");
+    const write = await service.writeAnchor({ name: "projects/legacy/legacy.md", content: legacy });
+    expect(write.warnings.filter((warning) => warning.severity === "BLOCK")).toEqual([]);
+
+    const migration = await postJson<{ migrated: boolean; version?: string }>("/api/ui/anchor-design-header", {
+      name: "projects/legacy/legacy.md",
+    });
+    expect(migration.migrated).toBe(true);
+    expect(migration.version).toMatch(/[a-f0-9]{40}/);
+
+    const read = await service.readAnchor("projects/legacy/legacy.md");
+    expect(read.content).toContain("## Introduction");
+    expect(read.content).toContain("### Purpose");
+    expect(read.content).toContain("## Invariants");
+    expect(read.content).not.toContain("Not documented");
+  });
+
   it("does not rescan the anchor index for detail requests", async () => {
     const listAnchors = vi.spyOn(AnchorService.prototype, "listAnchors");
 
@@ -492,6 +510,7 @@ describe("UI HTTP routes", () => {
     const restorePriority = stubAnchorServiceMethod("updateProjectPriority", vi.fn(async () => ({ version: "vp", warnings: [] })));
     const restoreSection = stubAnchorServiceMethod("updateAnchorSection", vi.fn(async () => ({ version: "v2", warnings: [] })));
     const restoreAppend = stubAnchorServiceMethod("appendToAnchorSection", vi.fn(async () => ({ version: "v3", warnings: [] })));
+    const restoreStructuredContent = stubAnchorServiceMethod("addStructuredSectionContent", vi.fn(async () => ({ version: "vs", warnings: [] })));
     const restoreDeleteSection = stubAnchorServiceMethod("deleteAnchorSection", vi.fn(async () => ({ version: "v4", warnings: [] })));
     const restoreClaimText = stubAnchorServiceMethod("updateClaimText", vi.fn(async () => ({ version: "vc", warnings: [] })));
     const restoreQuestionText = stubAnchorServiceMethod("updateQuestionText", vi.fn(async () => ({ version: "vq", warnings: [] })));
@@ -521,6 +540,13 @@ describe("UI HTTP routes", () => {
         name: "projects/demo/demo.md",
         heading: "PRs",
         content: "- [PR Demo - #1](https://github.com/example/repo/pull/1)",
+      });
+      await postJson("/api/ui/anchor-structured-content", {
+        name: "projects/demo/demo.md",
+        heading: "Purpose",
+        text: "Help reviewers understand the project.",
+        approved: true,
+        expectedFileCommit: "abc123",
       });
       await postJson("/api/ui/anchor-section-delete", {
         name: "projects/demo/demo.md",
@@ -628,6 +654,16 @@ describe("UI HTTP routes", () => {
           coAuthor: undefined,
           expectedFileCommit: undefined,
         });
+      expect((AnchorService.prototype as unknown as { addStructuredSectionContent: ReturnType<typeof vi.fn> }).addStructuredSectionContent)
+        .toHaveBeenCalledWith({
+          name: "projects/demo/demo.md",
+          heading: "Purpose",
+          text: "Help reviewers understand the project.",
+          message: undefined,
+          approved: true,
+          coAuthor: undefined,
+          expectedFileCommit: "abc123",
+        });
       expect((AnchorService.prototype as unknown as { deleteAnchorSection: ReturnType<typeof vi.fn> }).deleteAnchorSection)
         .toHaveBeenCalledWith({
           name: "projects/demo/demo.md",
@@ -643,6 +679,7 @@ describe("UI HTTP routes", () => {
       restorePriority();
       restoreSection();
       restoreAppend();
+      restoreStructuredContent();
       restoreDeleteSection();
       restoreClaimText();
       restoreQuestionText();
@@ -960,6 +997,7 @@ describe("UI HTTP routes", () => {
       claims: Array<{
         anchor: string;
         line: number;
+        section: string;
         text: string;
         status: string;
         annotation?: { src: string; conf: string; kind?: string; person?: string; personName?: string };
@@ -972,6 +1010,9 @@ describe("UI HTTP routes", () => {
 
     const initial = await fetchJson<ClaimsResult>("/api/ui/claims?project=demo&status=unannotated");
     expect(initial.summary.total).toBeGreaterThan(0);
+    const invariants = await fetchJson<ClaimsResult>("/api/ui/claims?project=demo&section=Invariants");
+    expect(invariants.claims.every((claim) => claim.section === "Invariants")).toBe(true);
+    expect(invariants.claims.length).toBeGreaterThan(0);
     const target = initial.claims[0];
     expect(target?.status).toBe("unannotated");
 
@@ -1498,6 +1539,28 @@ last_validated: ${recentLastValidated}
 ---
 
 # Demo Anchor
+
+## Introduction
+
+### Purpose
+
+Provide durable project context.
+
+### Goals
+
+- Keep agents and reviewers aligned.
+
+### Users
+
+- Project contributors and reviewers.
+
+### Non-goals
+
+- Replace the project roadmap.
+
+## Invariants
+
+- Stored context remains reviewable Markdown.
 
 ## Current State
 

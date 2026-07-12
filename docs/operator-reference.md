@@ -336,11 +336,12 @@ The server instructions tell agents to write back durable discoveries, not only 
 in chat, and to avoid editing anchor files under `--repo` directly on disk. Use MCP
 write tools so validation and server-side commits stay aligned.
 
-- Facts map to `## Current State`, `## Decisions`, or `## Constraints`.
+- Design-header claims map to `## Introduction` or `## Invariants`; operational facts
+  map to `## Current State`, `## Decisions`, or `## Constraints`.
 - PR links go under `## PRs` with link text `PR <title> - #<number>`.
-- Material changes to Current State, Decisions, or Constraints should refresh
+- Material changes to Introduction, Invariants, Current State, Decisions, or Constraints should refresh
   `last_validated`.
-- Edits that change Decisions or Constraints, or remove bullets, require explicit
+- Edits that change Invariants, Decisions, or Constraints, or remove bullets, require explicit
   approval through `approved: true`.
 - `deleteAnchor` and `renameAnchor` always require `approved: true`.
 
@@ -373,6 +374,9 @@ Blocking validation covers:
 
 Warnings cover:
 
+- project context anchors with a missing or misplaced design header: `## Introduction`
+  (`### Purpose`, `### Goals`, `### Users`, `### Non-goals`) followed by
+  `## Invariants`
 - removed bullets that should move to history or be marked superseded
 - roadmaps over 400 lines
 - `## Completed` tables over 10 rows
@@ -380,6 +384,46 @@ Warnings cover:
 
 During migration, run with `--migration-warn-only` to downgrade schema and shape blocks
 into warnings while existing anchors are cleaned up.
+
+### Project context design header
+
+The durable `type: context-anchor` file directly under `projects/<slug>/` begins with
+two orientation sections before the operational sections:
+
+```markdown
+## Introduction
+
+### Purpose
+
+### Goals
+
+### Users
+
+### Non-goals
+
+## Invariants
+```
+
+Purpose states the problem the project exists to solve. Goals name intended outcomes;
+Users identifies primary users and stakeholders; Non-goals establishes explicit scope
+boundaries. Invariants are intentional, architecture-level guarantees that must always
+remain true. Constraints are limits imposed by the current environment, technology,
+organization, or operating context. The UI uses these same definitions in hoverable
+info tooltips, and MCP reads/context loads return every definition in
+`sectionDefinitions` for agents. The shared schema in `src/anchorStructure.ts` is the
+source of truth for required headings, definitions, claim-bearing sections,
+substantive-section validation, and approval-sensitive sections.
+Prefer one testable invariant per bullet with a stable id such as `INV-001` so reviews,
+decisions, and conflict reports can cite it without copying or ambiguously paraphrasing it.
+
+Missing fields do not block MCP reads or writes; they return WARN entries. When the UI
+opens a legacy project context anchor, it persists the missing blank sections and fields
+in a migration commit before rendering detail. Raw and Rendered therefore show the same
+Markdown, and bullets in Introduction and Invariants use the same claim/provenance editor
+as Current State, Decisions, and Constraints. Treat Introduction and Invariants as the
+project's authoritative design header: when later details conflict, flag the conflict for
+resolution rather than silently preferring the detail. Semantic conflict detection remains
+an agent review responsibility; the server only detects structural omissions and placement.
 
 ## Dynamic Context Root
 

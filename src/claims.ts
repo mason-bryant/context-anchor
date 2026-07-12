@@ -37,8 +37,9 @@
  */
 
 import { randomBytes } from "node:crypto";
+import { CLAIM_BEARING_SECTIONS } from "./anchorStructure.js";
 
-export const CLAIM_SECTIONS = ["Current State", "Decisions", "Constraints"] as const;
+export const CLAIM_SECTIONS = CLAIM_BEARING_SECTIONS;
 
 export const CLAIM_CONFIDENCE_VALUES = ["high", "medium", "low"] as const;
 export type ClaimConfidence = (typeof CLAIM_CONFIDENCE_VALUES)[number];
