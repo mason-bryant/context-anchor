@@ -38,12 +38,29 @@ export const validateLastValidatedBump: Validator = (context) => {
 
 function sectionForSubstantiveComparison(sectionBody: string | undefined): string | undefined {
   if (sectionBody === undefined) return undefined;
-  const content = stripClaimAnnotations(sectionBody)
-    .split(/\r?\n/)
-    .filter((line) => !/^###\s+/.test(line))
-    .join("\n")
-    .trim();
+  const content = stripH3HeadingsOutsideFences(stripClaimAnnotations(sectionBody)).trim();
   return content || undefined;
+}
+
+function stripH3HeadingsOutsideFences(markdown: string): string {
+  let fence: { char: string; length: number } | undefined;
+  return markdown
+    .split(/\r?\n/)
+    .filter((line) => {
+      const fenceMatch = line.match(/^ {0,3}(`{3,}|~{3,})(.*)$/);
+      if (fenceMatch?.[1]) {
+        const marker = fenceMatch[1];
+        const char = marker[0] ?? "`";
+        if (!fence) {
+          fence = { char, length: marker.length };
+        } else if (fence.char === char && marker.length >= fence.length && (fenceMatch[2] ?? "").trim() === "") {
+          fence = undefined;
+        }
+        return true;
+      }
+      return Boolean(fence) || !/^ {0,3}###\s+/.test(line);
+    })
+    .join("\n");
 }
 
 function dateKey(value: unknown): unknown {

@@ -456,6 +456,30 @@ last_validated: 2026-05-10
     expect(result.warnings.map((warning) => warning.code)).toContain("last_validated_bump");
   });
 
+  it("treats H3-like lines inside fenced code as substantive content", async () => {
+    const staleDate = "1900-01-01";
+    await service.writeAnchor({
+      name: "projects/demo/demo",
+      content: projectAnchorContent({
+        currentState: "```md\n### Original sample heading\n```",
+        lastValidated: staleDate,
+      }),
+      message: "test: add fenced heading sample",
+    });
+
+    const result = await service.writeAnchor({
+      name: "projects/demo/demo",
+      content: projectAnchorContent({
+        currentState: "```md\n### Changed sample heading\n```",
+        lastValidated: staleDate,
+      }),
+      message: "test: update fenced heading sample",
+    });
+
+    expect(result.version).toBeUndefined();
+    expect(result.warnings.map((warning) => warning.code)).toContain("last_validated_bump");
+  });
+
   it("allows same-day substantive edits when last_validated already matches today", async () => {
     const today = todayDateKey();
     await service.writeAnchor({
