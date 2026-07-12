@@ -488,7 +488,15 @@ export const UI_HTML = `<!doctype html>
                 <button id="traces-refresh" type="button">Refresh</button>
               </div>
             </div>
-            <div id="traces-disabled" class="empty-state" hidden>Trace logging is disabled. Enable <code>logging.traces</code> in the server config to record context-retrieval traces.</div>
+            <div id="traces-disabled" class="empty-state" hidden>
+              <p>Trace logging is disabled. To record context-retrieval traces, add a <code>traces</code> block to the <code>logging</code> section of your anchor-mcp config file (the JSON file passed via <code>--config</code>, e.g. <code>anchor-mcp.config.json</code>), then restart the server:</p>
+              <pre class="compact-raw trace-config-hint">{
+  "logging": {
+    "traces": { "enabled": true }
+  }
+}</pre>
+              <p>Traces are written to <code>~/.anchor-mcp/logs/anchor-mcp-traces-&lt;date&gt;.log</code> with one-year retention. Optional keys: <code>dirname</code>, <code>maxFiles</code> (default <code>"365d"</code>), and <code>includeTaskText</code> (default <code>false</code>; task text is stored as a hash unless enabled). See <code>anchor-mcp.config.example.json</code> for the full block.</p>
+            </div>
             <div id="traces-empty" class="empty-state" hidden>No trace sessions recorded yet. Run a context query (startTask, loadContext, searchAnchors, ...) and refresh.</div>
             <div id="traces-list" hidden></div>
           </section>
@@ -1680,6 +1688,12 @@ textarea {
 
 .trace-event-summary {
   font-size: 12px;
+}
+
+.trace-config-hint {
+  display: inline-block;
+  margin: 12px auto;
+  text-align: left;
 }
 
 @media (max-width: 900px) {
