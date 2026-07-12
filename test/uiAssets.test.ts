@@ -268,6 +268,7 @@ describe("UI browser assets", () => {
     const html = hooks.claimSourceRowHtml(
       {
         src: "https://example.test/source",
+        id: "c-stable1",
         kind: "source",
         observed: "2026-07-08",
         conf: "medium",
@@ -286,6 +287,12 @@ describe("UI browser assets", () => {
     expect(html).toContain('value="url" selected');
     expect(html).toContain('class="claim-source-delete danger-button"');
     expect(html).toContain('<use href="#icon-trash"></use>');
+    expect(UI_HTML).toContain('id="claim-source-id-value"');
+    expect(UI_HTML).toContain("Assigned by server on save");
+    expect(UI_HTML).toContain("Immutable");
+    expect(UI_JS).toContain('claim.id || "Assigned by server on save"');
+    expect(html).not.toContain("claim-source-id");
+    expect(html).not.toContain('placeholder="optional"');
     // WP5 edge-key inputs, pre-filled from the source row.
     expect(html).toContain('class="claim-source-derived-from"');
     expect(html).toContain('value="projects/demo/b.md#c-up0001"');

@@ -1000,8 +1000,9 @@ describe("UI HTTP routes", () => {
         section: string;
         text: string;
         status: string;
+        id?: string;
         annotation?: { src: string; conf: string; kind?: string; person?: string; personName?: string };
-        sources?: Array<{ src: string; conf: string; kind?: string; person?: string; personName?: string }>;
+        sources?: Array<{ src: string; conf: string; id?: string; kind?: string; person?: string; personName?: string }>;
         strength?: string;
       }>;
       summary: { total: number; annotated: number; unannotated: number; malformed: number };
@@ -1022,6 +1023,7 @@ describe("UI HTTP routes", () => {
       src: "PR #54",
       observed: "2026-07-07",
       conf: "medium",
+      id: "c-ui-chosen",
       approved: true,
     });
     expect(saved.warnings.filter((warning) => warning.severity === "BLOCK")).toEqual([]);
@@ -1031,13 +1033,16 @@ describe("UI HTTP routes", () => {
       `/api/ui/claims?name=${encodeURIComponent(target.anchor)}&status=annotated`,
     );
     expect(annotated.claims.map((claim) => claim.text)).toContain(target.text);
-    expect(annotated.claims.find((claim) => claim.text === target.text)?.annotation?.src).toBe("PR #54");
+    const annotatedClaim = annotated.claims.find((claim) => claim.text === target.text);
+    expect(annotatedClaim?.annotation?.src).toBe("PR #54");
+    expect(annotatedClaim?.id).toMatch(/^c-[a-z0-9]{6,8}$/);
+    expect(annotatedClaim?.id).not.toBe("c-ui-chosen");
 
     const multi = await postJson<ClaimWrite>("/api/ui/claim-sources", {
       name: target.anchor,
       claim: target.text,
       sources: [
-        { src: "PR #55", observed: "2026-07-08", conf: "high" },
+        { src: "PR #55", observed: "2026-07-08", conf: "high", id: "c-ui-tamper" },
         { src: "src/a.ts", observed: "2026-07-09", conf: "low" },
       ],
       approved: true,
@@ -1049,6 +1054,8 @@ describe("UI HTTP routes", () => {
     const multiClaim = multiListed.claims.find((claim) => claim.text === target.text);
     expect(multiClaim?.sources?.map((source) => source.src)).toEqual(["PR #55", "src/a.ts"]);
     expect(multiClaim?.strength).toBe("medium");
+    expect(multiClaim?.id).toBe(annotatedClaim?.id);
+    expect(multiClaim?.id).not.toBe("c-ui-tamper");
 
     const cleared = await postJson<ClaimWrite>("/api/ui/claim-annotation", {
       name: target.anchor,

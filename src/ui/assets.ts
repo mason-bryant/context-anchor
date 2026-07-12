@@ -561,6 +561,7 @@ export const UI_HTML = `<!doctype html>
           <div>
             <h2 id="claim-source-title">Claim Sources</h2>
             <p id="claim-source-text"></p>
+            <p class="claim-source-id-display">Claim ID: <code id="claim-source-id-value">Assigned by server on save</code> <span>Immutable</span></p>
           </div>
           <button id="claim-source-close" type="button" class="icon-button" aria-label="Close claim source editor">×</button>
         </div>
@@ -2052,6 +2053,17 @@ textarea {
 .claim-source-delete {
   gap: 6px;
   white-space: nowrap;
+}
+.claim-source-id-display {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 5px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+.claim-source-id-display code {
+  color: var(--text);
 }
 .claim-person-add {
   margin: 6px 0 12px;
@@ -5084,6 +5096,7 @@ export const UI_JS = `(function () {
     };
     el("claim-source-title").textContent = "Claim Sources";
     el("claim-source-text").textContent = claim.text || "";
+    el("claim-source-id-value").textContent = claim.id || "Assigned by server on save";
     el("claim-source-readonly").hidden = !readOnly;
     el("claim-source-result").textContent = readOnly ? SERVER_RULE_READ_ONLY_MESSAGE : "";
     el("claim-source-add").disabled = !!readOnly;
@@ -5135,7 +5148,6 @@ export const UI_JS = `(function () {
         return "<option value=\\"" + value + "\\"" + (source.conf === value ? " selected" : "") + ">" + value + "</option>";
       }).join("")
       + "</select></label>"
-      + "<label>ID<input class=\\"claim-source-id\\" type=\\"text\\" value=\\"" + escapeHtml(source.id || "") + "\\" placeholder=\\"optional\\"" + disabled + "></label>"
       + "<label class=\\"claim-source-edge-label\\">Derived from<input class=\\"claim-source-derived-from\\" type=\\"text\\" value=\\"" + escapeHtml(source.derivedFrom || "") + "\\" placeholder=\\"anchor#claim-id or #claim-id\\"" + disabled + "></label>"
       + "<label class=\\"claim-source-edge-label\\">Contradicts<input class=\\"claim-source-contradicts\\" type=\\"text\\" value=\\"" + escapeHtml(source.contradicts || "") + "\\" placeholder=\\"anchor#claim-id or #claim-id\\"" + disabled + "></label>"
       + "<button class=\\"claim-source-delete danger-button\\" type=\\"button\\"" + disabled + "><span class=\\"icon-label\\"><svg class=\\"icon\\" aria-hidden=\\"true\\"><use href=\\"#icon-trash\\"></use></svg><span>Delete</span></span></button>"
@@ -5223,16 +5235,14 @@ export const UI_JS = `(function () {
       var personRaw = (row.querySelector(".claim-source-person").value || "").trim();
       var observed = row.querySelector(".claim-source-observed").value || "";
       var conf = row.querySelector(".claim-source-conf").value || "medium";
-      var id = (row.querySelector(".claim-source-id").value || "").trim();
       var derivedFromEl = row.querySelector(".claim-source-derived-from");
       var contradictsEl = row.querySelector(".claim-source-contradicts");
       var derivedFrom = (derivedFromEl && derivedFromEl.value || "").trim();
       var contradicts = (contradictsEl && contradictsEl.value || "").trim();
-      if (!type.requiresPerson && !src && !observed && !id && !derivedFrom && !contradicts) {
+      if (!type.requiresPerson && !src && !observed && !derivedFrom && !contradicts) {
         continue;
       }
       var edges = {};
-      if (id) edges.id = id;
       if (derivedFrom) edges.derivedFrom = derivedFrom;
       if (contradicts) edges.contradicts = contradicts;
       if (type.requiresPerson) {
