@@ -5,6 +5,7 @@ import {
   parseBodyH2Segments,
   stringifyBodyH2Segments,
 } from "./storage/markdown.js";
+import type { MarkdownHeadingSection, ParsedAnchor } from "./storage/markdown.js";
 import type { AnchorFrontmatter, ValidationViolation } from "./types.js";
 
 export const ANCHOR_SECTION_SCHEMA = {
@@ -258,6 +259,13 @@ export type DesignHeaderStatus = {
   isAtTop: boolean;
 };
 
+export type AnchorStructureAnalysis = {
+  parsed: ParsedAnchor;
+  headingSections: MarkdownHeadingSection[];
+  designHeader: DesignHeaderStatus;
+  currentStateOrganization: CurrentStateOrganizationStatus;
+};
+
 /** The design header applies to the durable context anchor for a project, not its roadmap or milestones. */
 export function isProjectContextAnchor(name: string, frontmatter: AnchorFrontmatter): boolean {
   return /^projects\/[^/]+\/[^/]+\.md$/.test(name) && frontmatterTypeIncludes(frontmatter.type, "context-anchor");
@@ -265,11 +273,17 @@ export function isProjectContextAnchor(name: string, frontmatter: AnchorFrontmat
 
 export function designHeaderStatus(name: string, content: string): DesignHeaderStatus {
   const parsed = parseAnchor(content);
+  return designHeaderStatusFromParsed(name, parsed, extractHeadingSections(parsed.body));
+}
+
+function designHeaderStatusFromParsed(
+  name: string,
+  parsed: ParsedAnchor,
+  headingSections: readonly MarkdownHeadingSection[],
+): DesignHeaderStatus {
   const applies = isProjectContextAnchor(name, parsed.frontmatter);
-  const introduction = parsed.sections.get("Introduction");
-  const h2Titles = parseBodyH2Segments(parsed.body)
-    .filter((segment) => segment.kind === "section")
-    .map((segment) => segment.title);
+  const introduction = findHeadingSectionInIndex(headingSections, ["Introduction"]);
+  const h2Titles = headingSections.filter((section) => section.level === 2).map((section) => section.title);
   const introIndex = h2Titles.indexOf("Introduction");
   const invariantsIndex = h2Titles.indexOf("Invariants");
 
@@ -280,7 +294,10 @@ export function designHeaderStatus(name: string, content: string): DesignHeaderS
       Invariants: parsed.sections.has("Invariants"),
     },
     introduction: Object.fromEntries(
-      INTRODUCTION_FIELDS.map((field) => [field, introduction !== undefined && extractH3Titles(introduction).has(field)]),
+      INTRODUCTION_FIELDS.map((field) => [
+        field,
+        introduction !== undefined && extractH3Titles(introduction.bodyLines.join("\n")).has(field),
+      ]),
     ) as Record<IntroductionField, boolean>,
     isAtTop: introIndex === 0 && invariantsIndex === 1,
   };
@@ -288,6 +305,10 @@ export function designHeaderStatus(name: string, content: string): DesignHeaderS
 
 export function designHeaderWarnings(name: string, content: string): ValidationViolation[] {
   const status = designHeaderStatus(name, content);
+  return designHeaderWarningsFromStatus(name, status);
+}
+
+function designHeaderWarningsFromStatus(name: string, status: DesignHeaderStatus): ValidationViolation[] {
   if (!status.applies) {
     return [];
   }
@@ -343,6 +364,14 @@ export type CurrentStateOrganizationStatus = {
 /** Summarize the same organization signals shown by validation and the UI. */
 export function currentStateOrganizationStatus(name: string, content: string): CurrentStateOrganizationStatus {
   const parsed = parseAnchor(content);
+  return currentStateOrganizationStatusFromParsed(name, parsed, extractHeadingSections(parsed.body));
+}
+
+function currentStateOrganizationStatusFromParsed(
+  name: string,
+  parsed: ParsedAnchor,
+  sections: readonly MarkdownHeadingSection[],
+): CurrentStateOrganizationStatus {
   if (!isProjectContextAnchor(name, parsed.frontmatter)) {
     return {
       applies: false,
@@ -355,7 +384,6 @@ export function currentStateOrganizationStatus(name: string, content: string): C
     };
   }
 
-  const sections = extractHeadingSections(parsed.body);
   const currentState = findHeadingSectionInIndex(sections, ["Current State"]);
   if (!currentState) {
     return {
@@ -419,6 +447,13 @@ function isCurrentStateBullet(line: string): boolean {
  */
 export function currentStateOrganizationWarnings(name: string, content: string): ValidationViolation[] {
   const organization = currentStateOrganizationStatus(name, content);
+  return currentStateOrganizationWarningsFromStatus(name, organization);
+}
+
+function currentStateOrganizationWarningsFromStatus(
+  name: string,
+  organization: CurrentStateOrganizationStatus,
+): ValidationViolation[] {
   if (!organization.applies) return [];
   const warnings: ValidationViolation[] = [];
 
@@ -461,10 +496,38 @@ export function currentStateOrganizationWarnings(name: string, content: string):
   return warnings;
 }
 
+/** Parse an anchor and build its reusable heading index once for validators and read paths. */
+export function analyzeAnchorStructure(name: string, content: string): AnchorStructureAnalysis {
+  const parsed = parseAnchor(content);
+  const headingSections = extractHeadingSections(parsed.body);
+  return {
+    parsed,
+    headingSections,
+    designHeader: designHeaderStatusFromParsed(name, parsed, headingSections),
+    currentStateOrganization: currentStateOrganizationStatusFromParsed(name, parsed, headingSections),
+  };
+}
+
+/** Produce all structure warnings from a precomputed analysis without reparsing Markdown. */
+export function anchorStructureWarningsFromAnalysis(
+  name: string,
+  analysis: AnchorStructureAnalysis,
+): ValidationViolation[] {
+  return [
+    ...designHeaderWarningsFromStatus(name, analysis.designHeader),
+    ...currentStateOrganizationWarningsFromStatus(name, analysis.currentStateOrganization),
+  ];
+}
+
+/** Produce all structure warnings with one shared anchor parse and heading index. */
+export function anchorStructureWarnings(name: string, content: string): ValidationViolation[] {
+  return anchorStructureWarningsFromAnalysis(name, analyzeAnchorStructure(name, content));
+}
+
 /** Add missing design-header sections/fields to persisted Markdown and move the header to the top. */
 export function migrateDesignHeaderContent(name: string, content: string): string {
   const parsed = parseAnchor(content);
-  const status = designHeaderStatus(name, content);
+  const status = designHeaderStatusFromParsed(name, parsed, extractHeadingSections(parsed.body));
   if (!status.applies || (status.isAtTop && allPresent(status))) {
     return content;
   }

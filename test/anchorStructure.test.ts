@@ -6,6 +6,8 @@ import {
   APPROVAL_REQUIRED_SECTIONS,
   CLAIM_BEARING_SECTIONS,
   CURRENT_STATE_TOPICS,
+  analyzeAnchorStructure,
+  anchorStructureWarningsFromAnalysis,
   currentStateOrganizationWarnings,
   currentStateOrganizationStatus,
   designHeaderStatus,
@@ -210,6 +212,38 @@ None.
 None.`);
 
     expect(currentStateOrganizationWarnings("projects/demo/demo.md", content).map((warning) => warning.code)).toEqual([
+      "current_state_unstructured",
+      "current_state_changelog_heavy",
+    ]);
+  });
+
+  it("derives design and organization warnings from one reusable structure analysis", () => {
+    const claims = Array.from({ length: 8 }, (_, index) =>
+      `- Capability ${index + 1} shipped in PR #${index + 1}.`,
+    ).join("\n");
+    const content = projectContextBody(`## Current State
+
+${claims}
+
+## Decisions
+
+None.
+
+## Constraints
+
+None.
+
+## PRs
+
+None.`);
+
+    const analysis = analyzeAnchorStructure("projects/demo/demo.md", content);
+
+    expect(analysis.parsed.sections.has("Current State")).toBe(true);
+    expect(analysis.headingSections.some((section) => section.path.join(" > ") === "Current State")).toBe(true);
+    expect(anchorStructureWarningsFromAnalysis("projects/demo/demo.md", analysis).map((warning) => warning.code)).toEqual([
+      "design_header_section_missing",
+      "design_header_section_missing",
       "current_state_unstructured",
       "current_state_changelog_heavy",
     ]);

@@ -211,8 +211,7 @@ import {
 import { runValidators } from "./validators/pipeline.js";
 import {
   ANCHOR_SECTION_DEFINITIONS,
-  currentStateOrganizationWarnings,
-  designHeaderWarnings,
+  anchorStructureWarnings,
   migrateDesignHeaderContent,
 } from "./anchorStructure.js";
 import {
@@ -764,10 +763,7 @@ export class AnchorService {
   ): Promise<AnchorRead> {
     const read = await this.readAnchorBase(name, version);
     const withProvenance = await this.withOptionalClaimProvenance(read, options.includeProvenance ?? "none", options.task);
-    const warnings = [
-      ...designHeaderWarnings(withProvenance.name, withProvenance.content),
-      ...currentStateOrganizationWarnings(withProvenance.name, withProvenance.content),
-    ];
+    const warnings = anchorStructureWarnings(withProvenance.name, withProvenance.content);
     return {
       ...withProvenance,
       sectionDefinitions: { ...ANCHOR_SECTION_DEFINITIONS },
