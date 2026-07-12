@@ -16,6 +16,7 @@ import type {
   ProposeChangeInput,
 } from "../types.js";
 import type { GraphEdgeType } from "../graph/model.js";
+import type { TraceIndex } from "../trace/index.js";
 import { UI_CSS, UI_HTML, UI_JS } from "./assets.js";
 import { toAnchorUiDetail, toAnchorUiMeta } from "./viewModel.js";
 
@@ -40,6 +41,7 @@ export function registerUiRoutes(
   service: AnchorService,
   options: {
     authMiddleware?: UiAuthMiddleware;
+    traceIndex?: TraceIndex;
   } = {},
 ): void {
   app.get("/", (_req, res) => res.redirect(302, "/ui"));
@@ -133,6 +135,23 @@ export function registerUiRoutes(
     "/api/ui/milestones",
     ...protect,
     jsonRoute(async (req) => ({ milestones: await service.listMilestones(optionalQueryString(req, "project")) })),
+  );
+
+  app.get(
+    "/api/ui/traces",
+    ...protect,
+    jsonRoute(async (req) => {
+      const traceIndex = options.traceIndex;
+      if (!traceIndex?.enabled) {
+        return { enabled: false, sessions: [] };
+      }
+      const limitRaw = optionalQueryString(req, "limit");
+      const limit = limitRaw ? Number.parseInt(limitRaw, 10) : undefined;
+      return {
+        enabled: true,
+        sessions: await traceIndex.getSessions({ limit: Number.isFinite(limit) ? limit : undefined }),
+      };
+    }),
   );
 
   app.get(

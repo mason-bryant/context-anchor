@@ -25,6 +25,15 @@
       "zippedArchive": true,
       "includeArguments": true,
       "redactArguments": true
+    },
+    "traces": {
+      "enabled": false,
+      "dirname": "~/.anchor-mcp/logs",
+      "filename": "anchor-mcp-traces-%DATE%.log",
+      "maxSize": "10m",
+      "maxFiles": "365d",
+      "zippedArchive": true,
+      "includeTaskText": false
     }
   }
 }

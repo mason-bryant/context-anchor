@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
-import type { FileLoggingConfig, LoggingConfig, RequestLoggingConfig, ServerConfig } from "../types.js";
+import type { FileLoggingConfig, LoggingConfig, RequestLoggingConfig, ServerConfig, TraceLoggingConfig } from "../types.js";
 import { expandHome } from "../utils/path.js";
 import { DEFAULT_GRAPH_SCORING_ENABLED, DEFAULT_GRAPH_SCORING_MAX_BOOST, clampGraphScoringMaxBoost } from "../graph/proximity.js";
 
@@ -236,7 +236,10 @@ function loggingConfigValue(value: unknown, key: string): LoggingConfig | undefi
 
   const file = fileLoggingConfigValue(value.file, `${key}.file`);
   const requests = requestLoggingConfigValue(value.requests, `${key}.requests`);
-  return file || requests ? { ...(file ? { file } : {}), ...(requests ? { requests } : {}) } : undefined;
+  const traces = traceLoggingConfigValue(value.traces, `${key}.traces`);
+  return file || requests || traces
+    ? { ...(file ? { file } : {}), ...(requests ? { requests } : {}), ...(traces ? { traces } : {}) }
+    : undefined;
 }
 
 function fileLoggingConfigValue(value: unknown, key: string): FileLoggingConfig | undefined {
@@ -278,6 +281,22 @@ function requestLoggingConfigValue(value: unknown, key: string): RequestLoggingC
     ...file,
     includeArguments: booleanConfigValue(value.includeArguments, `${key}.includeArguments`),
     redactArguments: booleanConfigValue(value.redactArguments, `${key}.redactArguments`),
+  };
+}
+
+function traceLoggingConfigValue(value: unknown, key: string): TraceLoggingConfig | undefined {
+  const file = fileLoggingConfigValue(value, key);
+  if (!file) {
+    return undefined;
+  }
+
+  if (!isRecord(value)) {
+    return file;
+  }
+
+  return {
+    ...file,
+    includeTaskText: booleanConfigValue(value.includeTaskText, `${key}.includeTaskText`),
   };
 }
 

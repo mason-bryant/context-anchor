@@ -1129,6 +1129,7 @@ export type GraphScoringConfig = {
 export type LoggingConfig = {
   file?: FileLoggingConfig;
   requests?: RequestLoggingConfig;
+  traces?: TraceLoggingConfig;
 };
 
 export type FileLoggingConfig = {
@@ -1147,4 +1148,13 @@ export type RequestLoggingConfig = FileLoggingConfig & {
   includeArguments?: boolean;
   /** Redact large/sensitive argument values. Defaults to true; disable only for local debugging. */
   redactArguments?: boolean;
+};
+
+/**
+ * Opt-in context-trace events (compact retrieval result summaries). Retention is
+ * independent of request logs and defaults to one year (`maxFiles: "365d"`).
+ */
+export type TraceLoggingConfig = FileLoggingConfig & {
+  /** Persist raw task text in trace events. Defaults to false: only a hash and length are stored. */
+  includeTaskText?: boolean;
 };

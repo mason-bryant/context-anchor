@@ -72,7 +72,7 @@ export async function startHttpServer(
 
   const auth = bearerAuth(options.authToken);
   app.use("/mcp", auth);
-  registerUiRoutes(app, runtime.service, { authMiddleware: auth });
+  registerUiRoutes(app, runtime.service, { authMiddleware: auth, traceIndex: runtime.traceIndex });
 
   if (options.stateless) {
     const transport = new NodeStreamableHTTPServerTransport({ sessionIdGenerator: undefined });
@@ -110,7 +110,14 @@ export async function startHttpServer(
             transports.delete(closingSessionId);
           }
         };
-        await createAnchorMcpServer(runtime.service, { requestLogger: runtime.requestLogger }).connect(transport);
+        const sessionTransport = transport;
+        await createAnchorMcpServer(runtime.service, {
+          requestLogger: runtime.requestLogger,
+          trace: {
+            logger: runtime.traceLogger,
+            connection: { transport: "http", getSessionId: () => sessionTransport.sessionId },
+          },
+        }).connect(transport);
       }
 
       try {
@@ -141,6 +148,7 @@ export async function startHttpServer(
       error: errorMetadata(error),
     });
     await runtime.requestLogger.close();
+    await runtime.traceLogger.close();
     await runtime.logger.close();
     throw error;
   }
@@ -149,7 +157,7 @@ export async function startHttpServer(
   server.once("close", () => {
     runtime.stopAutoSync();
     runtime.logger.info("http server closed", { host: options.host, port: options.port });
-    void Promise.all([runtime.requestLogger.close(), runtime.logger.close()]);
+    void Promise.all([runtime.requestLogger.close(), runtime.traceLogger.close(), runtime.logger.close()]);
   });
   return server;
 }

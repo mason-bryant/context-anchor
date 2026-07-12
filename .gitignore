@@ -9,3 +9,4 @@ coverage/
 .DS_Store
 fixtures/demo-context/
 anchor-mcp.config.json
+*.swp
