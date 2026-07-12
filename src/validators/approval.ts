@@ -1,8 +1,7 @@
 import { extractBullets, parseAnchor } from "../storage/markdown.js";
+import { APPROVAL_REQUIRED_SECTIONS } from "../anchorStructure.js";
 import type { Validator } from "./types.js";
 import { violation } from "./types.js";
-
-const APPROVAL_SECTIONS = ["Decisions", "Constraints"];
 
 export const validateApprovalGate: Validator = (context) => {
   if (context.approved || !context.oldContent) {
@@ -11,7 +10,7 @@ export const validateApprovalGate: Validator = (context) => {
 
   const oldParsed = parseAnchor(context.oldContent);
   const newParsed = parseAnchor(context.newContent);
-  const sensitiveSectionChanged = APPROVAL_SECTIONS.some(
+  const sensitiveSectionChanged = APPROVAL_REQUIRED_SECTIONS.some(
     (section) => oldParsed.sections.get(section) !== newParsed.sections.get(section),
   );
   const oldBullets = extractBullets(oldParsed.body);
@@ -26,7 +25,7 @@ export const validateApprovalGate: Validator = (context) => {
     violation(
       "BLOCK",
       "requires_approval",
-      "This write changes Decisions or Constraints, or removes existing bullets. Retry with approved: true after user approval.",
+      "This write changes Invariants, Decisions, or Constraints, or removes existing bullets. Retry with approved: true after user approval.",
       context.path,
     ),
   ];

@@ -492,7 +492,7 @@ export const UI_HTML = `<!doctype html>
               </div>
               <section class="detail-grid">
                 <div class="metadata-box">
-                  <h3>Required Sections</h3>
+                  <h3>Anchor Structure</h3>
                   <div id="section-status" class="section-status"></div>
                 </div>
                 <div class="metadata-box">
@@ -1071,6 +1071,14 @@ textarea {
   margin-top: 0;
 }
 
+.markdown h2.defined-heading-empty {
+  margin: 0.85em 0 0.2em;
+}
+
+.markdown h3.defined-heading-empty {
+  margin: 0.45em 0 0.12em;
+}
+
 .markdown p {
   margin: 0.55em 0;
 }
@@ -1450,6 +1458,103 @@ textarea {
   color: #4f5f6f;
   border-color: #c4ccd5;
   background: #eef1f4;
+}
+
+.section-info-icon {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 15px;
+  height: 15px;
+  margin-left: 5px;
+  border: 1px solid currentColor;
+  border-radius: 50%;
+  color: var(--muted);
+  font-size: 10px;
+  font-style: normal;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+  vertical-align: middle;
+}
+
+.section-info-icon:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.section-info-tooltip {
+  position: absolute;
+  z-index: 20;
+  left: calc(100% + 8px);
+  top: 50%;
+  width: max-content;
+  max-width: min(320px, 75vw);
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: #15202b;
+  color: #eef6ff;
+  box-shadow: 0 6px 18px rgba(16, 24, 32, 0.22);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.35;
+  text-align: left;
+  white-space: normal;
+  transform: translateX(-2px) translateY(-50%);
+  visibility: hidden;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 120ms ease, transform 120ms ease, visibility 120ms ease;
+}
+
+.section-info-icon:hover .section-info-tooltip,
+.section-info-icon:focus .section-info-tooltip,
+.section-info-icon:focus-within .section-info-tooltip {
+  visibility: visible;
+  opacity: 1;
+  transform: translateX(0) translateY(-50%);
+}
+
+.section-add-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  min-width: 22px;
+  margin-left: 7px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  background: var(--panel);
+  color: var(--muted);
+  font-size: 17px;
+  font-weight: 500;
+  line-height: 1;
+  vertical-align: middle;
+}
+
+.section-add-button:hover,
+.section-add-button:focus {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.section-add-editor {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  flex-wrap: wrap;
+  margin: 4px 0 12px;
+}
+
+.section-add-editor textarea {
+  width: min(620px, calc(100vw - 180px));
+  min-width: min(360px, 100%);
+  min-height: 58px;
+  resize: vertical;
 }
 
 .issue {
@@ -2587,6 +2692,7 @@ export const UI_JS = `(function () {
     claimTextEditor: null,
     bulletTextEditor: null,
     mermaidTextEditor: null,
+    sectionAddEditor: null,
     claimPersonMatchCache: [],
     claimPersonSearchTimer: null,
     claimPersonSearchSeq: 0,
@@ -4653,6 +4759,90 @@ export const UI_JS = `(function () {
     }
     if (editor.button) editor.button.disabled = false;
     state.bulletTextEditor = null;
+  }
+
+  function closeSectionAddEditor() {
+    var editor = state.sectionAddEditor;
+    if (!editor) return;
+    if (editor.editorEl && editor.editorEl.parentNode) {
+      editor.editorEl.parentNode.removeChild(editor.editorEl);
+    }
+    if (editor.button) editor.button.disabled = false;
+    state.sectionAddEditor = null;
+  }
+
+  function wireSectionAddControls(container, anchor, readOnly) {
+    container.querySelectorAll(".section-add-button[data-section-heading]").forEach(function (button) {
+      button.disabled = !!readOnly;
+      button.addEventListener("click", function () {
+        if (readOnly) return;
+        openSectionAddEditor(button, anchor);
+      });
+    });
+  }
+
+  function openSectionAddEditor(button, anchor) {
+    closeClaimTextEditor();
+    closeBulletTextEditor();
+    closeMermaidTextEditor();
+    closeSectionAddEditor();
+    var headingEl = button.closest("h2, h3");
+    if (!headingEl) return;
+    button.disabled = true;
+    var section = button.dataset.sectionHeading || "section";
+    var editorEl = document.createElement("div");
+    editorEl.className = "section-add-editor";
+    editorEl.innerHTML = "<textarea class=\\"section-add-input\\" rows=\\"2\\" placeholder=\\"Add one bullet to "
+      + escapeHtml(section) + "\\"></textarea>"
+      + "<span class=\\"claim-text-editor-actions\\">"
+      + "<button type=\\"button\\" class=\\"section-add-save\\">Add</button>"
+      + "<button type=\\"button\\" class=\\"section-add-cancel\\">Cancel</button>"
+      + "<span class=\\"claim-text-editor-result\\"></span>"
+      + "</span>";
+    headingEl.insertAdjacentElement("afterend", editorEl);
+    state.sectionAddEditor = { anchor: anchor, section: section, button: button, editorEl: editorEl };
+    var input = editorEl.querySelector(".section-add-input");
+    input.focus();
+    editorEl.querySelector(".section-add-cancel").addEventListener("click", closeSectionAddEditor);
+    editorEl.querySelector(".section-add-save").addEventListener("click", function () {
+      saveSectionAddEditor().catch(function (error) {
+        editorEl.querySelector(".claim-text-editor-result").textContent = error.message;
+      });
+    });
+  }
+
+  async function saveSectionAddEditor() {
+    var editor = state.sectionAddEditor;
+    if (!editor) return;
+    var resultEl = editor.editorEl.querySelector(".claim-text-editor-result");
+    var input = editor.editorEl.querySelector(".section-add-input");
+    var text = (input.value || "").trim();
+    if (!text) {
+      resultEl.textContent = "Content is required.";
+      return;
+    }
+    if (/[\\r\\n]/.test(text)) {
+      resultEl.textContent = "Add one bullet at a time.";
+      return;
+    }
+    resultEl.textContent = "Adding...";
+    var payload = {
+      name: editor.anchor.name,
+      heading: editor.section,
+      text: text,
+      approved: true
+    };
+    if (editor.anchor.fileCommit) payload.expectedFileCommit = editor.anchor.fileCommit;
+    var res = await apiPost("/api/ui/anchor-structured-content", payload);
+    if (res.warnings && res.warnings.some(function (warning) { return warning.severity === "BLOCK"; })) {
+      resultEl.textContent = res.warnings.map(function (warning) { return warning.message; }).join("; ");
+      return;
+    }
+    var anchorName = editor.anchor.name;
+    closeSectionAddEditor();
+    if (state.selectedName === anchorName) {
+      selectAnchor(anchorName, { skipLocationUpdate: true });
+    }
   }
 
   function openMermaidTextEditor(button, block, anchor) {
@@ -7347,6 +7537,15 @@ export const UI_JS = `(function () {
         await loadProjectMappings();
       }
       var detail = await api("/api/ui/anchor?name=" + encodeURIComponent(name));
+      if (detail.anchor.ui.designHeader && detail.anchor.ui.designHeader.applies
+          && (!detail.anchor.ui.designHeader.isAtTop
+            || Object.keys(detail.anchor.ui.designHeader.sections).some(function (key) { return !detail.anchor.ui.designHeader.sections[key]; })
+            || Object.keys(detail.anchor.ui.designHeader.introduction).some(function (key) { return !detail.anchor.ui.designHeader.introduction[key]; }))) {
+        var migration = await apiPost("/api/ui/anchor-design-header", { name: name });
+        if (migration.migrated) {
+          detail = await api("/api/ui/anchor?name=" + encodeURIComponent(name));
+        }
+      }
       renderDetail(detail.anchor, { focusTask: opts.focusTask });
       setBanner("", "info");
     } catch (error) {
@@ -7383,7 +7582,16 @@ export const UI_JS = `(function () {
       + (readOnly ? "<span class=\\"badge readonly\\">Read-only server rule</span>" : "")
       + "<span class=\\"badge\\">" + escapeHtml(anchor.frontmatter.type || "unknown type") + "</span>"
       + (priorityLabel(anchorPriority(anchor)) ? "<span class=\\"badge\\">" + escapeHtml(priorityLabel(anchorPriority(anchor))) + "</span>" : "");
-    el("section-status").innerHTML = Object.keys(anchor.ui.sections).map(function (section) {
+    var designHeader = anchor.ui.designHeader || { applies: false, sections: {}, introduction: {} };
+    var designBadges = designHeader.applies
+      ? Object.keys(designHeader.sections).concat(Object.keys(designHeader.introduction)).map(function (section) {
+          var ok = Object.prototype.hasOwnProperty.call(designHeader.sections, section)
+            ? designHeader.sections[section]
+            : designHeader.introduction[section];
+          return "<span class=\\"badge " + (ok ? "ok" : "warn") + "\\">" + escapeHtml(section) + "</span>";
+        }).join("")
+      : "";
+    el("section-status").innerHTML = designBadges + Object.keys(anchor.ui.sections).map(function (section) {
       var ok = anchor.ui.sections[section];
       return "<span class=\\"badge " + (ok ? "ok" : "block") + "\\">" + escapeHtml(section) + "</span>";
     }).join("");
@@ -7395,9 +7603,12 @@ export const UI_JS = `(function () {
       questions: anchor.ui.questions || [],
       mermaidBlocks: anchor.ui.mermaidBlocks || [],
       lineOffset: markdownBodyLineOffset(anchor.content || ""),
-      claimControls: true
+      claimControls: true,
+      sectionAddControls: !readOnly,
+      sectionDefinitions: anchor.ui.sectionDefinitions || {}
     });
     decorateAnchorLinks(el("detail-rendered"));
+    wireSectionAddControls(el("detail-rendered"), anchor, readOnly);
     wireClaimEpistemologyControls(el("detail-rendered"), anchor, readOnly);
     wireMermaidBlockControls(el("detail-rendered"), anchor, readOnly);
     wireEditableBulletControls(el("detail-rendered"), anchor, readOnly);
@@ -7818,12 +8029,22 @@ export const UI_JS = `(function () {
         flushParagraph();
         closeList();
         var level = heading[1].length;
+        var headingTitle = stripClosingHeadingHashes(heading[2]);
         if (level === 1) {
           currentSection = "";
         } else if (level === 2) {
-          currentSection = stripClosingHeadingHashes(heading[2]);
+          currentSection = headingTitle;
         }
-        html += "<h" + level + ">" + inlineMarkdown(heading[2]) + "</h" + level + ">";
+        var definitionInfo = level === 2 || level === 3
+          ? sectionDefinitionInfo(headingTitle, opts.sectionDefinitions || {})
+          : "";
+        var addControl = definitionInfo && opts.sectionAddControls
+          ? sectionAddButton(headingTitle)
+          : "";
+        var emptyDefinedClass = definitionInfo && !markdownHeadingHasContent(lines, index, level)
+          ? " class=\\"defined-heading-empty\\""
+          : "";
+        html += "<h" + level + emptyDefinedClass + ">" + inlineMarkdown(heading[2]) + definitionInfo + addControl + "</h" + level + ">";
         continue;
       }
       var bullet = line.match(/^([-*])\\s+(.+)$/);
@@ -7866,6 +8087,31 @@ export const UI_JS = `(function () {
       flushCode();
     }
     return html;
+  }
+
+  function sectionDefinitionInfo(section, definitions) {
+    var definition = definitions && definitions[section];
+    if (!definition) return "";
+    return "<span class=\\"section-info-icon\\" tabindex=\\"0\\" role=\\"img\\" aria-label=\\"About "
+      + escapeHtml(section) + ": " + escapeHtml(definition) + "\\">i"
+      + "<span class=\\"section-info-tooltip\\" role=\\"tooltip\\">" + escapeHtml(definition) + "</span></span>";
+  }
+
+  function sectionAddButton(section) {
+    var label = "Add content to " + section;
+    return "<button type=\\"button\\" class=\\"section-add-button\\" data-section-heading=\\""
+      + escapeHtml(section) + "\\" aria-label=\\"" + escapeHtml(label) + "\\" title=\\"" + escapeHtml(label) + "\\">+</button>";
+  }
+
+  function markdownHeadingHasContent(lines, headingIndex, headingLevel) {
+    for (var index = headingIndex + 1; index < lines.length; index += 1) {
+      var line = String(lines[index] || "");
+      if (!line.trim()) continue;
+      var nextHeading = line.match(/^(#{1,4})\\s+(.+)$/);
+      if (!nextHeading) return true;
+      return nextHeading[1].length > headingLevel;
+    }
+    return false;
   }
 
   function renderMermaidBlock(codeText, block, opts) {
@@ -8627,23 +8873,27 @@ export const UI_JS = `(function () {
       }
     });
     document.addEventListener("click", function (event) {
-      if (!state.claimTextEditor && !state.bulletTextEditor) return;
+      if (!state.claimTextEditor && !state.bulletTextEditor && !state.sectionAddEditor) return;
       var target = event.target;
       if (target && target.closest && (
         target.closest(".claim-text-editor")
         || target.closest(".claim-text-edit-button")
         || target.closest(".bullet-text-edit-button")
+        || target.closest(".section-add-editor")
+        || target.closest(".section-add-button")
       )) {
         return;
       }
       if (state.claimTextEditor) closeClaimTextEditor();
       if (state.bulletTextEditor) closeBulletTextEditor();
+      if (state.sectionAddEditor) closeSectionAddEditor();
     });
     window.addEventListener("keydown", function (event) {
       if (event.key === "Escape") {
         if (state.claimSourceModal) closeClaimSourceModal();
         if (state.claimTextEditor) closeClaimTextEditor();
         if (state.bulletTextEditor) closeBulletTextEditor();
+        if (state.sectionAddEditor) closeSectionAddEditor();
       }
     });
     el("tasks-refresh").addEventListener("click", function () {

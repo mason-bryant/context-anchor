@@ -45,6 +45,10 @@ For setup walkthroughs, see [QUICKSTART.md](QUICKSTART.md).
   PR history, roadmaps, and agent rules live in validated Markdown anchors. Write
   tools commit updates to git, so discoveries from one session are available to the
   next agent instead of being trapped in a transcript.
+- **Fast project orientation with an authoritative design header.** Project context
+  anchors begin with purpose, goals, users, non-goals, and architectural invariants.
+  Missing fields produce agent warnings; opening a legacy project anchor in the UI
+  persists the blank sections as a migration so Raw, Rendered, and editors stay aligned.
 - **Structured work tracking across projects.** Backlog and milestone tasks are
   first-class data with status, owner, priority, notes, due dates, completion dates,
   and roadmap goal links. Agents can manage them through MCP, while the `/ui` Tasks

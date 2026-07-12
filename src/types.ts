@@ -97,6 +97,10 @@ export type AnchorRead = {
   fileCommit?: string;
   /** Optional parsed claim provenance sidecar, returned only when requested. */
   claimProvenance?: AnchorClaimProvenance;
+  /** Non-blocking structural issues discovered while reading this anchor. */
+  warnings?: ValidationViolation[];
+  /** Canonical human/agent definitions for the structured Markdown sections. */
+  sectionDefinitions?: Record<string, string>;
 };
 
 export type SearchHit = {
@@ -868,6 +872,10 @@ export type LoadContextAnchor = {
   frontmatter?: AnchorFrontmatter;
   /** Optional parsed claim provenance sidecar. */
   claimProvenance?: AnchorClaimProvenance;
+  /** Non-blocking structural issues agents should address or surface. */
+  warnings?: ValidationViolation[];
+  /** Canonical human/agent definitions for the structured Markdown sections. */
+  sectionDefinitions?: Record<string, string>;
 };
 
 export type LoadContextResult = {

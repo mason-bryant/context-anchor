@@ -5,6 +5,7 @@ import {
   mergeAnchorFrontmatter,
   replaceAnchorSection,
 } from "./anchorPatch.js";
+import { ANCHOR_SECTION_SCHEMA, insertAnchorSectionBullet, type AnchorSectionName } from "./anchorStructure.js";
 import { buildContextRoot } from "./contextRoot.js";
 import {
   canonicalBuiltInAnchorName,
@@ -200,6 +201,11 @@ import {
   type MermaidBlock,
 } from "./mermaidBlocks.js";
 import { runValidators } from "./validators/pipeline.js";
+import {
+  ANCHOR_SECTION_DEFINITIONS,
+  designHeaderWarnings,
+  migrateDesignHeaderContent,
+} from "./anchorStructure.js";
 import {
   carryClaimAnnotations,
   collectClaimIds,
@@ -757,7 +763,30 @@ export class AnchorService {
     } else {
       read = await this.repo.readAnchor(name, version);
     }
-    return await this.withOptionalClaimProvenance(read, options.includeProvenance ?? "none", options.task);
+    const withProvenance = await this.withOptionalClaimProvenance(read, options.includeProvenance ?? "none", options.task);
+    const warnings = designHeaderWarnings(withProvenance.name, withProvenance.content);
+    return {
+      ...withProvenance,
+      sectionDefinitions: { ...ANCHOR_SECTION_DEFINITIONS },
+      ...(warnings.length > 0 ? { warnings } : {}),
+    };
+  }
+
+  /** Persist the canonical project-context design header when a legacy anchor is opened in the UI. */
+  async ensureDesignHeader(name: string): Promise<WriteAnchorResult & { migrated: boolean }> {
+    const read = await this.readAnchor(name);
+    const content = migrateDesignHeaderContent(read.name, read.content);
+    if (content === read.content) {
+      return { migrated: false, warnings: [] };
+    }
+    const result = await this.writeAnchor({
+      name: read.name,
+      content,
+      message: "chore: add project context design header",
+      approved: true,
+      expectedFileCommit: read.fileCommit,
+    });
+    return { ...result, migrated: result.version !== undefined };
   }
 
   /** Return a reviewable Markdown-link rewrite without mutating the anchor. */
@@ -2846,7 +2875,7 @@ None.
                 location.code === "claim_not_found"
                   ? `No claim in ${input.name} matches ${
                       "line" in target ? `line ${target.line}` : `"${target.claim}"`
-                    }. Claims are top-level bullets in Current State, Decisions, or Constraints.`
+                    }. Claims are top-level bullets in Introduction, Invariants, Current State, Decisions, or Constraints.`
                   : `Claim match "${"claim" in target ? target.claim : `line ${target.line}`}" is ambiguous in ${input.name}. Matches: ${location.candidates
                       .map((candidate) => `"${candidate}"`)
                       .join(", ")}. Use a longer unique fragment.`,
@@ -3045,7 +3074,7 @@ None.
                 location.code === "claim_not_found"
                   ? `No claim in ${input.name} matches ${
                       "line" in target ? `line ${target.line}` : `"${target.claim}"`
-                    }. Claims are top-level bullets in Current State, Decisions, or Constraints.`
+                    }. Claims are top-level bullets in Introduction, Invariants, Current State, Decisions, or Constraints.`
                   : `Claim match "${"claim" in target ? target.claim : `line ${target.line}`}" is ambiguous in ${input.name}. Matches: ${location.candidates
                       .map((candidate) => `"${candidate}"`)
                       .join(", ")}. Use a longer unique fragment.`,
@@ -3155,6 +3184,32 @@ None.
       coAuthor: input.coAuthor,
       expectedFileCommit: input.expectedFileCommit,
       mutate: (old) => appendToAnchorSection(old, input.heading, input.content),
+    });
+  }
+
+  async addStructuredSectionContent(input: {
+    name: string;
+    heading: string;
+    text: string;
+    message?: string;
+    approved?: boolean;
+    coAuthor?: string;
+    expectedFileCommit?: string;
+  }): Promise<WriteAnchorResult> {
+    const definition = ANCHOR_SECTION_SCHEMA[input.heading as AnchorSectionName];
+    if (!definition) {
+      return AnchorService.blockResult("structured_section_unknown", `Unknown structured anchor section: ${input.heading}`);
+    }
+    const parent = "parent" in definition ? ANCHOR_SECTION_SCHEMA[definition.parent] : undefined;
+    const substantive = definition.substantive || parent?.substantive;
+    return this.applyAnchorContentPatch({
+      name: input.name,
+      ...(substantive ? { lastValidated: localDateKey() } : {}),
+      message: input.message ?? `docs: add content to ${input.heading} in ${input.name}`,
+      approved: input.approved,
+      coAuthor: input.coAuthor,
+      expectedFileCommit: input.expectedFileCommit,
+      mutate: (old) => insertAnchorSectionBullet(old, input.heading, input.text),
     });
   }
 

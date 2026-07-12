@@ -1,9 +1,8 @@
 import { stripClaimAnnotations } from "../claims.js";
+import { SUBSTANTIVE_SECTIONS } from "../anchorStructure.js";
 import { parseAnchor } from "../storage/markdown.js";
 import type { Validator } from "./types.js";
 import { maybeMigrationBlock } from "./types.js";
-
-const SUBSTANTIVE_SECTIONS = ["Current State", "Decisions", "Constraints"];
 
 export const validateLastValidatedBump: Validator = (context) => {
   if (!context.oldContent) {
@@ -38,7 +37,30 @@ export const validateLastValidatedBump: Validator = (context) => {
 };
 
 function sectionForSubstantiveComparison(sectionBody: string | undefined): string | undefined {
-  return sectionBody === undefined ? undefined : stripClaimAnnotations(sectionBody);
+  if (sectionBody === undefined) return undefined;
+  const content = stripH3HeadingsOutsideFences(stripClaimAnnotations(sectionBody)).trim();
+  return content || undefined;
+}
+
+function stripH3HeadingsOutsideFences(markdown: string): string {
+  let fence: { char: string; length: number } | undefined;
+  return markdown
+    .split(/\r?\n/)
+    .filter((line) => {
+      const fenceMatch = line.match(/^ {0,3}(`{3,}|~{3,})(.*)$/);
+      if (fenceMatch?.[1]) {
+        const marker = fenceMatch[1];
+        const char = marker[0] ?? "`";
+        if (!fence) {
+          fence = { char, length: marker.length };
+        } else if (fence.char === char && marker.length >= fence.length && (fenceMatch[2] ?? "").trim() === "") {
+          fence = undefined;
+        }
+        return true;
+      }
+      return Boolean(fence) || !/^ {0,3}###\s+/.test(line);
+    })
+    .join("\n");
 }
 
 function dateKey(value: unknown): unknown {

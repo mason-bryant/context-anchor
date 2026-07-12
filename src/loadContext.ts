@@ -137,6 +137,7 @@ export function shrinkLoadContextAnchorToFit(
     summary: stringFromFrontmatter(read.frontmatter.summary),
     read_this_if: stringArrayFromFrontmatter(read.frontmatter.read_this_if),
     version: read.version,
+    ...(read.sectionDefinitions ? { sectionDefinitions: read.sectionDefinitions } : {}),
   };
 }
 
@@ -158,6 +159,8 @@ export function buildLoadContextAnchor(
     read_this_if: readThisIf,
     version: read.version,
     frontmatter: read.frontmatter,
+    ...(read.warnings?.length ? { warnings: read.warnings } : {}),
+    ...(read.sectionDefinitions ? { sectionDefinitions: read.sectionDefinitions } : {}),
   };
 
   if (includeContent === "none") {

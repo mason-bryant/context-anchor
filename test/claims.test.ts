@@ -243,6 +243,24 @@ type: context-anchor
 `;
 
 describe("extractClaims", () => {
+  it("treats Introduction and Invariants bullets as editable claims", () => {
+    const claims = extractClaims(`## Introduction
+
+### Goals
+
+- Make project intent easy to review.
+
+## Invariants
+
+- INV-001: Stored context remains reviewable Markdown.
+`);
+
+    expect(claims.map((claim) => ({ section: claim.section, text: claim.text }))).toEqual([
+      { section: "Introduction", text: "Make project intent easy to review." },
+      { section: "Invariants", text: "INV-001: Stored context remains reviewable Markdown." },
+    ]);
+  });
+
   it("extracts claims from claim sections with both annotation forms", () => {
     const claims = extractClaims(DOC);
     const byText = new Map(claims.map((claim) => [claim.text, claim]));
