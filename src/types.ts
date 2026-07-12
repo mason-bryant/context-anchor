@@ -876,6 +876,18 @@ export type LoadContextAnchor = {
   warnings?: ValidationViolation[];
   /** Canonical human/agent definitions for the structured Markdown sections. */
   sectionDefinitions?: Record<string, string>;
+  /** H2 sections omitted from a compact project-context excerpt and available through readAnchorSection. */
+  availableSections?: string[];
+};
+
+export type AnchorSectionRead = {
+  name: string;
+  path: string;
+  heading: string;
+  content: string;
+  availableSections: string[];
+  version?: string;
+  fileCommit?: string;
 };
 
 export type LoadContextResult = {
@@ -997,6 +1009,7 @@ export type StartTaskResult = {
   activeMilestones: StartTaskActiveMilestone[];
   suggestedFollowUp: {
     readAnchor: string[];
+    readAnchorSection: Array<{ name: string; headings: string[] }>;
     note: string;
   };
 };

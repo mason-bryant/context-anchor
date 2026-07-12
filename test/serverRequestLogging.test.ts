@@ -33,6 +33,28 @@ function parseToolInput(tool: RegisteredToolForTest, input: unknown): unknown {
 }
 
 describe("MCP request logging", () => {
+  it("routes on-demand H2 section reads", async () => {
+    const service = {
+      readAnchorSection: vi.fn(async () => ({
+        name: "projects/demo/demo.md",
+        path: "projects/demo/demo.md",
+        heading: "Current State",
+        content: "## Current State\n\n- Demo exists.",
+        availableSections: ["Current State", "Decisions"],
+      })),
+    } as unknown as AnchorService;
+    const server = createAnchorMcpServer(service);
+    const tool = toolForTest(server, "readAnchorSection");
+
+    await tool.handler(
+      parseToolInput(tool, { name: "projects/demo/demo.md", heading: "Current State" }),
+      {},
+    );
+
+    expect((service as unknown as { readAnchorSection: ReturnType<typeof vi.fn> }).readAnchorSection)
+      .toHaveBeenCalledWith("projects/demo/demo.md", "Current State", undefined);
+  });
+
   it("normalizes JSON-stringified proposeChange nested parameters", async () => {
     const service = {
       proposeChange: vi.fn(async () => ({

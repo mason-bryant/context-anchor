@@ -24,5 +24,9 @@ describe("MCP-advertised anchor structure guidance", () => {
         expect(description, `${toolName} should advertise the ${section} definition`).toContain(`${section}: ${purpose}`);
       }
     }
+
+    expect(server._registeredTools.readAnchorSection?.description).toContain("one H2 section");
+    expect(server._registeredTools.startTask?.description).toContain("Introduction-through-Invariants");
+    expect(server._registeredTools.loadContext?.description).toContain("availableSections");
   });
 });

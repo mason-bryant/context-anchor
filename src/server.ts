@@ -180,7 +180,7 @@ suggested loadContext call using the selected names.
 
 Do not browse the filesystem for anchors; always use these MCP tools.
 
-Use readAnchor(...) after startTask or loadContext when you need the full body of a specific anchor.
+Use readAnchorSection(...) for one H2 section advertised by an anchor's availableSections. Use readAnchor(...) only when you need the full body.
 
 Why this matters: project decisions, conflicts, and PR-history context intentionally live in anchors rather than code. \
 Working without this context is the most common cause of contradictory output.
@@ -332,12 +332,30 @@ the index when your workflow checks in that file.`,
   );
 
   server.registerTool(
+    "readAnchorSection",
+    {
+      title: "Read Anchor Section",
+      description:
+        "Read one H2 section without loading the entire anchor. Use headings advertised in loadContext/startTask availableSections. " +
+        "Returns the selected section plus the anchor's complete H2 heading list for further on-demand reads.",
+      inputSchema: z.object({
+        name: z.string(),
+        heading: z.string().min(1),
+        version: z.string().optional(),
+      }),
+      annotations: { readOnlyHint: true },
+    },
+    async ({ name, heading, version }) => jsonResult(await service.readAnchorSection(name, heading, version)),
+  );
+
+  server.registerTool(
     "startTask",
     {
       title: "Start Task",
       description:
         "Session-start orchestration: plan a task-aware context bundle and load suggested anchor excerpts in one call. " +
         "Returns plan rationale, anchor excerpts, staleness flags, compact claim-provenance health, active milestones, and suggested readAnchor follow-ups. " +
+        "Project context anchors load front matter plus the complete Introduction-through-Invariants design header and advertise remaining H2 headings for readAnchorSection. " +
         "Loaded anchors include canonical sectionDefinitions guidance. " +
         `Pass repo and/or filePaths to resolve candidate projects when the project is not named directly. ${SECTION_DEFINITION_GUIDANCE}`,
       inputSchema: z.object({
@@ -362,6 +380,7 @@ the index when your workflow checks in that file.`,
       description:
         "One-call context load: context-root style index (entries + optional markdown) plus multiple anchor bodies. " +
         "Loaded anchors include canonical sectionDefinitions guidance. " +
+        "In excerpt mode, project context anchors return their complete Introduction-through-Invariants design header plus availableSections for on-demand reads. " +
         `Supports filters, explicit names, excerpt/full/none content modes, byte and count limits, nextCursor continuation, and optional claim provenance sidecars via includeProvenance. ${SECTION_DEFINITION_GUIDANCE}`,
       inputSchema: LoadContextInputSchema,
       annotations: { readOnlyHint: true },

@@ -1035,6 +1035,79 @@ last_validated: 2026-05-10
     );
   });
 
+  it("plans large project context anchors from their design overview and reads detail sections on demand", async () => {
+    const largeHistory = `- ${"historical detail ".repeat(800)}`;
+    const content = projectContextAnchorContent({ summary: "Authoritative demo project orientation." })
+      .replace(
+        "# Demo Project Context\n\n## Current State",
+        `# Demo Project Context
+
+## Introduction
+
+### Purpose
+
+- Keep shared context reliable.
+
+### Goals
+
+- Help agents orient quickly.
+
+### Users
+
+- Engineers using coding agents.
+
+### Non-goals
+
+- Loading all history by default.
+
+## Invariants
+
+- The design header is authoritative.
+
+## Current State`,
+      )
+      .replace("- The demo project context exists.", largeHistory);
+    await service.writeAnchor({
+      name: "projects/demo/demo-project-context",
+      content,
+      message: "test: add large project context",
+    });
+
+    const started = await service.startTask({
+      task: "understand demo project context",
+      project: "demo",
+      budgetTokens: 700,
+      maxAnchors: 1,
+      includeProvenance: "none",
+    });
+
+    expect(started.plan.included.map((anchor) => anchor.name)).toContain("projects/demo/demo-project-context.md");
+    const loaded = started.anchors.find((anchor) => anchor.name === "projects/demo/demo-project-context.md");
+    expect(loaded?.frontmatter.summary).toBe("Authoritative demo project orientation.");
+    expect(loaded?.excerpt).toContain("## Introduction");
+    expect(loaded?.excerpt).toContain("## Invariants");
+    expect(loaded?.excerpt).not.toContain("historical detail");
+    expect(loaded?.availableSections).toEqual(["Current State", "Decisions", "Constraints", "PRs"]);
+    expect(started.suggestedFollowUp.readAnchorSection).toContainEqual({
+      name: "projects/demo/demo-project-context.md",
+      headings: ["Current State", "Decisions", "Constraints", "PRs"],
+    });
+
+    const currentState = await service.readAnchorSection(
+      "projects/demo/demo-project-context.md",
+      "Current State",
+    );
+    expect(currentState.content).toContain("historical detail");
+    expect(currentState.availableSections).toEqual([
+      "Introduction",
+      "Invariants",
+      "Current State",
+      "Decisions",
+      "Constraints",
+      "PRs",
+    ]);
+  });
+
   it("loadContext uses task-aware excerpts when task is provided", async () => {
     const padding = "x".repeat(1500);
     await service.writeAnchor({

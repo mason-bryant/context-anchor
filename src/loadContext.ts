@@ -1,6 +1,8 @@
 import { isDiscoveryCategory } from "./taxonomy.js";
 import type { DiscoveryCategory } from "./taxonomy.js";
 import { tokenize } from "./contextPlanner.js";
+import { isProjectContextAnchor } from "./anchorStructure.js";
+import { parseAnchor, parseBodyH2Segments, stringifyBodyH2Segments, type BodyH2Segment } from "./storage/markdown.js";
 import type {
   AnchorContentMode,
   AnchorRead,
@@ -171,7 +173,57 @@ export function buildLoadContextAnchor(
     return { ...base, content: read.content };
   }
 
+  const projectOverview = projectContextRetrievalOverview(read.name, read.content);
+  if (projectOverview) {
+    return {
+      ...base,
+      excerpt: projectOverview.excerpt,
+      availableSections: projectOverview.availableSections,
+    };
+  }
+
   return { ...base, excerpt: excerptFromContent(read.content, excerptChars, task) };
+}
+
+export type ProjectContextRetrievalOverview = {
+  excerpt: string;
+  availableSections: string[];
+};
+
+/** Keep the authoritative project design header intact and expose the rest as an H2 outline. */
+export function projectContextRetrievalOverview(
+  name: string,
+  content: string,
+): ProjectContextRetrievalOverview | undefined {
+  const parsed = parseAnchor(content);
+  if (!isProjectContextAnchor(name, parsed.frontmatter)) {
+    return undefined;
+  }
+
+  const sections = parseBodyH2Segments(parsed.body).filter(
+    (segment): segment is Extract<BodyH2Segment, { kind: "section" }> => segment.kind === "section",
+  );
+  const introductionIndex = sections.findIndex((section) => section.title === "Introduction");
+  const invariantsIndex = sections.findIndex((section) => section.title === "Invariants");
+  if (introductionIndex < 0 || invariantsIndex < introductionIndex) {
+    return undefined;
+  }
+
+  const designHeader = sections.slice(introductionIndex, invariantsIndex + 1);
+  const designHeaderSet = new Set(designHeader.map((section) => section.title));
+  return {
+    excerpt: stringifyBodyH2Segments(designHeader).trim(),
+    availableSections: sections.filter((section) => !designHeaderSet.has(section.title)).map((section) => section.title),
+  };
+}
+
+/** Character count used by planning for the content shape loadContext will actually return. */
+export function retrievalContentCharCount(name: string, content: string): number {
+  const overview = projectContextRetrievalOverview(name, content);
+  if (!overview) {
+    return stripFrontMatterForExcerpt(content).length;
+  }
+  return overview.excerpt.length + overview.availableSections.join("\n").length;
 }
 
 export function jsonByteLength(value: unknown): number {
