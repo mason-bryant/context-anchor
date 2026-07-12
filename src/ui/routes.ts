@@ -159,7 +159,7 @@ export function registerUiRoutes(
       if (!traceIndex?.enabled) {
         return { enabled: false, ...aggregateFollowUps([]) };
       }
-      const sessions = filterSessions(buildSessions(await traceIndex.getEvents()), readTraceFilter(req));
+      const sessions = filterSessions(buildSessions(await traceIndex.getEvents(), { maxEventsPerSession: Number.POSITIVE_INFINITY }), readTraceFilter(req));
       return { enabled: true, ...aggregateFollowUps(sessions) };
     }),
   );
@@ -172,7 +172,7 @@ export function registerUiRoutes(
       if (!traceIndex?.enabled) {
         return { enabled: false, rows: [] };
       }
-      const sessions = filterSessions(buildSessions(await traceIndex.getEvents()), readTraceFilter(req));
+      const sessions = filterSessions(buildSessions(await traceIndex.getEvents(), { maxEventsPerSession: Number.POSITIVE_INFINITY }), readTraceFilter(req));
       return { enabled: true, rows: aggregateFrequency(sessions) };
     }),
   );

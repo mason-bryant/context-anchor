@@ -374,13 +374,20 @@ export function filterSessions(sessions: TraceSessionView[], filter: TraceEventF
       result.push(session);
       continue;
     }
+    // Recompute all session-level metadata from the surviving events so a
+    // trimmed view never claims a task, project, or time range the filter
+    // removed.
     const ordered = orderedEvents(events);
+    const taskEvent = ordered.find((event) => event.task);
     result.push({
       ...session,
       events,
       eventCount: events.length,
       startedAt: ordered[0]!.timestamp,
       endedAt: ordered[ordered.length - 1]!.timestamp,
+      taskSha256: taskEvent?.task?.sha256,
+      taskText: taskEvent?.task?.text,
+      project: ordered.find((event) => event.project)?.project,
     });
   }
   return result;

@@ -147,8 +147,16 @@ function parseTraceLine(line: string): TraceEvent | undefined {
  * `startTask` boundaries; traceless events after a trace-minting `startTask`
  * on the same transport join that trace's session, since transport calls are
  * assumed serial (interleaved concurrent tasks are a documented limitation).
+ *
+ * `maxEventsPerSession` bounds the events retained per session (display
+ * default 500); aggregation callers pass Infinity so long sessions are not
+ * biased toward early-session behavior.
  */
-export function buildSessions(events: TraceEvent[]): TraceSessionView[] {
+export function buildSessions(
+  events: TraceEvent[],
+  options: { maxEventsPerSession?: number } = {},
+): TraceSessionView[] {
+  const maxEventsPerSession = options.maxEventsPerSession ?? MAX_EVENTS_PER_SESSION;
   const sorted = [...events].sort(
     (a, b) => a.timestamp.localeCompare(b.timestamp) || a.ordinal - b.ordinal,
   );
@@ -183,7 +191,7 @@ export function buildSessions(events: TraceEvent[]): TraceSessionView[] {
     };
     session.endedAt = event.timestamp > session.endedAt ? event.timestamp : session.endedAt;
     session.eventCount += 1;
-    if (session.events.length < MAX_EVENTS_PER_SESSION) {
+    if (session.events.length < maxEventsPerSession) {
       session.events.push(event);
     }
     if (!session.taskSha256 && event.task) {

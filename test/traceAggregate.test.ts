@@ -343,4 +343,45 @@ describe("project/since filters", () => {
     expect(trimmed.startedAt).toBe("2026-07-02T00:00:00.000Z");
     expect(trimmed.endedAt).toBe("2026-07-03T00:00:00.000Z");
   });
+
+  it("recomputes task and project metadata from surviving events on trimmed sessions", () => {
+    const events = [
+      ev({
+        sessionId: "s1",
+        traceId: "s1",
+        tool: "startTask",
+        project: "beta",
+        task: { sha256: "beta-task", length: 9 },
+        timestamp: "2026-07-01T00:00:00.000Z",
+      }),
+      ev({ sessionId: "s1", traceId: "s1", project: "alpha", timestamp: "2026-07-02T00:00:00.000Z" }),
+    ];
+    const sessions = buildSessions(events);
+    expect(sessions[0]!.taskSha256).toBe("beta-task");
+
+    const trimmed = filterSessions(sessions, { project: "alpha" })[0]!;
+    expect(trimmed.taskSha256).toBeUndefined();
+    expect(trimmed.taskText).toBeUndefined();
+    expect(trimmed.project).toBe("alpha");
+  });
+});
+
+describe("buildSessions event cap", () => {
+  it("caps retained events by default but keeps eventCount, and is uncapped for aggregation callers", () => {
+    const events = Array.from({ length: 7 }, (_, i) =>
+      ev({
+        sessionId: "s1",
+        traceId: "s1",
+        ordinal: i,
+        timestamp: `2026-07-01T00:00:0${i}.000Z`,
+      }),
+    );
+
+    const capped = buildSessions(events, { maxEventsPerSession: 5 })[0]!;
+    expect(capped.eventCount).toBe(7);
+    expect(capped.events).toHaveLength(5);
+
+    const uncapped = buildSessions(events, { maxEventsPerSession: Number.POSITIVE_INFINITY })[0]!;
+    expect(uncapped.events).toHaveLength(7);
+  });
 });
