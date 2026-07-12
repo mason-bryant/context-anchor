@@ -84,6 +84,12 @@ last_validated: 2026-07-12
 
 ## Current State
 
+### Capabilities
+
+- Earlier duplicate topic.
+
+### Capabilities
+
 - ${"large history ".repeat(500)}
 
 ## Decisions
@@ -106,6 +112,8 @@ None.
     expect(overview?.excerpt).toContain("## Invariants");
     expect(overview?.excerpt).not.toContain("large history");
     expect(overview?.availableSections).toEqual(["Current State", "Decisions", "Constraints", "PRs"]);
+    expect(overview?.availableSectionPaths).toEqual(["Current State > Capabilities"]);
+    expect(overview?.availableHeadingPaths).toEqual([["Current State", "Capabilities"]]);
   });
 
   it("falls back when the complete design header cannot fit the byte budget", () => {

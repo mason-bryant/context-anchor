@@ -509,6 +509,10 @@ export const UI_HTML = `<!doctype html>
                     <button id="update-priority" type="submit">Update</button>
                   </form>
                 </div>
+                <div id="current-state-organization-box" class="metadata-box current-state-organization-box" hidden>
+                  <h3>Current State Organization</h3>
+                  <div id="current-state-organization"></div>
+                </div>
               </section>
               <div class="detail-mode-row">
                 <div class="segmented" aria-label="Anchor detail content format">
@@ -1234,6 +1238,34 @@ textarea {
 .metadata-box h3 {
   margin: 0 0 10px;
   font-size: 14px;
+}
+
+.current-state-organization-box {
+  grid-column: 1 / -1;
+}
+
+.organization-summary,
+.organization-note {
+  margin: 7px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.retrieval-paths {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 9px;
+}
+
+.retrieval-path {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel-strong);
+  padding: 4px 7px;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 11px;
 }
 
 .planner-form {
@@ -7606,6 +7638,10 @@ export const UI_JS = `(function () {
       return "<span class=\\"badge " + (ok ? "ok" : "block") + "\\">" + escapeHtml(section) + "</span>";
     }).join("");
     el("validation-status").innerHTML = renderIssues(anchor.ui.health);
+    var organizationBox = el("current-state-organization-box");
+    var organization = anchor.ui.currentStateOrganization || { applies: false };
+    organizationBox.hidden = !organization.applies;
+    el("current-state-organization").innerHTML = currentStateOrganizationHtml(organization);
     renderDetailTasks(anchor, detailOpts.focusTask);
     var body = markdownBody(anchor.content || "");
     el("detail-rendered").innerHTML = renderMarkdown(body, {
@@ -7634,6 +7670,43 @@ export const UI_JS = `(function () {
       : "Load history to inspect diffs or revert.";
     resetNeighborsPanel();
     showDetailMode(state.detailMode);
+  }
+
+  function currentStateOrganizationHtml(organization) {
+    if (!organization || !organization.applies) return "";
+    var needsAttention = organization.status === "needs-attention";
+    var label = needsAttention
+      ? "Needs organization"
+      : organization.status === "organized" ? "Topic-oriented" : "Concise";
+    var html = "<span class=\\"badge " + (needsAttention ? "warn" : "ok") + "\\">" + escapeHtml(label) + "</span>";
+    html += "<p class=\\"organization-summary\\">" + escapeHtml(String(organization.claimCount || 0)) + " claims";
+    if (organization.ungroupedClaimCount) {
+      html += " · " + escapeHtml(String(organization.ungroupedClaimCount)) + " ungrouped";
+    }
+    if (organization.historyClaimCount) {
+      html += " · " + escapeHtml(String(organization.historyClaimCount)) + " release-history-style";
+    }
+    html += "</p>";
+
+    var topics = Array.isArray(organization.topics) ? organization.topics : [];
+    var paths = topics.map(function (topic) { return topic.path; });
+    if (paths.length) {
+      html += "<p class=\\"organization-note\\">Retrievable topic paths</p>";
+    } else if (needsAttention) {
+      paths = (organization.suggestedTopics || []).map(function (topic) { return "Current State > " + topic; });
+      html += "<p class=\\"organization-note\\">Suggested topic paths for a substantial Current State</p>";
+    } else {
+      html += "<p class=\\"organization-note\\">This concise Current State does not need topic headings yet.</p>";
+    }
+    if (paths.length) {
+      html += "<div class=\\"retrieval-paths\\">" + paths.map(function (path) {
+        return "<code class=\\"retrieval-path\\">" + escapeHtml(path) + "</code>";
+      }).join("") + "</div>";
+    }
+    if (needsAttention) {
+      html += "<p class=\\"organization-note\\">Keep present behavior in Current State and chronological delivery history in PRs.</p>";
+    }
+    return html;
   }
 
   // ---------------------------------------------------------------------------
@@ -9214,6 +9287,7 @@ export const UI_JS = `(function () {
     window.__ANCHOR_MCP_UI_TEST_HOOKS__.saveToken = saveToken;
     window.__ANCHOR_MCP_UI_TEST_HOOKS__.renderAnchorGroup = renderAnchorGroup;
     window.__ANCHOR_MCP_UI_TEST_HOOKS__.renderAnchorRow = renderAnchorRow;
+    window.__ANCHOR_MCP_UI_TEST_HOOKS__.currentStateOrganizationHtml = currentStateOrganizationHtml;
     window.__ANCHOR_MCP_UI_TEST_HOOKS__.sortAnchorGroups = sortAnchorGroups;
     window.__ANCHOR_MCP_UI_TEST_HOOKS__.priorityLabel = priorityLabel;
     window.__ANCHOR_MCP_UI_TEST_HOOKS__.projectOf = projectOf;

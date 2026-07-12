@@ -15,10 +15,11 @@ import type { AnchorQuestion } from "../questions.js";
 import {
   ALWAYS_REQUIRED_SECTIONS,
   ANCHOR_SECTION_DEFINITIONS,
-  designHeaderStatus,
+  analyzeAnchorStructure,
   type AlwaysRequiredSectionName,
   type AnchorSectionName,
   type DesignHeaderStatus,
+  type CurrentStateOrganizationStatus,
 } from "../anchorStructure.js";
 export type AnchorHealthStatus = "ok" | "warn" | "block";
 
@@ -48,6 +49,7 @@ export type AnchorUiDetail = AnchorRead & {
     health: AnchorUiHealth;
     sections: RequiredSectionStatus;
     designHeader: DesignHeaderStatus;
+    currentStateOrganization: CurrentStateOrganizationStatus;
     sectionDefinitions: Record<AnchorSectionName, string>;
     claims: (ClaimWithCertainty & { anchor: string })[];
     mermaidBlocks: (MermaidBlock & { anchor: string })[];
@@ -73,7 +75,8 @@ export function toAnchorUiDetail(
   mermaidBlocks: (MermaidBlock & { anchor: string })[] = [],
 ): AnchorUiDetail {
   const displayMeta = meta ?? anchorReadToMeta(anchor);
-  const sections = requiredSectionStatus(anchor.content);
+  const analysis = analyzeAnchorStructure(anchor.name, anchor.content);
+  const sections = requiredSectionStatusFromSections(analysis.parsed.sections);
 
   return {
     ...anchor,
@@ -81,7 +84,8 @@ export function toAnchorUiDetail(
       label: displayMeta.title || anchor.name,
       health: summarizeAnchorHealth({ ...displayMeta, warnings: anchor.warnings }, sections),
       sections,
-      designHeader: designHeaderStatus(anchor.name, anchor.content),
+      designHeader: analysis.designHeader,
+      currentStateOrganization: analysis.currentStateOrganization,
       sectionDefinitions: { ...ANCHOR_SECTION_DEFINITIONS },
       claims,
       mermaidBlocks,
@@ -91,8 +95,10 @@ export function toAnchorUiDetail(
 }
 
 export function requiredSectionStatus(content: string): RequiredSectionStatus {
-  const sections = parseAnchor(content).sections;
+  return requiredSectionStatusFromSections(parseAnchor(content).sections);
+}
 
+function requiredSectionStatusFromSections(sections: ReadonlyMap<string, string>): RequiredSectionStatus {
   return Object.fromEntries(
     ALWAYS_REQUIRED_SECTIONS.map((section) => [section, sections.has(section)]),
   ) as RequiredSectionStatus;

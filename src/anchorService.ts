@@ -60,7 +60,14 @@ import {
 } from "./proposedChanges.js";
 import { getRelatedAnchors } from "./relations/index.js";
 import { isProjectMilestoneType } from "./schema/milestoneTypes.js";
-import { countCompletedRows, parseAnchor } from "./storage/markdown.js";
+import {
+  countCompletedRows,
+  extractHeadingSections,
+  findHeadingSectionInIndex,
+  parseAnchor,
+  uniqueHeadingPathParts,
+  uniqueHeadingPaths,
+} from "./storage/markdown.js";
 import {
   SERVER_RULES_DISCOVERY_CATEGORY,
   classifyAnchorPath,
@@ -204,7 +211,7 @@ import {
 import { runValidators } from "./validators/pipeline.js";
 import {
   ANCHOR_SECTION_DEFINITIONS,
-  designHeaderWarnings,
+  anchorStructureWarnings,
   migrateDesignHeaderContent,
 } from "./anchorStructure.js";
 import {
@@ -754,18 +761,9 @@ export class AnchorService {
     version?: string,
     options: { includeProvenance?: ClaimProvenanceMode; task?: string } = {},
   ): Promise<AnchorRead> {
-    const built = readBuiltInAnchor(name);
-    let read: AnchorRead;
-    if (built) {
-      if (version && version !== "latest") {
-        throw new Error("Built-in policy anchors only support the latest revision.");
-      }
-      read = built;
-    } else {
-      read = await this.repo.readAnchor(name, version);
-    }
+    const read = await this.readAnchorBase(name, version);
     const withProvenance = await this.withOptionalClaimProvenance(read, options.includeProvenance ?? "none", options.task);
-    const warnings = designHeaderWarnings(withProvenance.name, withProvenance.content);
+    const warnings = anchorStructureWarnings(withProvenance.name, withProvenance.content);
     return {
       ...withProvenance,
       sectionDefinitions: { ...ANCHOR_SECTION_DEFINITIONS },
@@ -773,26 +771,63 @@ export class AnchorService {
     };
   }
 
-  async readAnchorSection(name: string, heading: string, version?: string): Promise<AnchorSectionRead> {
-    const normalizedHeading = heading.trim();
-    if (!normalizedHeading) {
+  private async readAnchorBase(name: string, version?: string): Promise<AnchorRead> {
+    const built = readBuiltInAnchor(name);
+    if (built) {
+      if (version && version !== "latest") {
+        throw new Error("Built-in policy anchors only support the latest revision.");
+      }
+      return built;
+    }
+    return this.repo.readAnchor(name, version);
+  }
+
+  async readAnchorSection(name: string, heading: string | string[], version?: string): Promise<AnchorSectionRead> {
+    const requestedPath = Array.isArray(heading)
+      ? heading.map((part) => part.trim().replace(/^#{2,6}\s+/, ""))
+      : [heading.trim().replace(/^#{2,6}\s+/, "")];
+    if (requestedPath.length === 0 || requestedPath.some((part) => !part)) {
       throw new Error("Section heading must not be blank.");
     }
-    const read = await this.readAnchor(name, version);
+    const read = await this.readAnchorBase(name, version);
     const parsed = parseAnchor(read.content);
-    const section = parsed.sections.get(normalizedHeading);
+    const headingSections = extractHeadingSections(parsed.body);
+    const normalizedInput = requestedPath[0] ?? "";
+    // Preserve the original exact-H2 contract even when a literal title uses
+    // the `>` character. Array input is an unambiguous nested path and may use
+    // `>` literally in any title.
+    const headingPath = Array.isArray(heading)
+      ? requestedPath
+      : parsed.sections.has(normalizedInput)
+      ? [normalizedInput]
+      : normalizedInput.split(">").map((part) => part.trim()).filter(Boolean);
+    const section = findHeadingSectionInIndex(headingSections, headingPath);
     const availableSections = [...parsed.sections.keys()];
+    const nestedHeadingSections = headingSections.filter((candidate) => candidate.level > 2);
+    const availableSectionPaths = uniqueHeadingPaths(nestedHeadingSections);
+    const availableHeadingPaths = uniqueHeadingPathParts(nestedHeadingSections);
     if (section === undefined) {
+      const ambiguousHeadingPaths = availableHeadingPaths.filter((availablePath) =>
+        availablePath.join(" > ") === normalizedInput
+        && !availablePath.every((part, index) => part === headingPath[index])
+      );
+      const ambiguityGuidance = ambiguousHeadingPaths.length > 0
+        ? ` The displayed path is ambiguous because a heading title contains ">". Use headingPath: ${JSON.stringify(ambiguousHeadingPaths[0])} from availableHeadingPaths.`
+        : "";
       throw new Error(
-        `Section not found in ${read.name}: ${normalizedHeading}. Available H2 sections: ${availableSections.join(", ") || "none"}.`,
+        `Section not found in ${read.name}: ${headingPath.join(" > ")}. Available section paths: `
+        + `${[...availableSections, ...availableSectionPaths].join(", ") || "none"}.${ambiguityGuidance}`,
       );
     }
+    const normalizedHeading = section.path.join(" > ");
     return {
       name: read.name,
       path: read.path,
       heading: normalizedHeading,
-      content: `## ${normalizedHeading}${section ? `\n\n${section}` : ""}`,
+      content: `${section.headingLine}${section.bodyLines.length > 0 ? `\n${section.bodyLines.join("\n")}` : ""}`.trimEnd(),
       availableSections,
+      availableSectionPaths,
+      availableHeadingPaths,
       version: read.version,
       ...(read.fileCommit ? { fileCommit: read.fileCommit } : {}),
     };
@@ -4041,8 +4076,12 @@ None.
         readAnchor: plan.included.map((anchor) => anchor.name),
         readAnchorSection: loaded.anchors
           .filter((anchor) => anchor.availableSections?.length)
-          .map((anchor) => ({ name: anchor.name, headings: anchor.availableSections ?? [] })),
-        note: "Use readAnchorSection for an available H2 section; use readAnchor only when the complete document is required.",
+          .map((anchor) => ({
+            name: anchor.name,
+            headings: [...(anchor.availableSections ?? []), ...(anchor.availableSectionPaths ?? [])],
+            headingPaths: anchor.availableHeadingPaths ?? [],
+          })),
+        note: "Use readAnchorSection for an available H2 or nested heading path; use readAnchor only when the complete document is required.",
       },
     };
   }

@@ -180,7 +180,7 @@ suggested loadContext call using the selected names.
 
 Do not browse the filesystem for anchors; always use these MCP tools.
 
-Use readAnchorSection(...) for one H2 section advertised by an anchor's availableSections. Use readAnchor(...) only when you need the full body.
+Use readAnchorSection(...) for one H2 section or nested path advertised by an anchor's availableSections/availableSectionPaths. Pass heading for an H2 or simple \`Current State > Capabilities\` path; pass an advertised availableHeadingPaths entry as headingPath when a heading title contains \`>\`. Use readAnchor(...) only when you need the full body.
 
 Why this matters: project decisions, conflicts, and PR-history context intentionally live in anchors rather than code. \
 Working without this context is the most common cause of contradictory output.
@@ -336,16 +336,20 @@ the index when your workflow checks in that file.`,
     {
       title: "Read Anchor Section",
       description:
-        "Read one H2 section without loading the entire anchor. Use headings advertised in loadContext/startTask availableSections. " +
-        "Returns the selected section plus the anchor's complete H2 heading list for further on-demand reads.",
+        "Read one H2 section or nested heading path without loading the entire anchor. Pass heading as an H2 name such as `Current State` or a simple path such as `Current State > Capabilities`; pass an availableHeadingPaths array as headingPath when any heading title contains `>`. Use paths advertised in loadContext/startTask availableSections, availableSectionPaths, and availableHeadingPaths. " +
+        "Returns the selected section plus the anchor's complete H2 and nested heading lists for further on-demand reads.",
       inputSchema: z.object({
         name: z.string(),
-        heading: z.string().trim().min(1),
+        heading: z.string().trim().min(1).optional(),
+        headingPath: z.array(z.string().trim().min(1)).min(1).optional(),
         version: z.string().optional(),
+      }).refine((input) => Boolean(input.heading) !== Boolean(input.headingPath), {
+        message: "Pass exactly one of heading or headingPath.",
       }),
       annotations: { readOnlyHint: true },
     },
-    async ({ name, heading, version }) => jsonResult(await service.readAnchorSection(name, heading, version)),
+    async ({ name, heading, headingPath, version }) =>
+      jsonResult(await service.readAnchorSection(name, headingPath ?? heading ?? "", version)),
   );
 
   server.registerTool(
@@ -355,7 +359,7 @@ the index when your workflow checks in that file.`,
       description:
         "Session-start orchestration: plan a task-aware context bundle and load suggested anchor excerpts in one call. " +
         "Returns plan rationale, anchor excerpts, staleness flags, compact claim-provenance health, active milestones, and suggested readAnchor follow-ups. " +
-        "Project context anchors load front matter plus the complete Introduction-through-Invariants design header and advertise remaining H2 headings for readAnchorSection. " +
+        "Project context anchors load front matter plus the complete Introduction-through-Invariants design header and advertise remaining H2 plus display and structured nested heading paths for readAnchorSection. " +
         "Loaded anchors include canonical sectionDefinitions guidance. " +
         `Pass repo and/or filePaths to resolve candidate projects when the project is not named directly. ${SECTION_DEFINITION_GUIDANCE}`,
       inputSchema: z.object({
@@ -380,7 +384,7 @@ the index when your workflow checks in that file.`,
       description:
         "One-call context load: context-root style index (entries + optional markdown) plus multiple anchor bodies. " +
         "Loaded anchors include canonical sectionDefinitions guidance. " +
-        "In excerpt mode, project context anchors return their complete Introduction-through-Invariants design header plus availableSections for on-demand reads. " +
+        "In excerpt mode, project context anchors return their complete Introduction-through-Invariants design header plus availableSections, availableSectionPaths, and unambiguous availableHeadingPaths for on-demand reads. " +
         `Supports filters, explicit names, excerpt/full/none content modes, byte and count limits, nextCursor continuation, and optional claim provenance sidecars via includeProvenance. ${SECTION_DEFINITION_GUIDANCE}`,
       inputSchema: LoadContextInputSchema,
       annotations: { readOnlyHint: true },
@@ -696,7 +700,7 @@ the index when your workflow checks in that file.`,
     {
       title: "Write Anchor",
       description:
-        `Validate, write, commit, and optionally push one context anchor. Project context anchors should begin with Introduction (Purpose, Goals, Users, Non-goals) and Invariants; omissions return non-blocking WARN entries, and the design header is authoritative over lower detail. ${SECTION_DEFINITION_GUIDANCE} When adding claims (bullets in Introduction/Invariants/Current State/Decisions/Constraints), cite provenance with an indented '{src: ...; observed: YYYY-MM-DD; conf: high|medium|low}' line under the bullet; new claims without one return a claim_annotation_missing WARN.`,
+        `Validate, write, commit, and optionally push one context anchor. Project context anchors should begin with Introduction (Purpose, Goals, Users, Non-goals) and Invariants; omissions return non-blocking WARN entries, and the design header is authoritative over lower detail. Organize a substantial Current State under H3 topics and describe present behavior rather than accumulating chronological release notes; organization issues return non-blocking WARN entries. ${SECTION_DEFINITION_GUIDANCE} When adding claims (bullets in Introduction/Invariants/Current State/Decisions/Constraints), cite provenance with an indented '{src: ...; observed: YYYY-MM-DD; conf: high|medium|low}' line under the bullet; new claims without one return a claim_annotation_missing WARN.`,
       inputSchema: z.object({
         name: z.string(),
         content: z.string(),

@@ -5,6 +5,11 @@ import {
   ANCHOR_SECTION_DEFINITIONS,
   APPROVAL_REQUIRED_SECTIONS,
   CLAIM_BEARING_SECTIONS,
+  CURRENT_STATE_TOPICS,
+  analyzeAnchorStructure,
+  anchorStructureWarningsFromAnalysis,
+  currentStateOrganizationWarnings,
+  currentStateOrganizationStatus,
   designHeaderStatus,
   designHeaderWarnings,
   insertAnchorSectionBullet,
@@ -30,9 +35,25 @@ describe("project context anchor design header", () => {
       "Non-goals",
       "Invariants",
       "Current State",
+      "Architecture",
+      "Capabilities",
+      "Interfaces",
+      "Data and Persistence",
+      "Operations and Security",
+      "Quality and Performance",
+      "Known Limitations",
       "Decisions",
       "Constraints",
       "PRs",
+    ]);
+    expect(CURRENT_STATE_TOPICS).toEqual([
+      "Architecture",
+      "Capabilities",
+      "Interfaces",
+      "Data and Persistence",
+      "Operations and Security",
+      "Quality and Performance",
+      "Known Limitations",
     ]);
   });
 
@@ -168,6 +189,201 @@ Explain the purpose.
 
     const updated = insertAnchorSectionBullet(content, "Purpose", "Real purpose.");
     expect(updated.indexOf("- Real purpose.")).toBeGreaterThan(updated.lastIndexOf("### Purpose"));
+  });
+
+  it("warns when a substantial Current State is unstructured or changelog-heavy", () => {
+    const claims = Array.from({ length: 8 }, (_, index) =>
+      `- Capability ${index + 1} shipped in PR #${index + 1}.`,
+    ).join("\n");
+    const content = projectContextBody(`## Current State
+
+${claims}
+
+## Decisions
+
+None.
+
+## Constraints
+
+None.
+
+## PRs
+
+None.`);
+
+    expect(currentStateOrganizationWarnings("projects/demo/demo.md", content).map((warning) => warning.code)).toEqual([
+      "current_state_unstructured",
+      "current_state_changelog_heavy",
+    ]);
+  });
+
+  it("derives design and organization warnings from one reusable structure analysis", () => {
+    const claims = Array.from({ length: 8 }, (_, index) =>
+      `- Capability ${index + 1} shipped in PR #${index + 1}.`,
+    ).join("\n");
+    const content = projectContextBody(`## Current State
+
+${claims}
+
+## Decisions
+
+None.
+
+## Constraints
+
+None.
+
+## PRs
+
+None.`);
+
+    const analysis = analyzeAnchorStructure("projects/demo/demo.md", content);
+
+    expect(analysis.parsed.sections.has("Current State")).toBe(true);
+    expect(analysis.headingSections.some((section) => section.path.join(" > ") === "Current State")).toBe(true);
+    expect(anchorStructureWarningsFromAnalysis("projects/demo/demo.md", analysis).map((warning) => warning.code)).toEqual([
+      "design_header_section_missing",
+      "design_header_section_missing",
+      "current_state_unstructured",
+      "current_state_changelog_heavy",
+    ]);
+  });
+
+  it("accepts a concise, topic-oriented Current State", () => {
+    const content = projectContextBody(`## Current State
+
+### Architecture
+
+  - The service has an MCP boundary.
+
+### Capabilities
+
+- Agents can retrieve context by task.
+
+## Decisions
+
+None.
+
+## Constraints
+
+None.
+
+## PRs
+
+None.`);
+
+    expect(currentStateOrganizationWarnings("projects/demo/demo.md", content)).toEqual([]);
+    expect(currentStateOrganizationStatus("projects/demo/demo.md", content)).toEqual(expect.objectContaining({
+      applies: true,
+      status: "organized",
+      claimCount: 2,
+      ungroupedClaimCount: 0,
+      topics: [
+        { title: "Architecture", path: "Current State > Architecture", claimCount: 1 },
+        { title: "Capabilities", path: "Current State > Capabilities", claimCount: 1 },
+      ],
+    }));
+  });
+
+  it("ignores bullet-like lines inside fenced code when counting Current State claims", () => {
+    const fencedClaims = Array.from({ length: 8 }, (_, index) =>
+      `- Example ${index + 1} shipped in PR #${index + 1}.`,
+    ).join("\n");
+    const content = projectContextBody(`## Current State
+
+- One real capability exists.
+
+\`\`\`yaml
+${fencedClaims}
+\`\`\`
+
+### Interfaces
+
+\`\`\`text
+- Example output.
+\`\`\`
+
+## Decisions
+
+None.
+
+## Constraints
+
+None.
+
+## PRs
+
+None.`);
+
+    expect(currentStateOrganizationWarnings("projects/demo/demo.md", content)).toEqual([]);
+    expect(currentStateOrganizationStatus("projects/demo/demo.md", content)).toEqual(expect.objectContaining({
+      status: "organized",
+      claimCount: 1,
+      ungroupedClaimCount: 1,
+      historyClaimCount: 0,
+      topics: [{ title: "Interfaces", path: "Current State > Interfaces", claimCount: 0 }],
+    }));
+  });
+
+  it("uses only the last duplicate Current State and its nested topics", () => {
+    const claims = Array.from({ length: 8 }, (_, index) => `- Current fact ${index + 1}.`).join("\n");
+    const content = projectContextBody(`## Current State
+
+### Legacy Topic
+
+- Superseded fact.
+
+## Current State
+
+${claims}
+
+## Decisions
+
+None.
+
+## Constraints
+
+None.
+
+## PRs
+
+None.`);
+
+    const organization = currentStateOrganizationStatus("projects/demo/demo.md", content);
+    expect(organization).toEqual(expect.objectContaining({
+      status: "needs-attention",
+      claimCount: 8,
+      ungroupedClaimCount: 8,
+      topics: [],
+    }));
+  });
+
+  it("does not let an empty trailing topic hide ungrouped claims", () => {
+    const claims = Array.from({ length: 8 }, (_, index) => `- Existing fact ${index + 1}.`).join("\n");
+    const content = projectContextBody(`## Current State
+
+${claims}
+
+### Architecture
+
+## Decisions
+
+None.
+
+## Constraints
+
+None.
+
+## PRs
+
+None.`);
+
+    const organization = currentStateOrganizationStatus("projects/demo/demo.md", content);
+    expect(organization.status).toBe("needs-attention");
+    expect(organization.ungroupedClaimCount).toBe(8);
+    expect(currentStateOrganizationWarnings("projects/demo/demo.md", content).map((warning) => warning.code)).toContain(
+      "current_state_unstructured",
+    );
   });
 });
 

@@ -14,6 +14,19 @@ export type BodyH2Segment =
   | { kind: "preamble"; lines: string[] }
   | { kind: "section"; headingLine: string; title: string; bodyLines: string[] };
 
+/** One fence-aware Markdown heading and the content nested beneath it. */
+export type MarkdownHeadingSection = {
+  headingLine: string;
+  title: string;
+  level: number;
+  /** One-based source line containing the heading. */
+  startLine: number;
+  /** Heading titles from the containing H2 through this heading. */
+  path: string[];
+  /** Content through (but not including) the next heading at this level or higher. */
+  bodyLines: string[];
+};
+
 type OpenFence = { char: "`" | "~"; len: number };
 
 export function parseAnchor(content: string): ParsedAnchor {
@@ -50,6 +63,121 @@ export function extractH2Sections(markdownBody: string): Map<string, string> {
     }
   }
   return map;
+}
+
+/**
+ * Enumerate H2-H6 sections with stable, human-readable heading paths.
+ * Headings inside fenced code blocks are ignored. Parent sections include
+ * their nested headings in bodyLines so reading an H2 remains backward compatible.
+ */
+export function extractHeadingSections(markdownBody: string): MarkdownHeadingSection[] {
+  const lines = markdownBody.split(/\r?\n/);
+  const headings: Array<Omit<MarkdownHeadingSection, "bodyLines" | "startLine"> & { lineIndex: number }> = [];
+  const ancestors: Array<string | undefined> = [];
+  let openFence: OpenFence | undefined;
+
+  for (let lineIndex = 0; lineIndex < lines.length; lineIndex += 1) {
+    const line = lines[lineIndex] ?? "";
+    if (openFence) {
+      if (tryCloseFence(line, openFence)) openFence = undefined;
+      continue;
+    }
+    const opened = tryOpenFence(line);
+    if (opened) {
+      openFence = opened;
+      continue;
+    }
+    const match = line.match(/^(#{2,6})\s+(.+?)\s*#*\s*$/);
+    if (!match?.[1] || !match[2]) continue;
+
+    const level = match[1].length;
+    const title = match[2].trim();
+    const depth = level - 2;
+    ancestors.length = depth;
+    ancestors[depth] = title;
+    headings.push({
+      headingLine: line,
+      title,
+      level,
+      path: ancestors.filter((entry): entry is string => entry !== undefined),
+      lineIndex,
+    });
+  }
+
+  return headings.map((heading, index) => {
+    let endLine = lines.length;
+    for (let nextIndex = index + 1; nextIndex < headings.length; nextIndex += 1) {
+      const next = headings[nextIndex];
+      if (next && next.level <= heading.level) {
+        endLine = next.lineIndex;
+        break;
+      }
+    }
+    return {
+      headingLine: heading.headingLine,
+      title: heading.title,
+      level: heading.level,
+      startLine: heading.lineIndex + 1,
+      path: heading.path,
+      bodyLines: lines.slice(heading.lineIndex + 1, endLine),
+    };
+  });
+}
+
+/** Resolve `Current State > Capabilities`-style paths without loading the whole anchor. */
+export function findHeadingSection(
+  markdownBody: string,
+  headingPath: readonly string[],
+): MarkdownHeadingSection | undefined {
+  return findHeadingSectionInIndex(extractHeadingSections(markdownBody), headingPath);
+}
+
+/** Resolve a heading path against a precomputed index, with the last duplicate winning. */
+export function findHeadingSectionInIndex(
+  sections: readonly MarkdownHeadingSection[],
+  headingPath: readonly string[],
+): MarkdownHeadingSection | undefined {
+  const normalized = headingPath.map((part) => part.trim()).filter(Boolean);
+  if (normalized.length === 0) return undefined;
+  let match: MarkdownHeadingSection | undefined;
+  for (const section of sections) {
+    if (
+      section.path.length === normalized.length
+      && section.path.every((part, index) => part === normalized[index])
+    ) {
+      // Match extractH2Sections' established duplicate-heading behavior: the
+      // last occurrence wins. This is deterministic for nested paths too.
+      match = section;
+    }
+  }
+  return match;
+}
+
+/** Return unique display paths ordered by their last occurrence in the document. */
+export function uniqueHeadingPaths(sections: readonly MarkdownHeadingSection[]): string[] {
+  const seen = new Set<string>();
+  const paths: string[] = [];
+  for (let index = sections.length - 1; index >= 0; index -= 1) {
+    const path = sections[index]?.path.join(" > ");
+    if (!path || seen.has(path)) continue;
+    seen.add(path);
+    paths.unshift(path);
+  }
+  return paths;
+}
+
+/** Return unique structured paths ordered by their last occurrence in the document. */
+export function uniqueHeadingPathParts(sections: readonly MarkdownHeadingSection[]): string[][] {
+  const seen = new Set<string>();
+  const paths: string[][] = [];
+  for (let index = sections.length - 1; index >= 0; index -= 1) {
+    const parts = sections[index]?.path;
+    const key = JSON.stringify(parts);
+    if (!parts || seen.has(key)) continue;
+    seen.add(key);
+    paths.unshift([...parts]);
+  }
+  return paths;
 }
 
 /**

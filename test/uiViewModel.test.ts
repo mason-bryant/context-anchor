@@ -237,6 +237,26 @@ None.
     expect(detail.ui.designHeader.applies).toBe(true);
     expect(detail.ui.designHeader.sections.Introduction).toBe(false);
   });
+
+  it("exposes Current State organization data for the anchor detail UI", () => {
+    const read = validRead();
+    read.content = read.content.replace(
+      "## Current State\n\nExists.",
+      "## Current State\n\n### Architecture\n\n- The service exists.\n\n### Capabilities\n\n- Agents can load context.",
+    );
+    const detail = toAnchorUiDetail(read);
+
+    expect(detail.ui.currentStateOrganization).toEqual(expect.objectContaining({
+      applies: true,
+      status: "organized",
+      claimCount: 2,
+      ungroupedClaimCount: 0,
+    }));
+    expect(detail.ui.currentStateOrganization.topics.map((topic) => topic.path)).toEqual([
+      "Current State > Architecture",
+      "Current State > Capabilities",
+    ]);
+  });
 });
 
 function validMeta(overrides: Partial<AnchorMeta> = {}): AnchorMeta {

@@ -2,7 +2,15 @@ import { isDiscoveryCategory } from "./taxonomy.js";
 import type { DiscoveryCategory } from "./taxonomy.js";
 import { tokenize } from "./contextPlanner.js";
 import { isProjectContextAnchor } from "./anchorStructure.js";
-import { parseAnchor, parseBodyH2Segments, stringifyBodyH2Segments, type BodyH2Segment } from "./storage/markdown.js";
+import {
+  extractHeadingSections,
+  parseAnchor,
+  parseBodyH2Segments,
+  stringifyBodyH2Segments,
+  type BodyH2Segment,
+  uniqueHeadingPathParts,
+  uniqueHeadingPaths,
+} from "./storage/markdown.js";
 import type {
   AnchorContentMode,
   AnchorRead,
@@ -182,6 +190,8 @@ export function buildLoadContextAnchor(
       ...base,
       excerpt: projectOverview.excerpt,
       availableSections: projectOverview.availableSections,
+      availableSectionPaths: projectOverview.availableSectionPaths,
+      availableHeadingPaths: projectOverview.availableHeadingPaths,
     };
   }
 
@@ -191,6 +201,8 @@ export function buildLoadContextAnchor(
 export type ProjectContextRetrievalOverview = {
   excerpt: string;
   availableSections: string[];
+  availableSectionPaths: string[];
+  availableHeadingPaths: string[][];
 };
 
 /** Keep the authoritative project design header intact and expose the rest as an H2 outline. */
@@ -214,9 +226,14 @@ export function projectContextRetrievalOverview(
 
   const designHeader = sections.slice(introductionIndex, invariantsIndex + 1);
   const designHeaderSet = new Set(designHeader.map((section) => section.title));
+  const availableSections = sections.filter((section) => !designHeaderSet.has(section.title)).map((section) => section.title);
+  const nestedHeadingSections = extractHeadingSections(parsed.body)
+    .filter((section) => section.level > 2 && availableSections.includes(section.path[0] ?? ""));
   return {
     excerpt: stringifyBodyH2Segments(designHeader).trim(),
-    availableSections: sections.filter((section) => !designHeaderSet.has(section.title)).map((section) => section.title),
+    availableSections,
+    availableSectionPaths: uniqueHeadingPaths(nestedHeadingSections),
+    availableHeadingPaths: uniqueHeadingPathParts(nestedHeadingSections),
   };
 }
 
@@ -226,7 +243,10 @@ export function retrievalContentCharCount(name: string, content: string): number
   if (!overview) {
     return stripFrontMatterForExcerpt(content).length;
   }
-  return overview.excerpt.length + overview.availableSections.join("\n").length;
+  return overview.excerpt.length
+    + overview.availableSections.join("\n").length
+    + overview.availableSectionPaths.join("\n").length
+    + JSON.stringify(overview.availableHeadingPaths).length;
 }
 
 export function jsonByteLength(value: unknown): number {

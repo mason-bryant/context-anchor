@@ -372,6 +372,29 @@ last_validated: 2026-05-10
     expect((await service.ensureDesignHeader("projects/demo/demo")).migrated).toBe(false);
   });
 
+  it("surfaces project Current State organization warnings on writes and reads", async () => {
+    const releaseClaims = Array.from({ length: 8 }, (_, index) =>
+      `- Capability ${index + 1} shipped in PR #${index + 1}.`,
+    ).join("\n");
+    const content = projectContextAnchorContent().replace("- The demo project context exists.", releaseClaims);
+
+    const written = await service.writeAnchor({
+      name: "projects/demo/demo",
+      content,
+      message: "test: add unstructured project state",
+    });
+    expect(written.warnings.map((warning) => warning.code)).toEqual(expect.arrayContaining([
+      "current_state_unstructured",
+      "current_state_changelog_heavy",
+    ]));
+
+    const read = await service.readAnchor("projects/demo/demo");
+    expect(read.warnings?.map((warning) => warning.code)).toEqual(expect.arrayContaining([
+      "current_state_unstructured",
+      "current_state_changelog_heavy",
+    ]));
+  });
+
   it("blocks anchors outside the enforced taxonomy", async () => {
     const result = await service.writeAnchor({
       name: "demo",
@@ -1036,7 +1059,7 @@ last_validated: 2026-05-10
   });
 
   it("plans large project context anchors from their design overview and reads detail sections on demand", async () => {
-    const largeHistory = `- ${"historical detail ".repeat(800)}`;
+    const largeHistory = `### Capabilities\n\n- ${"historical detail ".repeat(800)}`;
     const content = projectContextAnchorContent({ summary: "Authoritative demo project orientation." })
       .replace(
         "# Demo Project Context\n\n## Current State",
@@ -1088,15 +1111,20 @@ last_validated: 2026-05-10
     expect(loaded?.excerpt).toContain("## Invariants");
     expect(loaded?.excerpt).not.toContain("historical detail");
     expect(loaded?.availableSections).toEqual(["Current State", "Decisions", "Constraints", "PRs"]);
+    expect(loaded?.availableSectionPaths).toEqual(["Current State > Capabilities"]);
+    expect(loaded?.availableHeadingPaths).toEqual([["Current State", "Capabilities"]]);
     expect(started.suggestedFollowUp.readAnchorSection).toContainEqual({
       name: "projects/demo/demo-project-context.md",
-      headings: ["Current State", "Decisions", "Constraints", "PRs"],
+      headings: ["Current State", "Decisions", "Constraints", "PRs", "Current State > Capabilities"],
+      headingPaths: [["Current State", "Capabilities"]],
     });
 
+    const fullReadSpy = vi.spyOn(service, "readAnchor");
     const currentState = await service.readAnchorSection(
       "projects/demo/demo-project-context.md",
       "Current State",
     );
+    expect(fullReadSpy).not.toHaveBeenCalled();
     expect(currentState.content).toContain("historical detail");
     expect(currentState.availableSections).toEqual([
       "Introduction",
@@ -1106,6 +1134,17 @@ last_validated: 2026-05-10
       "Constraints",
       "PRs",
     ]);
+    expect(currentState.availableSectionPaths).toContain("Current State > Capabilities");
+    expect(currentState.availableHeadingPaths).toContainEqual(["Current State", "Capabilities"]);
+
+    const capabilities = await service.readAnchorSection(
+      "projects/demo/demo-project-context.md",
+      "Current State > Capabilities",
+    );
+    expect(capabilities.heading).toBe("Current State > Capabilities");
+    expect(capabilities.content).toMatch(/^### Capabilities/);
+    expect(capabilities.content).toContain("historical detail");
+    expect(capabilities.content).not.toContain("## Decisions");
 
     const normalizedCurrentState = await service.readAnchorSection(
       "projects/demo/demo-project-context.md",
@@ -1113,6 +1152,37 @@ last_validated: 2026-05-10
     );
     expect(normalizedCurrentState.heading).toBe("Current State");
     expect(normalizedCurrentState.content).toContain("historical detail");
+
+    const literalChevronContent = content.replace(
+      "## Decisions",
+      "### Input > Output\n\n- Nested conversion exists.\n\n## Input > Output\n\n- Conversion exists.\n\n## Decisions",
+    );
+    await service.writeAnchor({
+      name: "projects/demo/chevron-project-context",
+      content: literalChevronContent,
+      message: "test: preserve literal H2 chevrons",
+    });
+    const literalChevron = await service.readAnchorSection(
+      "projects/demo/chevron-project-context",
+      "Input > Output",
+    );
+    expect(literalChevron.heading).toBe("Input > Output");
+    expect(literalChevron.content).toMatch(/^## Input > Output/);
+    const nestedLiteralChevron = await service.readAnchorSection(
+      "projects/demo/chevron-project-context",
+      ["Current State", "Input > Output"],
+    );
+    expect(nestedLiteralChevron.heading).toBe("Current State > Input > Output");
+    expect(nestedLiteralChevron.content).toMatch(/^### Input > Output/);
+    expect(nestedLiteralChevron.content).toContain("Nested conversion exists");
+    await expect(
+      service.readAnchorSection(
+        "projects/demo/chevron-project-context",
+        "Current State > Input > Output",
+      ),
+    ).rejects.toThrow(
+      'The displayed path is ambiguous because a heading title contains ">". Use headingPath: ["Current State","Input > Output"] from availableHeadingPaths.',
+    );
     await expect(
       service.readAnchorSection("projects/demo/demo-project-context.md", "   "),
     ).rejects.toThrow("Section heading must not be blank");

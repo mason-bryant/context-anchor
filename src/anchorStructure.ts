@@ -1,4 +1,11 @@
-import { parseAnchor, parseBodyH2Segments, stringifyBodyH2Segments } from "./storage/markdown.js";
+import {
+  extractHeadingSections,
+  findHeadingSectionInIndex,
+  parseAnchor,
+  parseBodyH2Segments,
+  stringifyBodyH2Segments,
+} from "./storage/markdown.js";
+import type { MarkdownHeadingSection, ParsedAnchor } from "./storage/markdown.js";
 import type { AnchorFrontmatter, ValidationViolation } from "./types.js";
 
 export const ANCHOR_SECTION_SCHEMA = {
@@ -62,6 +69,69 @@ export const ANCHOR_SECTION_SCHEMA = {
     substantive: true,
     approvalRequired: false,
   },
+  Architecture: {
+    level: 3,
+    parent: "Current State",
+    required: "optional",
+    definition: "The implemented system boundaries, major components, and relationships that exist today.",
+    claimBearing: false,
+    substantive: false,
+    approvalRequired: false,
+  },
+  Capabilities: {
+    level: 3,
+    parent: "Current State",
+    required: "optional",
+    definition: "User- or operator-visible behavior that is implemented and available today.",
+    claimBearing: false,
+    substantive: false,
+    approvalRequired: false,
+  },
+  Interfaces: {
+    level: 3,
+    parent: "Current State",
+    required: "optional",
+    definition: "Current APIs, protocols, commands, and integration boundaries.",
+    claimBearing: false,
+    substantive: false,
+    approvalRequired: false,
+  },
+  "Data and Persistence": {
+    level: 3,
+    parent: "Current State",
+    required: "optional",
+    definition: "Current data models, storage backends, indexing, and durability behavior.",
+    claimBearing: false,
+    substantive: false,
+    approvalRequired: false,
+  },
+  "Operations and Security": {
+    level: 3,
+    parent: "Current State",
+    required: "optional",
+    definition: "Current deployment, observability, access-control, and operational behavior.",
+    claimBearing: false,
+    substantive: false,
+    approvalRequired: false,
+  },
+  "Quality and Performance": {
+    level: 3,
+    parent: "Current State",
+    required: "optional",
+    definition: "Verified quality characteristics, performance measurements, and test coverage.",
+    claimBearing: false,
+    substantive: false,
+    approvalRequired: false,
+  },
+  "Known Limitations": {
+    level: 3,
+    parent: "Current State",
+    required: "optional",
+    definition: "Observed gaps or limitations in the current implementation, without forward-looking plans.",
+    claimBearing: false,
+    substantive: false,
+    approvalRequired: false,
+  },
   Decisions: {
     level: 2,
     required: "all",
@@ -106,6 +176,9 @@ export const DESIGN_HEADER_SECTIONS = schemaEntries
 export const INTRODUCTION_FIELDS = schemaEntries
   .filter(([, definition]) => "parent" in definition && definition.parent === "Introduction")
   .map(([name]) => name) as IntroductionField[];
+export const CURRENT_STATE_TOPICS = schemaEntries
+  .filter(([, definition]) => "parent" in definition && definition.parent === "Current State")
+  .map(([name]) => name);
 export const ALWAYS_REQUIRED_SECTIONS = schemaEntries
   .filter(([, definition]) => definition.required === "all")
   .map(([name]) => name) as AlwaysRequiredSectionName[];
@@ -186,6 +259,13 @@ export type DesignHeaderStatus = {
   isAtTop: boolean;
 };
 
+export type AnchorStructureAnalysis = {
+  parsed: ParsedAnchor;
+  headingSections: MarkdownHeadingSection[];
+  designHeader: DesignHeaderStatus;
+  currentStateOrganization: CurrentStateOrganizationStatus;
+};
+
 /** The design header applies to the durable context anchor for a project, not its roadmap or milestones. */
 export function isProjectContextAnchor(name: string, frontmatter: AnchorFrontmatter): boolean {
   return /^projects\/[^/]+\/[^/]+\.md$/.test(name) && frontmatterTypeIncludes(frontmatter.type, "context-anchor");
@@ -193,11 +273,17 @@ export function isProjectContextAnchor(name: string, frontmatter: AnchorFrontmat
 
 export function designHeaderStatus(name: string, content: string): DesignHeaderStatus {
   const parsed = parseAnchor(content);
+  return designHeaderStatusFromParsed(name, parsed, extractHeadingSections(parsed.body));
+}
+
+function designHeaderStatusFromParsed(
+  name: string,
+  parsed: ParsedAnchor,
+  headingSections: readonly MarkdownHeadingSection[],
+): DesignHeaderStatus {
   const applies = isProjectContextAnchor(name, parsed.frontmatter);
-  const introduction = parsed.sections.get("Introduction");
-  const h2Titles = parseBodyH2Segments(parsed.body)
-    .filter((segment) => segment.kind === "section")
-    .map((segment) => segment.title);
+  const introduction = findHeadingSectionInIndex(headingSections, ["Introduction"]);
+  const h2Titles = headingSections.filter((section) => section.level === 2).map((section) => section.title);
   const introIndex = h2Titles.indexOf("Introduction");
   const invariantsIndex = h2Titles.indexOf("Invariants");
 
@@ -208,7 +294,10 @@ export function designHeaderStatus(name: string, content: string): DesignHeaderS
       Invariants: parsed.sections.has("Invariants"),
     },
     introduction: Object.fromEntries(
-      INTRODUCTION_FIELDS.map((field) => [field, introduction !== undefined && extractH3Titles(introduction).has(field)]),
+      INTRODUCTION_FIELDS.map((field) => [
+        field,
+        introduction !== undefined && extractH3Titles(introduction.bodyLines.join("\n")).has(field),
+      ]),
     ) as Record<IntroductionField, boolean>,
     isAtTop: introIndex === 0 && invariantsIndex === 1,
   };
@@ -216,6 +305,10 @@ export function designHeaderStatus(name: string, content: string): DesignHeaderS
 
 export function designHeaderWarnings(name: string, content: string): ValidationViolation[] {
   const status = designHeaderStatus(name, content);
+  return designHeaderWarningsFromStatus(name, status);
+}
+
+function designHeaderWarningsFromStatus(name: string, status: DesignHeaderStatus): ValidationViolation[] {
   if (!status.applies) {
     return [];
   }
@@ -254,10 +347,212 @@ export function designHeaderWarnings(name: string, content: string): ValidationV
   return warnings;
 }
 
+const UNSTRUCTURED_CURRENT_STATE_CLAIMS = 8;
+const OVERSIZED_CURRENT_STATE_TOPIC_CLAIMS = 12;
+const CHANGELOG_HEAVY_CURRENT_STATE_CLAIMS = 3;
+
+export type CurrentStateOrganizationStatus = {
+  applies: boolean;
+  status: "not-applicable" | "concise" | "organized" | "needs-attention";
+  claimCount: number;
+  ungroupedClaimCount: number;
+  historyClaimCount: number;
+  topics: Array<{ title: string; path: string; claimCount: number }>;
+  suggestedTopics: string[];
+};
+
+/** Summarize the same organization signals shown by validation and the UI. */
+export function currentStateOrganizationStatus(name: string, content: string): CurrentStateOrganizationStatus {
+  const parsed = parseAnchor(content);
+  return currentStateOrganizationStatusFromParsed(name, parsed, extractHeadingSections(parsed.body));
+}
+
+function currentStateOrganizationStatusFromParsed(
+  name: string,
+  parsed: ParsedAnchor,
+  sections: readonly MarkdownHeadingSection[],
+): CurrentStateOrganizationStatus {
+  if (!isProjectContextAnchor(name, parsed.frontmatter)) {
+    return {
+      applies: false,
+      status: "not-applicable",
+      claimCount: 0,
+      ungroupedClaimCount: 0,
+      historyClaimCount: 0,
+      topics: [],
+      suggestedTopics: [...CURRENT_STATE_TOPICS],
+    };
+  }
+
+  const currentState = findHeadingSectionInIndex(sections, ["Current State"]);
+  if (!currentState) {
+    return {
+      applies: true,
+      status: "needs-attention",
+      claimCount: 0,
+      ungroupedClaimCount: 0,
+      historyClaimCount: 0,
+      topics: [],
+      suggestedTopics: [...CURRENT_STATE_TOPICS],
+    };
+  }
+
+  const claimLines = currentStateBulletLines(currentState.bodyLines);
+  const currentStateEndLine = currentState.startLine + currentState.bodyLines.length;
+  const topicSections = sections.filter(
+    (section) => section.level === 3
+      && section.path[0] === "Current State"
+      && section.startLine > currentState.startLine
+      && section.startLine <= currentStateEndLine,
+  );
+  const firstTopic = topicSections[0];
+  const ungroupedBodyLineCount = firstTopic
+    ? Math.max(0, firstTopic.startLine - currentState.startLine - 1)
+    : currentState.bodyLines.length;
+  const ungroupedClaimCount = currentStateBulletLines(
+    currentState.bodyLines.slice(0, ungroupedBodyLineCount),
+  ).length;
+  const topics = topicSections.map((topic) => ({
+    title: topic.title,
+    path: topic.path.join(" > "),
+    claimCount: currentStateBulletLines(topic.bodyLines).length,
+  }));
+  const historyClaimCount = claimLines.filter((line) =>
+    /\b(?:shipped|merged|landed|implemented locally)\b|\bPR\s*#\d+/i.test(line)
+  ).length;
+  const needsAttention = (
+    (claimLines.length >= UNSTRUCTURED_CURRENT_STATE_CLAIMS && ungroupedClaimCount > 0)
+    || topics.some((topic) => topic.claimCount > OVERSIZED_CURRENT_STATE_TOPIC_CLAIMS)
+    || historyClaimCount >= CHANGELOG_HEAVY_CURRENT_STATE_CLAIMS
+  );
+
+  return {
+    applies: true,
+    status: needsAttention ? "needs-attention" : topics.length > 0 ? "organized" : "concise",
+    claimCount: claimLines.length,
+    ungroupedClaimCount,
+    historyClaimCount,
+    topics,
+    suggestedTopics: [...CURRENT_STATE_TOPICS],
+  };
+}
+
+function isCurrentStateBullet(line: string): boolean {
+  return /^\s*[-*]\s+\S/.test(line);
+}
+
+function currentStateBulletLines(lines: readonly string[]): string[] {
+  const bullets: string[] = [];
+  let fence: { char: string; length: number } | undefined;
+
+  for (const line of lines) {
+    const fenceMatch = line.match(/^ {0,3}(`{3,}|~{3,})/);
+    if (fenceMatch?.[1]) {
+      const char = fenceMatch[1][0] ?? "`";
+      if (!fence) {
+        fence = { char, length: fenceMatch[1].length };
+      } else if (
+        fence.char === char
+        && fenceMatch[1].length >= fence.length
+        && /^ {0,3}(`{3,}|~{3,})\s*$/.test(line)
+      ) {
+        fence = undefined;
+      }
+      continue;
+    }
+    if (!fence && isCurrentStateBullet(line)) bullets.push(line);
+  }
+
+  return bullets;
+}
+
+/**
+ * Quality guardrails for project context anchors. These remain warnings so
+ * existing anchors can migrate incrementally without blocking durable facts.
+ */
+export function currentStateOrganizationWarnings(name: string, content: string): ValidationViolation[] {
+  const organization = currentStateOrganizationStatus(name, content);
+  return currentStateOrganizationWarningsFromStatus(name, organization);
+}
+
+function currentStateOrganizationWarningsFromStatus(
+  name: string,
+  organization: CurrentStateOrganizationStatus,
+): ValidationViolation[] {
+  if (!organization.applies) return [];
+  const warnings: ValidationViolation[] = [];
+
+  if (
+    organization.claimCount >= UNSTRUCTURED_CURRENT_STATE_CLAIMS
+    && organization.ungroupedClaimCount > 0
+  ) {
+    warnings.push({
+      severity: "WARN",
+      code: "current_state_unstructured",
+      message:
+        `Project Current State has ${organization.ungroupedClaimCount} ungrouped claims out of ${organization.claimCount}. Group durable facts under H3 topic headings `
+        + `(for example ${CURRENT_STATE_TOPICS.slice(0, 4).join(", ")}) so humans and agents can retrieve them selectively.`,
+      path: name,
+    });
+  }
+
+  for (const topic of organization.topics) {
+    if (topic.claimCount > OVERSIZED_CURRENT_STATE_TOPIC_CLAIMS) {
+      warnings.push({
+        severity: "WARN",
+        code: "current_state_topic_oversized",
+        message:
+          `Current State topic "${topic.title}" has ${topic.claimCount} claims; split it into narrower H3 topics or a sibling detail anchor.`,
+        path: name,
+      });
+    }
+  }
+
+  if (organization.historyClaimCount >= CHANGELOG_HEAVY_CURRENT_STATE_CLAIMS) {
+    warnings.push({
+      severity: "WARN",
+      code: "current_state_changelog_heavy",
+      message:
+        `Project Current State has ${organization.historyClaimCount} release-history-style claims. Describe the resulting present behavior here and move chronological PR history to ## PRs.`,
+      path: name,
+    });
+  }
+
+  return warnings;
+}
+
+/** Parse an anchor and build its reusable heading index once for validators and read paths. */
+export function analyzeAnchorStructure(name: string, content: string): AnchorStructureAnalysis {
+  const parsed = parseAnchor(content);
+  const headingSections = extractHeadingSections(parsed.body);
+  return {
+    parsed,
+    headingSections,
+    designHeader: designHeaderStatusFromParsed(name, parsed, headingSections),
+    currentStateOrganization: currentStateOrganizationStatusFromParsed(name, parsed, headingSections),
+  };
+}
+
+/** Produce all structure warnings from a precomputed analysis without reparsing Markdown. */
+export function anchorStructureWarningsFromAnalysis(
+  name: string,
+  analysis: AnchorStructureAnalysis,
+): ValidationViolation[] {
+  return [
+    ...designHeaderWarningsFromStatus(name, analysis.designHeader),
+    ...currentStateOrganizationWarningsFromStatus(name, analysis.currentStateOrganization),
+  ];
+}
+
+/** Produce all structure warnings with one shared anchor parse and heading index. */
+export function anchorStructureWarnings(name: string, content: string): ValidationViolation[] {
+  return anchorStructureWarningsFromAnalysis(name, analyzeAnchorStructure(name, content));
+}
+
 /** Add missing design-header sections/fields to persisted Markdown and move the header to the top. */
 export function migrateDesignHeaderContent(name: string, content: string): string {
   const parsed = parseAnchor(content);
-  const status = designHeaderStatus(name, content);
+  const status = designHeaderStatusFromParsed(name, parsed, extractHeadingSections(parsed.body));
   if (!status.applies || (status.isAtTop && allPresent(status))) {
     return content;
   }
