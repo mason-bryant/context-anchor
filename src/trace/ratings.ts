@@ -81,7 +81,7 @@ export class TraceRatingsStore {
     try {
       const raw = await readFile(this.filePath(), "utf8");
       const parsed: unknown = JSON.parse(raw);
-      this.cache = isRatingsFile(parsed) ? parsed : {};
+      this.cache = sanitizeRatingsFile(parsed);
     } catch {
       this.cache = {};
     }
@@ -105,6 +105,27 @@ export class TraceRatingsStore {
   }
 }
 
-function isRatingsFile(value: unknown): value is RatingsFile {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+/**
+ * Validate a parsed ratings file entry by entry, dropping malformed rows so a
+ * corrupted or hand-edited file cannot flow invalid shapes through the API.
+ */
+function sanitizeRatingsFile(value: unknown): RatingsFile {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return {};
+  }
+  const ratings: RatingsFile = {};
+  for (const [sessionId, entry] of Object.entries(value)) {
+    if (typeof entry !== "object" || entry === null || Array.isArray(entry)) {
+      continue;
+    }
+    const { rating, note, updatedAt } = entry as Record<string, unknown>;
+    if ((rating !== "well" && rating !== "poorly") || typeof updatedAt !== "string") {
+      continue;
+    }
+    if (note !== undefined && typeof note !== "string") {
+      continue;
+    }
+    ratings[sessionId] = { rating, updatedAt, ...(note !== undefined ? { note } : {}) };
+  }
+  return ratings;
 }

@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, readdir } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
@@ -505,6 +505,21 @@ describe("dry query classification", () => {
     expect(dry[0].reason).toBe("zero-hit");
   });
 
+  it("does not treat metadata-only anchors as dry when structured projections were delivered", () => {
+    const sessions = buildSessions([
+      baseEvent({
+        tool: "startTask",
+        traceId: "t-structured",
+        ordinal: 0,
+        timestamp: "2026-07-12T12:00:00.000Z",
+        delivered: [{ name: "a", mode: "metadata" }],
+        structured: { kind: "milestone", ids: ["ui-milestone"] },
+      }),
+      baseEvent({ tool: "readAnchor", traceId: "t-structured", ordinal: 1, timestamp: "2026-07-12T12:01:00.000Z", delivered: [{ name: "a", mode: "full" }] }),
+    ]);
+    expect(findDryQueries(sessions)).toEqual([]);
+  });
+
   it("carries task identity and project onto dry query rows", () => {
     const sessions = buildSessions([
       baseEvent({
@@ -561,6 +576,27 @@ describe("trace ratings store", () => {
     await store.set("sess-3", null);
     expect(await store.get("sess-3")).toBeUndefined();
     expect(await store.getAll()).toEqual({});
+  });
+
+  it("drops malformed entries when loading a corrupted or hand-edited ratings file", async () => {
+    const tmpDir = await mkdtemp(path.join(os.tmpdir(), "anchor-mcp-ratings-"));
+    const filePath = path.join(tmpDir, "anchor-mcp-trace-ratings.json");
+    await writeFile(
+      filePath,
+      JSON.stringify({
+        "sess-good": { rating: "well", updatedAt: "2026-07-12T12:00:00.000Z" },
+        "sess-bad-rating": { rating: "amazing", updatedAt: "2026-07-12T12:00:00.000Z" },
+        "sess-missing-updated": { rating: "poorly" },
+        "sess-bad-note": { rating: "well", updatedAt: "2026-07-12T12:00:00.000Z", note: 42 },
+        "sess-not-object": "well",
+      }),
+      "utf8",
+    );
+
+    const store = new TraceRatingsStore(tmpDir);
+    const all = await store.getAll();
+    expect(Object.keys(all)).toEqual(["sess-good"]);
+    expect(all["sess-good"].rating).toBe("well");
   });
 
   it("is inert (but does not throw on read) when constructed without a directory", async () => {

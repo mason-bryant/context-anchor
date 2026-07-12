@@ -380,7 +380,9 @@ function classifyDryEvent(event: TraceEvent): TraceDryQuery["reason"] | undefine
   if (delivered.length === 0 && structuredCount === 0) {
     return "nothing-delivered";
   }
-  if (delivered.length > 0 && delivered.every((item) => item.mode === "metadata" || item.mode === "none")) {
+  // Structured projections (roadmap goals, milestone rows) are substantive
+  // content, so their presence keeps a metadata-only anchor list from being dry.
+  if (structuredCount === 0 && delivered.length > 0 && delivered.every((item) => item.mode === "metadata" || item.mode === "none")) {
     return "metadata-only";
   }
   return undefined;
