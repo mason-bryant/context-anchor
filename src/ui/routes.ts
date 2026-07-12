@@ -16,6 +16,7 @@ import type {
   ProposeChangeInput,
 } from "../types.js";
 import type { GraphEdgeType } from "../graph/model.js";
+import { aggregateBudget, aggregateFollowUps, aggregateFrequency, filterEvents, filterSessions } from "../trace/aggregate.js";
 import type { TraceIndex } from "../trace/index.js";
 import { UI_CSS, UI_HTML, UI_JS } from "./assets.js";
 import { toAnchorUiDetail, toAnchorUiMeta } from "./viewModel.js";
@@ -135,6 +136,45 @@ export function registerUiRoutes(
     "/api/ui/milestones",
     ...protect,
     jsonRoute(async (req) => ({ milestones: await service.listMilestones(optionalQueryString(req, "project")) })),
+  );
+
+  app.get(
+    "/api/ui/trace-budget",
+    ...protect,
+    jsonRoute(async (req) => {
+      const traceIndex = options.traceIndex;
+      if (!traceIndex?.enabled) {
+        return { enabled: false, displaced: [], downgraded: [], truncated: [], displacementCounts: [], consumerCounts: [] };
+      }
+      const events = filterEvents(await traceIndex.getEvents(), readTraceFilter(req));
+      return { enabled: true, ...aggregateBudget(events) };
+    }),
+  );
+
+  app.get(
+    "/api/ui/trace-followups",
+    ...protect,
+    jsonRoute(async (req) => {
+      const traceIndex = options.traceIndex;
+      if (!traceIndex?.enabled) {
+        return { enabled: false, buckets: {}, cumulative: [], representativeSessionIds: {} };
+      }
+      const sessions = filterSessions(await traceIndex.getSessions({ limit: 500 }), readTraceFilter(req));
+      return { enabled: true, ...aggregateFollowUps(sessions) };
+    }),
+  );
+
+  app.get(
+    "/api/ui/trace-frequency",
+    ...protect,
+    jsonRoute(async (req) => {
+      const traceIndex = options.traceIndex;
+      if (!traceIndex?.enabled) {
+        return { enabled: false, rows: [] };
+      }
+      const sessions = filterSessions(await traceIndex.getSessions({ limit: 500 }), readTraceFilter(req));
+      return { enabled: true, rows: aggregateFrequency(sessions) };
+    }),
   );
 
   app.get(
@@ -1020,6 +1060,15 @@ function readDiscoveryFilters(req: Request): {
     tag: optionalQueryString(req, "tag"),
     runtime: optionalQueryString(req, "runtime"),
     includeArchive: booleanQuery(req, "includeArchive"),
+  };
+}
+
+function readTraceFilter(req: Request): { project?: string; since?: string } {
+  const project = optionalQueryString(req, "project");
+  const since = optionalQueryString(req, "since");
+  return {
+    ...(project ? { project } : {}),
+    ...(since ? { since } : {}),
   };
 }
 

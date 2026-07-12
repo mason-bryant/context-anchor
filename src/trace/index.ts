@@ -52,6 +52,19 @@ export class TraceIndex {
       .slice(0, limit);
   }
 
+  /**
+   * All indexed events, unsorted-by-recency (callers that need sessions should
+   * prefer getSessions; this exists for aggregate view models that filter and
+   * regroup events themselves).
+   */
+  async getEvents(): Promise<TraceEvent[]> {
+    if (!this.logger.enabled) {
+      return [];
+    }
+    await this.ensureLoaded();
+    return [...this.eventsById.values()];
+  }
+
   private append(event: TraceEvent): void {
     if (this.eventsById.size >= MAX_EVENTS_IN_MEMORY) {
       return;
