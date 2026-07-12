@@ -5,6 +5,7 @@ import { createAppLogger, createRequestLogger, type AppLogger, type RequestLogge
 import { createAnchorMcpServer } from "./server.js";
 import { TraceIndex } from "./trace/index.js";
 import { createTraceLogger, type TraceLogger } from "./trace/logger.js";
+import { TraceRatingsStore } from "./trace/ratings.js";
 import type { ServerConfig } from "./types.js";
 
 export type AnchorRuntime = {
@@ -16,6 +17,7 @@ export type AnchorRuntime = {
   requestLogger: RequestLogger;
   traceLogger: TraceLogger;
   traceIndex: TraceIndex;
+  traceRatings: TraceRatingsStore;
   startAutoSync(): void;
   stopAutoSync(): void;
 };
@@ -27,7 +29,8 @@ export async function createAnchorRuntime(
   const logger = options.logger ?? createAppLogger(config.logging);
   const requestLogger = options.requestLogger ?? createRequestLogger(config.logging);
   const traceLogger = options.traceLogger ?? createTraceLogger(config.logging);
-  const traceIndex = new TraceIndex(traceLogger);
+  const traceRatings = new TraceRatingsStore(traceLogger.dirname);
+  const traceIndex = new TraceIndex(traceLogger, traceRatings);
   const repo = new AnchorRepository({
     repoPath: config.repoPath,
     anchorRoot: config.anchorRoot,
@@ -62,6 +65,7 @@ export async function createAnchorRuntime(
     requestLogger,
     traceLogger,
     traceIndex,
+    traceRatings,
     startAutoSync() {
       if (config.autoSync) {
         autoSync.start();

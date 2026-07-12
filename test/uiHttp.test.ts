@@ -1496,6 +1496,209 @@ describe("UI HTTP routes", () => {
   });
 });
 
+describe("UI HTTP trace routes", () => {
+  let traceTmpDir: string;
+  let traceServer: Server | undefined;
+  let traceBaseUrl: string;
+  let tracesDir: string;
+
+  beforeEach(async () => {
+    traceTmpDir = await mkdtemp(path.join(os.tmpdir(), "anchor-ui-traces-"));
+    tracesDir = await mkdtemp(path.join(os.tmpdir(), "anchor-mcp-traces-"));
+    const repo = new AnchorRepository({ repoPath: traceTmpDir });
+    await repo.ensureReady();
+
+    traceServer = await startHttpServer(
+      {
+        repoPath: traceTmpDir,
+        anchorRoot: ".",
+        autoSync: false,
+        pushOnWrite: false,
+        syncIntervalMs: 0,
+        migrationWarnOnly: false,
+        staleAfterDays: 45,
+        graphScoring: { enabled: false, maxBoost: 8 },
+        logging: { traces: { enabled: true, dirname: tracesDir, zippedArchive: false } },
+      },
+      {
+        host: "127.0.0.1",
+        port: 0,
+        authToken: TOKEN,
+        stateless: true,
+      },
+    );
+
+    const address = traceServer.address();
+    if (!address || typeof address === "string") {
+      throw new Error("Expected HTTP server to listen on a TCP port");
+    }
+    traceBaseUrl = `http://127.0.0.1:${address.port}`;
+  });
+
+  afterEach(async () => {
+    if (traceServer) {
+      await new Promise<void>((resolve, reject) => {
+        traceServer!.close((error) => (error ? reject(error) : resolve()));
+      });
+      traceServer = undefined;
+    }
+    await rm(traceTmpDir, { recursive: true, force: true });
+    await rm(tracesDir, { recursive: true, force: true });
+  });
+
+  async function traceFetchJson<T>(pathSuffix: string): Promise<T> {
+    const response = await fetch(`${traceBaseUrl}${pathSuffix}`, { headers: { Authorization: `Bearer ${TOKEN}` } });
+    if (!response.ok) {
+      throw new Error(`${response.status}: ${await response.text()}`);
+    }
+    return (await response.json()) as T;
+  }
+
+  async function tracePostJson<T = unknown>(pathSuffix: string, body: unknown): Promise<{ status: number; body: T }> {
+    const response = await fetch(`${traceBaseUrl}${pathSuffix}`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${TOKEN}`, "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    return { status: response.status, body: (await response.json()) as T };
+  }
+
+  async function callMcpTool(name: string, args: Record<string, unknown>): Promise<void> {
+    const response = await fetch(`${traceBaseUrl}/mcp`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${TOKEN}`,
+        "content-type": "application/json",
+        accept: "application/json, text/event-stream",
+      },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/call",
+        params: { name, arguments: args },
+      }),
+    });
+    await response.text();
+    if (!response.ok) {
+      throw new Error(`MCP call to ${name} failed with ${response.status}`);
+    }
+  }
+
+  it("lists sessions with measures via /api/ui/traces after a zero-hit search", async () => {
+    await callMcpTool("searchAnchors", { query: "nothing-matches-anything" });
+
+    const result = await traceFetchJson<{
+      enabled: boolean;
+      sessions: Array<{ id: string; measures: { zeroHitCount: number }; events: unknown[] }>;
+    }>("/api/ui/traces?limit=10");
+
+    expect(result.enabled).toBe(true);
+    expect(result.sessions.length).toBeGreaterThan(0);
+    const session = result.sessions[0];
+    expect(session.measures.zeroHitCount).toBe(1);
+  });
+
+  it("surfaces a zero-hit search as a dry query via /api/ui/trace-dry-queries (in a multi-query session, per the design's single-query exclusion)", async () => {
+    // A lone zero-hit search is a single-query session, which the design excludes from the
+    // dry-queries list by itself; pair it with another call in the same transport session so
+    // it is the follow-up, not the whole session.
+    await callMcpTool("listAnchors", {});
+    await callMcpTool("searchAnchors", { query: "nothing-matches-anything-either" });
+
+    const result = await traceFetchJson<{ enabled: boolean; dryQueries: Array<{ tool: string; reason: string }> }>(
+      "/api/ui/trace-dry-queries",
+    );
+
+    expect(result.enabled).toBe(true);
+    expect(result.dryQueries.some((row) => row.tool === "searchAnchors" && row.reason === "zero-hit")).toBe(true);
+  });
+
+  it("excludes a lone zero-hit search that is the only query in its session", async () => {
+    const isolatedTmpDir = await mkdtemp(path.join(os.tmpdir(), "anchor-ui-traces-solo-"));
+    const isolatedTracesDir = await mkdtemp(path.join(os.tmpdir(), "anchor-mcp-traces-solo-"));
+    const repo = new AnchorRepository({ repoPath: isolatedTmpDir });
+    await repo.ensureReady();
+    const soloServer = await startHttpServer(
+      {
+        repoPath: isolatedTmpDir,
+        anchorRoot: ".",
+        autoSync: false,
+        pushOnWrite: false,
+        syncIntervalMs: 0,
+        migrationWarnOnly: false,
+        staleAfterDays: 45,
+        graphScoring: { enabled: false, maxBoost: 8 },
+        logging: { traces: { enabled: true, dirname: isolatedTracesDir, zippedArchive: false } },
+      },
+      { host: "127.0.0.1", port: 0, authToken: TOKEN, stateless: true },
+    );
+    try {
+      const address = soloServer.address();
+      if (!address || typeof address === "string") {
+        throw new Error("Expected HTTP server to listen on a TCP port");
+      }
+      const soloBaseUrl = `http://127.0.0.1:${address.port}`;
+      await fetch(`${soloBaseUrl}/mcp`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${TOKEN}`,
+          "content-type": "application/json",
+          accept: "application/json, text/event-stream",
+        },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "tools/call",
+          params: { name: "searchAnchors", arguments: { query: "solo-zero-hit" } },
+        }),
+      });
+
+      const response = await fetch(`${soloBaseUrl}/api/ui/trace-dry-queries`, {
+        headers: { Authorization: `Bearer ${TOKEN}` },
+      });
+      const result = (await response.json()) as { dryQueries: Array<{ tool: string }> };
+      expect(result.dryQueries).toEqual([]);
+    } finally {
+      await new Promise<void>((resolve, reject) => {
+        soloServer.close((error) => (error ? reject(error) : resolve()));
+      });
+      await rm(isolatedTmpDir, { recursive: true, force: true });
+      await rm(isolatedTracesDir, { recursive: true, force: true });
+    }
+  });
+
+  it("rates a session and reflects the rating back through /api/ui/traces, then clears it", async () => {
+    await callMcpTool("searchAnchors", { query: "rating-target-query" });
+    const sessions = await traceFetchJson<{ sessions: Array<{ id: string }> }>("/api/ui/traces?limit=10");
+    const sessionId = sessions.sessions[0].id;
+
+    const rated = await tracePostJson("/api/ui/trace-rating", { sessionId, rating: "well", note: "Looked right." });
+    expect(rated.status).toBe(200);
+
+    const afterRating = await traceFetchJson<{
+      sessions: Array<{ id: string; rating?: { rating: string; note?: string } }>;
+    }>("/api/ui/traces?limit=10");
+    const ratedSession = afterRating.sessions.find((s) => s.id === sessionId);
+    expect(ratedSession?.rating).toMatchObject({ rating: "well", note: "Looked right." });
+
+    const cleared = await tracePostJson("/api/ui/trace-rating", { sessionId, rating: null });
+    expect(cleared.status).toBe(200);
+    const afterClear = await traceFetchJson<{ sessions: Array<{ id: string; rating?: unknown }> }>(
+      "/api/ui/traces?limit=10",
+    );
+    expect(afterClear.sessions.find((s) => s.id === sessionId)?.rating).toBeUndefined();
+  });
+
+  it("rejects an invalid rating value with 400", async () => {
+    const response = await tracePostJson<{ error: { message: string } }>("/api/ui/trace-rating", {
+      sessionId: "whatever",
+      rating: "amazing",
+    });
+    expect(response.status).toBe(400);
+    expect(response.body.error.message).toContain("Invalid rating");
+  });
+});
+
 async function fetchJson<T>(pathSuffix: string): Promise<T> {
   const response = await fetch(`${baseUrl}${pathSuffix}`, {
     headers: { Authorization: `Bearer ${TOKEN}` },
