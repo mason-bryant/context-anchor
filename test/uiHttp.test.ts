@@ -1598,10 +1598,7 @@ describe("UI HTTP trace routes", () => {
     expect(session.measures.zeroHitCount).toBe(1);
   });
 
-  it("surfaces a zero-hit search as a dry query via /api/ui/trace-dry-queries (in a multi-query session, per the design's single-query exclusion)", async () => {
-    // A lone zero-hit search is a single-query session, which the design excludes from the
-    // dry-queries list by itself; pair it with another call in the same transport session so
-    // it is the follow-up, not the whole session.
+  it("surfaces a zero-hit search as a dry query via /api/ui/trace-dry-queries", async () => {
     await callMcpTool("listAnchors", {});
     await callMcpTool("searchAnchors", { query: "nothing-matches-anything-either" });
 
@@ -1613,7 +1610,7 @@ describe("UI HTTP trace routes", () => {
     expect(result.dryQueries.some((row) => row.tool === "searchAnchors" && row.reason === "zero-hit")).toBe(true);
   });
 
-  it("excludes a lone zero-hit search that is the only query in its session", async () => {
+  it("includes a lone zero-hit search even when it is the only query in its session", async () => {
     const isolatedTmpDir = await mkdtemp(path.join(os.tmpdir(), "anchor-ui-traces-solo-"));
     const isolatedTracesDir = await mkdtemp(path.join(os.tmpdir(), "anchor-mcp-traces-solo-"));
     const repo = new AnchorRepository({ repoPath: isolatedTmpDir });
@@ -1656,8 +1653,10 @@ describe("UI HTTP trace routes", () => {
       const response = await fetch(`${soloBaseUrl}/api/ui/trace-dry-queries`, {
         headers: { Authorization: `Bearer ${TOKEN}` },
       });
-      const result = (await response.json()) as { dryQueries: Array<{ tool: string }> };
-      expect(result.dryQueries).toEqual([]);
+      const result = (await response.json()) as { dryQueries: Array<{ tool: string; reason: string }> };
+      // Zero-hit is a query-intrinsic failure: dry regardless of session shape.
+      // Only ambiguous metadata-only deliveries hide behind the thin filter.
+      expect(result.dryQueries.some((row) => row.tool === "searchAnchors" && row.reason === "zero-hit")).toBe(true);
     } finally {
       await new Promise<void>((resolve, reject) => {
         soloServer.close((error) => (error ? reject(error) : resolve()));

@@ -319,11 +319,12 @@ function nextSubdivisionId(counters: Map<string, number>, transportKey: string):
 
 /**
  * Extract every unambiguously dry context query across sessions per the
- * design's Dry Queries view: zero-hit searches, planner/startTask calls that
- * delivered nothing, and metadata-only bundles. Single-query sessions are
- * excluded by default (the design forbids treating "no follow-up" alone as
- * dry); `thinNoFollowUp` adds sessions whose only delivery was metadata-only
- * and which had no follow-up at all.
+ * design's Dry Queries view. Zero-hit searches and calls that delivered
+ * nothing are query-intrinsic failures and always listed, regardless of
+ * session shape. Metadata-only delivery in a single-query session is the
+ * ambiguous "thin delivery, no follow-up" case (the bundle may simply have
+ * been sufficient), so it appears only behind the `thinNoFollowUp` filter —
+ * being single-query is never a dry criterion by itself.
  */
 export function findDryQueries(sessions: TraceSessionView[], options: { thinNoFollowUp?: boolean } = {}): TraceDryQuery[] {
   const results: TraceDryQuery[] = [];
@@ -335,7 +336,7 @@ export function findDryQueries(sessions: TraceSessionView[], options: { thinNoFo
       if (!reason) {
         continue;
       }
-      if (isSingleQuery && !(options.thinNoFollowUp && reason === "metadata-only")) {
+      if (isSingleQuery && reason === "metadata-only" && !options.thinNoFollowUp) {
         continue;
       }
       results.push({

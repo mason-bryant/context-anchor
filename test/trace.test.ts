@@ -489,10 +489,20 @@ describe("dry query classification", () => {
     expect(withFlag[0].reason).toBe("metadata-only");
   });
 
-  it("does not flag a single-query session with nothing delivered unless thinNoFollowUp is set (nothing-delivered stays outside the thin exception)", () => {
+  it("flags a single-query session with nothing delivered regardless of the thin filter", () => {
     const sessions = buildSessions([baseEvent({ tool: "startTask", traceId: "t-empty" })]);
-    expect(findDryQueries(sessions)).toEqual([]);
-    expect(findDryQueries(sessions, { thinNoFollowUp: true })).toEqual([]);
+    expect(findDryQueries(sessions)).toHaveLength(1);
+    expect(findDryQueries(sessions)[0].reason).toBe("nothing-delivered");
+    expect(findDryQueries(sessions, { thinNoFollowUp: true })).toHaveLength(1);
+  });
+
+  it("flags a lone zero-hit search even when it is the only query in its session", () => {
+    const sessions = buildSessions([
+      baseEvent({ tool: "searchAnchors", traceId: "t-solo", zeroHit: true }),
+    ]);
+    const dry = findDryQueries(sessions);
+    expect(dry).toHaveLength(1);
+    expect(dry[0].reason).toBe("zero-hit");
   });
 
   it("carries task identity and project onto dry query rows", () => {
