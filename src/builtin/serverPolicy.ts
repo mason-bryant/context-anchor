@@ -69,7 +69,7 @@ None.
 4. If a goal in \`## Goals\` lacks \`#### Acceptance Criteria\`, **tell the user** before planning or claiming completion; offer **Proposed** criteria, clearly labeled.
 5. Before your final response on roadmap-scoped work, reconcile each applicable criterion as **pass**, **fail**, **unknown**, or **not checked**, with evidence for any pass claim. **Unknown blocks a done claim** until the user clarifies or scope explicitly excludes that criterion.
 6. When implementation reveals a criterion is wrong, propose a roadmap update; do **not** silently edit Approved criteria.
-7. When work ships, move observable behavior into the context anchor **Current State** and decisions into **Decisions**; keep the roadmap’s completed history compact.
+7. When work ships, move observable behavior into the context anchor **Current State** and decisions into **Decisions**; describe the resulting present behavior instead of accumulating release notes, group a substantial Current State under descriptive H3 topics, and keep chronological PR history in **PRs**.
 
 ## Closeout snippet
 

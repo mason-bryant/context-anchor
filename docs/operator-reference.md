@@ -225,9 +225,12 @@ Defaults are `limit: 12`, `maxBytes: 250000`, `includeContent: "excerpt"`, and
 In excerpt mode, a canonical project context anchor is budgeted and loaded using a
 compact project overview rather than its complete body. The response includes its
 front matter, the complete Markdown from `## Introduction` through `## Invariants`,
-and `availableSections`, an outline of the other H2 headings. Call
-`readAnchorSection({ name, heading })` to retrieve one of those sections without
-loading the full anchor. Use `readAnchor` only when the complete document is needed.
+`availableSections`, an outline of the other H2 headings, and
+`availableSectionPaths`, an outline of nested headings beneath those sections. Call
+`readAnchorSection({ name, heading: "Current State" })` for a complete H2 or
+`readAnchorSection({ name, heading: "Current State > Capabilities" })` for one nested
+topic without loading the full anchor. Use `readAnchor` only when the complete
+document is needed.
 
 When `truncated` is true, call again with `nextCursor` from the previous response. If
 the payload is still too large for the client, reduce `limit` or `maxBytes`, or set
@@ -384,6 +387,11 @@ Warnings cover:
 - project context anchors with a missing or misplaced design header: `## Introduction`
   (`### Purpose`, `### Goals`, `### Users`, `### Non-goals`) followed by
   `## Invariants`
+- project context anchors whose `## Current State` has at least eight claims but no
+  H3 topic headings (`current_state_unstructured`)
+- Current State topics with more than twelve claims (`current_state_topic_oversized`)
+- Current State sections with at least three release-history-style claims, such as
+  “merged” or “shipped in PR #…” (`current_state_changelog_heavy`)
 - removed bullets that should move to history or be marked superseded
 - roadmaps over 400 lines
 - `## Completed` tables over 10 rows
@@ -431,6 +439,39 @@ as Current State, Decisions, and Constraints. Treat Introduction and Invariants 
 project's authoritative design header: when later details conflict, flag the conflict for
 resolution rather than silently preferring the detail. Semantic conflict detection remains
 an agent review responsibility; the server only detects structural omissions and placement.
+
+### Organizing Current State
+
+`## Current State` records present implementation reality, not a chronological release
+log. Small anchors can remain a concise flat list. Once the section grows, group claims
+under descriptive H3 topics so humans can scan the document and agents can retrieve only
+the relevant subtree. The shared schema advertises a recommended vocabulary:
+
+```markdown
+## Current State
+
+### Architecture
+
+### Capabilities
+
+### Interfaces
+
+### Data and Persistence
+
+### Operations and Security
+
+### Quality and Performance
+
+### Known Limitations
+```
+
+These topic names are optional rather than a fixed template; use domain-specific H3
+headings when they communicate the system more clearly. Keep observable behavior in
+Current State, settled rationale in `## Decisions`, environmental limits in
+`## Constraints`, and chronological delivery links in `## PRs`. If one topic grows
+beyond a coherent section, split it into narrower H3 topics or a sibling project detail
+anchor. Nested paths are fence-aware and may be read directly with
+`readAnchorSection`, for example `Current State > Data and Persistence`.
 
 ## Dynamic Context Root
 

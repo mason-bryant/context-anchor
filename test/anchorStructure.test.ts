@@ -5,6 +5,8 @@ import {
   ANCHOR_SECTION_DEFINITIONS,
   APPROVAL_REQUIRED_SECTIONS,
   CLAIM_BEARING_SECTIONS,
+  CURRENT_STATE_TOPICS,
+  currentStateOrganizationWarnings,
   designHeaderStatus,
   designHeaderWarnings,
   insertAnchorSectionBullet,
@@ -30,9 +32,25 @@ describe("project context anchor design header", () => {
       "Non-goals",
       "Invariants",
       "Current State",
+      "Architecture",
+      "Capabilities",
+      "Interfaces",
+      "Data and Persistence",
+      "Operations and Security",
+      "Quality and Performance",
+      "Known Limitations",
       "Decisions",
       "Constraints",
       "PRs",
+    ]);
+    expect(CURRENT_STATE_TOPICS).toEqual([
+      "Architecture",
+      "Capabilities",
+      "Interfaces",
+      "Data and Persistence",
+      "Operations and Security",
+      "Quality and Performance",
+      "Known Limitations",
     ]);
   });
 
@@ -168,6 +186,58 @@ Explain the purpose.
 
     const updated = insertAnchorSectionBullet(content, "Purpose", "Real purpose.");
     expect(updated.indexOf("- Real purpose.")).toBeGreaterThan(updated.lastIndexOf("### Purpose"));
+  });
+
+  it("warns when a substantial Current State is unstructured or changelog-heavy", () => {
+    const claims = Array.from({ length: 8 }, (_, index) =>
+      `- Capability ${index + 1} shipped in PR #${index + 1}.`,
+    ).join("\n");
+    const content = projectContextBody(`## Current State
+
+${claims}
+
+## Decisions
+
+None.
+
+## Constraints
+
+None.
+
+## PRs
+
+None.`);
+
+    expect(currentStateOrganizationWarnings("projects/demo/demo.md", content).map((warning) => warning.code)).toEqual([
+      "current_state_unstructured",
+      "current_state_changelog_heavy",
+    ]);
+  });
+
+  it("accepts a concise, topic-oriented Current State", () => {
+    const content = projectContextBody(`## Current State
+
+### Architecture
+
+- The service has an MCP boundary.
+
+### Capabilities
+
+- Agents can retrieve context by task.
+
+## Decisions
+
+None.
+
+## Constraints
+
+None.
+
+## PRs
+
+None.`);
+
+    expect(currentStateOrganizationWarnings("projects/demo/demo.md", content)).toEqual([]);
   });
 });
 

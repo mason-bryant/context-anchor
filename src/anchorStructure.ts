@@ -1,4 +1,4 @@
-import { parseAnchor, parseBodyH2Segments, stringifyBodyH2Segments } from "./storage/markdown.js";
+import { extractHeadingSections, parseAnchor, parseBodyH2Segments, stringifyBodyH2Segments } from "./storage/markdown.js";
 import type { AnchorFrontmatter, ValidationViolation } from "./types.js";
 
 export const ANCHOR_SECTION_SCHEMA = {
@@ -62,6 +62,69 @@ export const ANCHOR_SECTION_SCHEMA = {
     substantive: true,
     approvalRequired: false,
   },
+  Architecture: {
+    level: 3,
+    parent: "Current State",
+    required: "optional",
+    definition: "The implemented system boundaries, major components, and relationships that exist today.",
+    claimBearing: false,
+    substantive: false,
+    approvalRequired: false,
+  },
+  Capabilities: {
+    level: 3,
+    parent: "Current State",
+    required: "optional",
+    definition: "User- or operator-visible behavior that is implemented and available today.",
+    claimBearing: false,
+    substantive: false,
+    approvalRequired: false,
+  },
+  Interfaces: {
+    level: 3,
+    parent: "Current State",
+    required: "optional",
+    definition: "Current APIs, protocols, commands, and integration boundaries.",
+    claimBearing: false,
+    substantive: false,
+    approvalRequired: false,
+  },
+  "Data and Persistence": {
+    level: 3,
+    parent: "Current State",
+    required: "optional",
+    definition: "Current data models, storage backends, indexing, and durability behavior.",
+    claimBearing: false,
+    substantive: false,
+    approvalRequired: false,
+  },
+  "Operations and Security": {
+    level: 3,
+    parent: "Current State",
+    required: "optional",
+    definition: "Current deployment, observability, access-control, and operational behavior.",
+    claimBearing: false,
+    substantive: false,
+    approvalRequired: false,
+  },
+  "Quality and Performance": {
+    level: 3,
+    parent: "Current State",
+    required: "optional",
+    definition: "Verified quality characteristics, performance measurements, and test coverage.",
+    claimBearing: false,
+    substantive: false,
+    approvalRequired: false,
+  },
+  "Known Limitations": {
+    level: 3,
+    parent: "Current State",
+    required: "optional",
+    definition: "Observed gaps or limitations in the current implementation, without forward-looking plans.",
+    claimBearing: false,
+    substantive: false,
+    approvalRequired: false,
+  },
   Decisions: {
     level: 2,
     required: "all",
@@ -106,6 +169,9 @@ export const DESIGN_HEADER_SECTIONS = schemaEntries
 export const INTRODUCTION_FIELDS = schemaEntries
   .filter(([, definition]) => "parent" in definition && definition.parent === "Introduction")
   .map(([name]) => name) as IntroductionField[];
+export const CURRENT_STATE_TOPICS = schemaEntries
+  .filter(([, definition]) => "parent" in definition && definition.parent === "Current State")
+  .map(([name]) => name);
 export const ALWAYS_REQUIRED_SECTIONS = schemaEntries
   .filter(([, definition]) => definition.required === "all")
   .map(([name]) => name) as AlwaysRequiredSectionName[];
@@ -251,6 +317,69 @@ export function designHeaderWarnings(name: string, content: string): ValidationV
       path: name,
     });
   }
+  return warnings;
+}
+
+const UNSTRUCTURED_CURRENT_STATE_CLAIMS = 8;
+const OVERSIZED_CURRENT_STATE_TOPIC_CLAIMS = 12;
+const CHANGELOG_HEAVY_CURRENT_STATE_CLAIMS = 3;
+
+/**
+ * Quality guardrails for project context anchors. These remain warnings so
+ * existing anchors can migrate incrementally without blocking durable facts.
+ */
+export function currentStateOrganizationWarnings(name: string, content: string): ValidationViolation[] {
+  const parsed = parseAnchor(content);
+  if (!isProjectContextAnchor(name, parsed.frontmatter)) return [];
+
+  const currentState = extractHeadingSections(parsed.body).find(
+    (section) => section.level === 2 && section.path.length === 1 && section.title === "Current State",
+  );
+  if (!currentState) return [];
+
+  const claimLines = currentState.bodyLines.filter((line) => /^[-*]\s+\S/.test(line));
+  const topics = extractHeadingSections(parsed.body).filter(
+    (section) => section.level === 3 && section.path[0] === "Current State",
+  );
+  const warnings: ValidationViolation[] = [];
+
+  if (claimLines.length >= UNSTRUCTURED_CURRENT_STATE_CLAIMS && topics.length === 0) {
+    warnings.push({
+      severity: "WARN",
+      code: "current_state_unstructured",
+      message:
+        `Project Current State has ${claimLines.length} claims without H3 topics. Group durable facts under topic headings `
+        + `(for example ${CURRENT_STATE_TOPICS.slice(0, 4).join(", ")}) so humans and agents can retrieve them selectively.`,
+      path: name,
+    });
+  }
+
+  for (const topic of topics) {
+    const topicClaims = topic.bodyLines.filter((line) => /^[-*]\s+\S/.test(line)).length;
+    if (topicClaims > OVERSIZED_CURRENT_STATE_TOPIC_CLAIMS) {
+      warnings.push({
+        severity: "WARN",
+        code: "current_state_topic_oversized",
+        message:
+          `Current State topic "${topic.title}" has ${topicClaims} claims; split it into narrower H3 topics or a sibling detail anchor.`,
+        path: name,
+      });
+    }
+  }
+
+  const historyClaims = claimLines.filter((line) =>
+    /\b(?:shipped|merged|landed|implemented locally)\b|\bPR\s*#\d+/i.test(line),
+  );
+  if (historyClaims.length >= CHANGELOG_HEAVY_CURRENT_STATE_CLAIMS) {
+    warnings.push({
+      severity: "WARN",
+      code: "current_state_changelog_heavy",
+      message:
+        `Project Current State has ${historyClaims.length} release-history-style claims. Describe the resulting present behavior here and move chronological PR history to ## PRs.`,
+      path: name,
+    });
+  }
+
   return warnings;
 }
 

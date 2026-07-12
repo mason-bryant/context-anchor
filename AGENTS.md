@@ -413,6 +413,28 @@ CallMcpTool(
 - **`## PRs`** — Related pull requests. Format: `[PR <title> - #<number>](<url>)`.
   Group by status (Merged / Open / Closed). If none exist, write `None.`
 
+For substantial project context anchors, organize `## Current State` with descriptive
+H3 topics. Recommended topics include `### Architecture`, `### Capabilities`,
+`### Interfaces`, `### Data and Persistence`, `### Operations and Security`,
+`### Quality and Performance`, and `### Known Limitations`; domain-specific headings
+are allowed. Describe the present behavior produced by shipped work and keep the
+chronological PR history in `## PRs`. Agents can load one topic with a heading path:
+
+```json
+CallMcpTool(
+  server="anchor-mcp",
+  toolName="readAnchorSection",
+  arguments={
+    "name": "projects/my-project/my-project-context.md",
+    "heading": "Current State > Architecture"
+  }
+)
+```
+
+Large flat Current State sections, oversized topics, and release-history-heavy prose
+produce non-blocking organization warnings so existing repositories can migrate
+incrementally.
+
 > **Tip:** Start the server with `--migration-warn-only` to demote missing-section
 > violations from BLOCK to WARN, allowing incremental migration without blocking all
 > writes. This is a server configuration flag — see the Reference section below.

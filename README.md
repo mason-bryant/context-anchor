@@ -84,8 +84,10 @@ At session start, agents call `startTask` when they know the project and task. T
 one call plans a budgeted context bundle, loads task-aware excerpts, flags stale
 anchors, and suggests follow-up reads when excerpts are not enough. Project context
 anchors use a compact overview: front matter plus the complete Introduction and
-Invariants design header, followed by `availableSections` for details that can be
-loaded individually with `readAnchorSection`. Broader discovery is available through
+Invariants design header, followed by `availableSections` and nested
+`availableSectionPaths` for details that can be loaded individually with
+`readAnchorSection`. A caller can request an H2 such as `Current State` or a nested
+topic such as `Current State > Capabilities`. Broader discovery is available through
 `loadContext` and `contextRoot`.
 
 When facts change, agents write through MCP tools such as `updateAnchorSection`,
