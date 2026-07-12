@@ -208,7 +208,7 @@ export function projectContextRetrievalOverview(
   );
   const introductionIndex = sections.findIndex((section) => section.title === "Introduction");
   const invariantsIndex = sections.findIndex((section) => section.title === "Invariants");
-  if (introductionIndex < 0 || invariantsIndex < introductionIndex) {
+  if (introductionIndex < 0 || invariantsIndex !== introductionIndex + 1) {
     return undefined;
   }
 

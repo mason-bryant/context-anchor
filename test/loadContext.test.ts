@@ -155,4 +155,32 @@ ${"oversized design context ".repeat(500)}
     expect(row.content).toBeUndefined();
     expect(row.name).toBe("projects/demo/demo-project-context.md");
   });
+
+  it("does not compact a noncanonical header with history between Introduction and Invariants", () => {
+    const content = `---
+project:
+  - demo
+type: context-anchor
+tags: []
+summary: Demo context.
+read_this_if:
+  - Working on demo.
+last_validated: 2026-07-12
+---
+
+## Introduction
+
+- Demo purpose.
+
+## Current State
+
+- ${"large history ".repeat(500)}
+
+## Invariants
+
+- Stable ids remain stable.
+`;
+
+    expect(projectContextRetrievalOverview("projects/demo/demo-project-context.md", content)).toBeUndefined();
+  });
 });
