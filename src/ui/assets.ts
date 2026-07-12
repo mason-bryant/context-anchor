@@ -5835,8 +5835,11 @@ export const UI_JS = `(function () {
       return "";
     }
     var top = displaced[0];
+    var detail = [];
+    if (top.score !== undefined) detail.push("score " + top.score);
+    if (top.estimatedTokens !== undefined) detail.push("needed ~" + top.estimatedTokens);
     return "budget " + (ev.budgetTokens !== undefined ? ev.budgetTokens + " tokens" : "") + ": "
-      + escapeHtml(top.name) + " excluded (score " + escapeHtml(top.score) + (top.estimatedTokens !== undefined ? ", needed ~" + top.estimatedTokens : "") + ")"
+      + escapeHtml(top.name) + " excluded" + (detail.length ? " (" + detail.join(", ") + ")" : "")
       + (displaced.length > 1 ? " and " + (displaced.length - 1) + " more" : "");
   }
 

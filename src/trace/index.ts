@@ -283,15 +283,16 @@ function computeSessionMeasures(events: TraceEvent[]): TraceSessionMeasures {
 
   let deliveredItemCount = 0;
   const deliveredModesByName = new Map<string, Set<string>>();
+  // A conversion counts once per anchor: the first excerpt→full transition.
+  const convertedNames = new Set<string>();
   let fullReadConversions = 0;
   for (const event of events) {
     for (const item of event.delivered ?? []) {
       deliveredItemCount += 1;
       const seenModes = deliveredModesByName.get(item.name);
-      if (item.mode === "full") {
-        if (seenModes?.has("excerpt")) {
-          fullReadConversions += 1;
-        }
+      if (item.mode === "full" && seenModes?.has("excerpt") && !convertedNames.has(item.name)) {
+        convertedNames.add(item.name);
+        fullReadConversions += 1;
       }
       if (!seenModes) {
         deliveredModesByName.set(item.name, new Set([item.mode]));

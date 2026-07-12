@@ -430,6 +430,17 @@ describe("session measures", () => {
     const [session] = buildSessions(events);
     expect(session.measures.fullReadConversions).toBe(2);
   });
+
+  it("counts an anchor's excerpt-to-full conversion only once despite repeated full deliveries", () => {
+    const events: TraceEvent[] = [
+      baseEvent({ tool: "startTask", traceId: "t-m4", ordinal: 0, timestamp: "2026-07-12T12:00:00.000Z", delivered: [{ name: "a", mode: "excerpt" }] }),
+      baseEvent({ tool: "readAnchor", traceId: "t-m4", ordinal: 1, timestamp: "2026-07-12T12:01:00.000Z", delivered: [{ name: "a", mode: "full" }] }),
+      baseEvent({ tool: "readAnchor", traceId: "t-m4", ordinal: 2, timestamp: "2026-07-12T12:02:00.000Z", delivered: [{ name: "a", mode: "full" }] }),
+      baseEvent({ tool: "readAnchorBatch", traceId: "t-m4", ordinal: 3, timestamp: "2026-07-12T12:03:00.000Z", delivered: [{ name: "a", mode: "full" }] }),
+    ];
+    const [session] = buildSessions(events);
+    expect(session.measures.fullReadConversions).toBe(1);
+  });
 });
 
 describe("dry query classification", () => {
