@@ -90,7 +90,7 @@ export function createRequestLogger(config: LoggingConfig | undefined): RequestL
   );
 }
 
-function createWinstonLogger(fileConfig: ResolvedFileLoggingConfig, defaultMeta: LogMeta): winston.Logger {
+export function createWinstonLogger(fileConfig: Required<FileLoggingConfig>, defaultMeta: LogMeta): winston.Logger {
   const transport = new DailyRotateFile({
     dirname: path.resolve(expandHome(fileConfig.dirname)),
     filename: fileConfig.filename,
@@ -127,10 +127,10 @@ export function errorMetadata(error: unknown): LogMeta {
   return { message: String(error) };
 }
 
-function resolveFileLoggingConfig(
+export function resolveFileLoggingConfig(
   config: FileLoggingConfig | undefined,
-  defaults: ResolvedFileLoggingConfig,
-): ResolvedFileLoggingConfig | undefined {
+  defaults: Required<FileLoggingConfig>,
+): Required<FileLoggingConfig> | undefined {
   if (!config?.enabled) {
     return undefined;
   }
@@ -328,7 +328,7 @@ function isPlainRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function closeWinstonLogger(logger: winston.Logger): Promise<void> {
+export function closeWinstonLogger(logger: winston.Logger): Promise<void> {
   return new Promise((resolve) => {
     const timeout = setTimeout(resolve, 500);
     timeout.unref();

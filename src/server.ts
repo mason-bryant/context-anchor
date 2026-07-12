@@ -6,6 +6,9 @@ import type { AnchorService } from "./anchorService.js";
 import { anchorSectionGuidance } from "./anchorStructure.js";
 import { PeopleRegistryConflictError, ProjectMappingsConflictError } from "./git/repo.js";
 import { errorMetadata, noopRequestLogger, type RequestLogger } from "./logger.js";
+import { newTraceId } from "./trace/events.js";
+import type { TraceLogger } from "./trace/logger.js";
+import { TraceRecorder, type TraceConnection } from "./trace/recorder.js";
 import { isDiscoveryCategory, type DiscoveryCategory } from "./taxonomy.js";
 import type {
   LoadContextInput,
@@ -116,7 +119,12 @@ const ProposeChangeInputSchema = z.object({
   message: z.string().optional(),
 });
 const ProjectUpdateStatusesSchema = z.union([z.array(ProjectUpdateStatusSchema), JsonStringSchema]);
+const TraceIdSchema = z
+  .string()
+  .optional()
+  .describe("Optional trace correlation id (returned by startTask); echo it on follow-up context calls for exact session tracing.");
 const LoadContextInputSchema = z.object({
+  traceId: TraceIdSchema,
   project: z.string().optional(),
   category: CategorySchema.optional(),
   tag: z.string().optional(),
@@ -152,7 +160,10 @@ const SharedWriteOptsSchema = z.object({
 
 export function createAnchorMcpServer(
   service: AnchorService,
-  options: { requestLogger?: RequestLogger } = {},
+  options: {
+    requestLogger?: RequestLogger;
+    trace?: { logger: TraceLogger; connection?: TraceConnection };
+  } = {},
 ): McpServer {
   const server = new McpServer(
     {
@@ -267,6 +278,9 @@ the index when your workflow checks in that file.`,
     },
   );
   attachRequestLogging(server, options.requestLogger ?? noopRequestLogger);
+  if (options.trace?.logger.enabled) {
+    attachTraceLogging(server, new TraceRecorder(options.trace.logger, options.trace.connection));
+  }
 
   server.registerTool(
     "listAnchors",
@@ -274,6 +288,7 @@ the index when your workflow checks in that file.`,
       title: "List Anchors",
       description: "List context anchor markdown files and front matter metadata.",
       inputSchema: z.object({
+        traceId: TraceIdSchema,
         project: z.string().optional(),
         tag: z.string().optional(),
         since: z.string().optional(),
@@ -298,6 +313,7 @@ the index when your workflow checks in that file.`,
       description:
         `Read one context anchor, optionally at a git version. Latest reads include \`fileCommit\` (last git commit touching the file) for optional \`expectedFileCommit\` on writes and \`sectionDefinitions\` with canonical section definitions. Pass includeProvenance to add parsed claim provenance: summary, relevant, or full. Project context anchors return WARN entries when their Introduction design header or Invariants are incomplete. Treat that header as authoritative and flag conflicts with lower detail rather than silently choosing the detail. ${SECTION_DEFINITION_GUIDANCE}`,
       inputSchema: z.object({
+        traceId: TraceIdSchema,
         name: z.string(),
         version: z.string().optional(),
         includeProvenance: ClaimProvenanceModeSchema.optional(),
@@ -315,6 +331,7 @@ the index when your workflow checks in that file.`,
       title: "Read Anchor Batch",
       description: `Read multiple latest context anchors in one call. Each result includes \`sectionDefinitions\` with canonical definitions. Pass includeProvenance to add parsed claim provenance sidecars. ${SECTION_DEFINITION_GUIDANCE}`,
       inputSchema: z.object({
+        traceId: TraceIdSchema,
         names: NonEmptyStringArraySchema,
         includeProvenance: ClaimProvenanceModeSchema.optional(),
         task: z.string().optional().describe("Optional task text used when includeProvenance is relevant."),
@@ -339,6 +356,7 @@ the index when your workflow checks in that file.`,
         "Read one H2 section or nested heading path without loading the entire anchor. Pass heading as an H2 name such as `Current State` or a simple path such as `Current State > Capabilities`; pass an availableHeadingPaths array as headingPath when any heading title contains `>`. Use paths advertised in loadContext/startTask availableSections, availableSectionPaths, and availableHeadingPaths. " +
         "Returns the selected section plus the anchor's complete H2 and nested heading lists for further on-demand reads.",
       inputSchema: z.object({
+        traceId: TraceIdSchema,
         name: z.string(),
         heading: z.string().trim().min(1).optional(),
         headingPath: z.array(z.string().trim().min(1)).min(1).optional(),
@@ -361,8 +379,10 @@ the index when your workflow checks in that file.`,
         "Returns plan rationale, anchor excerpts, staleness flags, compact claim-provenance health, active milestones, and suggested readAnchor follow-ups. " +
         "Project context anchors load front matter plus the complete Introduction-through-Invariants design header and advertise remaining H2 plus display and structured nested heading paths for readAnchorSection. " +
         "Loaded anchors include canonical sectionDefinitions guidance. " +
+        "The response includes a traceId; echo it on follow-up context calls (readAnchor, loadContext, searchAnchors, ...) for exact session tracing. " +
         `Pass repo and/or filePaths to resolve candidate projects when the project is not named directly. ${SECTION_DEFINITION_GUIDANCE}`,
       inputSchema: z.object({
+        traceId: TraceIdSchema,
         task: z.string().min(1),
         project: z.string().optional(),
         repo: z.string().optional(),
@@ -374,7 +394,7 @@ the index when your workflow checks in that file.`,
       }),
       annotations: { readOnlyHint: true },
     },
-    async (input) => jsonResult(await service.startTask(input)),
+    async ({ traceId, ...input }) => jsonResult({ traceId: traceId ?? newTraceId(), ...(await service.startTask(input)) }),
   );
 
   server.registerTool(
@@ -400,6 +420,7 @@ the index when your workflow checks in that file.`,
         "Plan a task-aware context bundle. Returns included anchors, excluded anchors, reasons, estimated token use, missing-context signals, and a suggested loadContext call. " +
         "Pass repo and/or filePaths to resolve candidate projects when the project is not named directly. Includes compact claim-provenance health by default; pass includeProvenance: \"none\" to omit it.",
       inputSchema: z.object({
+        traceId: TraceIdSchema,
         task: z.string().min(1),
         project: z.string().optional(),
         repo: z.string().optional(),
@@ -425,6 +446,7 @@ the index when your workflow checks in that file.`,
       description:
         "List `type: project-milestone` anchors under `projects/<slug>/milestones/` with status, theme, referenced goal ids, optional `milestoneId` / `sequence`, derived `displayId` (`M<sequence>` or `backlog`), sorted by sequence (backlog and unsequenced last).",
       inputSchema: z.object({
+        traceId: TraceIdSchema,
         project: z.string().optional(),
       }),
       annotations: { readOnlyHint: true },
@@ -439,6 +461,7 @@ the index when your workflow checks in that file.`,
       description:
         "Structured, sorted listing of a project's roadmap goals without reading the whole roadmap document. Status derives from the region a goal appears in (## Goals = active, ## Completed / ## Cancelled = history; a goal id can appear in both when a phase shipped). Default sort groups by status (active first) with the newest G-### first within each group; sort: id gives ascending id order, sort: recent gives newest-first across statuses. Each goal lists the milestones that reference it.",
       inputSchema: z.object({
+        traceId: TraceIdSchema,
         project: z.string().describe("Project slug (alias-aware)."),
         status: z.enum(["active", "completed", "cancelled"]).optional().describe("Filter by goal status."),
         sort: z.enum(["status", "id", "recent"]).optional().describe("Sort mode. Defaults to status grouping with newest ids first."),
@@ -455,6 +478,7 @@ the index when your workflow checks in that file.`,
       description:
         "Read one milestone anchor plus resolved roadmap goals referenced by `relations.goal_ids` (from the sibling `<slug>-roadmap.md`).",
       inputSchema: z.object({
+        traceId: TraceIdSchema,
         name: z.string(),
       }),
       annotations: { readOnlyHint: true },
@@ -676,6 +700,7 @@ the index when your workflow checks in that file.`,
       title: "Search Anchors",
       description: "Search context anchor contents for a case-insensitive text query.",
       inputSchema: z.object({
+        traceId: TraceIdSchema,
         query: z.string().min(1),
         scope: z.string().optional(),
       }),
@@ -1511,6 +1536,7 @@ the index when your workflow checks in that file.`,
       title: "Context Root",
       description: "Build a dynamic context root from anchor front matter.",
       inputSchema: z.object({
+        traceId: TraceIdSchema,
         project: z.string().optional(),
         category: CategorySchema.optional(),
         tag: z.string().optional(),
@@ -1906,6 +1932,35 @@ function attachRequestLogging(server: McpServer, requestLogger: RequestLogger): 
         throw error;
       }
     })) as unknown as McpServer["registerTool"];
+}
+
+function attachTraceLogging(server: McpServer, recorder: TraceRecorder): void {
+  const registerTool = server.registerTool.bind(server) as (
+    name: string,
+    config: unknown,
+    callback: ToolCallback,
+  ) => unknown;
+  server.registerTool = ((name: string, config: unknown, callback: ToolCallback) => {
+    if (!recorder.isContextTool(name)) {
+      return registerTool(name, config, callback);
+    }
+    return registerTool(name, config, async (input: unknown, context: unknown) => {
+      const startedAt = Date.now();
+      try {
+        const result = await callback(input, context);
+        recorder.record({
+          toolName: name,
+          input,
+          result: result as { isError?: boolean; structuredContent?: Record<string, unknown> },
+          durationMs: Date.now() - startedAt,
+        });
+        return result;
+      } catch (error) {
+        recorder.record({ toolName: name, input, error, durationMs: Date.now() - startedAt });
+        throw error;
+      }
+    });
+  }) as unknown as McpServer["registerTool"];
 }
 
 type ToolCallback = (input: unknown, context: unknown) => CallToolResult | Promise<CallToolResult>;

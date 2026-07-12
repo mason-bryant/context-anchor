@@ -138,6 +138,7 @@ export const UI_HTML = `<!doctype html>
             <button class="tab" data-tab="teams" type="button"><span class="icon-label"><svg class="icon" aria-hidden="true"><use href="#icon-team"></use></svg><span>Teams</span></span></button>
             <button class="tab" data-tab="mappings" type="button"><span class="icon-label"><svg class="icon" aria-hidden="true"><use href="#icon-filter"></use></svg><span>Mappings</span></span></button>
             <button class="tab" data-tab="review" type="button"><span class="icon-label"><svg class="icon" aria-hidden="true"><use href="#icon-save"></use></svg><span>Review</span></span></button>
+            <button class="tab" data-tab="traces" type="button"><span class="icon-label"><svg class="icon" aria-hidden="true"><use href="#icon-plan"></use></svg><span>Traces</span></span></button>
             <button class="tab" data-tab="detail" type="button" disabled><span class="icon-label"><svg class="icon" aria-hidden="true"><use href="#icon-anchor"></use></svg><span>Selected Anchor</span></span></button>
           </nav>
 
@@ -475,6 +476,21 @@ export const UI_HTML = `<!doctype html>
             </details>
             <div id="teams-empty" class="empty-state" hidden>No teams in registry.</div>
             <div id="teams-list" class="registry-cards"></div>
+          </section>
+
+          <section id="traces-view" class="view">
+            <div class="view-header">
+              <div>
+                <h2>Context Traces</h2>
+                <p id="traces-summary">Recent agent context-retrieval sessions, grouped by trace id or transport session.</p>
+              </div>
+              <div class="tasks-filters">
+                <button id="traces-refresh" type="button">Refresh</button>
+              </div>
+            </div>
+            <div id="traces-disabled" class="empty-state" hidden>Trace logging is disabled. Enable <code>logging.traces</code> in the server config to record context-retrieval traces.</div>
+            <div id="traces-empty" class="empty-state" hidden>No trace sessions recorded yet. Run a context query (startTask, loadContext, searchAnchors, ...) and refresh.</div>
+            <div id="traces-list" hidden></div>
           </section>
 
           <section id="detail-view" class="view">
@@ -1612,6 +1628,60 @@ textarea {
   text-align: center;
 }
 
+.trace-session {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  margin-bottom: 12px;
+  padding: 10px 14px;
+}
+
+.trace-session-head {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.trace-task {
+  color: var(--muted);
+  font-style: italic;
+  margin: 6px 0;
+}
+
+.trace-meta {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.trace-badge {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  font-size: 11px;
+  padding: 1px 8px;
+  text-transform: uppercase;
+}
+
+.trace-badge-exact {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+.trace-event {
+  border-top: 1px solid var(--border);
+  margin-top: 6px;
+  padding-top: 6px;
+}
+
+.trace-event summary {
+  cursor: pointer;
+}
+
+.trace-event-summary {
+  font-size: 12px;
+}
+
 @media (max-width: 900px) {
   .topbar {
     align-items: stretch;
@@ -2706,6 +2776,8 @@ export const UI_JS = `(function () {
     anchorGroupSort: DEFAULT_ANCHOR_SORT,
     tasks: [],
     tasksLoading: false,
+    traces: null,
+    tracesLoading: false,
     pendingTaskFocus: null,
     tasksProject: "",
     tasksStatus: "active,todo,blocked",
@@ -2836,7 +2908,7 @@ export const UI_JS = `(function () {
   }
 
   function validTab(value) {
-    return value === "root" || value === "planner" || value === "tasks" || value === "people" || value === "teams" || value === "mappings" || value === "review" || value === "detail" ? value : null;
+    return value === "root" || value === "planner" || value === "tasks" || value === "traces" || value === "people" || value === "teams" || value === "mappings" || value === "review" || value === "detail" ? value : null;
   }
 
   function validRootMode(value) {
@@ -3538,6 +3610,9 @@ export const UI_JS = `(function () {
     }
     if (state.activeTab === "tasks") {
       await loadTasks();
+    }
+    if (state.activeTab === "traces" && !state.traces) {
+      await loadTraces();
     }
     // Anchors are now loaded; re-render the registry views so soft project-slug
     // validation (which reads state.anchors) runs even when the user landed
@@ -4710,6 +4785,18 @@ export const UI_JS = `(function () {
     }
   }
 
+  function showTracesView(options) {
+    var opts = options || {};
+    if (!opts.skipLocationUpdate) {
+      updateLocationFromState({ anchor: null, view: "traces", history: "push" });
+    }
+    state.pendingAnchor = null;
+    showTab("traces");
+    if (!state.traces && !state.tracesLoading) {
+      loadTraces();
+    }
+  }
+
   // Switch to the tasks view (where tasks are editable) and focus a specific
   // task, used by the detail-view "Edit in tasks" links. loadTasks re-renders
   // and applies the focus; if tasks are already loaded we apply it directly.
@@ -5523,6 +5610,79 @@ export const UI_JS = `(function () {
     } catch (error) {
       el("claim-source-result").textContent = error.message;
     }
+  }
+
+  async function loadTraces() {
+    state.tracesLoading = true;
+    try {
+      var result = await api("/api/ui/traces?limit=50");
+      state.traces = result;
+      renderTraces();
+    } catch (error) {
+      setBanner(error.message, "error");
+    } finally {
+      state.tracesLoading = false;
+    }
+  }
+
+  function traceEventSummary(ev) {
+    var parts = [];
+    if (ev.budgetTokens !== undefined) {
+      parts.push("budget " + ev.budgetTokens + (ev.estimatedTokens !== undefined ? " (est " + ev.estimatedTokens + ")" : ""));
+    }
+    if (ev.included) parts.push("included " + ev.included.length);
+    if (ev.excluded) parts.push("excluded " + ev.excluded.length);
+    if (ev.delivered && ev.delivered.length) {
+      parts.push("delivered " + ev.delivered.map(function (d) {
+        var extra = d.mode + (d.bytes !== undefined ? ", " + d.bytes + "b" : "") + (d.degradation ? ", " + d.degradation : "");
+        return d.name + " (" + extra + ")";
+      }).join("; "));
+    }
+    if (ev.listed) parts.push("listed " + ev.listed.length);
+    if (ev.structured) parts.push(ev.structured.kind + " x" + ev.structured.ids.length);
+    if (ev.missingContext && ev.missingContext.length) parts.push("missing-context " + ev.missingContext.length);
+    if (ev.zeroHit) parts.push("ZERO HIT");
+    if (ev.truncated) parts.push("truncated");
+    if (ev.cursor === "continuation") parts.push("pagination");
+    if (ev.error) parts.push("error: " + ev.error.message);
+    return parts.join(" | ");
+  }
+
+  function formatTraceTime(iso) {
+    if (!iso) return "";
+    var date = new Date(iso);
+    return isNaN(date.getTime()) ? iso : date.toLocaleString();
+  }
+
+  function renderTraces() {
+    var data = state.traces;
+    if (!data) {
+      return;
+    }
+    var enabled = !!data.enabled;
+    var sessions = data.sessions || [];
+    el("traces-disabled").hidden = enabled;
+    el("traces-empty").hidden = !enabled || sessions.length > 0;
+    var listEl = el("traces-list");
+    listEl.hidden = !enabled || sessions.length === 0;
+    el("traces-summary").textContent = enabled
+      ? sessions.length + " session(s), newest first. Click an event for its raw trace record."
+      : "Trace logging is disabled.";
+    if (listEl.hidden) {
+      listEl.innerHTML = "";
+      return;
+    }
+    listEl.innerHTML = sessions.map(function (session) {
+      var head = '<div class="trace-session-head"><span class="trace-badge trace-badge-' + escapeHtml(session.correlation) + '">' + escapeHtml(session.correlation) + '</span> <code>' + escapeHtml(session.id) + '</code>'
+        + ' <span class="trace-meta">' + escapeHtml(session.transport) + ' | ' + session.eventCount + ' event(s) | ' + escapeHtml(formatTraceTime(session.startedAt)) + (session.endedAt !== session.startedAt ? " - " + escapeHtml(formatTraceTime(session.endedAt)) : "") + '</span>'
+        + (session.project ? ' <span class="trace-meta">project: ' + escapeHtml(session.project) + '</span>' : "")
+        + '</div>'
+        + (session.taskText || session.taskSha256 ? '<div class="trace-task">' + escapeHtml(session.taskText || "task sha256 " + session.taskSha256.slice(0, 12) + "...") + '</div>' : "");
+      var events = (session.events || []).map(function (ev) {
+        return '<details class="trace-event"><summary><code>' + escapeHtml(ev.tool) + '</code> <span class="trace-meta">' + escapeHtml(formatTraceTime(ev.timestamp)) + ' | ' + ev.durationMs + 'ms | ' + escapeHtml(ev.outcome) + '</span> <span class="trace-event-summary">' + escapeHtml(traceEventSummary(ev)) + '</span></summary><pre class="compact-raw">' + escapeHtml(JSON.stringify(ev, null, 2)) + '</pre></details>';
+      }).join("");
+      return '<div class="trace-session">' + head + events + '</div>';
+    }).join("");
   }
 
   async function loadTasks() {
@@ -9115,6 +9275,10 @@ export const UI_JS = `(function () {
           showTasksView();
           return;
         }
+        if (button.dataset.tab === "traces") {
+          showTracesView();
+          return;
+        }
         if (button.dataset.tab === "people") {
           showPeopleView();
           return;
@@ -9158,6 +9322,10 @@ export const UI_JS = `(function () {
     el("people-refresh").addEventListener("click", function () {
       state.registry = null;
       loadRegistry().catch(function (error) { setBanner(error.message, "error"); });
+    });
+    el("traces-refresh").addEventListener("click", function () {
+      state.traces = null;
+      loadTraces();
     });
     el("mappings-save").addEventListener("click", function () { saveProjectMappings(); });
     el("mappings-refresh").addEventListener("click", function () {

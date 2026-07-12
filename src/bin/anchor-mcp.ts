@@ -42,6 +42,7 @@ async function main(): Promise<void> {
     runtime.stopAutoSync();
     await runtime.mcpServer.close();
     await runtime.requestLogger.close();
+    await runtime.traceLogger.close();
     await logger.close();
   };
   process.once("SIGINT", () => void shutdown());
