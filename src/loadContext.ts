@@ -115,10 +115,13 @@ export function shrinkLoadContextAnchorToFit(
   let mode: AnchorContentMode = includeContent === "full" ? "excerpt" : includeContent;
   let chars = excerptChars;
 
-  while (chars >= 100) {
+  while (true) {
     const row = buildLoadContextAnchor(read, mode, chars, task);
     if (jsonByteLength(row) <= maxBytes) {
       return row;
+    }
+    if (chars === 100) {
+      break;
     }
     chars = Math.max(100, Math.floor(chars * 0.7));
   }

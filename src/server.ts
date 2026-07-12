@@ -340,7 +340,7 @@ the index when your workflow checks in that file.`,
         "Returns the selected section plus the anchor's complete H2 heading list for further on-demand reads.",
       inputSchema: z.object({
         name: z.string(),
-        heading: z.string().min(1),
+        heading: z.string().trim().min(1),
         version: z.string().optional(),
       }),
       annotations: { readOnlyHint: true },

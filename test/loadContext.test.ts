@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import { excerptFromContent, projectContextRetrievalOverview, taskAwareExcerpt } from "../src/loadContext.js";
+import {
+  excerptFromContent,
+  projectContextRetrievalOverview,
+  shrinkLoadContextAnchorToFit,
+  taskAwareExcerpt,
+} from "../src/loadContext.js";
 
 describe("taskAwareExcerpt", () => {
   it("returns matching sections even when they appear after a long prefix", () => {
@@ -101,5 +106,53 @@ None.
     expect(overview?.excerpt).toContain("## Invariants");
     expect(overview?.excerpt).not.toContain("large history");
     expect(overview?.availableSections).toEqual(["Current State", "Decisions", "Constraints", "PRs"]);
+  });
+
+  it("falls back when the complete design header cannot fit the byte budget", () => {
+    const content = `---
+project:
+  - demo
+type: context-anchor
+tags: []
+summary: Demo context.
+read_this_if:
+  - Working on demo.
+last_validated: 2026-07-12
+---
+
+## Introduction
+
+${"oversized design context ".repeat(500)}
+
+## Invariants
+
+- Stable ids remain stable.
+
+## Current State
+
+- Demo exists.
+`;
+    const row = shrinkLoadContextAnchorToFit(
+      {
+        name: "projects/demo/demo-project-context.md",
+        path: "projects/demo/demo-project-context.md",
+        content,
+        frontmatter: {
+          project: ["demo"],
+          type: "context-anchor",
+          tags: [],
+          summary: "Demo context.",
+          read_this_if: ["Working on demo."],
+          last_validated: "2026-07-12",
+        },
+      },
+      "excerpt",
+      1200,
+      500,
+    );
+
+    expect(row.excerpt).toBeUndefined();
+    expect(row.content).toBeUndefined();
+    expect(row.name).toBe("projects/demo/demo-project-context.md");
   });
 });

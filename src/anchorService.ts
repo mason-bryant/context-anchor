@@ -774,20 +774,24 @@ export class AnchorService {
   }
 
   async readAnchorSection(name: string, heading: string, version?: string): Promise<AnchorSectionRead> {
+    const normalizedHeading = heading.trim();
+    if (!normalizedHeading) {
+      throw new Error("Section heading must not be blank.");
+    }
     const read = await this.readAnchor(name, version);
     const parsed = parseAnchor(read.content);
-    const section = parsed.sections.get(heading);
+    const section = parsed.sections.get(normalizedHeading);
     const availableSections = [...parsed.sections.keys()];
     if (section === undefined) {
       throw new Error(
-        `Section not found in ${read.name}: ${heading}. Available H2 sections: ${availableSections.join(", ") || "none"}.`,
+        `Section not found in ${read.name}: ${normalizedHeading}. Available H2 sections: ${availableSections.join(", ") || "none"}.`,
       );
     }
     return {
       name: read.name,
       path: read.path,
-      heading,
-      content: `## ${heading}${section ? `\n\n${section}` : ""}`,
+      heading: normalizedHeading,
+      content: `## ${normalizedHeading}${section ? `\n\n${section}` : ""}`,
       availableSections,
       version: read.version,
       ...(read.fileCommit ? { fileCommit: read.fileCommit } : {}),

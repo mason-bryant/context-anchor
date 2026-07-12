@@ -1106,6 +1106,16 @@ last_validated: 2026-05-10
       "Constraints",
       "PRs",
     ]);
+
+    const normalizedCurrentState = await service.readAnchorSection(
+      "projects/demo/demo-project-context.md",
+      "  Current State  ",
+    );
+    expect(normalizedCurrentState.heading).toBe("Current State");
+    expect(normalizedCurrentState.content).toContain("historical detail");
+    await expect(
+      service.readAnchorSection("projects/demo/demo-project-context.md", "   "),
+    ).rejects.toThrow("Section heading must not be blank");
   });
 
   it("loadContext uses task-aware excerpts when task is provided", async () => {
