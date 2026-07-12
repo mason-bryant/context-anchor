@@ -91,7 +91,7 @@ export class TraceIndex {
     return this.logger.enabled;
   }
 
-  async getSessions(options: { limit?: number } = {}): Promise<TraceSessionView[]> {
+  async getSessions(options: { limit?: number; sessionId?: string } = {}): Promise<TraceSessionView[]> {
     if (!this.logger.enabled) {
       return [];
     }
@@ -101,6 +101,9 @@ export class TraceIndex {
     ]);
     const limit = Math.max(1, Math.min(options.limit ?? 50, 500));
     return sessions
+      // sessionId lookup happens before the recency limit so any session the
+      // dry-queries view references stays reachable, however old.
+      .filter((session) => !options.sessionId || session.id === options.sessionId)
       .map((session) => (ratings[session.id] ? { ...session, rating: ratings[session.id] } : session))
       .sort((a, b) => b.endedAt.localeCompare(a.endedAt))
       .slice(0, limit);

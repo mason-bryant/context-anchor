@@ -5811,7 +5811,7 @@ export const UI_JS = `(function () {
         return modeCounts[mode] + " " + mode;
       }).join(", ");
       parts.push("delivered " + ev.delivered.length + " (" + modeSummary + ")");
-    } else if (ev.tool !== "planContextBundle" && !ev.zeroHit) {
+    } else if (ev.tool !== "planContextBundle" && !ev.zeroHit && !(ev.structured && ev.structured.ids.length)) {
       parts.push("delivered none");
     }
     if (ev.listed && ev.listed.length) parts.push("listed " + ev.listed.length);
@@ -6054,8 +6054,24 @@ export const UI_JS = `(function () {
 
   async function openDrySessionTimeline(sessionId) {
     state.tracesMode = "timeline";
-    if (!state.traces || !(state.traces.sessions || []).some(function (s) { return s.id === sessionId; })) {
+    var loaded = function () {
+      return state.traces && (state.traces.sessions || []).some(function (s) { return s.id === sessionId; });
+    };
+    if (!loaded()) {
       await loadTraces();
+    }
+    if (!loaded()) {
+      // Dry queries are unlimited but the session list is recency-capped, so
+      // an old session may not be in the newest page. Fetch it by id and
+      // splice it in so the click-through always lands.
+      try {
+        var result = await api("/api/ui/traces?sessionId=" + encodeURIComponent(sessionId));
+        if (result.sessions && result.sessions.length && state.traces) {
+          state.traces.sessions = (state.traces.sessions || []).concat(result.sessions);
+        }
+      } catch (error) {
+        setBanner(error.message, "error");
+      }
     }
     renderTracesModeButtons();
     renderTraces();

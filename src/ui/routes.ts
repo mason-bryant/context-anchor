@@ -149,9 +149,13 @@ export function registerUiRoutes(
       }
       const limitRaw = optionalQueryString(req, "limit");
       const limit = limitRaw ? Number.parseInt(limitRaw, 10) : undefined;
+      const sessionId = optionalQueryString(req, "sessionId");
       return {
         enabled: true,
-        sessions: await traceIndex.getSessions({ limit: Number.isFinite(limit) ? limit : undefined }),
+        sessions: await traceIndex.getSessions({
+          limit: Number.isFinite(limit) ? limit : undefined,
+          ...(sessionId ? { sessionId } : {}),
+        }),
       };
     }),
   );

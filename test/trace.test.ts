@@ -431,6 +431,29 @@ describe("session measures", () => {
     expect(session.measures.fullReadConversions).toBe(2);
   });
 
+  it("looks up a session by id past the recency limit", async () => {
+    const tmpDir = await mkdtemp(path.join(os.tmpdir(), "anchor-mcp-traces-"));
+    const logger = createTraceLogger({ traces: { enabled: true, dirname: tmpDir, zippedArchive: false } });
+    const index = new TraceIndex(logger);
+    const recorder = new TraceRecorder(logger);
+    for (let i = 0; i < 3; i += 1) {
+      recorder.record({
+        toolName: "searchAnchors",
+        input: { traceId: `t-lookup-${i}`, query: "x" },
+        result: { structuredContent: { hits: [] } },
+        durationMs: 1,
+      });
+    }
+
+    const limited = await index.getSessions({ limit: 1 });
+    expect(limited).toHaveLength(1);
+
+    const byId = await index.getSessions({ limit: 1, sessionId: "t-lookup-0" });
+    expect(byId).toHaveLength(1);
+    expect(byId[0].id).toBe("t-lookup-0");
+    await logger.close();
+  });
+
   it("counts an anchor's excerpt-to-full conversion only once despite repeated full deliveries", () => {
     const events: TraceEvent[] = [
       baseEvent({ tool: "startTask", traceId: "t-m4", ordinal: 0, timestamp: "2026-07-12T12:00:00.000Z", delivered: [{ name: "a", mode: "excerpt" }] }),
