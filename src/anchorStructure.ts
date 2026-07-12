@@ -324,58 +324,124 @@ const UNSTRUCTURED_CURRENT_STATE_CLAIMS = 8;
 const OVERSIZED_CURRENT_STATE_TOPIC_CLAIMS = 12;
 const CHANGELOG_HEAVY_CURRENT_STATE_CLAIMS = 3;
 
+export type CurrentStateOrganizationStatus = {
+  applies: boolean;
+  status: "not-applicable" | "concise" | "organized" | "needs-attention";
+  claimCount: number;
+  ungroupedClaimCount: number;
+  historyClaimCount: number;
+  topics: Array<{ title: string; path: string; claimCount: number }>;
+  suggestedTopics: string[];
+};
+
+/** Summarize the same organization signals shown by validation and the UI. */
+export function currentStateOrganizationStatus(name: string, content: string): CurrentStateOrganizationStatus {
+  const parsed = parseAnchor(content);
+  if (!isProjectContextAnchor(name, parsed.frontmatter)) {
+    return {
+      applies: false,
+      status: "not-applicable",
+      claimCount: 0,
+      ungroupedClaimCount: 0,
+      historyClaimCount: 0,
+      topics: [],
+      suggestedTopics: [...CURRENT_STATE_TOPICS],
+    };
+  }
+
+  const sections = extractHeadingSections(parsed.body);
+  const currentState = sections.find(
+    (section) => section.level === 2 && section.path.length === 1 && section.title === "Current State",
+  );
+  if (!currentState) {
+    return {
+      applies: true,
+      status: "needs-attention",
+      claimCount: 0,
+      ungroupedClaimCount: 0,
+      historyClaimCount: 0,
+      topics: [],
+      suggestedTopics: [...CURRENT_STATE_TOPICS],
+    };
+  }
+
+  const claimLines = currentState.bodyLines.filter((line) => /^[-*]\s+\S/.test(line));
+  const topicSections = sections.filter(
+    (section) => section.level === 3 && section.path[0] === "Current State",
+  );
+  const firstTopic = topicSections[0];
+  const ungroupedBodyLineCount = firstTopic
+    ? Math.max(0, firstTopic.startLine - currentState.startLine - 1)
+    : currentState.bodyLines.length;
+  const ungroupedClaimCount = currentState.bodyLines
+    .slice(0, ungroupedBodyLineCount)
+    .filter((line) => /^[-*]\s+\S/.test(line)).length;
+  const topics = topicSections.map((topic) => ({
+    title: topic.title,
+    path: topic.path.join(" > "),
+    claimCount: topic.bodyLines.filter((line) => /^[-*]\s+\S/.test(line)).length,
+  }));
+  const historyClaimCount = claimLines.filter((line) =>
+    /\b(?:shipped|merged|landed|implemented locally)\b|\bPR\s*#\d+/i.test(line)
+  ).length;
+  const needsAttention = (
+    (claimLines.length >= UNSTRUCTURED_CURRENT_STATE_CLAIMS && ungroupedClaimCount > 0)
+    || topics.some((topic) => topic.claimCount > OVERSIZED_CURRENT_STATE_TOPIC_CLAIMS)
+    || historyClaimCount >= CHANGELOG_HEAVY_CURRENT_STATE_CLAIMS
+  );
+
+  return {
+    applies: true,
+    status: needsAttention ? "needs-attention" : topics.length > 0 ? "organized" : "concise",
+    claimCount: claimLines.length,
+    ungroupedClaimCount,
+    historyClaimCount,
+    topics,
+    suggestedTopics: [...CURRENT_STATE_TOPICS],
+  };
+}
+
 /**
  * Quality guardrails for project context anchors. These remain warnings so
  * existing anchors can migrate incrementally without blocking durable facts.
  */
 export function currentStateOrganizationWarnings(name: string, content: string): ValidationViolation[] {
-  const parsed = parseAnchor(content);
-  if (!isProjectContextAnchor(name, parsed.frontmatter)) return [];
-
-  const currentState = extractHeadingSections(parsed.body).find(
-    (section) => section.level === 2 && section.path.length === 1 && section.title === "Current State",
-  );
-  if (!currentState) return [];
-
-  const claimLines = currentState.bodyLines.filter((line) => /^[-*]\s+\S/.test(line));
-  const topics = extractHeadingSections(parsed.body).filter(
-    (section) => section.level === 3 && section.path[0] === "Current State",
-  );
+  const organization = currentStateOrganizationStatus(name, content);
+  if (!organization.applies) return [];
   const warnings: ValidationViolation[] = [];
 
-  if (claimLines.length >= UNSTRUCTURED_CURRENT_STATE_CLAIMS && topics.length === 0) {
+  if (
+    organization.claimCount >= UNSTRUCTURED_CURRENT_STATE_CLAIMS
+    && organization.ungroupedClaimCount > 0
+  ) {
     warnings.push({
       severity: "WARN",
       code: "current_state_unstructured",
       message:
-        `Project Current State has ${claimLines.length} claims without H3 topics. Group durable facts under topic headings `
+        `Project Current State has ${organization.ungroupedClaimCount} ungrouped claims out of ${organization.claimCount}. Group durable facts under H3 topic headings `
         + `(for example ${CURRENT_STATE_TOPICS.slice(0, 4).join(", ")}) so humans and agents can retrieve them selectively.`,
       path: name,
     });
   }
 
-  for (const topic of topics) {
-    const topicClaims = topic.bodyLines.filter((line) => /^[-*]\s+\S/.test(line)).length;
-    if (topicClaims > OVERSIZED_CURRENT_STATE_TOPIC_CLAIMS) {
+  for (const topic of organization.topics) {
+    if (topic.claimCount > OVERSIZED_CURRENT_STATE_TOPIC_CLAIMS) {
       warnings.push({
         severity: "WARN",
         code: "current_state_topic_oversized",
         message:
-          `Current State topic "${topic.title}" has ${topicClaims} claims; split it into narrower H3 topics or a sibling detail anchor.`,
+          `Current State topic "${topic.title}" has ${topic.claimCount} claims; split it into narrower H3 topics or a sibling detail anchor.`,
         path: name,
       });
     }
   }
 
-  const historyClaims = claimLines.filter((line) =>
-    /\b(?:shipped|merged|landed|implemented locally)\b|\bPR\s*#\d+/i.test(line),
-  );
-  if (historyClaims.length >= CHANGELOG_HEAVY_CURRENT_STATE_CLAIMS) {
+  if (organization.historyClaimCount >= CHANGELOG_HEAVY_CURRENT_STATE_CLAIMS) {
     warnings.push({
       severity: "WARN",
       code: "current_state_changelog_heavy",
       message:
-        `Project Current State has ${historyClaims.length} release-history-style claims. Describe the resulting present behavior here and move chronological PR history to ## PRs.`,
+        `Project Current State has ${organization.historyClaimCount} release-history-style claims. Describe the resulting present behavior here and move chronological PR history to ## PRs.`,
       path: name,
     });
   }

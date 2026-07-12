@@ -90,6 +90,11 @@ Invariants design header, followed by `availableSections` and nested
 topic such as `Current State > Capabilities`. Broader discovery is available through
 `loadContext` and `contextRoot`.
 
+The anchor detail UI shows a Current State Organization card for project context
+anchors. It reports claim, ungrouped, and release-history counts; lists existing
+nested retrieval paths; and suggests topic paths when a substantial Current State is
+still flat.
+
 When facts change, agents write through MCP tools such as `updateAnchorSection`,
 `updateAnchorFrontmatter`, or `writeAnchor`. Successful writes are validated,
 committed to git, and optionally pushed, which keeps context changes reviewable and

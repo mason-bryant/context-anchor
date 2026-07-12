@@ -19,6 +19,8 @@ export type MarkdownHeadingSection = {
   headingLine: string;
   title: string;
   level: number;
+  /** One-based source line containing the heading. */
+  startLine: number;
   /** Heading titles from the containing H2 through this heading. */
   path: string[];
   /** Content through (but not including) the next heading at this level or higher. */
@@ -70,7 +72,7 @@ export function extractH2Sections(markdownBody: string): Map<string, string> {
  */
 export function extractHeadingSections(markdownBody: string): MarkdownHeadingSection[] {
   const lines = markdownBody.split(/\r?\n/);
-  const headings: Array<Omit<MarkdownHeadingSection, "bodyLines"> & { lineIndex: number }> = [];
+  const headings: Array<Omit<MarkdownHeadingSection, "bodyLines" | "startLine"> & { lineIndex: number }> = [];
   const ancestors: Array<string | undefined> = [];
   let openFence: OpenFence | undefined;
 
@@ -115,6 +117,7 @@ export function extractHeadingSections(markdownBody: string): MarkdownHeadingSec
       headingLine: heading.headingLine,
       title: heading.title,
       level: heading.level,
+      startLine: heading.lineIndex + 1,
       path: heading.path,
       bodyLines: lines.slice(heading.lineIndex + 1, endLine),
     };

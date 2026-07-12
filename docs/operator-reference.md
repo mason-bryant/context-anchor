@@ -387,8 +387,8 @@ Warnings cover:
 - project context anchors with a missing or misplaced design header: `## Introduction`
   (`### Purpose`, `### Goals`, `### Users`, `### Non-goals`) followed by
   `## Invariants`
-- project context anchors whose `## Current State` has at least eight claims but no
-  H3 topic headings (`current_state_unstructured`)
+- project context anchors whose `## Current State` has at least eight claims with
+  claims left outside H3 topic headings (`current_state_unstructured`)
 - Current State topics with more than twelve claims (`current_state_topic_oversized`)
 - Current State sections with at least three release-history-style claims, such as
   “merged” or “shipped in PR #…” (`current_state_changelog_heavy`)
@@ -472,6 +472,12 @@ Current State, settled rationale in `## Decisions`, environmental limits in
 beyond a coherent section, split it into narrower H3 topics or a sibling project detail
 anchor. Nested paths are fence-aware and may be read directly with
 `readAnchorSection`, for example `Current State > Data and Persistence`.
+
+The anchor detail UI exposes these signals in a **Current State Organization** card.
+The card distinguishes concise, topic-oriented, and needs-organization states; shows
+claim, ungrouped, and release-history counts; and displays either the anchor's actual
+retrieval paths or the recommended topic paths. The Validation card continues to show
+the corresponding warning codes and remediation messages.
 
 ## Dynamic Context Root
 

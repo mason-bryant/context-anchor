@@ -7,6 +7,7 @@ import {
   CLAIM_BEARING_SECTIONS,
   CURRENT_STATE_TOPICS,
   currentStateOrganizationWarnings,
+  currentStateOrganizationStatus,
   designHeaderStatus,
   designHeaderWarnings,
   insertAnchorSectionBullet,
@@ -238,6 +239,44 @@ None.
 None.`);
 
     expect(currentStateOrganizationWarnings("projects/demo/demo.md", content)).toEqual([]);
+    expect(currentStateOrganizationStatus("projects/demo/demo.md", content)).toEqual(expect.objectContaining({
+      applies: true,
+      status: "organized",
+      claimCount: 2,
+      ungroupedClaimCount: 0,
+      topics: [
+        { title: "Architecture", path: "Current State > Architecture", claimCount: 1 },
+        { title: "Capabilities", path: "Current State > Capabilities", claimCount: 1 },
+      ],
+    }));
+  });
+
+  it("does not let an empty trailing topic hide ungrouped claims", () => {
+    const claims = Array.from({ length: 8 }, (_, index) => `- Existing fact ${index + 1}.`).join("\n");
+    const content = projectContextBody(`## Current State
+
+${claims}
+
+### Architecture
+
+## Decisions
+
+None.
+
+## Constraints
+
+None.
+
+## PRs
+
+None.`);
+
+    const organization = currentStateOrganizationStatus("projects/demo/demo.md", content);
+    expect(organization.status).toBe("needs-attention");
+    expect(organization.ungroupedClaimCount).toBe(8);
+    expect(currentStateOrganizationWarnings("projects/demo/demo.md", content).map((warning) => warning.code)).toContain(
+      "current_state_unstructured",
+    );
   });
 });
 

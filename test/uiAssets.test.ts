@@ -39,6 +39,7 @@ type UiAssetHooks = {
   saveToken(value: string): void;
   renderAnchorGroup(group: { key: string; label: string; anchors: Array<Record<string, unknown>> }): string;
   renderAnchorRow(anchor: Record<string, unknown>): string;
+  currentStateOrganizationHtml(organization: Record<string, unknown>): string;
   sortAnchorGroups(
     groups: Array<{ key: string; label: string; anchors: Array<Record<string, unknown>> }>,
   ): Array<{ key: string; label: string; anchors: Array<Record<string, unknown>> }>;
@@ -231,6 +232,37 @@ describe("UI browser assets", () => {
     expect(html).toContain('aria-label="Add content to Current State"');
     expect(UI_JS).toContain('apiPost("/api/ui/anchor-structured-content", payload)');
     expect(UI_CSS).toContain(".section-add-editor");
+  });
+
+  it("renders visible Current State organization status and nested retrieval paths", () => {
+    const hooks = loadHooks();
+    const attention = hooks.currentStateOrganizationHtml({
+      applies: true,
+      status: "needs-attention",
+      claimCount: 18,
+      ungroupedClaimCount: 18,
+      historyClaimCount: 4,
+      topics: [],
+      suggestedTopics: ["Architecture", "Capabilities"],
+    });
+    expect(attention).toContain("Needs organization");
+    expect(attention).toContain("18 ungrouped");
+    expect(attention).toContain("Current State &gt; Architecture");
+    expect(attention).toContain("chronological delivery history in PRs");
+
+    const organized = hooks.currentStateOrganizationHtml({
+      applies: true,
+      status: "organized",
+      claimCount: 5,
+      ungroupedClaimCount: 0,
+      historyClaimCount: 0,
+      topics: [{ title: "Storage", path: "Current State > Storage", claimCount: 5 }],
+      suggestedTopics: [],
+    });
+    expect(organized).toContain("Topic-oriented");
+    expect(organized).toContain("Current State &gt; Storage");
+    expect(UI_HTML).toContain('id="current-state-organization-box"');
+    expect(UI_CSS).toContain(".current-state-organization-box");
   });
 
   it("provides a small monochrome icon library for core controls", () => {

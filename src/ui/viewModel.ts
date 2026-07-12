@@ -15,10 +15,12 @@ import type { AnchorQuestion } from "../questions.js";
 import {
   ALWAYS_REQUIRED_SECTIONS,
   ANCHOR_SECTION_DEFINITIONS,
+  currentStateOrganizationStatus,
   designHeaderStatus,
   type AlwaysRequiredSectionName,
   type AnchorSectionName,
   type DesignHeaderStatus,
+  type CurrentStateOrganizationStatus,
 } from "../anchorStructure.js";
 export type AnchorHealthStatus = "ok" | "warn" | "block";
 
@@ -48,6 +50,7 @@ export type AnchorUiDetail = AnchorRead & {
     health: AnchorUiHealth;
     sections: RequiredSectionStatus;
     designHeader: DesignHeaderStatus;
+    currentStateOrganization: CurrentStateOrganizationStatus;
     sectionDefinitions: Record<AnchorSectionName, string>;
     claims: (ClaimWithCertainty & { anchor: string })[];
     mermaidBlocks: (MermaidBlock & { anchor: string })[];
@@ -82,6 +85,7 @@ export function toAnchorUiDetail(
       health: summarizeAnchorHealth({ ...displayMeta, warnings: anchor.warnings }, sections),
       sections,
       designHeader: designHeaderStatus(anchor.name, anchor.content),
+      currentStateOrganization: currentStateOrganizationStatus(anchor.name, anchor.content),
       sectionDefinitions: { ...ANCHOR_SECTION_DEFINITIONS },
       claims,
       mermaidBlocks,
