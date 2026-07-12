@@ -129,10 +129,18 @@ export function findHeadingSection(
   markdownBody: string,
   headingPath: readonly string[],
 ): MarkdownHeadingSection | undefined {
+  return findHeadingSectionInIndex(extractHeadingSections(markdownBody), headingPath);
+}
+
+/** Resolve a heading path against a precomputed index, with the last duplicate winning. */
+export function findHeadingSectionInIndex(
+  sections: readonly MarkdownHeadingSection[],
+  headingPath: readonly string[],
+): MarkdownHeadingSection | undefined {
   const normalized = headingPath.map((part) => part.trim()).filter(Boolean);
   if (normalized.length === 0) return undefined;
   let match: MarkdownHeadingSection | undefined;
-  for (const section of extractHeadingSections(markdownBody)) {
+  for (const section of sections) {
     if (
       section.path.length === normalized.length
       && section.path.every((part, index) => part === normalized[index])
@@ -143,6 +151,33 @@ export function findHeadingSection(
     }
   }
   return match;
+}
+
+/** Return unique display paths ordered by their last occurrence in the document. */
+export function uniqueHeadingPaths(sections: readonly MarkdownHeadingSection[]): string[] {
+  const seen = new Set<string>();
+  const paths: string[] = [];
+  for (let index = sections.length - 1; index >= 0; index -= 1) {
+    const path = sections[index]?.path.join(" > ");
+    if (!path || seen.has(path)) continue;
+    seen.add(path);
+    paths.unshift(path);
+  }
+  return paths;
+}
+
+/** Return unique structured paths ordered by their last occurrence in the document. */
+export function uniqueHeadingPathParts(sections: readonly MarkdownHeadingSection[]): string[][] {
+  const seen = new Set<string>();
+  const paths: string[][] = [];
+  for (let index = sections.length - 1; index >= 0; index -= 1) {
+    const parts = sections[index]?.path;
+    const key = JSON.stringify(parts);
+    if (!parts || seen.has(key)) continue;
+    seen.add(key);
+    paths.unshift([...parts]);
+  }
+  return paths;
 }
 
 /**

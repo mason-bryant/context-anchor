@@ -11,6 +11,7 @@ import {
   findHeadingSection,
   parseBodyH2Segments,
   stringifyBodyH2Segments,
+  uniqueHeadingPaths,
 } from "../src/storage/markdown.js";
 
 describe("fence-aware H2 sections", () => {
@@ -90,6 +91,9 @@ B
 - New.
 `;
     expect(findHeadingSection(body, ["Current State", "Capabilities"])?.bodyLines.join("\n")).toContain("New.");
+    expect(uniqueHeadingPaths(extractHeadingSections(body).filter((section) => section.level > 2))).toEqual([
+      "Current State > Capabilities",
+    ]);
   });
 });
 

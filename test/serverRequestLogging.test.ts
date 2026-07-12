@@ -75,6 +75,37 @@ describe("MCP request logging", () => {
     expect((service as unknown as { readAnchorSection: ReturnType<typeof vi.fn> }).readAnchorSection)
       .toHaveBeenCalledWith("projects/demo/demo.md", "Current State", undefined);
     expect(() => parseToolInput(tool, { name: "projects/demo/demo.md", heading: "   " })).toThrow();
+    expect(() => parseToolInput(tool, { name: "projects/demo/demo.md" })).toThrow();
+    expect(() => parseToolInput(tool, {
+      name: "projects/demo/demo.md",
+      heading: "Current State",
+      headingPath: ["Current State", "Capabilities"],
+    })).toThrow();
+  });
+
+  it("routes unambiguous nested heading path arrays", async () => {
+    const service = {
+      readAnchorSection: vi.fn(async () => ({
+        name: "projects/demo/demo.md",
+        path: "projects/demo/demo.md",
+        heading: "Current State > Input > Output",
+        content: "### Input > Output\n\n- Demo exists.",
+        availableSections: ["Current State"],
+        availableSectionPaths: ["Current State > Input > Output"],
+      })),
+    } as unknown as AnchorService;
+    const tool = toolForTest(createAnchorMcpServer(service), "readAnchorSection");
+
+    await tool.handler(
+      parseToolInput(tool, {
+        name: "projects/demo/demo.md",
+        headingPath: ["Current State", "Input > Output"],
+      }),
+      {},
+    );
+
+    expect((service as unknown as { readAnchorSection: ReturnType<typeof vi.fn> }).readAnchorSection)
+      .toHaveBeenCalledWith("projects/demo/demo.md", ["Current State", "Input > Output"], undefined);
   });
 
   it("normalizes JSON-stringified proposeChange nested parameters", async () => {

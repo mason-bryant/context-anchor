@@ -1112,9 +1112,11 @@ last_validated: 2026-05-10
     expect(loaded?.excerpt).not.toContain("historical detail");
     expect(loaded?.availableSections).toEqual(["Current State", "Decisions", "Constraints", "PRs"]);
     expect(loaded?.availableSectionPaths).toEqual(["Current State > Capabilities"]);
+    expect(loaded?.availableHeadingPaths).toEqual([["Current State", "Capabilities"]]);
     expect(started.suggestedFollowUp.readAnchorSection).toContainEqual({
       name: "projects/demo/demo-project-context.md",
       headings: ["Current State", "Decisions", "Constraints", "PRs", "Current State > Capabilities"],
+      headingPaths: [["Current State", "Capabilities"]],
     });
 
     const currentState = await service.readAnchorSection(
@@ -1131,6 +1133,7 @@ last_validated: 2026-05-10
       "PRs",
     ]);
     expect(currentState.availableSectionPaths).toContain("Current State > Capabilities");
+    expect(currentState.availableHeadingPaths).toContainEqual(["Current State", "Capabilities"]);
 
     const capabilities = await service.readAnchorSection(
       "projects/demo/demo-project-context.md",
@@ -1150,7 +1153,7 @@ last_validated: 2026-05-10
 
     const literalChevronContent = content.replace(
       "## Decisions",
-      "## Input > Output\n\n- Conversion exists.\n\n## Decisions",
+      "### Input > Output\n\n- Nested conversion exists.\n\n## Input > Output\n\n- Conversion exists.\n\n## Decisions",
     );
     await service.writeAnchor({
       name: "projects/demo/chevron-project-context",
@@ -1163,6 +1166,13 @@ last_validated: 2026-05-10
     );
     expect(literalChevron.heading).toBe("Input > Output");
     expect(literalChevron.content).toMatch(/^## Input > Output/);
+    const nestedLiteralChevron = await service.readAnchorSection(
+      "projects/demo/chevron-project-context",
+      ["Current State", "Input > Output"],
+    );
+    expect(nestedLiteralChevron.heading).toBe("Current State > Input > Output");
+    expect(nestedLiteralChevron.content).toMatch(/^### Input > Output/);
+    expect(nestedLiteralChevron.content).toContain("Nested conversion exists");
     await expect(
       service.readAnchorSection("projects/demo/demo-project-context.md", "   "),
     ).rejects.toThrow("Section heading must not be blank");

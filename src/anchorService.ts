@@ -63,8 +63,10 @@ import { isProjectMilestoneType } from "./schema/milestoneTypes.js";
 import {
   countCompletedRows,
   extractHeadingSections,
-  findHeadingSection,
+  findHeadingSectionInIndex,
   parseAnchor,
+  uniqueHeadingPathParts,
+  uniqueHeadingPaths,
 } from "./storage/markdown.js";
 import {
   SERVER_RULES_DISCOVERY_CATEGORY,
@@ -782,23 +784,30 @@ export class AnchorService {
     };
   }
 
-  async readAnchorSection(name: string, heading: string, version?: string): Promise<AnchorSectionRead> {
-    const normalizedInput = heading.trim().replace(/^#{2,6}\s+/, "");
-    if (!normalizedInput) {
+  async readAnchorSection(name: string, heading: string | string[], version?: string): Promise<AnchorSectionRead> {
+    const requestedPath = Array.isArray(heading)
+      ? heading.map((part) => part.trim().replace(/^#{2,6}\s+/, ""))
+      : [heading.trim().replace(/^#{2,6}\s+/, "")];
+    if (requestedPath.length === 0 || requestedPath.some((part) => !part)) {
       throw new Error("Section heading must not be blank.");
     }
     const read = await this.readAnchor(name, version);
     const parsed = parseAnchor(read.content);
+    const headingSections = extractHeadingSections(parsed.body);
+    const normalizedInput = requestedPath[0] ?? "";
     // Preserve the original exact-H2 contract even when a literal title uses
-    // the `>` character; otherwise interpret it as a nested heading path.
-    const headingPath = parsed.sections.has(normalizedInput)
+    // the `>` character. Array input is an unambiguous nested path and may use
+    // `>` literally in any title.
+    const headingPath = Array.isArray(heading)
+      ? requestedPath
+      : parsed.sections.has(normalizedInput)
       ? [normalizedInput]
       : normalizedInput.split(">").map((part) => part.trim()).filter(Boolean);
-    const section = findHeadingSection(parsed.body, headingPath);
+    const section = findHeadingSectionInIndex(headingSections, headingPath);
     const availableSections = [...parsed.sections.keys()];
-    const availableSectionPaths = extractHeadingSections(parsed.body)
-      .filter((candidate) => candidate.level > 2)
-      .map((candidate) => candidate.path.join(" > "));
+    const nestedHeadingSections = headingSections.filter((candidate) => candidate.level > 2);
+    const availableSectionPaths = uniqueHeadingPaths(nestedHeadingSections);
+    const availableHeadingPaths = uniqueHeadingPathParts(nestedHeadingSections);
     if (section === undefined) {
       throw new Error(
         `Section not found in ${read.name}: ${headingPath.join(" > ")}. Available section paths: `
@@ -813,6 +822,7 @@ export class AnchorService {
       content: `${section.headingLine}${section.bodyLines.length > 0 ? `\n${section.bodyLines.join("\n")}` : ""}`.trimEnd(),
       availableSections,
       availableSectionPaths,
+      availableHeadingPaths,
       version: read.version,
       ...(read.fileCommit ? { fileCommit: read.fileCommit } : {}),
     };
@@ -4064,6 +4074,7 @@ None.
           .map((anchor) => ({
             name: anchor.name,
             headings: [...(anchor.availableSections ?? []), ...(anchor.availableSectionPaths ?? [])],
+            headingPaths: anchor.availableHeadingPaths ?? [],
           })),
         note: "Use readAnchorSection for an available H2 or nested heading path; use readAnchor only when the complete document is required.",
       },

@@ -229,8 +229,11 @@ front matter, the complete Markdown from `## Introduction` through `## Invariant
 `availableSectionPaths`, an outline of nested headings beneath those sections. Call
 `readAnchorSection({ name, heading: "Current State" })` for a complete H2 or
 `readAnchorSection({ name, heading: "Current State > Capabilities" })` for one nested
-topic without loading the full anchor. Use `readAnchor` only when the complete
-document is needed.
+topic without loading the full anchor. If a title contains the `>` delimiter, pass an
+array from `availableHeadingPaths` instead:
+`readAnchorSection({ name, headingPath: ["Current State", "Input > Output"] })`.
+Repeated paths are advertised once, with reads resolving to the final occurrence in
+document order. Use `readAnchor` only when the complete document is needed.
 
 When `truncated` is true, call again with `nextCursor` from the previous response. If
 the payload is still too large for the client, reduce `limit` or `maxBytes`, or set

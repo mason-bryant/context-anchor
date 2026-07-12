@@ -87,8 +87,10 @@ anchors use a compact overview: front matter plus the complete Introduction and
 Invariants design header, followed by `availableSections` and nested
 `availableSectionPaths` for details that can be loaded individually with
 `readAnchorSection`. A caller can request an H2 such as `Current State` or a nested
-topic such as `Current State > Capabilities`. Broader discovery is available through
-`loadContext` and `contextRoot`.
+topic such as `Current State > Capabilities`. When a heading title itself contains
+`>`, callers pass the corresponding structured `availableHeadingPaths` entry as the
+`headingPath` input instead. Broader discovery is available through `loadContext` and
+`contextRoot`.
 
 The anchor detail UI shows a Current State Organization card for project context
 anchors. It reports claim, ungrouped, and release-history counts; lists existing

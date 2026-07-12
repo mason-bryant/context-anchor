@@ -880,6 +880,8 @@ export type LoadContextAnchor = {
   availableSections?: string[];
   /** Nested heading paths omitted from a compact excerpt, such as `Current State > Capabilities`. */
   availableSectionPaths?: string[];
+  /** Unambiguous nested heading path segments for use with readAnchorSection headingPath. */
+  availableHeadingPaths?: string[][];
 };
 
 export type AnchorSectionRead = {
@@ -889,6 +891,7 @@ export type AnchorSectionRead = {
   content: string;
   availableSections: string[];
   availableSectionPaths?: string[];
+  availableHeadingPaths?: string[][];
   version?: string;
   fileCommit?: string;
 };
@@ -1012,7 +1015,7 @@ export type StartTaskResult = {
   activeMilestones: StartTaskActiveMilestone[];
   suggestedFollowUp: {
     readAnchor: string[];
-    readAnchorSection: Array<{ name: string; headings: string[] }>;
+    readAnchorSection: Array<{ name: string; headings: string[]; headingPaths: string[][] }>;
     note: string;
   };
 };
