@@ -24,7 +24,7 @@ import {
   LOAD_CONTEXT_DEFAULT_MAX_BYTES,
   shrinkLoadContextAnchorToFit,
   anchorBodyForSearchIndex,
-  stripFrontMatterForExcerpt,
+  retrievalContentCharCount,
   toNextCursorPayload,
 } from "./loadContext.js";
 import {
@@ -71,6 +71,7 @@ import type {
   AnchorContentMode,
   AnchorMeta,
   AnchorRead,
+  AnchorSectionRead,
   AnchorVersion,
   CompactionReport,
   ContextRootFormat,
@@ -558,7 +559,7 @@ export class AnchorService {
             if (content === undefined) {
               continue;
             }
-            bodyCharCounts.set(anchor.name, stripFrontMatterForExcerpt(content).length);
+            bodyCharCounts.set(anchor.name, retrievalContentCharCount(anchor.name, content));
             bm25Index.add({
               id: anchor.name,
               text: anchorBodyForSearchIndex(content),
@@ -769,6 +770,31 @@ export class AnchorService {
       ...withProvenance,
       sectionDefinitions: { ...ANCHOR_SECTION_DEFINITIONS },
       ...(warnings.length > 0 ? { warnings } : {}),
+    };
+  }
+
+  async readAnchorSection(name: string, heading: string, version?: string): Promise<AnchorSectionRead> {
+    const normalizedHeading = heading.trim();
+    if (!normalizedHeading) {
+      throw new Error("Section heading must not be blank.");
+    }
+    const read = await this.readAnchor(name, version);
+    const parsed = parseAnchor(read.content);
+    const section = parsed.sections.get(normalizedHeading);
+    const availableSections = [...parsed.sections.keys()];
+    if (section === undefined) {
+      throw new Error(
+        `Section not found in ${read.name}: ${normalizedHeading}. Available H2 sections: ${availableSections.join(", ") || "none"}.`,
+      );
+    }
+    return {
+      name: read.name,
+      path: read.path,
+      heading: normalizedHeading,
+      content: `## ${normalizedHeading}${section ? `\n\n${section}` : ""}`,
+      availableSections,
+      version: read.version,
+      ...(read.fileCommit ? { fileCommit: read.fileCommit } : {}),
     };
   }
 
@@ -4013,7 +4039,10 @@ None.
       activeMilestones,
       suggestedFollowUp: {
         readAnchor: plan.included.map((anchor) => anchor.name),
-        note: "Use readAnchor for full anchor bodies when excerpts are insufficient or truncated is true.",
+        readAnchorSection: loaded.anchors
+          .filter((anchor) => anchor.availableSections?.length)
+          .map((anchor) => ({ name: anchor.name, headings: anchor.availableSections ?? [] })),
+        note: "Use readAnchorSection for an available H2 section; use readAnchor only when the complete document is required.",
       },
     };
   }

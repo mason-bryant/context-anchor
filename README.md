@@ -82,8 +82,11 @@ anchor files under the taxonomy directories.
 
 At session start, agents call `startTask` when they know the project and task. That
 one call plans a budgeted context bundle, loads task-aware excerpts, flags stale
-anchors, and suggests follow-up full reads when excerpts are not enough. Broader
-discovery is available through `loadContext` and `contextRoot`.
+anchors, and suggests follow-up reads when excerpts are not enough. Project context
+anchors use a compact overview: front matter plus the complete Introduction and
+Invariants design header, followed by `availableSections` for details that can be
+loaded individually with `readAnchorSection`. Broader discovery is available through
+`loadContext` and `contextRoot`.
 
 When facts change, agents write through MCP tools such as `updateAnchorSection`,
 `updateAnchorFrontmatter`, or `writeAnchor`. Successful writes are validated,

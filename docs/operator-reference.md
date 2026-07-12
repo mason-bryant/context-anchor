@@ -215,12 +215,19 @@ Add a durable client rule so agents load context before other tools:
 ```
 
 `startTask` runs `planContextBundle`, loads suggested anchor excerpts, reports stale
-included anchors, includes active milestone summaries, and suggests follow-up
-`readAnchor` calls when excerpts are not enough.
+included anchors, includes active milestone summaries, and suggests follow-up reads
+when excerpts are not enough.
 
 `loadContext` combines discovery metadata with multiple anchor bodies in one call.
 Defaults are `limit: 12`, `maxBytes: 250000`, `includeContent: "excerpt"`, and
 `excerptChars: 1200`.
+
+In excerpt mode, a canonical project context anchor is budgeted and loaded using a
+compact project overview rather than its complete body. The response includes its
+front matter, the complete Markdown from `## Introduction` through `## Invariants`,
+and `availableSections`, an outline of the other H2 headings. Call
+`readAnchorSection({ name, heading })` to retrieve one of those sections without
+loading the full anchor. Use `readAnchor` only when the complete document is needed.
 
 When `truncated` is true, call again with `nextCursor` from the previous response. If
 the payload is still too large for the client, reduce `limit` or `maxBytes`, or set
