@@ -762,16 +762,7 @@ export class AnchorService {
     version?: string,
     options: { includeProvenance?: ClaimProvenanceMode; task?: string } = {},
   ): Promise<AnchorRead> {
-    const built = readBuiltInAnchor(name);
-    let read: AnchorRead;
-    if (built) {
-      if (version && version !== "latest") {
-        throw new Error("Built-in policy anchors only support the latest revision.");
-      }
-      read = built;
-    } else {
-      read = await this.repo.readAnchor(name, version);
-    }
+    const read = await this.readAnchorBase(name, version);
     const withProvenance = await this.withOptionalClaimProvenance(read, options.includeProvenance ?? "none", options.task);
     const warnings = [
       ...designHeaderWarnings(withProvenance.name, withProvenance.content),
@@ -784,6 +775,17 @@ export class AnchorService {
     };
   }
 
+  private async readAnchorBase(name: string, version?: string): Promise<AnchorRead> {
+    const built = readBuiltInAnchor(name);
+    if (built) {
+      if (version && version !== "latest") {
+        throw new Error("Built-in policy anchors only support the latest revision.");
+      }
+      return built;
+    }
+    return this.repo.readAnchor(name, version);
+  }
+
   async readAnchorSection(name: string, heading: string | string[], version?: string): Promise<AnchorSectionRead> {
     const requestedPath = Array.isArray(heading)
       ? heading.map((part) => part.trim().replace(/^#{2,6}\s+/, ""))
@@ -791,7 +793,7 @@ export class AnchorService {
     if (requestedPath.length === 0 || requestedPath.some((part) => !part)) {
       throw new Error("Section heading must not be blank.");
     }
-    const read = await this.readAnchor(name, version);
+    const read = await this.readAnchorBase(name, version);
     const parsed = parseAnchor(read.content);
     const headingSections = extractHeadingSections(parsed.body);
     const normalizedInput = requestedPath[0] ?? "";

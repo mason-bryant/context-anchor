@@ -1119,10 +1119,12 @@ last_validated: 2026-05-10
       headingPaths: [["Current State", "Capabilities"]],
     });
 
+    const fullReadSpy = vi.spyOn(service, "readAnchor");
     const currentState = await service.readAnchorSection(
       "projects/demo/demo-project-context.md",
       "Current State",
     );
+    expect(fullReadSpy).not.toHaveBeenCalled();
     expect(currentState.content).toContain("historical detail");
     expect(currentState.availableSections).toEqual([
       "Introduction",

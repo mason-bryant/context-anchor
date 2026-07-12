@@ -1,4 +1,10 @@
-import { extractHeadingSections, parseAnchor, parseBodyH2Segments, stringifyBodyH2Segments } from "./storage/markdown.js";
+import {
+  extractHeadingSections,
+  findHeadingSectionInIndex,
+  parseAnchor,
+  parseBodyH2Segments,
+  stringifyBodyH2Segments,
+} from "./storage/markdown.js";
 import type { AnchorFrontmatter, ValidationViolation } from "./types.js";
 
 export const ANCHOR_SECTION_SCHEMA = {
@@ -350,9 +356,7 @@ export function currentStateOrganizationStatus(name: string, content: string): C
   }
 
   const sections = extractHeadingSections(parsed.body);
-  const currentState = sections.find(
-    (section) => section.level === 2 && section.path.length === 1 && section.title === "Current State",
-  );
+  const currentState = findHeadingSectionInIndex(sections, ["Current State"]);
   if (!currentState) {
     return {
       applies: true,
@@ -365,9 +369,13 @@ export function currentStateOrganizationStatus(name: string, content: string): C
     };
   }
 
-  const claimLines = currentState.bodyLines.filter((line) => /^[-*]\s+\S/.test(line));
+  const claimLines = currentState.bodyLines.filter(isCurrentStateBullet);
+  const currentStateEndLine = currentState.startLine + currentState.bodyLines.length;
   const topicSections = sections.filter(
-    (section) => section.level === 3 && section.path[0] === "Current State",
+    (section) => section.level === 3
+      && section.path[0] === "Current State"
+      && section.startLine > currentState.startLine
+      && section.startLine <= currentStateEndLine,
   );
   const firstTopic = topicSections[0];
   const ungroupedBodyLineCount = firstTopic
@@ -375,11 +383,11 @@ export function currentStateOrganizationStatus(name: string, content: string): C
     : currentState.bodyLines.length;
   const ungroupedClaimCount = currentState.bodyLines
     .slice(0, ungroupedBodyLineCount)
-    .filter((line) => /^[-*]\s+\S/.test(line)).length;
+    .filter(isCurrentStateBullet).length;
   const topics = topicSections.map((topic) => ({
     title: topic.title,
     path: topic.path.join(" > "),
-    claimCount: topic.bodyLines.filter((line) => /^[-*]\s+\S/.test(line)).length,
+    claimCount: topic.bodyLines.filter(isCurrentStateBullet).length,
   }));
   const historyClaimCount = claimLines.filter((line) =>
     /\b(?:shipped|merged|landed|implemented locally)\b|\bPR\s*#\d+/i.test(line)
@@ -399,6 +407,10 @@ export function currentStateOrganizationStatus(name: string, content: string): C
     topics,
     suggestedTopics: [...CURRENT_STATE_TOPICS],
   };
+}
+
+function isCurrentStateBullet(line: string): boolean {
+  return /^\s*[-*]\s+\S/.test(line);
 }
 
 /**

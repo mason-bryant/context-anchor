@@ -261,6 +261,18 @@ describe("UI browser assets", () => {
     });
     expect(organized).toContain("Topic-oriented");
     expect(organized).toContain("Current State &gt; Storage");
+
+    const concise = hooks.currentStateOrganizationHtml({
+      applies: true,
+      status: "concise",
+      claimCount: 2,
+      ungroupedClaimCount: 2,
+      historyClaimCount: 0,
+      topics: [],
+      suggestedTopics: ["Architecture"],
+    });
+    expect(concise).toContain("does not need topic headings yet");
+    expect(concise).not.toContain("Current State &gt; Architecture");
     expect(UI_HTML).toContain('id="current-state-organization-box"');
     expect(UI_CSS).toContain(".current-state-organization-box");
   });

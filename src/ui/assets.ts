@@ -7692,13 +7692,17 @@ export const UI_JS = `(function () {
     var paths = topics.map(function (topic) { return topic.path; });
     if (paths.length) {
       html += "<p class=\\"organization-note\\">Retrievable topic paths</p>";
-    } else {
+    } else if (needsAttention) {
       paths = (organization.suggestedTopics || []).map(function (topic) { return "Current State > " + topic; });
       html += "<p class=\\"organization-note\\">Suggested topic paths for a substantial Current State</p>";
+    } else {
+      html += "<p class=\\"organization-note\\">This concise Current State does not need topic headings yet.</p>";
     }
-    html += "<div class=\\"retrieval-paths\\">" + paths.map(function (path) {
-      return "<code class=\\"retrieval-path\\">" + escapeHtml(path) + "</code>";
-    }).join("") + "</div>";
+    if (paths.length) {
+      html += "<div class=\\"retrieval-paths\\">" + paths.map(function (path) {
+        return "<code class=\\"retrieval-path\\">" + escapeHtml(path) + "</code>";
+      }).join("") + "</div>";
+    }
     if (needsAttention) {
       html += "<p class=\\"organization-note\\">Keep present behavior in Current State and chronological delivery history in PRs.</p>";
     }

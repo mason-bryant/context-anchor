@@ -220,7 +220,7 @@ None.`);
 
 ### Architecture
 
-- The service has an MCP boundary.
+  - The service has an MCP boundary.
 
 ### Capabilities
 
@@ -248,6 +248,39 @@ None.`);
         { title: "Architecture", path: "Current State > Architecture", claimCount: 1 },
         { title: "Capabilities", path: "Current State > Capabilities", claimCount: 1 },
       ],
+    }));
+  });
+
+  it("uses only the last duplicate Current State and its nested topics", () => {
+    const claims = Array.from({ length: 8 }, (_, index) => `- Current fact ${index + 1}.`).join("\n");
+    const content = projectContextBody(`## Current State
+
+### Legacy Topic
+
+- Superseded fact.
+
+## Current State
+
+${claims}
+
+## Decisions
+
+None.
+
+## Constraints
+
+None.
+
+## PRs
+
+None.`);
+
+    const organization = currentStateOrganizationStatus("projects/demo/demo.md", content);
+    expect(organization).toEqual(expect.objectContaining({
+      status: "needs-attention",
+      claimCount: 8,
+      ungroupedClaimCount: 8,
+      topics: [],
     }));
   });
 
