@@ -1176,6 +1176,14 @@ last_validated: 2026-05-10
     expect(nestedLiteralChevron.content).toMatch(/^### Input > Output/);
     expect(nestedLiteralChevron.content).toContain("Nested conversion exists");
     await expect(
+      service.readAnchorSection(
+        "projects/demo/chevron-project-context",
+        "Current State > Input > Output",
+      ),
+    ).rejects.toThrow(
+      'The displayed path is ambiguous because a heading title contains ">". Use headingPath: ["Current State","Input > Output"] from availableHeadingPaths.',
+    );
+    await expect(
       service.readAnchorSection("projects/demo/demo-project-context.md", "   "),
     ).rejects.toThrow("Section heading must not be blank");
   });

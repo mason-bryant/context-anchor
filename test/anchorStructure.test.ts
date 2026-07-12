@@ -285,6 +285,46 @@ None.`);
     }));
   });
 
+  it("ignores bullet-like lines inside fenced code when counting Current State claims", () => {
+    const fencedClaims = Array.from({ length: 8 }, (_, index) =>
+      `- Example ${index + 1} shipped in PR #${index + 1}.`,
+    ).join("\n");
+    const content = projectContextBody(`## Current State
+
+- One real capability exists.
+
+\`\`\`yaml
+${fencedClaims}
+\`\`\`
+
+### Interfaces
+
+\`\`\`text
+- Example output.
+\`\`\`
+
+## Decisions
+
+None.
+
+## Constraints
+
+None.
+
+## PRs
+
+None.`);
+
+    expect(currentStateOrganizationWarnings("projects/demo/demo.md", content)).toEqual([]);
+    expect(currentStateOrganizationStatus("projects/demo/demo.md", content)).toEqual(expect.objectContaining({
+      status: "organized",
+      claimCount: 1,
+      ungroupedClaimCount: 1,
+      historyClaimCount: 0,
+      topics: [{ title: "Interfaces", path: "Current State > Interfaces", claimCount: 0 }],
+    }));
+  });
+
   it("uses only the last duplicate Current State and its nested topics", () => {
     const claims = Array.from({ length: 8 }, (_, index) => `- Current fact ${index + 1}.`).join("\n");
     const content = projectContextBody(`## Current State

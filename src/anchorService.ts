@@ -807,9 +807,16 @@ export class AnchorService {
     const availableSectionPaths = uniqueHeadingPaths(nestedHeadingSections);
     const availableHeadingPaths = uniqueHeadingPathParts(nestedHeadingSections);
     if (section === undefined) {
+      const ambiguousHeadingPaths = availableHeadingPaths.filter((availablePath) =>
+        availablePath.join(" > ") === normalizedInput
+        && !availablePath.every((part, index) => part === headingPath[index])
+      );
+      const ambiguityGuidance = ambiguousHeadingPaths.length > 0
+        ? ` The displayed path is ambiguous because a heading title contains ">". Use headingPath: ${JSON.stringify(ambiguousHeadingPaths[0])} from availableHeadingPaths.`
+        : "";
       throw new Error(
         `Section not found in ${read.name}: ${headingPath.join(" > ")}. Available section paths: `
-        + `${[...availableSections, ...availableSectionPaths].join(", ") || "none"}.`,
+        + `${[...availableSections, ...availableSectionPaths].join(", ") || "none"}.${ambiguityGuidance}`,
       );
     }
     const normalizedHeading = section.path.join(" > ");

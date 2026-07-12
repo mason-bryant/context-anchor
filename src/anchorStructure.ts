@@ -397,7 +397,7 @@ function currentStateOrganizationStatusFromParsed(
     };
   }
 
-  const claimLines = currentState.bodyLines.filter(isCurrentStateBullet);
+  const claimLines = currentStateBulletLines(currentState.bodyLines);
   const currentStateEndLine = currentState.startLine + currentState.bodyLines.length;
   const topicSections = sections.filter(
     (section) => section.level === 3
@@ -409,13 +409,13 @@ function currentStateOrganizationStatusFromParsed(
   const ungroupedBodyLineCount = firstTopic
     ? Math.max(0, firstTopic.startLine - currentState.startLine - 1)
     : currentState.bodyLines.length;
-  const ungroupedClaimCount = currentState.bodyLines
-    .slice(0, ungroupedBodyLineCount)
-    .filter(isCurrentStateBullet).length;
+  const ungroupedClaimCount = currentStateBulletLines(
+    currentState.bodyLines.slice(0, ungroupedBodyLineCount),
+  ).length;
   const topics = topicSections.map((topic) => ({
     title: topic.title,
     path: topic.path.join(" > "),
-    claimCount: topic.bodyLines.filter(isCurrentStateBullet).length,
+    claimCount: currentStateBulletLines(topic.bodyLines).length,
   }));
   const historyClaimCount = claimLines.filter((line) =>
     /\b(?:shipped|merged|landed|implemented locally)\b|\bPR\s*#\d+/i.test(line)
@@ -439,6 +439,31 @@ function currentStateOrganizationStatusFromParsed(
 
 function isCurrentStateBullet(line: string): boolean {
   return /^\s*[-*]\s+\S/.test(line);
+}
+
+function currentStateBulletLines(lines: readonly string[]): string[] {
+  const bullets: string[] = [];
+  let fence: { char: string; length: number } | undefined;
+
+  for (const line of lines) {
+    const fenceMatch = line.match(/^ {0,3}(`{3,}|~{3,})/);
+    if (fenceMatch?.[1]) {
+      const char = fenceMatch[1][0] ?? "`";
+      if (!fence) {
+        fence = { char, length: fenceMatch[1].length };
+      } else if (
+        fence.char === char
+        && fenceMatch[1].length >= fence.length
+        && /^ {0,3}(`{3,}|~{3,})\s*$/.test(line)
+      ) {
+        fence = undefined;
+      }
+      continue;
+    }
+    if (!fence && isCurrentStateBullet(line)) bullets.push(line);
+  }
+
+  return bullets;
 }
 
 /**
