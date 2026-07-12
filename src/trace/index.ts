@@ -79,10 +79,16 @@ export class TraceIndex {
     }
     const traceFiles = names.filter((name) => name.startsWith(TRACE_FILENAME_PREFIX)).sort();
     for (const name of traceFiles) {
+      if (this.eventsById.size >= MAX_EVENTS_IN_MEMORY) {
+        return;
+      }
       try {
         const raw = await fs.readFile(path.join(dirname, name));
         const text = name.endsWith(".gz") ? gunzipSync(raw).toString("utf8") : raw.toString("utf8");
         for (const line of text.split("\n")) {
+          if (this.eventsById.size >= MAX_EVENTS_IN_MEMORY) {
+            return;
+          }
           const event = parseTraceLine(line);
           if (event) {
             this.append(event);

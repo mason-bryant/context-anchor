@@ -229,10 +229,21 @@ describe("trace recorder", () => {
     expect(events.map((event) => event.ordinal)).toEqual([0, 1]);
   });
 
-  it("covers every context tool the design names", () => {
-    for (const tool of ["startTask", "planContextBundle", "loadContext", "contextRoot", "searchAnchors", "readAnchor", "readAnchorBatch", "listRoadmapGoals", "readMilestone"]) {
-      expect(CONTEXT_TOOLS.has(tool)).toBe(true);
-    }
+  it("traces exactly the context tools the design names", () => {
+    expect([...CONTEXT_TOOLS].sort()).toEqual([
+      "contextRoot",
+      "listAnchors",
+      "listMilestones",
+      "listRoadmapGoals",
+      "loadContext",
+      "planContextBundle",
+      "readAnchor",
+      "readAnchorBatch",
+      "readAnchorSection",
+      "readMilestone",
+      "searchAnchors",
+      "startTask",
+    ]);
   });
 });
 

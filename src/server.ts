@@ -121,6 +121,9 @@ const ProposeChangeInputSchema = z.object({
 const ProjectUpdateStatusesSchema = z.union([z.array(ProjectUpdateStatusSchema), JsonStringSchema]);
 const TraceIdSchema = z
   .string()
+  .trim()
+  .min(1)
+  .max(128)
   .optional()
   .describe("Optional trace correlation id (returned by startTask); echo it on follow-up context calls for exact session tracing.");
 const LoadContextInputSchema = z.object({
