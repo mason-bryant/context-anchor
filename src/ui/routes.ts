@@ -17,7 +17,7 @@ import type {
 } from "../types.js";
 import type { GraphEdgeType } from "../graph/model.js";
 import { aggregateBudget, aggregateFollowUps, aggregateFrequency, filterEvents, filterSessions } from "../trace/aggregate.js";
-import type { TraceIndex } from "../trace/index.js";
+import { buildSessions, type TraceIndex } from "../trace/index.js";
 import { UI_CSS, UI_HTML, UI_JS } from "./assets.js";
 import { toAnchorUiDetail, toAnchorUiMeta } from "./viewModel.js";
 
@@ -157,9 +157,9 @@ export function registerUiRoutes(
     jsonRoute(async (req) => {
       const traceIndex = options.traceIndex;
       if (!traceIndex?.enabled) {
-        return { enabled: false, buckets: {}, cumulative: [], representativeSessionIds: {} };
+        return { enabled: false, ...aggregateFollowUps([]) };
       }
-      const sessions = filterSessions(await traceIndex.getSessions({ limit: 500 }), readTraceFilter(req));
+      const sessions = filterSessions(buildSessions(await traceIndex.getEvents()), readTraceFilter(req));
       return { enabled: true, ...aggregateFollowUps(sessions) };
     }),
   );
@@ -172,7 +172,7 @@ export function registerUiRoutes(
       if (!traceIndex?.enabled) {
         return { enabled: false, rows: [] };
       }
-      const sessions = filterSessions(await traceIndex.getSessions({ limit: 500 }), readTraceFilter(req));
+      const sessions = filterSessions(buildSessions(await traceIndex.getEvents()), readTraceFilter(req));
       return { enabled: true, rows: aggregateFrequency(sessions) };
     }),
   );
@@ -1066,9 +1066,18 @@ function readDiscoveryFilters(req: Request): {
 function readTraceFilter(req: Request): { project?: string; since?: string } {
   const project = optionalQueryString(req, "project");
   const since = optionalQueryString(req, "since");
+  if (since === undefined) {
+    return { ...(project ? { project } : {}) };
+  }
+  const parsed = Date.parse(since);
+  if (Number.isNaN(parsed)) {
+    throw new UiHttpError(400, `Invalid since timestamp: ${since}`);
+  }
+  // Normalize to ISO so lexicographic comparison against event timestamps is
+  // correct even for inputs like "07/12/2026" that parse but sort wrong.
   return {
     ...(project ? { project } : {}),
-    ...(since ? { since } : {}),
+    since: new Date(parsed).toISOString(),
   };
 }
 

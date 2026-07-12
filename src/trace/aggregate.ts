@@ -219,17 +219,20 @@ export type FrequencyRow = {
   deliveredSessions: number;
   fullReadSessions: number;
   fullReadConversion: number;
-  medianBytesDelivered: number | undefined;
-  lastDelivered: string | undefined;
+  /** Null (not omitted) when the item was never delivered, per the endpoint contract. */
+  medianBytesDelivered: number | null;
+  lastDelivered: string | null;
   neverDelivered: boolean;
 };
 
 /**
  * Per-content-unit (anchor name) frequency and coverage counts, session-scoped
- * so eligibility ("appeared in included or excluded") is deduplicated once per
- * session rather than once per event. Sorted by deliveredSessions desc per
- * the design's "sortable by delivery rate" requirement (delivery is the
- * default sort here; callers may re-sort).
+ * so each measure is deduplicated once per session rather than once per event.
+ * Eligibility counts sessions where the item appeared in included, excluded,
+ * or delivered lists: direct reads (readAnchor et al.) deliver items that
+ * never pass through a plan, and counting them keeps deliveredSessions from
+ * exceeding its own denominator. Sorted by deliveredSessions desc per the
+ * design's "sortable by delivery rate" requirement (callers may re-sort).
  */
 export function aggregateFrequency(sessions: TraceSessionView[]): FrequencyRow[] {
   type Accum = {
@@ -239,7 +242,7 @@ export function aggregateFrequency(sessions: TraceSessionView[]): FrequencyRow[]
     fullReadSessions: Set<string>;
     fullReadConversionSessions: Set<string>;
     bytesDelivered: number[];
-    lastDelivered: string | undefined;
+    lastDelivered: string | null;
   };
   const byName = new Map<string, Accum>();
 
@@ -253,7 +256,7 @@ export function aggregateFrequency(sessions: TraceSessionView[]): FrequencyRow[]
         fullReadSessions: new Set(),
         fullReadConversionSessions: new Set(),
         bytesDelivered: [],
-        lastDelivered: undefined,
+        lastDelivered: null,
       };
       byName.set(name, accum);
     }
@@ -316,9 +319,9 @@ export function aggregateFrequency(sessions: TraceSessionView[]): FrequencyRow[]
   return rows;
 }
 
-function median(values: number[]): number | undefined {
+function median(values: number[]): number | null {
   if (values.length === 0) {
-    return undefined;
+    return null;
   }
   const sorted = [...values].sort((a, b) => a - b);
   const mid = Math.floor(sorted.length / 2);
@@ -356,7 +359,9 @@ export function filterEvents(events: TraceEvent[], filter: TraceEventFilter): Tr
 /**
  * Filter sessions to those containing at least one event matching the
  * filter, and restrict each session's own events to the matching subset so
- * downstream aggregation only sees in-scope events.
+ * downstream aggregation only sees in-scope events. Trimmed sessions get
+ * their startedAt/endedAt/eventCount recomputed from the surviving events so
+ * the metadata never disagrees with the event list.
  */
 export function filterSessions(sessions: TraceSessionView[], filter: TraceEventFilter): TraceSessionView[] {
   const result: TraceSessionView[] = [];
@@ -365,7 +370,18 @@ export function filterSessions(sessions: TraceSessionView[], filter: TraceEventF
     if (events.length === 0) {
       continue;
     }
-    result.push(events.length === session.events.length ? session : { ...session, events });
+    if (events.length === session.events.length) {
+      result.push(session);
+      continue;
+    }
+    const ordered = orderedEvents(events);
+    result.push({
+      ...session,
+      events,
+      eventCount: events.length,
+      startedAt: ordered[0]!.timestamp,
+      endedAt: ordered[ordered.length - 1]!.timestamp,
+    });
   }
   return result;
 }

@@ -256,7 +256,8 @@ describe("aggregateFrequency", () => {
     expect(cold.neverDelivered).toBe(true);
     expect(cold.eligibleSessions).toBe(2);
     expect(cold.deliveredSessions).toBe(0);
-    expect(cold.lastDelivered).toBeUndefined();
+    expect(cold.lastDelivered).toBeNull();
+    expect(cold.medianBytesDelivered).toBeNull();
   });
 
   it("counts full-read conversion when an excerpt delivery is later followed by a full delivery in the same session", () => {
@@ -326,5 +327,20 @@ describe("project/since filters", () => {
     expect(filtered[0]!.id).toBe("s1");
     expect(filtered[0]!.events).toHaveLength(1);
     expect(filtered[0]!.events[0]!.project).toBe("alpha");
+  });
+
+  it("recomputes startedAt/endedAt/eventCount on trimmed sessions", () => {
+    const events = [
+      ev({ sessionId: "s1", traceId: "s1", project: "beta", timestamp: "2026-07-01T00:00:00.000Z" }),
+      ev({ sessionId: "s1", traceId: "s1", project: "alpha", timestamp: "2026-07-02T00:00:00.000Z" }),
+      ev({ sessionId: "s1", traceId: "s1", project: "alpha", timestamp: "2026-07-03T00:00:00.000Z" }),
+      ev({ sessionId: "s1", traceId: "s1", project: "beta", timestamp: "2026-07-04T00:00:00.000Z" }),
+    ];
+    const sessions = buildSessions(events);
+
+    const trimmed = filterSessions(sessions, { project: "alpha" })[0]!;
+    expect(trimmed.eventCount).toBe(2);
+    expect(trimmed.startedAt).toBe("2026-07-02T00:00:00.000Z");
+    expect(trimmed.endedAt).toBe("2026-07-03T00:00:00.000Z");
   });
 });
