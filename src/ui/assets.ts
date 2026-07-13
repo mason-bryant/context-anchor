@@ -5915,7 +5915,7 @@ export const UI_JS = `(function () {
     var markers = [];
     if (ev.zeroHit) markers.push('<span class="trace-marker trace-marker-zero">zero-hit</span>');
     if (ev.cursor === "continuation") markers.push('<span class="trace-marker">pagination</span>');
-    var summary = '<div class="trace-query-summary">'
+    var summary = '<div class="trace-query-summary" role="button" tabindex="0" aria-expanded="' + (expanded ? "true" : "false") + '">'
       + '<code>' + escapeHtml(ev.tool) + '</code>'
       + ' <span class="trace-meta">' + escapeHtml(formatTraceTime(ev.timestamp)) + ' | ' + ev.durationMs + 'ms | ' + escapeHtml(ev.outcome) + '</span>'
       + markers.join(" ")
@@ -5983,11 +5983,18 @@ export const UI_JS = `(function () {
 
   function wireTraceSessionEvents(listEl, sessions) {
     listEl.querySelectorAll(".trace-query-summary").forEach(function (summaryEl) {
-      summaryEl.addEventListener("click", function () {
+      var toggle = function () {
         var queryEl = summaryEl.parentElement;
         var key = queryEl.dataset.queryKey;
         state.tracesExpandedQuery = state.tracesExpandedQuery === key ? null : key;
         renderTraces();
+      };
+      summaryEl.addEventListener("click", toggle);
+      summaryEl.addEventListener("keydown", function (event) {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          toggle();
+        }
       });
     });
     listEl.querySelectorAll(".trace-rating").forEach(function (ratingEl) {
@@ -6038,7 +6045,7 @@ export const UI_JS = `(function () {
     bodyEl.innerHTML = rows.map(function (row) {
       var task = row.taskText || (row.taskSha256 ? "sha256 " + row.taskSha256.slice(0, 10) + "..." : "");
       var nearestMiss = row.nearestMiss ? row.nearestMiss.name + (row.nearestMiss.reason ? " (" + row.nearestMiss.reason + ")" : "") : "";
-      return "<tr class=\\"trace-dry-row\\" data-session-id=\\"" + escapeHtml(row.sessionId) + "\\">"
+      return "<tr class=\\"trace-dry-row\\" role=\\"button\\" tabindex=\\"0\\" data-session-id=\\"" + escapeHtml(row.sessionId) + "\\">"
         + "<td>" + escapeHtml(formatTraceTime(row.timestamp)) + "</td>"
         + "<td><code>" + escapeHtml(row.tool) + "</code></td>"
         + "<td>" + escapeHtml(row.reason) + "</td>"
@@ -6049,8 +6056,15 @@ export const UI_JS = `(function () {
         + "</tr>";
     }).join("");
     bodyEl.querySelectorAll(".trace-dry-row").forEach(function (rowEl) {
-      rowEl.addEventListener("click", function () {
+      var open = function () {
         openDrySessionTimeline(rowEl.dataset.sessionId);
+      };
+      rowEl.addEventListener("click", open);
+      rowEl.addEventListener("keydown", function (event) {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          open();
+        }
       });
     });
   }
