@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AnchorService } from "../src/anchorService.js";
 import { AnchorRepository } from "../src/git/repo.js";
 import {
+  CLAIM_SECTIONS,
   carryClaimAnnotations,
   collectClaimIds,
   extractClaims,
@@ -1537,6 +1538,9 @@ None.
     expect(warning?.message).toContain('section "Definition and Registration"');
     expect(warning?.message).toContain("no claim will be created");
     expect(warning?.message).toContain("use an H3 topic");
+    for (const section of CLAIM_SECTIONS) {
+      expect(warning?.message).toContain(section);
+    }
 
     const listed = await service.listClaims({ name: "projects/demo/claims-demo" });
     expect(listed.summary.malformed).toBe(0);

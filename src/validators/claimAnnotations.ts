@@ -1,4 +1,4 @@
-import { extractClaims, findInertClaimAnnotations } from "../claims.js";
+import { CLAIM_SECTIONS, extractClaims, findInertClaimAnnotations } from "../claims.js";
 import type { ValidationContext, Validator } from "./types.js";
 import { violation } from "./types.js";
 import type { ValidationViolation } from "../types.js";
@@ -10,6 +10,7 @@ import type { ValidationViolation } from "../types.js";
  */
 export const validateClaimAnnotations: Validator = (context: ValidationContext): ValidationViolation[] => {
   const results: ValidationViolation[] = [];
+  const claimSectionGuidance = formatList(CLAIM_SECTIONS);
 
   for (const inert of findInertClaimAnnotations(context.newContent)) {
     const annotationLocation = inert.annotationLines.length === 1
@@ -19,7 +20,7 @@ export const validateClaimAnnotations: Validator = (context: ValidationContext):
       violation(
         "WARN",
         "claim_annotation_in_non_claim_section",
-        `Bullet at line ${inert.bulletLine} in non-claim-bearing section "${inert.section}" has provenance on ${annotationLocation}, but no claim will be created and the annotation will be ignored. Move the bullet under Introduction, Invariants, Current State, Decisions, or Constraints (use an H3 topic beneath one of those H2 sections) or remove the annotation: "${truncate(inert.text)}"`,
+        `Bullet at line ${inert.bulletLine} in non-claim-bearing section "${inert.section}" has provenance on ${annotationLocation}, but no claim will be created and the annotation will be ignored. Move the bullet under ${claimSectionGuidance} (use an H3 topic beneath one of those H2 sections) or remove the annotation: "${truncate(inert.text)}"`,
         context.path,
       ),
     );
@@ -45,6 +46,13 @@ export const validateClaimAnnotations: Validator = (context: ValidationContext):
 
   return results;
 };
+
+function formatList(values: readonly string[]): string {
+  if (values.length <= 1) {
+    return values[0] ?? "a claim-bearing H2 section";
+  }
+  return `${values.slice(0, -1).join(", ")}, or ${values[values.length - 1]}`;
+}
 
 function truncate(text: string): string {
   return text.length > 80 ? `${text.slice(0, 77)}...` : text;
