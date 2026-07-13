@@ -113,7 +113,8 @@ type UiAssetHooks = {
   buildJudgePrompt(plan: Record<string, unknown>, anchorBodies: Record<string, string>): string;
   formatPreview(preview: Record<string, unknown>): string;
   priorityLabel(priority: number): string;
-  projectOf(anchor: Record<string, unknown>): string;
+  projectOf(anchor: Record<string, unknown> | null): string;
+  initialLoadErrorMessage(error: { status?: number; message?: string }): string;
   isServerRuleAnchor(anchor: Record<string, unknown> | string | null): boolean;
   readOnlyDetailControlIds(): string[];
 };
@@ -826,6 +827,25 @@ describe("UI browser assets", () => {
         frontmatter: { project: ["demo"] },
       }),
     ).toBe("demo");
+  });
+
+  it("renders mapped-reference prose safely when no anchor is selected", () => {
+    const hooks = loadHooks();
+
+    expect(hooks.projectOf(null)).toBe("");
+    expect(() => hooks.renderMarkdown("Generated context root entry for PR #42.")).not.toThrow();
+    expect(hooks.renderMarkdown("Generated context root entry for PR #42.")).toContain("PR #42");
+  });
+
+  it("only asks for an HTTP auth token after an authorization failure", () => {
+    const hooks = loadHooks();
+
+    expect(hooks.initialLoadErrorMessage({ status: 401, message: "401 Unauthorized" })).toBe(
+      "Enter the HTTP auth token to load anchors. 401 Unauthorized",
+    );
+    expect(hooks.initialLoadErrorMessage({ message: "Cannot read properties of null" })).toBe(
+      "Could not load UI data. Cannot read properties of null",
+    );
   });
 
   it("requests anchor list batches with explicit limit and offset", () => {
