@@ -97,14 +97,22 @@ export class TraceIndex {
     }
     const [sessions, ratings] = await Promise.all([
       this.buildAllSessions(),
-      this.ratings?.getAll() ?? Promise.resolve<Record<string, TraceRating>>({}),
+      this.ratings?.getAll() ?? Promise.resolve<Record<string, TraceRating>>(Object.create(null) as Record<string, TraceRating>),
     ]);
     const limit = Math.max(1, Math.min(options.limit ?? 50, 500));
+    // Own-property check: session ids come from client-supplied trace ids, so
+    // an id like "__proto__" must not read a bogus rating off the prototype
+    // chain of a plain-object map.
+    const ratingFor = (id: string): TraceRating | undefined =>
+      Object.prototype.hasOwnProperty.call(ratings, id) ? ratings[id] : undefined;
     return sessions
       // sessionId lookup happens before the recency limit so any session the
       // dry-queries view references stays reachable, however old.
       .filter((session) => !options.sessionId || session.id === options.sessionId)
-      .map((session) => (ratings[session.id] ? { ...session, rating: ratings[session.id] } : session))
+      .map((session) => {
+        const rating = ratingFor(session.id);
+        return rating ? { ...session, rating } : session;
+      })
       .sort((a, b) => b.endedAt.localeCompare(a.endedAt))
       .slice(0, limit);
   }
