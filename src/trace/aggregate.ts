@@ -1,5 +1,5 @@
 import type { TraceEvent } from "./events.js";
-import type { TraceSessionView } from "./index.js";
+import { computeSessionMeasures, type TraceSessionView } from "./index.js";
 
 /** Reason substring the planner uses when an anchor is excluded for budget, not relevance. */
 const BUDGET_EXCLUSION_REASON = "outside token budget";
@@ -388,6 +388,7 @@ export function filterSessions(sessions: TraceSessionView[], filter: TraceEventF
       taskSha256: taskEvent?.task?.sha256,
       taskText: taskEvent?.task?.text,
       project: ordered.find((event) => event.project)?.project,
+      measures: computeSessionMeasures(ordered),
     });
   }
   return result;

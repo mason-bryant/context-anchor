@@ -72,7 +72,11 @@ export async function startHttpServer(
 
   const auth = bearerAuth(options.authToken);
   app.use("/mcp", auth);
-  registerUiRoutes(app, runtime.service, { authMiddleware: auth, traceIndex: runtime.traceIndex });
+  registerUiRoutes(app, runtime.service, {
+    authMiddleware: auth,
+    traceIndex: runtime.traceIndex,
+    traceRatings: runtime.traceRatings,
+  });
 
   if (options.stateless) {
     const transport = new NodeStreamableHTTPServerTransport({ sessionIdGenerator: undefined });

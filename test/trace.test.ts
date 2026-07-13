@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, readdir } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
@@ -11,9 +11,10 @@ import {
   taskIdentity,
   type TraceEvent,
 } from "../src/trace/events.js";
-import { buildSessions, TraceIndex } from "../src/trace/index.js";
+import { buildSessions, findDryQueries, TraceIndex } from "../src/trace/index.js";
 import { createTraceLogger, noopTraceLogger } from "../src/trace/logger.js";
 import { PROCESS_ID, TraceRecorder } from "../src/trace/recorder.js";
+import { TraceRatingsStore } from "../src/trace/ratings.js";
 
 async function findLogFile(dir: string, prefix: string): Promise<string | undefined> {
   for (let attempt = 0; attempt < 10; attempt += 1) {
@@ -375,5 +376,338 @@ describe("trace logger and index", () => {
     const index = new TraceIndex(noopTraceLogger);
     expect(index.enabled).toBe(false);
     await expect(index.getSessions()).resolves.toEqual([]);
+  });
+});
+
+describe("session measures", () => {
+  it("counts follow-ups, semantic follow-ups, pagination, zero-hits, and delivered items", () => {
+    const events: TraceEvent[] = [
+      baseEvent({ tool: "startTask", traceId: "t-m1", ordinal: 0, timestamp: "2026-07-12T12:00:00.000Z", delivered: [{ name: "a", mode: "excerpt" }] }),
+      baseEvent({ tool: "readAnchor", traceId: "t-m1", ordinal: 1, timestamp: "2026-07-12T12:01:00.000Z", delivered: [{ name: "a", mode: "full" }] }),
+      baseEvent({ tool: "loadContext", traceId: "t-m1", ordinal: 2, timestamp: "2026-07-12T12:02:00.000Z", cursor: "continuation", delivered: [{ name: "b", mode: "excerpt" }] }),
+      baseEvent({ tool: "searchAnchors", traceId: "t-m1", ordinal: 3, timestamp: "2026-07-12T12:03:00.000Z", zeroHit: true }),
+    ];
+
+    const [session] = buildSessions(events);
+    expect(session.measures).toEqual({
+      followUpCount: 3,
+      semanticFollowUpCount: 2,
+      paginationCount: 1,
+      zeroHitCount: 1,
+      deliveredItemCount: 3,
+      fullReadConversions: 1,
+    });
+  });
+
+  it("reports zero measures for a single-event session", () => {
+    const [session] = buildSessions([baseEvent({ tool: "startTask", traceId: "t-solo", delivered: [{ name: "a", mode: "excerpt" }] })]);
+    expect(session.measures).toEqual({
+      followUpCount: 0,
+      semanticFollowUpCount: 0,
+      paginationCount: 0,
+      zeroHitCount: 0,
+      deliveredItemCount: 1,
+      fullReadConversions: 0,
+    });
+  });
+
+  it("does not count a full delivery as a conversion without a prior excerpt of the same name", () => {
+    const events: TraceEvent[] = [
+      baseEvent({ tool: "startTask", traceId: "t-m2", ordinal: 0, timestamp: "2026-07-12T12:00:00.000Z", delivered: [{ name: "a", mode: "metadata" }] }),
+      baseEvent({ tool: "readAnchor", traceId: "t-m2", ordinal: 1, timestamp: "2026-07-12T12:01:00.000Z", delivered: [{ name: "a", mode: "full" }] }),
+      baseEvent({ tool: "readAnchor", traceId: "t-m2", ordinal: 2, timestamp: "2026-07-12T12:02:00.000Z", delivered: [{ name: "b", mode: "full" }] }),
+    ];
+    const [session] = buildSessions(events);
+    expect(session.measures.fullReadConversions).toBe(0);
+  });
+
+  it("counts multiple same-item excerpt-to-full conversions across different anchors", () => {
+    const events: TraceEvent[] = [
+      baseEvent({ tool: "startTask", traceId: "t-m3", ordinal: 0, timestamp: "2026-07-12T12:00:00.000Z", delivered: [{ name: "a", mode: "excerpt" }, { name: "b", mode: "excerpt" }] }),
+      baseEvent({ tool: "readAnchor", traceId: "t-m3", ordinal: 1, timestamp: "2026-07-12T12:01:00.000Z", delivered: [{ name: "a", mode: "full" }] }),
+      baseEvent({ tool: "readAnchor", traceId: "t-m3", ordinal: 2, timestamp: "2026-07-12T12:02:00.000Z", delivered: [{ name: "b", mode: "full" }] }),
+    ];
+    const [session] = buildSessions(events);
+    expect(session.measures.fullReadConversions).toBe(2);
+  });
+
+  it("looks up a session by id past the recency limit", async () => {
+    const tmpDir = await mkdtemp(path.join(os.tmpdir(), "anchor-mcp-traces-"));
+    const logger = createTraceLogger({ traces: { enabled: true, dirname: tmpDir, zippedArchive: false } });
+    const index = new TraceIndex(logger);
+    const recorder = new TraceRecorder(logger);
+    for (let i = 0; i < 3; i += 1) {
+      recorder.record({
+        toolName: "searchAnchors",
+        input: { traceId: `t-lookup-${i}`, query: "x" },
+        result: { structuredContent: { hits: [] } },
+        durationMs: 1,
+      });
+    }
+
+    const limited = await index.getSessions({ limit: 1 });
+    expect(limited).toHaveLength(1);
+
+    const byId = await index.getSessions({ limit: 1, sessionId: "t-lookup-0" });
+    expect(byId).toHaveLength(1);
+    expect(byId[0].id).toBe("t-lookup-0");
+    await logger.close();
+  });
+
+  it("counts an anchor's excerpt-to-full conversion only once despite repeated full deliveries", () => {
+    const events: TraceEvent[] = [
+      baseEvent({ tool: "startTask", traceId: "t-m4", ordinal: 0, timestamp: "2026-07-12T12:00:00.000Z", delivered: [{ name: "a", mode: "excerpt" }] }),
+      baseEvent({ tool: "readAnchor", traceId: "t-m4", ordinal: 1, timestamp: "2026-07-12T12:01:00.000Z", delivered: [{ name: "a", mode: "full" }] }),
+      baseEvent({ tool: "readAnchor", traceId: "t-m4", ordinal: 2, timestamp: "2026-07-12T12:02:00.000Z", delivered: [{ name: "a", mode: "full" }] }),
+      baseEvent({ tool: "readAnchorBatch", traceId: "t-m4", ordinal: 3, timestamp: "2026-07-12T12:03:00.000Z", delivered: [{ name: "a", mode: "full" }] }),
+    ];
+    const [session] = buildSessions(events);
+    expect(session.measures.fullReadConversions).toBe(1);
+  });
+});
+
+describe("dry query classification", () => {
+  it("includes a zero-hit search from a multi-query session", () => {
+    const events: TraceEvent[] = [
+      baseEvent({ tool: "startTask", traceId: "t-d1", ordinal: 0, timestamp: "2026-07-12T12:00:00.000Z", delivered: [{ name: "a", mode: "full" }] }),
+      baseEvent({ tool: "searchAnchors", traceId: "t-d1", ordinal: 1, timestamp: "2026-07-12T12:01:00.000Z", zeroHit: true }),
+    ];
+    const sessions = buildSessions(events);
+    const dry = findDryQueries(sessions);
+    expect(dry).toHaveLength(1);
+    expect(dry[0]).toMatchObject({ sessionId: "t-d1", tool: "searchAnchors", reason: "zero-hit" });
+  });
+
+  it("excludes a healthy single-query session that delivered a substantive bundle", () => {
+    const sessions = buildSessions([
+      baseEvent({ tool: "startTask", traceId: "t-healthy", delivered: [{ name: "a", mode: "excerpt" }] }),
+    ]);
+    expect(findDryQueries(sessions)).toEqual([]);
+  });
+
+  it("flags a planContextBundle call that selected nothing", () => {
+    const sessions = buildSessions([
+      baseEvent({ tool: "startTask", traceId: "t-d2", ordinal: 0, timestamp: "2026-07-12T12:00:00.000Z", delivered: [{ name: "a", mode: "full" }] }),
+      baseEvent({
+        tool: "planContextBundle",
+        traceId: "t-d2",
+        ordinal: 1,
+        timestamp: "2026-07-12T12:01:00.000Z",
+        included: [],
+        excluded: [{ name: "z", score: 5, reason: "low relevance" }],
+      }),
+    ]);
+    const dry = findDryQueries(sessions);
+    expect(dry).toHaveLength(1);
+    expect(dry[0].reason).toBe("nothing-delivered");
+    expect(dry[0].nearestMiss).toEqual({ name: "z", reason: "low relevance" });
+  });
+
+  it("flags a startTask bundle whose only delivery was metadata only, in a multi-query session", () => {
+    const sessions = buildSessions([
+      baseEvent({ tool: "startTask", traceId: "t-d3", ordinal: 0, timestamp: "2026-07-12T12:00:00.000Z", delivered: [{ name: "a", mode: "metadata" }] }),
+      baseEvent({ tool: "readAnchor", traceId: "t-d3", ordinal: 1, timestamp: "2026-07-12T12:01:00.000Z", delivered: [{ name: "a", mode: "full" }] }),
+    ]);
+    const dry = findDryQueries(sessions);
+    expect(dry).toHaveLength(1);
+    expect(dry[0].reason).toBe("metadata-only");
+  });
+
+  it("excludes a single-query metadata-only session unless thinNoFollowUp is set", () => {
+    const sessions = buildSessions([
+      baseEvent({ tool: "startTask", traceId: "t-thin", delivered: [{ name: "a", mode: "metadata" }] }),
+    ]);
+    expect(findDryQueries(sessions)).toEqual([]);
+    const withFlag = findDryQueries(sessions, { thinNoFollowUp: true });
+    expect(withFlag).toHaveLength(1);
+    expect(withFlag[0].reason).toBe("metadata-only");
+  });
+
+  it("flags a single-query session with nothing delivered regardless of the thin filter", () => {
+    const sessions = buildSessions([baseEvent({ tool: "startTask", traceId: "t-empty" })]);
+    expect(findDryQueries(sessions)).toHaveLength(1);
+    expect(findDryQueries(sessions)[0].reason).toBe("nothing-delivered");
+    expect(findDryQueries(sessions, { thinNoFollowUp: true })).toHaveLength(1);
+  });
+
+  it("flags a lone zero-hit search even when it is the only query in its session", () => {
+    const sessions = buildSessions([
+      baseEvent({ tool: "searchAnchors", traceId: "t-solo", zeroHit: true }),
+    ]);
+    const dry = findDryQueries(sessions);
+    expect(dry).toHaveLength(1);
+    expect(dry[0].reason).toBe("zero-hit");
+  });
+
+  it("caps dry-query results at the requested limit, newest first", async () => {
+    const tmpDir = await mkdtemp(path.join(os.tmpdir(), "anchor-mcp-traces-"));
+    const logger = createTraceLogger({ traces: { enabled: true, dirname: tmpDir, zippedArchive: false } });
+    const index = new TraceIndex(logger);
+    const recorder = new TraceRecorder(logger);
+    for (let i = 0; i < 5; i += 1) {
+      recorder.record({
+        toolName: "searchAnchors",
+        input: { traceId: `t-dry-${i}`, query: "x" },
+        result: { structuredContent: { hits: [] } },
+        durationMs: 1,
+      });
+    }
+
+    const limited = await index.getDryQueries({ limit: 2 });
+    expect(limited).toHaveLength(2);
+    const all = await index.getDryQueries();
+    expect(all).toHaveLength(5);
+    await logger.close();
+  });
+
+  it("classifies a bundle that only listed index metadata as metadata-only, not nothing-delivered", () => {
+    const sessions = buildSessions([
+      baseEvent({ tool: "loadContext", traceId: "t-listed", ordinal: 0, timestamp: "2026-07-12T12:00:00.000Z", listed: ["a", "b"] }),
+      baseEvent({ tool: "readAnchor", traceId: "t-listed", ordinal: 1, timestamp: "2026-07-12T12:01:00.000Z", delivered: [{ name: "a", mode: "full" }] }),
+    ]);
+    const dry = findDryQueries(sessions);
+    expect(dry).toHaveLength(1);
+    expect(dry[0].reason).toBe("metadata-only");
+
+    // As the ambiguous thin case, it is gated behind the filter in a
+    // single-query session.
+    const solo = buildSessions([baseEvent({ tool: "loadContext", traceId: "t-listed-solo", listed: ["a"] })]);
+    expect(findDryQueries(solo)).toEqual([]);
+    expect(findDryQueries(solo, { thinNoFollowUp: true })).toHaveLength(1);
+  });
+
+  it("does not treat metadata-only anchors as dry when structured projections were delivered", () => {
+    const sessions = buildSessions([
+      baseEvent({
+        tool: "startTask",
+        traceId: "t-structured",
+        ordinal: 0,
+        timestamp: "2026-07-12T12:00:00.000Z",
+        delivered: [{ name: "a", mode: "metadata" }],
+        structured: { kind: "milestone", ids: ["ui-milestone"] },
+      }),
+      baseEvent({ tool: "readAnchor", traceId: "t-structured", ordinal: 1, timestamp: "2026-07-12T12:01:00.000Z", delivered: [{ name: "a", mode: "full" }] }),
+    ]);
+    expect(findDryQueries(sessions)).toEqual([]);
+  });
+
+  it("carries task identity and project onto dry query rows", () => {
+    const sessions = buildSessions([
+      baseEvent({
+        tool: "startTask",
+        traceId: "t-d4",
+        ordinal: 0,
+        timestamp: "2026-07-12T12:00:00.000Z",
+        task: { sha256: "abc123", length: 4 },
+        project: "demo",
+      }),
+      baseEvent({ tool: "searchAnchors", traceId: "t-d4", ordinal: 1, timestamp: "2026-07-12T12:01:00.000Z", zeroHit: true }),
+    ]);
+    const dry = findDryQueries(sessions);
+    expect(dry[0]).toMatchObject({ taskSha256: "abc123", project: "demo" });
+  });
+});
+
+describe("trace ratings store", () => {
+  it("round-trips a rating with a note and reflects it back through the getters", async () => {
+    const tmpDir = await mkdtemp(path.join(os.tmpdir(), "anchor-mcp-ratings-"));
+    const store = new TraceRatingsStore(tmpDir);
+    expect(store.enabled).toBe(true);
+
+    await store.set("sess-1", "well", "Great retrieval, no follow-up needed.");
+    const rating = await store.get("sess-1");
+    expect(rating?.rating).toBe("well");
+    expect(rating?.note).toBe("Great retrieval, no follow-up needed.");
+    expect(rating?.updatedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+
+    const all = await store.getAll();
+    expect(Object.keys(all)).toEqual(["sess-1"]);
+  });
+
+  it("persists ratings atomically to disk and reloads them in a fresh store instance", async () => {
+    const tmpDir = await mkdtemp(path.join(os.tmpdir(), "anchor-mcp-ratings-"));
+    const store = new TraceRatingsStore(tmpDir);
+    await store.set("sess-2", "poorly");
+
+    const filePath = path.join(tmpDir, "anchor-mcp-trace-ratings.json");
+    const raw = JSON.parse(await readFile(filePath, "utf8"));
+    expect(raw["sess-2"].rating).toBe("poorly");
+
+    const reloaded = new TraceRatingsStore(tmpDir);
+    const rating = await reloaded.get("sess-2");
+    expect(rating?.rating).toBe("poorly");
+  });
+
+  it("clears a rating when set with null", async () => {
+    const tmpDir = await mkdtemp(path.join(os.tmpdir(), "anchor-mcp-ratings-"));
+    const store = new TraceRatingsStore(tmpDir);
+    await store.set("sess-3", "well", "note");
+    expect(await store.get("sess-3")).toBeDefined();
+
+    await store.set("sess-3", null);
+    expect(await store.get("sess-3")).toBeUndefined();
+    expect(await store.getAll()).toEqual({});
+  });
+
+  it("drops malformed entries when loading a corrupted or hand-edited ratings file", async () => {
+    const tmpDir = await mkdtemp(path.join(os.tmpdir(), "anchor-mcp-ratings-"));
+    const filePath = path.join(tmpDir, "anchor-mcp-trace-ratings.json");
+    await writeFile(
+      filePath,
+      JSON.stringify({
+        "sess-good": { rating: "well", updatedAt: "2026-07-12T12:00:00.000Z" },
+        "sess-bad-rating": { rating: "amazing", updatedAt: "2026-07-12T12:00:00.000Z" },
+        "sess-missing-updated": { rating: "poorly" },
+        "sess-bad-note": { rating: "well", updatedAt: "2026-07-12T12:00:00.000Z", note: 42 },
+        "sess-not-object": "well",
+      }),
+      "utf8",
+    );
+
+    const store = new TraceRatingsStore(tmpDir);
+    const all = await store.getAll();
+    expect(Object.keys(all)).toEqual(["sess-good"]);
+    expect(all["sess-good"].rating).toBe("well");
+  });
+
+  it("keeps __proto__ session ids as plain data keys without touching the prototype chain", async () => {
+    const tmpDir = await mkdtemp(path.join(os.tmpdir(), "anchor-mcp-ratings-"));
+    const store = new TraceRatingsStore(tmpDir);
+    await store.set("__proto__", "well");
+
+    expect(({} as Record<string, unknown>).rating).toBeUndefined();
+    expect((await store.get("__proto__"))?.rating).toBe("well");
+
+    const reloaded = new TraceRatingsStore(tmpDir);
+    expect((await reloaded.get("__proto__"))?.rating).toBe("well");
+    expect(({} as Record<string, unknown>).rating).toBeUndefined();
+  });
+
+  it("is inert (but does not throw on read) when constructed without a directory", async () => {
+    const store = new TraceRatingsStore(undefined);
+    expect(store.enabled).toBe(false);
+    expect(await store.getAll()).toEqual({});
+    await expect(store.set("sess-4", "well")).rejects.toThrow(/disabled/);
+  });
+
+  it("exposes ratings through TraceIndex.getSessions", async () => {
+    const tmpDir = await mkdtemp(path.join(os.tmpdir(), "anchor-mcp-ratings-"));
+    const logger = createTraceLogger({ traces: { enabled: true, dirname: tmpDir, zippedArchive: false } });
+    const ratings = new TraceRatingsStore(tmpDir);
+    const index = new TraceIndex(logger, ratings);
+    const recorder = new TraceRecorder(logger);
+
+    recorder.record({
+      toolName: "startTask",
+      input: { task: "review" },
+      result: { structuredContent: { traceId: "t-rated", plan: {}, anchors: [] } },
+      durationMs: 5,
+    });
+
+    await ratings.set("t-rated", "well", "Solid bundle.");
+    const sessions = await index.getSessions();
+    expect(sessions).toHaveLength(1);
+    expect(sessions[0].rating).toEqual({ rating: "well", note: "Solid bundle.", updatedAt: expect.any(String) });
+    await logger.close();
   });
 });
