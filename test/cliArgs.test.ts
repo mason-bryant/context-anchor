@@ -159,6 +159,17 @@ describe("CLI args — stateful HTTP sessions", () => {
     expect(options.stateless).toBe(false);
   });
 
+  it("env var takes precedence over a config file that sets stateful false", async () => {
+    const tmpDir = await mkdtemp(path.join(os.tmpdir(), "anchor-mcp-config-"));
+    const configPath = path.join(tmpDir, "anchor-mcp.config.json");
+    await writeFile(configPath, JSON.stringify({ stateful: false }), "utf8");
+
+    const options = parseCliArgs(["--transport", "http", "--config", configPath], {
+      ANCHOR_MCP_STATEFUL: "true",
+    });
+    expect(options.stateless).toBe(false);
+  });
+
   it("stays stateless when the config file sets stateful false and nothing overrides it", async () => {
     const tmpDir = await mkdtemp(path.join(os.tmpdir(), "anchor-mcp-config-"));
     const configPath = path.join(tmpDir, "anchor-mcp.config.json");

@@ -151,8 +151,9 @@ toggles.
 ## HTTP Transport Sessions
 
 The HTTP transport is **stateless by default**: every request is self-contained,
-which survives server restarts, tolerates proxies and tunnels that drop headers,
-and never leaks per-session server state. Stateful mode gives each client an
+which survives server restarts, tolerates proxies and tunnels that mishandle the
+`Mcp-Session-Id` header (auth headers are still required either way), and never
+leaks per-session server state. Stateful mode gives each client an
 `Mcp-Session-Id` (spec-conforming clients handle this automatically) and creates
 one server session per client. Its main benefit today is **context-trace
 correlation**: with sessions enabled, trace events group by transport session
