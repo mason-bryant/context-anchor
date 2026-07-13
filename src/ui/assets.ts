@@ -5785,7 +5785,7 @@ export const UI_JS = `(function () {
   async function loadDryQueries() {
     state.dryQueriesLoading = true;
     try {
-      var qs = state.dryQueriesThinNoFollowUp ? "?thinNoFollowUp=true" : "";
+      var qs = "?limit=200" + (state.dryQueriesThinNoFollowUp ? "&thinNoFollowUp=true" : "");
       var result = await api("/api/ui/trace-dry-queries" + qs);
       state.dryQueries = result;
       renderDryQueries();
@@ -6005,7 +6005,10 @@ export const UI_JS = `(function () {
     var note;
     if (action === "well" || action === "poorly") {
       rating = action;
-      note = window.prompt("Optional note about this session", "") || undefined;
+      note = window.prompt("Optional note about this session (max 500 chars)", "") || undefined;
+      if (note && note.length > 500) {
+        note = note.slice(0, 500);
+      }
     }
     try {
       await apiPost("/api/ui/trace-rating", { sessionId: sessionId, rating: rating, note: note });

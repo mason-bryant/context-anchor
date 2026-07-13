@@ -539,6 +539,27 @@ describe("dry query classification", () => {
     expect(dry[0].reason).toBe("zero-hit");
   });
 
+  it("caps dry-query results at the requested limit, newest first", async () => {
+    const tmpDir = await mkdtemp(path.join(os.tmpdir(), "anchor-mcp-traces-"));
+    const logger = createTraceLogger({ traces: { enabled: true, dirname: tmpDir, zippedArchive: false } });
+    const index = new TraceIndex(logger);
+    const recorder = new TraceRecorder(logger);
+    for (let i = 0; i < 5; i += 1) {
+      recorder.record({
+        toolName: "searchAnchors",
+        input: { traceId: `t-dry-${i}`, query: "x" },
+        result: { structuredContent: { hits: [] } },
+        durationMs: 1,
+      });
+    }
+
+    const limited = await index.getDryQueries({ limit: 2 });
+    expect(limited).toHaveLength(2);
+    const all = await index.getDryQueries();
+    expect(all).toHaveLength(5);
+    await logger.close();
+  });
+
   it("classifies a bundle that only listed index metadata as metadata-only, not nothing-delivered", () => {
     const sessions = buildSessions([
       baseEvent({ tool: "loadContext", traceId: "t-listed", ordinal: 0, timestamp: "2026-07-12T12:00:00.000Z", listed: ["a", "b"] }),

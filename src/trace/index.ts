@@ -115,12 +115,15 @@ export class TraceIndex {
    * queries are the operator's highest-value signal and the underlying event
    * volume is already bounded by `MAX_EVENTS_IN_MEMORY`.
    */
-  async getDryQueries(options: { thinNoFollowUp?: boolean } = {}): Promise<TraceDryQuery[]> {
+  async getDryQueries(options: { thinNoFollowUp?: boolean; limit?: number } = {}): Promise<TraceDryQuery[]> {
     if (!this.logger.enabled) {
       return [];
     }
     const sessions = await this.buildAllSessions();
-    return findDryQueries(sessions, options).sort((a, b) => b.timestamp.localeCompare(a.timestamp));
+    const limit = Math.max(1, Math.min(options.limit ?? 200, 1000));
+    return findDryQueries(sessions, options)
+      .sort((a, b) => b.timestamp.localeCompare(a.timestamp))
+      .slice(0, limit);
   }
 
   private async buildAllSessions(): Promise<TraceSessionView[]> {

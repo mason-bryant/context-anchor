@@ -1696,6 +1696,23 @@ describe("UI HTTP trace routes", () => {
     expect(response.status).toBe(400);
     expect(response.body.error.message).toContain("Invalid rating");
   });
+
+  it("rejects an oversized rating note and sessionId with 400", async () => {
+    const longNote = await tracePostJson<{ error: { message: string } }>("/api/ui/trace-rating", {
+      sessionId: "whatever",
+      rating: "well",
+      note: "x".repeat(501),
+    });
+    expect(longNote.status).toBe(400);
+    expect(longNote.body.error.message).toContain("note");
+
+    const longId = await tracePostJson<{ error: { message: string } }>("/api/ui/trace-rating", {
+      sessionId: "s".repeat(257),
+      rating: "well",
+    });
+    expect(longId.status).toBe(400);
+    expect(longId.body.error.message).toContain("sessionId");
+  });
 });
 
 async function fetchJson<T>(pathSuffix: string): Promise<T> {

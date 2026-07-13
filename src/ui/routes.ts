@@ -169,9 +169,14 @@ export function registerUiRoutes(
         return { enabled: false, dryQueries: [] };
       }
       const thinNoFollowUp = booleanQuery(req, "thinNoFollowUp") ?? false;
+      const limitRaw = optionalQueryString(req, "limit");
+      const limit = limitRaw ? Number.parseInt(limitRaw, 10) : undefined;
       return {
         enabled: true,
-        dryQueries: await traceIndex.getDryQueries({ thinNoFollowUp }),
+        dryQueries: await traceIndex.getDryQueries({
+          thinNoFollowUp,
+          ...(Number.isFinite(limit) ? { limit } : {}),
+        }),
       };
     }),
   );
@@ -186,8 +191,16 @@ export function registerUiRoutes(
       }
       const body = bodyRecord(req);
       const sessionId = requiredBodyString(body, "sessionId");
+      if (sessionId.length > 256) {
+        throw new UiHttpError(400, "sessionId must be at most 256 characters.");
+      }
       const rating = readTraceRatingBody(body);
       const note = optionalBodyString(body, "note");
+      // Ratings live in a non-rotating sidecar file; bound the note so one
+      // request cannot bloat it.
+      if (note !== undefined && note.length > 500) {
+        throw new UiHttpError(400, "note must be at most 500 characters.");
+      }
       await traceRatings.set(sessionId, rating, rating ? note : undefined);
       return { sessionId, rating: rating ? await traceRatings.get(sessionId) : null };
     }),
