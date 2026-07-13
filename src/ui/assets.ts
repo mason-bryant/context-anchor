@@ -5998,6 +5998,16 @@ export const UI_JS = `(function () {
         var key = queryEl.dataset.queryKey;
         state.tracesExpandedQuery = state.tracesExpandedQuery === key ? null : key;
         renderTraces();
+        // renderTraces rebuilds the list's DOM, which would drop keyboard
+        // focus to the document; restore it to this query's new summary.
+        var queries = document.querySelectorAll("#traces-list .trace-query");
+        for (var i = 0; i < queries.length; i++) {
+          if (queries[i].dataset.queryKey === key) {
+            var restored = queries[i].querySelector(".trace-query-summary");
+            if (restored) restored.focus();
+            break;
+          }
+        }
       };
       summaryEl.addEventListener("click", toggle);
       summaryEl.addEventListener("keydown", function (event) {
