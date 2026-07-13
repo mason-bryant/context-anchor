@@ -16,6 +16,7 @@ import type {
   ProposeChangeInput,
 } from "../types.js";
 import type { GraphEdgeType } from "../graph/model.js";
+import { aggregateBudget, aggregateFollowUps, aggregateFrequency, filterEvents, filterSessions } from "../trace/aggregate.js";
 import type { TraceIndex } from "../trace/index.js";
 import type { TraceRatingsStore, TraceRatingValue } from "../trace/ratings.js";
 import { UI_CSS, UI_HTML, UI_JS } from "./assets.js";
@@ -137,6 +138,45 @@ export function registerUiRoutes(
     "/api/ui/milestones",
     ...protect,
     jsonRoute(async (req) => ({ milestones: await service.listMilestones(optionalQueryString(req, "project")) })),
+  );
+
+  app.get(
+    "/api/ui/trace-budget",
+    ...protect,
+    jsonRoute(async (req) => {
+      const traceIndex = options.traceIndex;
+      if (!traceIndex?.enabled) {
+        return { enabled: false, displaced: [], downgraded: [], truncated: [], displacementCounts: [], consumerCounts: [] };
+      }
+      const events = filterEvents(await traceIndex.getEvents(), readTraceFilter(req));
+      return { enabled: true, ...aggregateBudget(events) };
+    }),
+  );
+
+  app.get(
+    "/api/ui/trace-followups",
+    ...protect,
+    jsonRoute(async (req) => {
+      const traceIndex = options.traceIndex;
+      if (!traceIndex?.enabled) {
+        return { enabled: false, ...aggregateFollowUps([]) };
+      }
+      const sessions = filterSessions(await traceIndex.getUncappedSessions(), readTraceFilter(req));
+      return { enabled: true, ...aggregateFollowUps(sessions) };
+    }),
+  );
+
+  app.get(
+    "/api/ui/trace-frequency",
+    ...protect,
+    jsonRoute(async (req) => {
+      const traceIndex = options.traceIndex;
+      if (!traceIndex?.enabled) {
+        return { enabled: false, rows: [] };
+      }
+      const sessions = filterSessions(await traceIndex.getUncappedSessions(), readTraceFilter(req));
+      return { enabled: true, rows: aggregateFrequency(sessions) };
+    }),
   );
 
   app.get(
@@ -1072,6 +1112,24 @@ function readDiscoveryFilters(req: Request): {
     tag: optionalQueryString(req, "tag"),
     runtime: optionalQueryString(req, "runtime"),
     includeArchive: booleanQuery(req, "includeArchive"),
+  };
+}
+
+function readTraceFilter(req: Request): { project?: string; since?: string } {
+  const project = optionalQueryString(req, "project");
+  const since = optionalQueryString(req, "since");
+  if (since === undefined) {
+    return { ...(project ? { project } : {}) };
+  }
+  const parsed = Date.parse(since);
+  if (Number.isNaN(parsed)) {
+    throw new UiHttpError(400, `Invalid since timestamp: ${since}`);
+  }
+  // Normalize to ISO so lexicographic comparison against event timestamps is
+  // correct even for inputs like "07/12/2026" that parse but sort wrong.
+  return {
+    ...(project ? { project } : {}),
+    since: new Date(parsed).toISOString(),
   };
 }
 
