@@ -6059,7 +6059,7 @@ export const UI_JS = `(function () {
       var task = row.taskText || (row.taskSha256 ? "sha256 " + row.taskSha256.slice(0, 10) + "..." : "");
       var nearestMiss = row.nearestMiss ? row.nearestMiss.name + (row.nearestMiss.reason ? " (" + row.nearestMiss.reason + ")" : "") : "";
       return "<tr class=\\"trace-dry-row\\" data-session-id=\\"" + escapeHtml(row.sessionId) + "\\">"
-        + "<td><button type=\\"button\\" class=\\"trace-dry-open link-button\\">" + escapeHtml(formatTraceTime(row.timestamp)) + "</button></td>"
+        + "<td><button type=\\"button\\" class=\\"trace-dry-open link-button\\" aria-label=\\"Open session timeline for " + escapeHtml(row.tool) + " query in session " + escapeHtml(row.sessionId) + "\\">" + escapeHtml(formatTraceTime(row.timestamp)) + "</button></td>"
         + "<td><code>" + escapeHtml(row.tool) + "</code></td>"
         + "<td>" + escapeHtml(row.reason) + "</td>"
         + "<td>" + escapeHtml(task) + "</td>"
