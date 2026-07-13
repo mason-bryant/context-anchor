@@ -148,6 +148,38 @@ New interactive elements in the UI are expected to keep this bar: real
 when semantics require it), distinct accessible names, and `aria-expanded` on
 toggles.
 
+## HTTP Transport Sessions
+
+The HTTP transport is **stateless by default**: every request is self-contained,
+which survives server restarts, tolerates proxies and tunnels that mishandle the
+`Mcp-Session-Id` header (auth headers are still required either way), and never
+leaks per-session server state. Stateful mode gives each client an
+`Mcp-Session-Id` (spec-conforming clients handle this automatically) and creates
+one server session per client. Its main benefit today is **context-trace
+correlation**: with sessions enabled, trace events group by transport session
+even when an agent does not echo the `traceId` returned by `startTask`; without
+them, correlation falls back to process identity.
+
+Enable stateful mode any of three ways (CLI flag wins, then env, then config):
+
+```sh
+anchor-mcp --transport http --stateful ...
+```
+
+```sh
+ANCHOR_MCP_STATEFUL=true anchor-mcp --transport http ...
+```
+
+```json
+{ "stateful": true }
+```
+
+(in the config JSON passed via `--config <path>` or `ANCHOR_MCP_CONFIG` — the
+file is not discovered automatically).
+
+Note that after a server restart, clients holding an old session id must
+re-initialize; conforming clients reconnect automatically.
+
 ## Documentation
 
 - [Quick Start](QUICKSTART.md) - migrate context, start the server, and connect clients.
