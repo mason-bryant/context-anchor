@@ -3400,7 +3400,9 @@ export const UI_JS = `(function () {
     var response = await fetch(path, { headers: headers });
     if (!response.ok) {
       var text = await response.text();
-      throw new Error(response.status + " " + response.statusText + ": " + text);
+      var err = new Error(response.status + " " + response.statusText + ": " + text);
+      err.status = response.status;
+      throw err;
     }
     return response.json();
   }
@@ -3443,6 +3445,9 @@ export const UI_JS = `(function () {
   }
 
   function projectOf(anchor) {
+    if (!anchor) {
+      return "";
+    }
     if (anchor.projectSlug) {
       return anchor.projectSlug;
     }
@@ -3459,6 +3464,13 @@ export const UI_JS = `(function () {
       return anchor.frontmatter.project;
     }
     return "";
+  }
+
+  function initialLoadErrorMessage(error) {
+    var message = error && error.message ? error.message : String(error);
+    return error && (error.status === 401 || error.status === 403)
+      ? "Enter the HTTP auth token to load anchors. " + message
+      : "Could not load UI data. " + message;
   }
 
   function isServerRuleAnchor(anchor) {
@@ -9929,6 +9941,7 @@ export const UI_JS = `(function () {
     window.__ANCHOR_MCP_UI_TEST_HOOKS__.sortAnchorGroups = sortAnchorGroups;
     window.__ANCHOR_MCP_UI_TEST_HOOKS__.priorityLabel = priorityLabel;
     window.__ANCHOR_MCP_UI_TEST_HOOKS__.projectOf = projectOf;
+    window.__ANCHOR_MCP_UI_TEST_HOOKS__.initialLoadErrorMessage = initialLoadErrorMessage;
     window.__ANCHOR_MCP_UI_TEST_HOOKS__.isServerRuleAnchor = isServerRuleAnchor;
     window.__ANCHOR_MCP_UI_TEST_HOOKS__.readOnlyDetailControlIds = function () {
       return READ_ONLY_DETAIL_CONTROL_IDS.slice();
@@ -9996,6 +10009,6 @@ export const UI_JS = `(function () {
     showTab(state.activeTab);
   }
   load().catch(function (error) {
-    setBanner("Enter the HTTP auth token to load anchors. " + error.message, "warn");
+    setBanner(initialLoadErrorMessage(error), error && (error.status === 401 || error.status === 403) ? "warn" : "error");
   });
 })();`;
