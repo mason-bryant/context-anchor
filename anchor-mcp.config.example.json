@@ -3,6 +3,7 @@
   "allowedHosts": [
     "your-tunnel.ngrok-free.dev"
   ],
+  "stateful": false,
   "logging": {
     "file": {
       "enabled": true,

@@ -134,6 +134,51 @@ describe("CLI args — authToken", () => {
   });
 });
 
+describe("CLI args — stateful HTTP sessions", () => {
+  it("defaults to stateless", () => {
+    const options = parseCliArgs(["--transport", "http"], {});
+    expect(options.stateless).toBe(true);
+  });
+
+  it("enables stateful mode via the --stateful flag", () => {
+    const options = parseCliArgs(["--transport", "http", "--stateful"], {});
+    expect(options.stateless).toBe(false);
+  });
+
+  it("enables stateful mode via ANCHOR_MCP_STATEFUL", () => {
+    const options = parseCliArgs(["--transport", "http"], { ANCHOR_MCP_STATEFUL: "true" });
+    expect(options.stateless).toBe(false);
+  });
+
+  it("enables stateful mode via the config file", async () => {
+    const tmpDir = await mkdtemp(path.join(os.tmpdir(), "anchor-mcp-config-"));
+    const configPath = path.join(tmpDir, "anchor-mcp.config.json");
+    await writeFile(configPath, JSON.stringify({ stateful: true }), "utf8");
+
+    const options = parseCliArgs(["--transport", "http", "--config", configPath], {});
+    expect(options.stateless).toBe(false);
+  });
+
+  it("stays stateless when the config file sets stateful false and nothing overrides it", async () => {
+    const tmpDir = await mkdtemp(path.join(os.tmpdir(), "anchor-mcp-config-"));
+    const configPath = path.join(tmpDir, "anchor-mcp.config.json");
+    await writeFile(configPath, JSON.stringify({ stateful: false }), "utf8");
+
+    const options = parseCliArgs(["--transport", "http", "--config", configPath], {});
+    expect(options.stateless).toBe(true);
+  });
+
+  it("rejects a non-boolean stateful config value", async () => {
+    const tmpDir = await mkdtemp(path.join(os.tmpdir(), "anchor-mcp-config-"));
+    const configPath = path.join(tmpDir, "anchor-mcp.config.json");
+    await writeFile(configPath, JSON.stringify({ stateful: "yes" }), "utf8");
+
+    expect(() => parseCliArgs(["--transport", "http", "--config", configPath], {})).toThrow(
+      /stateful/,
+    );
+  });
+});
+
 describe("CLI args — file logging", () => {
   it("reads file logging defaults from the config file", async () => {
     const tmpDir = await mkdtemp(path.join(os.tmpdir(), "anchor-mcp-config-"));

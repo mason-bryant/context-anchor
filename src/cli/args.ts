@@ -60,7 +60,11 @@ export function parseCliArgs(argv: string[], env: NodeJS.ProcessEnv = process.en
       stringFlag(flags, "auth-token") ??
       env.ANCHOR_MCP_AUTH_TOKEN ??
       stringConfigValue(fileConfig.authToken, "authToken"),
-    stateless: !booleanFlag(flags, "stateful"),
+    stateless: !(
+      booleanFlag(flags, "stateful") ||
+      booleanEnv(env.ANCHOR_MCP_STATEFUL) ||
+      (booleanConfigValue(fileConfig.stateful, "stateful") ?? false)
+    ),
     config: {
       repoPath: path.resolve(expandHome(repo)),
       anchorRoot: stringFlag(flags, "anchor-root") ?? env.ANCHOR_MCP_ANCHOR_ROOT ?? ".",
@@ -93,6 +97,8 @@ function booleanEnv(value: string | undefined): boolean {
 type CliConfigFile = {
   allowedHosts?: unknown;
   authToken?: unknown;
+  /** HTTP transport session mode; CLI --stateful and ANCHOR_MCP_STATEFUL take precedence. */
+  stateful?: unknown;
   logging?: unknown;
 };
 
