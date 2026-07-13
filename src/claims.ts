@@ -727,6 +727,7 @@ function dedupeInOrder(values: readonly string[]): string[] {
  */
 function findStandaloneAnnotationIndexes(lines: string[], bulletIndex: number): number[] {
   const indexes: number[] = [];
+  let fence: { char: "`" | "~"; len: number } | undefined;
   for (let index = bulletIndex + 1; index < lines.length; index += 1) {
     const line = lines[index];
     if (!line.trim()) {
@@ -734,6 +735,22 @@ function findStandaloneAnnotationIndexes(lines: string[], bulletIndex: number): 
     }
     if (!/^\s/.test(line)) {
       return indexes;
+    }
+    const fenceMarker = /^\s*(`{3,}|~{3,})(.*)$/.exec(line);
+    if (fenceMarker) {
+      const marker = fenceMarker[1];
+      const char = marker[0] as "`" | "~";
+      if (!fence) {
+        fence = { char, len: marker.length };
+        continue;
+      }
+      if (char === fence.char && marker.length >= fence.len && !fenceMarker[2].trim()) {
+        fence = undefined;
+      }
+      continue;
+    }
+    if (fence) {
+      continue;
     }
     const standalone = STANDALONE_ANNOTATION_PATTERN.exec(line);
     if (standalone && looksLikeAnnotationBody(standalone[2])) {

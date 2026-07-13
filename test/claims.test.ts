@@ -301,6 +301,10 @@ describe("extractClaims", () => {
 - Standalone source claim.
   {src: src/views.py; observed: 2026-07-13; conf: high}
 - Inline source claim. {src: PR #42; observed: 2026-07-13; conf: medium}
+- Bullet containing a fenced annotation example.
+  \`\`\`markdown
+  {src: src/nested-fence.py; observed: 2026-07-13; conf: high}
+  \`\`\`
 
 \`\`\`
 - Fenced source claim.
@@ -329,6 +333,23 @@ describe("extractClaims", () => {
         text: "Inline source claim.",
       },
     ]);
+  });
+
+  it("does not parse a standalone annotation example inside a bullet's fenced continuation", () => {
+    const claims = extractClaims(`## Current State
+
+- Claim with a provenance example.
+  \`\`\`markdown
+  {src: src/example.py; observed: 2026-07-13; conf: high}
+  \`\`\`
+`);
+
+    expect(claims).toHaveLength(1);
+    expect(claims[0]).toMatchObject({
+      text: "Claim with a provenance example.",
+      status: "unannotated",
+      sources: [],
+    });
   });
 
   it("extracts multiple sources and computes combined strength", () => {
