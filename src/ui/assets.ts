@@ -1712,6 +1712,16 @@ textarea {
   text-align: left;
 }
 
+.link-button {
+  background: none;
+  border: none;
+  color: var(--accent);
+  cursor: pointer;
+  font: inherit;
+  padding: 0;
+  text-decoration: underline;
+}
+
 .trace-measures {
   display: flex;
   flex-wrap: wrap;
@@ -5915,7 +5925,7 @@ export const UI_JS = `(function () {
     var markers = [];
     if (ev.zeroHit) markers.push('<span class="trace-marker trace-marker-zero">zero-hit</span>');
     if (ev.cursor === "continuation") markers.push('<span class="trace-marker">pagination</span>');
-    var summary = '<div class="trace-query-summary">'
+    var summary = '<div class="trace-query-summary" role="button" tabindex="0" aria-expanded="' + (expanded ? "true" : "false") + '">'
       + '<code>' + escapeHtml(ev.tool) + '</code>'
       + ' <span class="trace-meta">' + escapeHtml(formatTraceTime(ev.timestamp)) + ' | ' + ev.durationMs + 'ms | ' + escapeHtml(ev.outcome) + '</span>'
       + markers.join(" ")
@@ -5983,11 +5993,31 @@ export const UI_JS = `(function () {
 
   function wireTraceSessionEvents(listEl, sessions) {
     listEl.querySelectorAll(".trace-query-summary").forEach(function (summaryEl) {
-      summaryEl.addEventListener("click", function () {
+      var toggle = function () {
         var queryEl = summaryEl.parentElement;
         var key = queryEl.dataset.queryKey;
         state.tracesExpandedQuery = state.tracesExpandedQuery === key ? null : key;
         renderTraces();
+        // renderTraces rebuilds the list's DOM, which would drop keyboard
+        // focus to the document; restore it to this query's new summary.
+        var queries = document.querySelectorAll("#traces-list .trace-query");
+        for (var i = 0; i < queries.length; i++) {
+          if (queries[i].dataset.queryKey === key) {
+            var restored = queries[i].querySelector(".trace-query-summary");
+            if (restored) restored.focus();
+            break;
+          }
+        }
+      };
+      summaryEl.addEventListener("click", toggle);
+      summaryEl.addEventListener("keydown", function (event) {
+        if (event.repeat) {
+          return;
+        }
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          toggle();
+        }
       });
     });
     listEl.querySelectorAll(".trace-rating").forEach(function (ratingEl) {
@@ -6039,7 +6069,7 @@ export const UI_JS = `(function () {
       var task = row.taskText || (row.taskSha256 ? "sha256 " + row.taskSha256.slice(0, 10) + "..." : "");
       var nearestMiss = row.nearestMiss ? row.nearestMiss.name + (row.nearestMiss.reason ? " (" + row.nearestMiss.reason + ")" : "") : "";
       return "<tr class=\\"trace-dry-row\\" data-session-id=\\"" + escapeHtml(row.sessionId) + "\\">"
-        + "<td>" + escapeHtml(formatTraceTime(row.timestamp)) + "</td>"
+        + "<td><button type=\\"button\\" class=\\"trace-dry-open link-button\\" aria-label=\\"Open session timeline for " + escapeHtml(row.tool) + " query in session " + escapeHtml(row.sessionId) + "\\">" + escapeHtml(formatTraceTime(row.timestamp)) + "</button></td>"
         + "<td><code>" + escapeHtml(row.tool) + "</code></td>"
         + "<td>" + escapeHtml(row.reason) + "</td>"
         + "<td>" + escapeHtml(task) + "</td>"
@@ -6048,10 +6078,21 @@ export const UI_JS = `(function () {
         + "<td>" + escapeHtml(nearestMiss) + "</td>"
         + "</tr>";
     }).join("");
+    // The row stays a plain table row for assistive technology; the real
+    // interactive control is the button in the first cell. Row click is kept
+    // as a mouse convenience only.
     bodyEl.querySelectorAll(".trace-dry-row").forEach(function (rowEl) {
-      rowEl.addEventListener("click", function () {
+      var open = function () {
         openDrySessionTimeline(rowEl.dataset.sessionId);
-      });
+      };
+      rowEl.addEventListener("click", open);
+      var button = rowEl.querySelector(".trace-dry-open");
+      if (button) {
+        button.addEventListener("click", function (event) {
+          event.stopPropagation();
+          open();
+        });
+      }
     });
   }
 

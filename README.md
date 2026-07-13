@@ -130,6 +130,24 @@ surfaces work across projects with filters, grouping, due and completed windows,
 assignment, priority edits, lifecycle actions, and links back to the milestone anchors
 that store the task metadata.
 
+## Web UI Keyboard Support
+
+The browser UI is operable without a mouse. Most controls are native buttons,
+selects, and links, so standard `Tab` / `Shift+Tab` navigation and `Enter` /
+`Space` activation apply everywhere. Beyond that:
+
+| Keys | Where | Action |
+|---|---|---|
+| `Tab` / `Shift+Tab` | Everywhere | Move between interactive controls |
+| `Enter` / `Space` | Traces timeline query rows | Expand or collapse the query's considered/delivered/raw detail (state is announced via `aria-expanded`; key repeat is ignored) |
+| `Enter` / `Space` | Dry-queries table | Activate a row's open button (each button announces its tool and session id) to jump to that session's timeline |
+| `Escape` | Anchor detail editors | Close any open claim-source modal, claim/bullet text editor, or section-add editor |
+
+New interactive elements in the UI are expected to keep this bar: real
+`<button>` elements (or `role="button"` with `tabindex="0"` and key handling
+when semantics require it), distinct accessible names, and `aria-expanded` on
+toggles.
+
 ## Documentation
 
 - [Quick Start](QUICKSTART.md) - migrate context, start the server, and connect clients.
