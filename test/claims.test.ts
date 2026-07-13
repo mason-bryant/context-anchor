@@ -10,6 +10,7 @@ import {
   carryClaimAnnotations,
   collectClaimIds,
   extractClaims,
+  findInertClaimAnnotations,
   formatAnnotationBody,
   deleteClaim,
   isMintedClaimIdFormat,
@@ -291,6 +292,42 @@ describe("extractClaims", () => {
     expect(texts.some((text) => text.includes("PR Something"))).toBe(false);
     expect(texts.some((text) => text.includes("Sub-bullet detail"))).toBe(false);
     expect(texts.some((text) => text.includes("fenced bullet"))).toBe(false);
+  });
+
+  it("finds standalone and inline annotations that are inert outside claim-bearing H2 sections", () => {
+    const inert = findInertClaimAnnotations(`## Definition and Registration
+
+- Standalone source claim.
+  {src: src/views.py; observed: 2026-07-13; conf: high}
+- Inline source claim. {src: PR #42; observed: 2026-07-13; conf: medium}
+
+\`\`\`
+- Fenced source claim.
+  {src: src/fenced.py; observed: 2026-07-13; conf: high}
+\`\`\`
+
+## Current State
+
+### Definition and Registration
+
+- Active source claim.
+  {src: src/active.py; observed: 2026-07-13; conf: high}
+`);
+
+    expect(inert).toEqual([
+      {
+        section: "Definition and Registration",
+        bulletLine: 3,
+        annotationLines: [4],
+        text: "Standalone source claim.",
+      },
+      {
+        section: "Definition and Registration",
+        bulletLine: 5,
+        annotationLines: [5],
+        text: "Inline source claim.",
+      },
+    ]);
   });
 
   it("extracts multiple sources and computes combined strength", () => {
@@ -1474,6 +1511,36 @@ None.
       message: "test: clean write",
     });
     expect(clean.warnings.filter((warning) => warning.severity === "BLOCK")).toEqual([]);
+  });
+
+  it("warns when a provenance annotation is inert in a non-claim-bearing H2 section", async () => {
+    const content = anchorContent().replace(
+      "## Decisions",
+      `## Definition and Registration
+
+- A ZView declares its schema in Python.
+  {src: app/hub_platform/z_views/models/base/views.py; observed: 2026-07-13; conf: high}
+
+## Decisions`,
+    );
+    const write = await service.writeAnchor({
+      name: "projects/demo/claims-demo",
+      content,
+      message: "test: add inert provenance annotation",
+    });
+
+    expect(write.version).toBeTruthy();
+    const warning = write.warnings.find(
+      (entry) => entry.code === "claim_annotation_in_non_claim_section",
+    );
+    expect(warning).toMatchObject({ severity: "WARN" });
+    expect(warning?.message).toContain('section "Definition and Registration"');
+    expect(warning?.message).toContain("no claim will be created");
+    expect(warning?.message).toContain("use an H3 topic");
+
+    const listed = await service.listClaims({ name: "projects/demo/claims-demo" });
+    expect(listed.summary.malformed).toBe(0);
+    expect(listed.claims.some((claim) => claim.text.includes("ZView declares"))).toBe(false);
   });
 
   it("mints a stable id for an annotated claim that lacks one, reporting a claim_id_minted WARN", async () => {

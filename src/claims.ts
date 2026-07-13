@@ -122,6 +122,17 @@ export type AnchorClaim = {
   sourceErrors?: { line: number; inline: boolean; errors: string[] }[];
 };
 
+export type InertClaimAnnotation = {
+  /** Non-claim-bearing H2 section containing the bullet. */
+  section: string;
+  /** 1-based line number of the bullet the annotation appears to describe. */
+  bulletLine: number;
+  /** 1-based line numbers of every inline or standalone annotation attempt. */
+  annotationLines: number[];
+  /** Bullet text without the leading `- ` or a trailing annotation block. */
+  text: string;
+};
+
 export type ClaimStrengthCounts = {
   high: number;
   medium: number;
@@ -577,6 +588,47 @@ export function extractClaims(content: string): AnchorClaim[] {
   }
 
   return claims;
+}
+
+/**
+ * Find claim-shaped annotations that cannot create claims because their
+ * bullets live under a non-claim-bearing H2 section. These annotations would
+ * otherwise be inert: `extractClaims` deliberately ignores the bullet before
+ * parsing or validating its provenance rows.
+ */
+export function findInertClaimAnnotations(content: string): InertClaimAnnotation[] {
+  const lines = content.split(/\r?\n/);
+  const results: InertClaimAnnotation[] = [];
+  const state: LineScanState = { inFence: false, section: undefined };
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+    advanceScanState(state, line);
+    if (state.inFence || !state.section || isClaimSection(state.section) || !line.startsWith("- ")) {
+      continue;
+    }
+
+    const annotationLines: number[] = [];
+    let text = line.slice(2).trim();
+    const trailing = TRAILING_ANNOTATION_PATTERN.exec(line);
+    if (trailing && looksLikeAnnotationBody(trailing[2])) {
+      annotationLines.push(index + 1);
+      text = trailing[1].slice(2).trim();
+    }
+    for (const annotationIndex of findStandaloneAnnotationIndexes(lines, index)) {
+      annotationLines.push(annotationIndex + 1);
+    }
+    if (annotationLines.length > 0) {
+      results.push({
+        section: state.section,
+        bulletLine: index + 1,
+        annotationLines,
+        text,
+      });
+    }
+  }
+
+  return results;
 }
 
 function isClaimSection(section: string): boolean {
