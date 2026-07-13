@@ -174,6 +174,9 @@ ANCHOR_MCP_STATEFUL=true anchor-mcp --transport http ...
 { "stateful": true }
 ```
 
+(in the config JSON passed via `--config <path>` or `ANCHOR_MCP_CONFIG` — the
+file is not discovered automatically).
+
 Note that after a server restart, clients holding an old session id must
 re-initialize; conforming clients reconnect automatically.
 
