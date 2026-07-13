@@ -79,6 +79,8 @@ export class TraceIndex {
   private loadPromise: Promise<void> | undefined;
   /** Memoized session grouping, invalidated whenever a new event appends. */
   private sessionsCache: TraceSessionView[] | undefined;
+  /** Memoized uncapped grouping for aggregation endpoints, same invalidation. */
+  private uncappedSessionsCache: TraceSessionView[] | undefined;
 
   constructor(
     private readonly logger: TraceLogger,
@@ -153,6 +155,23 @@ export class TraceIndex {
     return this.sessionsCache;
   }
 
+  /**
+   * Sessions with no per-session event cap, for aggregation view models that
+   * must not bias long sessions toward early-session behavior. Memoized like
+   * the display grouping so aggregate endpoints never re-sort and re-group
+   * the full event set per request.
+   */
+  async getUncappedSessions(): Promise<TraceSessionView[]> {
+    if (!this.logger.enabled) {
+      return [];
+    }
+    await this.ensureLoaded();
+    this.uncappedSessionsCache ??= buildSessions([...this.eventsById.values()], {
+      maxEventsPerSession: Number.POSITIVE_INFINITY,
+    });
+    return this.uncappedSessionsCache;
+  }
+
   private append(event: TraceEvent): void {
     if (this.eventsById.size >= MAX_EVENTS_IN_MEMORY) {
       return;
@@ -160,6 +179,7 @@ export class TraceIndex {
     if (!this.eventsById.has(event.id)) {
       this.eventsById.set(event.id, event);
       this.sessionsCache = undefined;
+      this.uncappedSessionsCache = undefined;
     }
   }
 

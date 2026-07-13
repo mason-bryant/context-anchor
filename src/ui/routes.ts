@@ -17,7 +17,7 @@ import type {
 } from "../types.js";
 import type { GraphEdgeType } from "../graph/model.js";
 import { aggregateBudget, aggregateFollowUps, aggregateFrequency, filterEvents, filterSessions } from "../trace/aggregate.js";
-import { buildSessions, type TraceIndex } from "../trace/index.js";
+import type { TraceIndex } from "../trace/index.js";
 import type { TraceRatingsStore, TraceRatingValue } from "../trace/ratings.js";
 import { UI_CSS, UI_HTML, UI_JS } from "./assets.js";
 import { toAnchorUiDetail, toAnchorUiMeta } from "./viewModel.js";
@@ -161,7 +161,7 @@ export function registerUiRoutes(
       if (!traceIndex?.enabled) {
         return { enabled: false, ...aggregateFollowUps([]) };
       }
-      const sessions = filterSessions(buildSessions(await traceIndex.getEvents(), { maxEventsPerSession: Number.POSITIVE_INFINITY }), readTraceFilter(req));
+      const sessions = filterSessions(await traceIndex.getUncappedSessions(), readTraceFilter(req));
       return { enabled: true, ...aggregateFollowUps(sessions) };
     }),
   );
@@ -174,7 +174,7 @@ export function registerUiRoutes(
       if (!traceIndex?.enabled) {
         return { enabled: false, rows: [] };
       }
-      const sessions = filterSessions(buildSessions(await traceIndex.getEvents(), { maxEventsPerSession: Number.POSITIVE_INFINITY }), readTraceFilter(req));
+      const sessions = filterSessions(await traceIndex.getUncappedSessions(), readTraceFilter(req));
       return { enabled: true, rows: aggregateFrequency(sessions) };
     }),
   );

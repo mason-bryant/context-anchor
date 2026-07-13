@@ -204,7 +204,20 @@ export function aggregateFollowUps(sessions: TraceSessionView[]): FollowUpAggreg
 }
 
 function orderedEvents(events: TraceEvent[]): TraceEvent[] {
-  return [...events].sort((a, b) => a.timestamp.localeCompare(b.timestamp) || a.ordinal - b.ordinal);
+  // Session events usually arrive already ordered from buildSessions; an O(n)
+  // check avoids re-cloning and re-sorting them per session per request.
+  let sorted = true;
+  for (let i = 1; i < events.length; i += 1) {
+    if (compareEvents(events[i - 1]!, events[i]!) > 0) {
+      sorted = false;
+      break;
+    }
+  }
+  return sorted ? events : [...events].sort(compareEvents);
+}
+
+function compareEvents(a: TraceEvent, b: TraceEvent): number {
+  return a.timestamp.localeCompare(b.timestamp) || a.ordinal - b.ordinal;
 }
 
 // ---------------------------------------------------------------------------
@@ -381,8 +394,8 @@ export function filterSessions(sessions: TraceSessionView[], filter: TraceEventF
     const taskEvent = ordered.find((event) => event.task);
     result.push({
       ...session,
-      events,
-      eventCount: events.length,
+      events: ordered,
+      eventCount: ordered.length,
       startedAt: ordered[0]!.timestamp,
       endedAt: ordered[ordered.length - 1]!.timestamp,
       taskSha256: taskEvent?.task?.sha256,
