@@ -17,6 +17,7 @@ import type {
 } from "../types.js";
 import type { GraphEdgeType } from "../graph/model.js";
 import type { TraceIndex } from "../trace/index.js";
+import type { TraceRatingsStore, TraceRatingValue } from "../trace/ratings.js";
 import { UI_CSS, UI_HTML, UI_JS } from "./assets.js";
 import { toAnchorUiDetail, toAnchorUiMeta } from "./viewModel.js";
 
@@ -42,6 +43,7 @@ export function registerUiRoutes(
   options: {
     authMiddleware?: UiAuthMiddleware;
     traceIndex?: TraceIndex;
+    traceRatings?: TraceRatingsStore;
   } = {},
 ): void {
   app.get("/", (_req, res) => res.redirect(302, "/ui"));
@@ -147,10 +149,60 @@ export function registerUiRoutes(
       }
       const limitRaw = optionalQueryString(req, "limit");
       const limit = limitRaw ? Number.parseInt(limitRaw, 10) : undefined;
+      const sessionId = optionalQueryString(req, "sessionId");
       return {
         enabled: true,
-        sessions: await traceIndex.getSessions({ limit: Number.isFinite(limit) ? limit : undefined }),
+        sessions: await traceIndex.getSessions({
+          limit: Number.isFinite(limit) ? limit : undefined,
+          ...(sessionId ? { sessionId } : {}),
+        }),
       };
+    }),
+  );
+
+  app.get(
+    "/api/ui/trace-dry-queries",
+    ...protect,
+    jsonRoute(async (req) => {
+      const traceIndex = options.traceIndex;
+      if (!traceIndex?.enabled) {
+        return { enabled: false, dryQueries: [] };
+      }
+      const thinNoFollowUp = booleanQuery(req, "thinNoFollowUp") ?? false;
+      const limitRaw = optionalQueryString(req, "limit");
+      const limit = limitRaw ? Number.parseInt(limitRaw, 10) : undefined;
+      return {
+        enabled: true,
+        dryQueries: await traceIndex.getDryQueries({
+          thinNoFollowUp,
+          ...(Number.isFinite(limit) ? { limit } : {}),
+        }),
+      };
+    }),
+  );
+
+  app.post(
+    "/api/ui/trace-rating",
+    ...protect,
+    jsonRoute(async (req) => {
+      const traceRatings = options.traceRatings;
+      if (!traceRatings?.enabled) {
+        throw new UiHttpError(400, "Trace ratings are unavailable because trace logging is disabled.");
+      }
+      const body = bodyRecord(req);
+      const sessionId = requiredBodyString(body, "sessionId");
+      if (sessionId.length > 256) {
+        throw new UiHttpError(400, "sessionId must be at most 256 characters.");
+      }
+      const rating = readTraceRatingBody(body);
+      const note = optionalBodyString(body, "note");
+      // Ratings live in a non-rotating sidecar file; bound the note so one
+      // request cannot bloat it.
+      if (note !== undefined && note.length > 500) {
+        throw new UiHttpError(400, "note must be at most 500 characters.");
+      }
+      await traceRatings.set(sessionId, rating, rating ? note : undefined);
+      return { sessionId, rating: rating ? await traceRatings.get(sessionId) : null };
     }),
   );
 
@@ -1253,6 +1305,18 @@ function nullableNumberBody(body: Record<string, unknown>, key: string): number 
     }
   }
   throw new UiHttpError(400, `Invalid ${key}: expected a finite number or null`);
+}
+
+/** Reads the `rating` body field: "well", "poorly", or `null` to clear a session's rating. */
+function readTraceRatingBody(body: Record<string, unknown>): TraceRatingValue | null {
+  const value = body.rating;
+  if (value === null) {
+    return null;
+  }
+  if (value === "well" || value === "poorly") {
+    return value;
+  }
+  throw new UiHttpError(400, 'Invalid rating: expected "well", "poorly", or null');
 }
 
 function optionalNumberBody(body: Record<string, unknown>, key: string): number | undefined {

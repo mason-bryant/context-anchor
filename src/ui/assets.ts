@@ -485,6 +485,8 @@ export const UI_HTML = `<!doctype html>
                 <p id="traces-summary">Recent agent context-retrieval sessions, grouped by trace id or transport session.</p>
               </div>
               <div class="tasks-filters">
+                <button id="traces-show-timeline" type="button" class="mode active" data-traces-mode="timeline">Sessions</button>
+                <button id="traces-show-dry" type="button" class="mode" data-traces-mode="dry">Dry queries</button>
                 <button id="traces-refresh" type="button">Refresh</button>
               </div>
             </div>
@@ -497,8 +499,22 @@ export const UI_HTML = `<!doctype html>
 }</pre>
               <p>Traces are written to <code>~/.anchor-mcp/logs/anchor-mcp-traces-&lt;date&gt;.log</code> with one-year retention. Optional keys: <code>dirname</code>, <code>maxFiles</code> (default <code>"365d"</code>), and <code>includeTaskText</code> (default <code>false</code>; task text is stored as a hash unless enabled). See <code>anchor-mcp.config.example.json</code> for the full block.</p>
             </div>
-            <div id="traces-empty" class="empty-state" hidden>No trace sessions recorded yet. Run a context query (startTask, loadContext, searchAnchors, ...) and refresh.</div>
-            <div id="traces-list" hidden></div>
+            <div id="traces-timeline-panel">
+              <div id="traces-empty" class="empty-state" hidden>No trace sessions recorded yet. Run a context query (startTask, loadContext, searchAnchors, ...) and refresh.</div>
+              <div id="traces-list" hidden></div>
+            </div>
+            <div id="traces-dry-panel" hidden>
+              <div class="tasks-filters">
+                <label><input type="checkbox" id="traces-dry-thin" /> Include thin deliveries with no follow-up</label>
+              </div>
+              <div id="traces-dry-empty" class="empty-state" hidden>No dry queries found.</div>
+              <table id="traces-dry-table" hidden>
+                <thead>
+                  <tr><th>Time</th><th>Tool</th><th>Reason</th><th>Task</th><th>Project</th><th>Session</th><th>Nearest miss</th></tr>
+                </thead>
+                <tbody id="traces-dry-rows"></tbody>
+              </table>
+            </div>
           </section>
 
           <section id="detail-view" class="view">
@@ -1696,6 +1712,128 @@ textarea {
   text-align: left;
 }
 
+.trace-measures {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 6px 0;
+}
+
+.trace-rating {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 6px 0;
+}
+
+.trace-rate-btn {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 12px;
+  padding: 3px 9px;
+}
+
+.trace-rate-btn.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+.trace-rating-label {
+  font-style: italic;
+}
+
+.trace-timeline {
+  margin-top: 8px;
+}
+
+.trace-query {
+  border-top: 1px solid var(--border);
+  margin-top: 6px;
+  padding-top: 6px;
+}
+
+.trace-query-summary {
+  cursor: pointer;
+}
+
+.trace-query.expanded .trace-query-summary {
+  font-weight: 600;
+}
+
+.trace-result-line {
+  color: var(--muted);
+  font-size: 12px;
+  margin-top: 2px;
+}
+
+.trace-warning {
+  color: #b16a03;
+  font-size: 12px;
+  margin-top: 2px;
+}
+
+.trace-marker {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 11px;
+  margin-left: 6px;
+  padding: 0 6px;
+}
+
+.trace-marker-zero {
+  border-color: rgba(199, 53, 45, 0.4);
+  color: #c7352d;
+}
+
+.trace-query-detail {
+  margin-top: 8px;
+}
+
+.trace-detail-columns {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(3, 1fr);
+}
+
+.trace-detail-col h4 {
+  font-size: 12px;
+  margin: 0 0 6px;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+#traces-dry-table {
+  border-collapse: collapse;
+  width: 100%;
+}
+
+#traces-dry-table th,
+#traces-dry-table td {
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+  padding: 6px 8px;
+  text-align: left;
+}
+
+.trace-dry-row {
+  cursor: pointer;
+}
+
+.trace-dry-row:hover {
+  background: var(--panel);
+}
+
+@media (max-width: 900px) {
+  .trace-detail-columns {
+    grid-template-columns: 1fr;
+  }
+}
+
 @media (max-width: 900px) {
   .topbar {
     align-items: stretch;
@@ -2792,6 +2930,11 @@ export const UI_JS = `(function () {
     tasksLoading: false,
     traces: null,
     tracesLoading: false,
+    tracesMode: "timeline",
+    tracesExpandedQuery: null,
+    dryQueries: null,
+    dryQueriesLoading: false,
+    dryQueriesThinNoFollowUp: false,
     pendingTaskFocus: null,
     tasksProject: "",
     tasksStatus: "active,todo,blocked",
@@ -5639,33 +5782,75 @@ export const UI_JS = `(function () {
     }
   }
 
-  function traceEventSummary(ev) {
+  async function loadDryQueries() {
+    state.dryQueriesLoading = true;
+    try {
+      var qs = "?limit=200" + (state.dryQueriesThinNoFollowUp ? "&thinNoFollowUp=true" : "");
+      var result = await api("/api/ui/trace-dry-queries" + qs);
+      state.dryQueries = result;
+      renderDryQueries();
+    } catch (error) {
+      setBanner(error.message, "error");
+    } finally {
+      state.dryQueriesLoading = false;
+    }
+  }
+
+  function traceEventResultLine(ev) {
     var parts = [];
-    if (ev.budgetTokens !== undefined) {
-      parts.push("budget " + ev.budgetTokens + (ev.estimatedTokens !== undefined ? " (est " + ev.estimatedTokens + ")" : ""));
+    var consideredCount = (ev.included ? ev.included.length : 0) + (ev.excluded ? ev.excluded.length : 0);
+    if (consideredCount > 0) {
+      parts.push("considered " + consideredCount + " | selected " + (ev.included ? ev.included.length : 0));
     }
-    if (ev.included) parts.push("included " + ev.included.length);
-    if (ev.excluded) parts.push("excluded " + ev.excluded.length);
     if (ev.delivered && ev.delivered.length) {
-      parts.push("delivered " + ev.delivered.map(function (d) {
-        var extra = d.mode + (d.bytes !== undefined ? ", " + d.bytes + "b" : "") + (d.degradation ? ", " + d.degradation : "");
-        return d.name + " (" + extra + ")";
-      }).join("; "));
+      var modeCounts = {};
+      ev.delivered.forEach(function (d) {
+        modeCounts[d.mode] = (modeCounts[d.mode] || 0) + 1;
+      });
+      var modeSummary = Object.keys(modeCounts).map(function (mode) {
+        return modeCounts[mode] + " " + mode;
+      }).join(", ");
+      parts.push("delivered " + ev.delivered.length + " (" + modeSummary + ")");
+    } else if (ev.tool !== "planContextBundle" && !ev.zeroHit && !(ev.structured && ev.structured.ids.length)) {
+      parts.push("delivered none");
     }
-    if (ev.listed) parts.push("listed " + ev.listed.length);
+    if (ev.listed && ev.listed.length) parts.push("listed " + ev.listed.length);
     if (ev.structured) parts.push(ev.structured.kind + " x" + ev.structured.ids.length);
-    if (ev.missingContext && ev.missingContext.length) parts.push("missing-context " + ev.missingContext.length);
+    if (ev.estimatedTokens !== undefined) {
+      parts.push((ev.budgetTokens !== undefined ? ev.budgetTokens + " token budget" : "budget") + ", ~" + ev.estimatedTokens + " est tokens");
+    }
     if (ev.zeroHit) parts.push("ZERO HIT");
-    if (ev.truncated) parts.push("truncated");
     if (ev.cursor === "continuation") parts.push("pagination");
+    if (ev.truncated) parts.push("truncated");
     if (ev.error) parts.push("error: " + ev.error.message);
     return parts.join(" | ");
+  }
+
+  function traceBudgetWarning(ev) {
+    var excluded = Array.isArray(ev.excluded) ? ev.excluded : [];
+    var displaced = excluded.filter(function (item) {
+      return item.reason && item.reason.indexOf("outside token budget") !== -1;
+    });
+    if (!displaced.length) {
+      return "";
+    }
+    var top = displaced[0];
+    var detail = [];
+    if (top.score !== undefined) detail.push("score " + top.score);
+    if (top.estimatedTokens !== undefined) detail.push("needed ~" + top.estimatedTokens);
+    return "budget " + (ev.budgetTokens !== undefined ? ev.budgetTokens + " tokens" : "") + ": "
+      + escapeHtml(top.name) + " excluded" + (detail.length ? " (" + detail.join(", ") + ")" : "")
+      + (displaced.length > 1 ? " and " + (displaced.length - 1) + " more" : "");
   }
 
   function formatTraceTime(iso) {
     if (!iso) return "";
     var date = new Date(iso);
     return isNaN(date.getTime()) ? iso : date.toLocaleString();
+  }
+
+  function traceQueryKey(sessionId, ordinal) {
+    return sessionId + "#" + ordinal;
   }
 
   function renderTraces() {
@@ -5680,23 +5865,241 @@ export const UI_JS = `(function () {
     var listEl = el("traces-list");
     listEl.hidden = !enabled || sessions.length === 0;
     el("traces-summary").textContent = enabled
-      ? sessions.length + " session(s), newest first. Click an event for its raw trace record."
+      ? sessions.length + " session(s), newest first. Click a query to inspect considered, selected, and delivered content."
       : "Trace logging is disabled.";
     if (listEl.hidden) {
       listEl.innerHTML = "";
       return;
     }
-    listEl.innerHTML = sessions.map(function (session) {
-      var head = '<div class="trace-session-head"><span class="trace-badge trace-badge-' + escapeHtml(session.correlation) + '">' + escapeHtml(session.correlation) + '</span> <code>' + escapeHtml(session.id) + '</code>'
-        + ' <span class="trace-meta">' + escapeHtml(session.transport) + ' | ' + session.eventCount + ' event(s) | ' + escapeHtml(formatTraceTime(session.startedAt)) + (session.endedAt !== session.startedAt ? " - " + escapeHtml(formatTraceTime(session.endedAt)) : "") + '</span>'
-        + (session.project ? ' <span class="trace-meta">project: ' + escapeHtml(session.project) + '</span>' : "")
-        + '</div>'
-        + (session.taskText || session.taskSha256 ? '<div class="trace-task">' + escapeHtml(session.taskText || "task sha256 " + session.taskSha256.slice(0, 12) + "...") + '</div>' : "");
-      var events = (session.events || []).map(function (ev) {
-        return '<details class="trace-event"><summary><code>' + escapeHtml(ev.tool) + '</code> <span class="trace-meta">' + escapeHtml(formatTraceTime(ev.timestamp)) + ' | ' + ev.durationMs + 'ms | ' + escapeHtml(ev.outcome) + '</span> <span class="trace-event-summary">' + escapeHtml(traceEventSummary(ev)) + '</span></summary><pre class="compact-raw">' + escapeHtml(JSON.stringify(ev, null, 2)) + '</pre></details>';
-      }).join("");
-      return '<div class="trace-session">' + head + events + '</div>';
+    listEl.innerHTML = sessions.map(renderTraceSession).join("");
+    wireTraceSessionEvents(listEl, sessions);
+  }
+
+  function renderTraceSession(session) {
+    var measures = session.measures || {};
+    var head = '<div class="trace-session-head"><span class="trace-badge trace-badge-' + escapeHtml(session.correlation) + '">' + escapeHtml(session.correlation) + '</span> <code>' + escapeHtml(session.id) + '</code>'
+      + ' <span class="trace-meta">' + escapeHtml(session.transport) + ' | ' + session.eventCount + ' event(s) | ' + escapeHtml(formatTraceTime(session.startedAt)) + (session.endedAt !== session.startedAt ? " - " + escapeHtml(formatTraceTime(session.endedAt)) : "") + '</span>'
+      + (session.project ? ' <span class="trace-meta">project: ' + escapeHtml(session.project) + '</span>' : "")
+      + '</div>'
+      + (session.taskText || session.taskSha256 ? '<div class="trace-task">' + escapeHtml(session.taskText || "task sha256 " + session.taskSha256.slice(0, 12) + "...") + '</div>' : "");
+
+    var measureLine = '<div class="trace-measures">'
+      + '<span class="trace-meta">follow-ups ' + measures.followUpCount + '</span>'
+      + '<span class="trace-meta">semantic ' + measures.semanticFollowUpCount + '</span>'
+      + '<span class="trace-meta">pagination ' + measures.paginationCount + '</span>'
+      + '<span class="trace-meta">zero-hit ' + measures.zeroHitCount + '</span>'
+      + '<span class="trace-meta">delivered items ' + measures.deliveredItemCount + '</span>'
+      + '<span class="trace-meta">full-read conversions ' + measures.fullReadConversions + '</span>'
+      + '</div>';
+
+    var rating = session.rating;
+    var ratingLabel = rating ? ("Rated: " + (rating.rating === "well" ? "went well" : "went poorly") + (rating.note ? " (" + escapeHtml(rating.note) + ")" : "")) : "No rating yet.";
+    var ratingRow = '<div class="trace-rating" data-session-id="' + escapeHtml(session.id) + '">'
+      + '<button type="button" class="trace-rate-btn' + (rating && rating.rating === "well" ? " active" : "") + '" data-rate="well">\u{1F44D} well</button>'
+      + '<button type="button" class="trace-rate-btn' + (rating && rating.rating === "poorly" ? " active" : "") + '" data-rate="poorly">\u{1F44E} poorly</button>'
+      + (rating ? '<button type="button" class="trace-rate-btn" data-rate="clear">Clear</button>' : "")
+      + '<span class="trace-meta trace-rating-label">' + ratingLabel + '</span>'
+      + '</div>';
+
+    var events = (session.events || []).map(function (ev, index) {
+      return renderTraceQueryRow(session, ev, index);
     }).join("");
+
+    return '<div class="trace-session" data-session-id="' + escapeHtml(session.id) + '">' + head + measureLine + ratingRow + '<div class="trace-timeline">' + events + '</div></div>';
+  }
+
+  function renderTraceQueryRow(session, ev, index) {
+    var key = traceQueryKey(session.id, ev.ordinal !== undefined ? ev.ordinal : index);
+    var expanded = state.tracesExpandedQuery === key;
+    var warning = traceBudgetWarning(ev);
+    var markers = [];
+    if (ev.zeroHit) markers.push('<span class="trace-marker trace-marker-zero">zero-hit</span>');
+    if (ev.cursor === "continuation") markers.push('<span class="trace-marker">pagination</span>');
+    var summary = '<div class="trace-query-summary">'
+      + '<code>' + escapeHtml(ev.tool) + '</code>'
+      + ' <span class="trace-meta">' + escapeHtml(formatTraceTime(ev.timestamp)) + ' | ' + ev.durationMs + 'ms | ' + escapeHtml(ev.outcome) + '</span>'
+      + markers.join(" ")
+      + '<div class="trace-result-line">' + escapeHtml(traceEventResultLine(ev)) + '</div>'
+      + (warning ? '<div class="trace-warning">⚠ ' + warning + '</div>' : '')
+      + '</div>';
+
+    var detail = "";
+    if (expanded) {
+      detail = '<div class="trace-query-detail">'
+        + '<div class="trace-detail-columns">'
+        + '<div class="trace-detail-col"><h4>Considered</h4>' + renderConsideredList(ev) + '</div>'
+        + '<div class="trace-detail-col"><h4>Selected / Delivered</h4>' + renderDeliveredList(ev) + '</div>'
+        + '<div class="trace-detail-col"><h4>Raw event</h4><pre class="compact-raw">' + escapeHtml(JSON.stringify(ev, null, 2)) + '</pre></div>'
+        + '</div>'
+        + '</div>';
+    }
+
+    return '<div class="trace-query' + (expanded ? " expanded" : "") + '" data-query-key="' + escapeHtml(key) + '">' + summary + detail + '</div>';
+  }
+
+  function renderConsideredList(ev) {
+    var included = (ev.included || []).map(function (item) { return traceConsideredCard(item, true); });
+    var excluded = (ev.excluded || []).map(function (item) { return traceConsideredCard(item, false); });
+    var all = included.concat(excluded);
+    if (!all.length) {
+      return '<p class="trace-meta">No scored items reported.</p>';
+    }
+    return all.join("");
+  }
+
+  function traceConsideredCard(item, wasIncluded) {
+    return '<div class="planner-card">'
+      + '<div class="planner-card-title"><span>' + escapeHtml(item.name) + '</span><span class="badge">' + (wasIncluded ? "selected" : "excluded") + (item.score !== undefined ? ", score " + escapeHtml(item.score) : "") + '</span></div>'
+      + (item.reason ? '<p>' + escapeHtml(item.reason) + '</p>' : '')
+      + (item.estimatedTokens !== undefined ? '<p>Tokens: ' + escapeHtml(item.estimatedTokens) + '</p>' : '')
+      + '</div>';
+  }
+
+  function renderDeliveredList(ev) {
+    var delivered = ev.delivered || [];
+    var structured = ev.structured;
+    var listed = ev.listed || [];
+    var cards = delivered.map(function (item) {
+      var degraded = item.requestedMode && item.requestedMode !== item.mode;
+      return '<div class="planner-card">'
+        + '<div class="planner-card-title"><span>' + escapeHtml(item.name) + '</span><span class="badge">' + escapeHtml(item.mode) + '</span></div>'
+        + (degraded ? '<p>Requested ' + escapeHtml(item.requestedMode) + ', delivered ' + escapeHtml(item.mode) + (item.degradation ? " (" + escapeHtml(item.degradation) + ")" : "") + '</p>' : '')
+        + (item.bytes !== undefined ? '<p>' + escapeHtml(item.bytes) + ' bytes</p>' : '')
+        + (item.sections && item.sections.length ? '<p>Sections: ' + escapeHtml(item.sections.join(", ")) + '</p>' : '')
+        + (item.warningCount ? '<p>' + escapeHtml(item.warningCount) + ' warning(s)</p>' : '')
+        + '</div>';
+    });
+    if (structured) {
+      cards.push('<div class="planner-card"><div class="planner-card-title"><span>' + escapeHtml(structured.kind) + '</span><span class="badge">structured x' + structured.ids.length + '</span></div><p>' + escapeHtml(structured.ids.join(", ")) + '</p></div>');
+    }
+    if (listed.length && !delivered.length) {
+      cards.push('<div class="planner-card"><div class="planner-card-title"><span>Listed (metadata only)</span><span class="badge">' + listed.length + '</span></div><p>' + escapeHtml(listed.join(", ")) + '</p></div>');
+    }
+    if (!cards.length) {
+      return '<p class="trace-meta">Nothing delivered.</p>';
+    }
+    return cards.join("");
+  }
+
+  function wireTraceSessionEvents(listEl, sessions) {
+    listEl.querySelectorAll(".trace-query-summary").forEach(function (summaryEl) {
+      summaryEl.addEventListener("click", function () {
+        var queryEl = summaryEl.parentElement;
+        var key = queryEl.dataset.queryKey;
+        state.tracesExpandedQuery = state.tracesExpandedQuery === key ? null : key;
+        renderTraces();
+      });
+    });
+    listEl.querySelectorAll(".trace-rating").forEach(function (ratingEl) {
+      var sessionId = ratingEl.dataset.sessionId;
+      ratingEl.querySelectorAll(".trace-rate-btn").forEach(function (btn) {
+        btn.addEventListener("click", function () {
+          rateTraceSession(sessionId, btn.dataset.rate);
+        });
+      });
+    });
+  }
+
+  async function rateTraceSession(sessionId, action) {
+    var rating = null;
+    var note;
+    if (action === "well" || action === "poorly") {
+      rating = action;
+      note = window.prompt("Optional note about this session (max 500 chars)", "") || undefined;
+      if (note && note.length > 500) {
+        note = note.slice(0, 500);
+      }
+    }
+    try {
+      await apiPost("/api/ui/trace-rating", { sessionId: sessionId, rating: rating, note: note });
+      state.traces = null;
+      await loadTraces();
+    } catch (error) {
+      setBanner(error.message, "error");
+    }
+  }
+
+  function renderDryQueries() {
+    var data = state.dryQueries;
+    if (!data) {
+      return;
+    }
+    var enabled = !!data.enabled;
+    var rows = data.dryQueries || [];
+    el("traces-disabled").hidden = enabled;
+    el("traces-dry-empty").hidden = !enabled || rows.length > 0;
+    var tableEl = el("traces-dry-table");
+    tableEl.hidden = !enabled || rows.length === 0;
+    var bodyEl = el("traces-dry-rows");
+    if (tableEl.hidden) {
+      bodyEl.innerHTML = "";
+      return;
+    }
+    bodyEl.innerHTML = rows.map(function (row) {
+      var task = row.taskText || (row.taskSha256 ? "sha256 " + row.taskSha256.slice(0, 10) + "..." : "");
+      var nearestMiss = row.nearestMiss ? row.nearestMiss.name + (row.nearestMiss.reason ? " (" + row.nearestMiss.reason + ")" : "") : "";
+      return "<tr class=\\"trace-dry-row\\" data-session-id=\\"" + escapeHtml(row.sessionId) + "\\">"
+        + "<td>" + escapeHtml(formatTraceTime(row.timestamp)) + "</td>"
+        + "<td><code>" + escapeHtml(row.tool) + "</code></td>"
+        + "<td>" + escapeHtml(row.reason) + "</td>"
+        + "<td>" + escapeHtml(task) + "</td>"
+        + "<td>" + escapeHtml(row.project || "") + "</td>"
+        + "<td><code>" + escapeHtml(row.sessionId) + "</code></td>"
+        + "<td>" + escapeHtml(nearestMiss) + "</td>"
+        + "</tr>";
+    }).join("");
+    bodyEl.querySelectorAll(".trace-dry-row").forEach(function (rowEl) {
+      rowEl.addEventListener("click", function () {
+        openDrySessionTimeline(rowEl.dataset.sessionId);
+      });
+    });
+  }
+
+  async function openDrySessionTimeline(sessionId) {
+    state.tracesMode = "timeline";
+    var loaded = function () {
+      return state.traces && (state.traces.sessions || []).some(function (s) { return s.id === sessionId; });
+    };
+    if (!loaded()) {
+      await loadTraces();
+    }
+    if (!loaded()) {
+      // Dry queries are unlimited but the session list is recency-capped, so
+      // an old session may not be in the newest page. Fetch it by id and
+      // splice it in so the click-through always lands.
+      try {
+        var result = await api("/api/ui/traces?sessionId=" + encodeURIComponent(sessionId));
+        if (result.sessions && result.sessions.length && state.traces) {
+          state.traces.sessions = (state.traces.sessions || []).concat(result.sessions);
+        }
+      } catch (error) {
+        setBanner(error.message, "error");
+      }
+    }
+    renderTracesModeButtons();
+    renderTraces();
+    var sessionEls = document.querySelectorAll("#traces-list .trace-session");
+    for (var i = 0; i < sessionEls.length; i++) {
+      if (sessionEls[i].dataset.sessionId === sessionId) {
+        sessionEls[i].scrollIntoView({ behavior: "smooth", block: "start" });
+        break;
+      }
+    }
+  }
+
+  function renderTracesModeButtons() {
+    el("traces-show-timeline").classList.toggle("active", state.tracesMode === "timeline");
+    el("traces-show-dry").classList.toggle("active", state.tracesMode === "dry");
+    el("traces-timeline-panel").hidden = state.tracesMode !== "timeline";
+    el("traces-dry-panel").hidden = state.tracesMode !== "dry";
+  }
+
+  function showTracesMode(mode) {
+    state.tracesMode = mode === "dry" ? "dry" : "timeline";
+    renderTracesModeButtons();
+    if (state.tracesMode === "dry" && !state.dryQueries && !state.dryQueriesLoading) {
+      loadDryQueries();
+    }
   }
 
   async function loadTasks() {
@@ -9338,8 +9741,20 @@ export const UI_JS = `(function () {
       loadRegistry().catch(function (error) { setBanner(error.message, "error"); });
     });
     el("traces-refresh").addEventListener("click", function () {
-      state.traces = null;
-      loadTraces();
+      if (state.tracesMode === "dry") {
+        state.dryQueries = null;
+        loadDryQueries();
+      } else {
+        state.traces = null;
+        loadTraces();
+      }
+    });
+    el("traces-show-timeline").addEventListener("click", function () { showTracesMode("timeline"); });
+    el("traces-show-dry").addEventListener("click", function () { showTracesMode("dry"); });
+    el("traces-dry-thin").addEventListener("change", function () {
+      state.dryQueriesThinNoFollowUp = el("traces-dry-thin").checked;
+      state.dryQueries = null;
+      loadDryQueries();
     });
     el("mappings-save").addEventListener("click", function () { saveProjectMappings(); });
     el("mappings-refresh").addEventListener("click", function () {
