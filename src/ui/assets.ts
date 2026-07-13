@@ -1712,6 +1712,16 @@ textarea {
   text-align: left;
 }
 
+.link-button {
+  background: none;
+  border: none;
+  color: var(--accent);
+  cursor: pointer;
+  font: inherit;
+  padding: 0;
+  text-decoration: underline;
+}
+
 .trace-measures {
   display: flex;
   flex-wrap: wrap;
@@ -5991,6 +6001,9 @@ export const UI_JS = `(function () {
       };
       summaryEl.addEventListener("click", toggle);
       summaryEl.addEventListener("keydown", function (event) {
+        if (event.repeat) {
+          return;
+        }
         if (event.key === "Enter" || event.key === " ") {
           event.preventDefault();
           toggle();
@@ -6045,8 +6058,8 @@ export const UI_JS = `(function () {
     bodyEl.innerHTML = rows.map(function (row) {
       var task = row.taskText || (row.taskSha256 ? "sha256 " + row.taskSha256.slice(0, 10) + "..." : "");
       var nearestMiss = row.nearestMiss ? row.nearestMiss.name + (row.nearestMiss.reason ? " (" + row.nearestMiss.reason + ")" : "") : "";
-      return "<tr class=\\"trace-dry-row\\" role=\\"button\\" tabindex=\\"0\\" data-session-id=\\"" + escapeHtml(row.sessionId) + "\\">"
-        + "<td>" + escapeHtml(formatTraceTime(row.timestamp)) + "</td>"
+      return "<tr class=\\"trace-dry-row\\" data-session-id=\\"" + escapeHtml(row.sessionId) + "\\">"
+        + "<td><button type=\\"button\\" class=\\"trace-dry-open link-button\\">" + escapeHtml(formatTraceTime(row.timestamp)) + "</button></td>"
         + "<td><code>" + escapeHtml(row.tool) + "</code></td>"
         + "<td>" + escapeHtml(row.reason) + "</td>"
         + "<td>" + escapeHtml(task) + "</td>"
@@ -6055,17 +6068,21 @@ export const UI_JS = `(function () {
         + "<td>" + escapeHtml(nearestMiss) + "</td>"
         + "</tr>";
     }).join("");
+    // The row stays a plain table row for assistive technology; the real
+    // interactive control is the button in the first cell. Row click is kept
+    // as a mouse convenience only.
     bodyEl.querySelectorAll(".trace-dry-row").forEach(function (rowEl) {
       var open = function () {
         openDrySessionTimeline(rowEl.dataset.sessionId);
       };
       rowEl.addEventListener("click", open);
-      rowEl.addEventListener("keydown", function (event) {
-        if (event.key === "Enter" || event.key === " ") {
-          event.preventDefault();
+      var button = rowEl.querySelector(".trace-dry-open");
+      if (button) {
+        button.addEventListener("click", function (event) {
+          event.stopPropagation();
           open();
-        }
-      });
+        });
+      }
     });
   }
 
