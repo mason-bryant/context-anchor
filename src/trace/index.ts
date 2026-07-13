@@ -79,6 +79,8 @@ export class TraceIndex {
   private loadPromise: Promise<void> | undefined;
   /** Memoized session grouping, invalidated whenever a new event appends. */
   private sessionsCache: TraceSessionView[] | undefined;
+  /** Memoized uncapped grouping for aggregation endpoints, same invalidation. */
+  private uncappedSessionsCache: TraceSessionView[] | undefined;
 
   constructor(
     private readonly logger: TraceLogger,
@@ -97,16 +99,37 @@ export class TraceIndex {
     }
     const [sessions, ratings] = await Promise.all([
       this.buildAllSessions(),
-      this.ratings?.getAll() ?? Promise.resolve<Record<string, TraceRating>>({}),
+      this.ratings?.getAll() ?? Promise.resolve<Record<string, TraceRating>>(Object.create(null) as Record<string, TraceRating>),
     ]);
     const limit = Math.max(1, Math.min(options.limit ?? 50, 500));
+    // Own-property check: session ids come from client-supplied trace ids, so
+    // an id like "__proto__" must not read a bogus rating off the prototype
+    // chain of a plain-object map.
+    const ratingFor = (id: string): TraceRating | undefined =>
+      Object.prototype.hasOwnProperty.call(ratings, id) ? ratings[id] : undefined;
     return sessions
       // sessionId lookup happens before the recency limit so any session the
       // dry-queries view references stays reachable, however old.
       .filter((session) => !options.sessionId || session.id === options.sessionId)
-      .map((session) => (ratings[session.id] ? { ...session, rating: ratings[session.id] } : session))
+      .map((session) => {
+        const rating = ratingFor(session.id);
+        return rating ? { ...session, rating } : session;
+      })
       .sort((a, b) => b.endedAt.localeCompare(a.endedAt))
       .slice(0, limit);
+  }
+
+  /**
+   * All indexed events, unsorted-by-recency (callers that need sessions should
+   * prefer getSessions; this exists for aggregate view models that filter and
+   * regroup events themselves).
+   */
+  async getEvents(): Promise<TraceEvent[]> {
+    if (!this.logger.enabled) {
+      return [];
+    }
+    await this.ensureLoaded();
+    return [...this.eventsById.values()];
   }
 
   /**
@@ -132,6 +155,23 @@ export class TraceIndex {
     return this.sessionsCache;
   }
 
+  /**
+   * Sessions with no per-session event cap, for aggregation view models that
+   * must not bias long sessions toward early-session behavior. Memoized like
+   * the display grouping so aggregate endpoints never re-sort and re-group
+   * the full event set per request.
+   */
+  async getUncappedSessions(): Promise<TraceSessionView[]> {
+    if (!this.logger.enabled) {
+      return [];
+    }
+    await this.ensureLoaded();
+    this.uncappedSessionsCache ??= buildSessions([...this.eventsById.values()], {
+      maxEventsPerSession: Number.POSITIVE_INFINITY,
+    });
+    return this.uncappedSessionsCache;
+  }
+
   private append(event: TraceEvent): void {
     if (this.eventsById.size >= MAX_EVENTS_IN_MEMORY) {
       return;
@@ -139,6 +179,7 @@ export class TraceIndex {
     if (!this.eventsById.has(event.id)) {
       this.eventsById.set(event.id, event);
       this.sessionsCache = undefined;
+      this.uncappedSessionsCache = undefined;
     }
   }
 
@@ -215,8 +256,16 @@ function parseTraceLine(line: string): TraceEvent | undefined {
  * `startTask` boundaries; traceless events after a trace-minting `startTask`
  * on the same transport join that trace's session, since transport calls are
  * assumed serial (interleaved concurrent tasks are a documented limitation).
+ *
+ * `maxEventsPerSession` bounds the events retained per session (display
+ * default 500); aggregation callers pass Infinity so long sessions are not
+ * biased toward early-session behavior.
  */
-export function buildSessions(events: TraceEvent[]): TraceSessionView[] {
+export function buildSessions(
+  events: TraceEvent[],
+  options: { maxEventsPerSession?: number } = {},
+): TraceSessionView[] {
+  const maxEventsPerSession = options.maxEventsPerSession ?? MAX_EVENTS_PER_SESSION;
   const sorted = [...events].sort(
     (a, b) => a.timestamp.localeCompare(b.timestamp) || a.ordinal - b.ordinal,
   );
@@ -252,7 +301,7 @@ export function buildSessions(events: TraceEvent[]): TraceSessionView[] {
     };
     session.endedAt = event.timestamp > session.endedAt ? event.timestamp : session.endedAt;
     session.eventCount += 1;
-    if (session.events.length < MAX_EVENTS_PER_SESSION) {
+    if (session.events.length < maxEventsPerSession) {
       session.events.push(event);
     }
     if (!session.taskSha256 && event.task) {
@@ -285,7 +334,7 @@ const EMPTY_MEASURES: TraceSessionMeasures = {
  * call is a context query per the design, so follow-ups are simply every event
  * after the first.
  */
-function computeSessionMeasures(events: TraceEvent[]): TraceSessionMeasures {
+export function computeSessionMeasures(events: TraceEvent[]): TraceSessionMeasures {
   const followUps = events.slice(1);
   const paginationCount = followUps.filter((event) => event.cursor === "continuation").length;
   const semanticFollowUpCount = followUps.length - paginationCount;
