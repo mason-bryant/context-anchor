@@ -168,6 +168,17 @@ describe("planAnchorMigration: convert_relation", () => {
     expect(result.outcomes.filter((o) => o.code === "convert_relation")).toHaveLength(0);
     expect(result.newContent).toContain("G-030");
   });
+
+  it("leaves a legacy owned_by (person/team) target untouched — no operation in this slice converts person/team-targeted keys", () => {
+    const content = doc(
+      "relations:\n  owned_by:\n    - alice",
+      "## Current State\n\nNone.\n",
+    );
+    const ctx = makeCtx({ resolveAnchorName: () => undefined, anchorIdForAnchorName: () => undefined });
+    const result = planAnchorMigration(content, ctx, ["convert_relation", "scope_goal_reference"]);
+    expect(result.outcomes.filter((o) => o.code === "convert_relation" || o.code === "scope_goal_reference")).toHaveLength(0);
+    expect(result.newContent).toContain("owned_by:\n    - alice");
+  });
 });
 
 describe("planAnchorMigration: scope_goal_reference", () => {
@@ -360,6 +371,14 @@ describe("planAnchorMigration: idempotence", () => {
 
     const first = planAnchorMigration(content, ctx, MIGRATION_OPERATION_CODES);
     expect(first.outcomes.some((o) => o.status === "applied")).toBe(true);
+    // Both convert_relation (anchor-targeted depends_on) and
+    // scope_goal_reference (goal-targeted implements) touch the same
+    // `relations` front-matter object in one merge call — assert both land
+    // simultaneously without either clobbering the other.
+    expect(first.newContent).toContain("anchor:a-target1");
+    expect(first.newContent).toContain("goal:demo:G-030");
+    expect(first.newContent).not.toContain("projects/demo/other.md");
+    expect(first.newContent).not.toMatch(/implements:\s*\n\s*- G-030/);
 
     // Second pass: the minted anchor_id and claim ids must be folded into the
     // tree-wide id sets, exactly as a real service call would after the
