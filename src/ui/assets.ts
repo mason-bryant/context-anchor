@@ -2163,6 +2163,14 @@ textarea {
   font-size: 0.84rem;
   line-height: 1.35;
 }
+.claim-popover::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: -6px;
+  height: 6px;
+}
 .claim-epistemology:hover .claim-popover,
 .claim-epistemology:focus-within .claim-popover {
   display: block;
