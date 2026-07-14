@@ -1081,15 +1081,23 @@ export class AnchorService {
       // update) so creating an anchor costs exactly one tree walk — see the
       // validator's docstring for the split.
       const treeAnchorIds = await this.collectTreeAnchorIds(resolved.name);
-      if (suppliedId && isValidAnchorId(suppliedId)) {
-        const owner = treeAnchorIds.get(suppliedId);
+      // An invalid-format supplied id is treated as ABSENT for minting: the
+      // server owns identity allocation, and letting a malformed value
+      // through (possible when migrationWarnOnly downgrades the schema BLOCK
+      // to a WARN) would commit a newly created anchor without a valid
+      // identity. It is replaced by a fresh mint, reported via the
+      // anchor_id_replaced WARN below — mirroring the claim_id_minted WARN
+      // pattern above.
+      const validSuppliedId = suppliedId && isValidAnchorId(suppliedId) ? suppliedId : undefined;
+      if (validSuppliedId) {
+        const owner = treeAnchorIds.get(validSuppliedId);
         if (owner) {
           return {
             warnings: [
               {
                 severity: "BLOCK",
                 code: "anchor_id_duplicate",
-                message: `anchor_id "${suppliedId}" already exists on "${owner}". anchor_id must be unique across the tree.`,
+                message: `anchor_id "${validSuppliedId}" already exists on "${owner}". anchor_id must be unique across the tree.`,
                 path: resolved.path,
               },
             ],
@@ -1098,8 +1106,15 @@ export class AnchorService {
         }
       }
       const updates: Record<string, unknown> = {};
-      if (!suppliedId) {
+      if (!validSuppliedId) {
         updates.anchor_id = mintAnchorId(new Set(treeAnchorIds.keys()));
+        if (suppliedId) {
+          carryWarnings.push({
+            severity: "WARN",
+            code: "anchor_id_replaced",
+            message: `Supplied anchor_id "${suppliedId}" does not match the required format and was replaced with server-minted "${String(updates.anchor_id)}". The server mints anchor identity; ids must match ^a-[0-9a-z]{6,8}$.`,
+          });
+        }
       }
       if (fm.schema_version === undefined) {
         updates.schema_version = 1;

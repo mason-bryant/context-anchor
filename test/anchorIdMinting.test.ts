@@ -95,6 +95,25 @@ describe("mint-on-create: anchor_id + schema_version", () => {
     expect(read.frontmatter.schema_version).toBe(1);
   });
 
+  it("replaces an INVALID caller-supplied anchor_id with a fresh mint on create (anchor_id_replaced WARN)", async () => {
+    // The server owns identity allocation: a malformed supplied id must not
+    // survive creation (it could otherwise commit when migrationWarnOnly
+    // downgrades the schema BLOCK), and must not suppress minting.
+    const result = await service.writeAnchor({
+      name: "projects/demo/bad-supplied.md",
+      content: anchorContent({ anchorId: "not-a-valid-id" }),
+      message: "test: create with invalid supplied anchor_id",
+    });
+    expect(result.warnings.some((w) => w.severity === "BLOCK")).toBe(false);
+    expect(result.warnings.some((w) => w.severity === "WARN" && w.code === "anchor_id_replaced")).toBe(true);
+
+    const read = await service.readAnchor("projects/demo/bad-supplied");
+    expect(read.content).not.toContain("not-a-valid-id");
+    const match = read.content.match(/anchor_id: (a-[0-9a-z]{6,8})/);
+    expect(match).not.toBeNull();
+    expect(isValidAnchorId(match![1])).toBe(true);
+  });
+
   it("keeps a caller-supplied schema_version on create instead of overwriting it", async () => {
     await service.writeAnchor({
       name: "projects/demo/demo",
