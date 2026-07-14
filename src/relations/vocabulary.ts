@@ -136,16 +136,18 @@ export function parseRelationTarget(raw: string): RelationTargetParseResult {
     return { raw, legacy: true, malformedReason: "empty" };
   }
 
-  const goalMatch = GOAL_REF_PATTERN.exec(trimmed);
-  if (goalMatch) {
-    const [, projectSlug, goalId] = goalMatch;
-    if (!projectSlug.trim() || !goalId.trim()) {
+  if (trimmed.startsWith("goal:")) {
+    // ANY goal:-prefixed value is a typed-ref attempt (never a legacy bare
+    // string): `goal:onlyoneslug` is a malformed typed ref WP5 coverage must
+    // distinguish from a legacy anchor path, not silently downgrade.
+    const goalMatch = GOAL_REF_PATTERN.exec(trimmed);
+    if (!goalMatch || !goalMatch[1].trim() || !goalMatch[2].trim()) {
       return { raw, legacy: false, malformedReason: "goal ref requires <project-slug>:<goal-id>" };
     }
     return {
       raw,
       legacy: false,
-      parsed: { kind: "goal", projectSlug: projectSlug.trim(), goalId: goalId.trim() },
+      parsed: { kind: "goal", projectSlug: goalMatch[1].trim(), goalId: goalMatch[2].trim() },
     };
   }
 

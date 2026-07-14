@@ -634,6 +634,36 @@ type: context-anchor
     ]);
   });
 
+  it("emits ONE section_anchor containment edge when several id-only claims share the same section (GraphIndex does not dedupe)", () => {
+    const ctx = makeCtx();
+    const idOnlyContent = `---
+type: context-anchor
+---
+
+## Current State
+
+- First id-only claim.
+  {id: c-legacy1}
+- Second id-only claim in the same section.
+  {id: c-legacy2}
+- Third id-only claim in the same section.
+  {id: c-legacy3}
+`;
+    const d = doc({ anchorName: "projects/demo/a.md", content: idOnlyContent });
+    const edges = extractClaimEdges(d, ctx);
+    const claimSectionEdges = edges.filter((edge) => edge.type === "claim_section");
+    const sectionAnchorEdges = edges.filter((edge) => edge.type === "section_anchor");
+    expect(claimSectionEdges).toHaveLength(3);
+    expect(sectionAnchorEdges).toEqual([
+      {
+        from: "section:projects/demo/a.md#Current State",
+        to: "anchor:projects/demo/a.md",
+        type: "section_anchor",
+        sourceOfTruth: "containment",
+      },
+    ]);
+  });
+
   it("does not add an own-section containment edge to an already-annotated claim (existing annotated-claim edges stay exactly as before WP4)", () => {
     const ctx = makeCtx();
     const d = doc({ anchorName: "projects/demo/a.md", content });

@@ -534,6 +534,21 @@ export function extractClaimEdges(doc: DocumentInput, ctx: ExtractDocumentEdgesC
     },
   };
 
+  // Containment `section_anchor` edges are structural facts about the
+  // section, not about any one claim: several claims in (or citing) the same
+  // section must produce ONE section -> anchor edge, not one per claim or per
+  // source row — GraphIndex does not dedupe edges, so emitting duplicates
+  // here would inflate the adjacency lists and every downstream traversal.
+  const seenSectionAnchorEdges = new Set<string>();
+  const pushSectionAnchorEdge = (fromSection: string, toAnchor: string): void => {
+    const key = `${fromSection}\n${toAnchor}`;
+    if (seenSectionAnchorEdges.has(key)) {
+      return;
+    }
+    seenSectionAnchorEdges.add(key);
+    edges.push({ from: fromSection, to: toAnchor, type: "section_anchor", sourceOfTruth: "containment" });
+  };
+
   for (const claim of claims) {
     if (!claim.id) {
       continue;
@@ -549,7 +564,7 @@ export function extractClaimEdges(doc: DocumentInput, ctx: ExtractDocumentEdgesC
       // real source rows today), harmlessly no-op-ing over an empty array.
       const ownSection = sectionNodeId(doc.anchorName, normalizeSectionTitle(claim.section));
       edges.push({ from, to: ownSection, type: "claim_section", sourceOfTruth: "containment" });
-      edges.push({ from: ownSection, to: anchorNodeId(doc.anchorName), type: "section_anchor", sourceOfTruth: "containment" });
+      pushSectionAnchorEdge(ownSection, anchorNodeId(doc.anchorName));
     }
 
     for (const source of claim.sources) {
@@ -561,12 +576,7 @@ export function extractClaimEdges(doc: DocumentInput, ctx: ExtractDocumentEdgesC
           edges.push({ from, to: result.node.nodeId, type: "claim_section", sourceOfTruth: "claim-annotation" });
           const sectionAnchor = sectionNodeAnchorName(result.node.nodeId);
           if (sectionAnchor) {
-            edges.push({
-              from: result.node.nodeId,
-              to: anchorNodeId(sectionAnchor),
-              type: "section_anchor",
-              sourceOfTruth: "containment",
-            });
+            pushSectionAnchorEdge(result.node.nodeId, anchorNodeId(sectionAnchor));
           }
         } else {
           edges.push({ from, to: result.node.nodeId, type: "claim_source", sourceOfTruth: "claim-annotation" });

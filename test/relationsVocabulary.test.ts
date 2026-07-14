@@ -102,7 +102,9 @@ describe("parseRelationTarget: legacy bare strings", () => {
 describe("parseRelationTarget: malformed typed refs", () => {
   it("reports a malformed goal ref missing the project slug segment", () => {
     const result = parseRelationTarget("goal:onlyoneslug");
-    expect(result.legacy).toBe(true); // does not match GOAL_REF_PATTERN (needs exactly two colons), falls to legacy
+    expect(result.legacy).toBe(false);
+    expect(result.parsed).toBeUndefined();
+    expect(result.malformedReason).toBeDefined();
   });
 
   it("reports a malformed goal ref with an empty project slug", () => {
