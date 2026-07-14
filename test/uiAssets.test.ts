@@ -1148,6 +1148,9 @@ describe("UI browser assets", () => {
     expect(html).toContain("Claim text.");
     expect(html).toContain("Claim justification strength: high");
     expect(html).not.toContain("{src:");
+    expect(UI_CSS).toContain(".claim-popover::before");
+    expect(UI_CSS).toContain("top: -6px");
+    expect(UI_CSS).toContain("height: 6px");
   });
 
   it("renders edit controls for tl-dr and question bullets without claim provenance controls", () => {
