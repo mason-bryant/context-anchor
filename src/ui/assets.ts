@@ -3365,17 +3365,14 @@ export const UI_JS = `(function () {
     if (stateSet) {
       filters.states.forEach(function (value) { stateSet[value] = true; });
     }
-    var project = filters.project;
     var text = filters.text;
+    // Project scoping is server-side only (the project= query param): claim
+    // records carry no projectSlug, so a client-side project comparison
+    // would silently drop every claim row. Mirrors filterCoverageRecords in
+    // src/ui/viewModel.ts.
     return records.filter(function (record) {
       if (stateSet && !stateSet[record.state]) {
         return false;
-      }
-      if (project) {
-        var recordProject = record.kind === "anchor" ? record.projectSlug : undefined;
-        if (recordProject !== project) {
-          return false;
-        }
       }
       if (text && record.anchorName.toLowerCase().indexOf(text) === -1) {
         return false;

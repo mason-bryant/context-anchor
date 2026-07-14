@@ -343,9 +343,11 @@ function frontmatterValueIncludes(value: unknown, expected: string): boolean {
 // filtering, URL-param round-trip, and cursor-append helpers over the
 // `GET /api/ui/graph-coverage` response shape (`AnchorService.graphCoverage`,
 // `src/anchorService.ts` — not modified here). The browser UI
-// (`src/ui/assets.ts`) is plain ES5 in template strings and calls these
-// exported functions instead of re-implementing the logic inline, so it can
-// be unit-tested outside a DOM/fetch environment.
+// (`src/ui/assets.ts`) is plain ES5 embedded in template strings and cannot
+// import TypeScript modules, so it MIRRORS this logic inline; these exports
+// are the unit-tested reference implementation, and any behavior change here
+// must be applied to the corresponding function in `assets.ts` (each mirror
+// names its counterpart) — the pair drifting apart is a bug.
 // ---------------------------------------------------------------------------
 
 /** Display order for coverage-state badges/cards: worst-to-best structural signal first, matching WP5's precedence (malformed > dangling > ambiguous > partial), with the two mutually exclusive "happy"/"inert" ends last. */
@@ -398,32 +400,31 @@ export function deriveCoverageProjects(records: readonly CoverageRecordKind[]): 
 }
 
 /**
- * Apply the filter rail's state/project/anchor-name-text filters to an
+ * Apply the filter rail's state/anchor-name-text filters to an
  * already-fetched page of records. This is a client-side refinement over
  * whatever page the server already returned (the server-side `states`/
  * `project` query params narrow what gets fetched in the first place — see
  * `coverageQueryParams` below); this function exists so the table can also
- * apply the free-text anchor-name filter, and re-apply filters instantly
- * when the user toggles a state card without waiting on a network round
- * trip for records already in hand.
+ * apply the free-text anchor-name filter, and re-apply the state filter
+ * instantly when the user toggles a state card without waiting on a network
+ * round trip for records already in hand.
+ *
+ * The PROJECT filter is deliberately NOT applied here: project scoping is
+ * server-side only (`project=`), because claim records carry no
+ * `projectSlug` of their own — a client-side project comparison would
+ * silently drop every claim row belonging to anchors that ARE in the
+ * selected project.
  */
 export function filterCoverageRecords(
   records: readonly CoverageRecordKind[],
   filters: CoverageFilters,
 ): CoverageRecordKind[] {
   const stateSet = filters.states && filters.states.length > 0 ? new Set(filters.states) : undefined;
-  const project = filters.project?.trim();
   const text = filters.anchorText?.trim().toLowerCase();
 
   return records.filter((record) => {
     if (stateSet && !stateSet.has(record.state)) {
       return false;
-    }
-    if (project) {
-      const recordProject = record.kind === "anchor" ? record.projectSlug : undefined;
-      if (recordProject !== project) {
-        return false;
-      }
     }
     if (text && !record.anchorName.toLowerCase().includes(text)) {
       return false;

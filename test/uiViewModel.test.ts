@@ -309,15 +309,22 @@ describe("Schema Coverage view model", () => {
     expect(filtered.map((record) => record.anchorName + ":" + record.state)).toEqual(["b.md:dangling", "a.md:partial"]);
   });
 
-  it("filters records by project (anchor-scoped; claim records are excluded from project filtering unless their anchor matches)", () => {
+  it("does NOT filter by project client-side: project scoping is server-side, so claim rows (which carry no projectSlug) survive", () => {
+    // Regression guard for review feedback on PR #90: a client-side project
+    // comparison silently dropped every claim row because claims have no
+    // projectSlug of their own. The server already scopes the fetched page
+    // via the project= query param (coverageQueryParams), so client-side
+    // filtering must pass ALL records through when a project is selected.
     const records: CoverageRecordKind[] = [
       anchorRecord({ anchorName: "projects/alpha/alpha.md", projectSlug: "alpha" }),
-      anchorRecord({ anchorName: "projects/beta/beta.md", projectSlug: "beta" }),
       claimRecord({ anchorName: "projects/alpha/alpha.md", line: 2 }),
     ];
 
     const filtered = filterCoverageRecords(records, { project: "alpha" });
-    expect(filtered.map((record) => record.anchorName)).toEqual(["projects/alpha/alpha.md"]);
+    expect(filtered.map((record) => record.kind + ":" + record.anchorName)).toEqual([
+      "anchor:projects/alpha/alpha.md",
+      "claim:projects/alpha/alpha.md",
+    ]);
   });
 
   it("filters records by a case-insensitive anchor-name substring", () => {
@@ -330,11 +337,11 @@ describe("Schema Coverage view model", () => {
     expect(filtered.map((record) => record.anchorName)).toEqual(["projects/alpha/Roadmap.md"]);
   });
 
-  it("combines state, project, and text filters (AND semantics)", () => {
+  it("combines state and text filters (AND semantics); project is ignored client-side", () => {
     const records: CoverageRecordKind[] = [
       anchorRecord({ anchorName: "projects/alpha/roadmap.md", projectSlug: "alpha", state: "dangling" }),
       anchorRecord({ anchorName: "projects/alpha/design.md", projectSlug: "alpha", state: "structured" }),
-      anchorRecord({ anchorName: "projects/beta/roadmap.md", projectSlug: "beta", state: "dangling" }),
+      anchorRecord({ anchorName: "projects/beta/notes.md", projectSlug: "beta", state: "dangling" }),
     ];
 
     const filtered = filterCoverageRecords(records, { states: ["dangling"], project: "alpha", anchorText: "road" });
