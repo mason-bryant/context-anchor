@@ -116,7 +116,17 @@ export function registerUiRoutes(
       const claims = await service.listClaims({ name });
       const questions = await service.listQuestions({ name });
       const mermaidBlocks = await service.listMermaidBlocks({ name });
-      return { anchor: toAnchorUiDetail(anchor, undefined, claims.claims, questions.questions, mermaidBlocks.blocks) };
+      const markdownTables = await service.listMarkdownTables({ name });
+      return {
+        anchor: toAnchorUiDetail(
+          anchor,
+          undefined,
+          claims.claims,
+          questions.questions,
+          mermaidBlocks.blocks,
+          markdownTables.tables,
+        ),
+      };
     }),
   );
 
@@ -776,6 +786,23 @@ export function registerUiRoutes(
     jsonRoute(async (req) => {
       const body = bodyRecord(req);
       return service.updateMermaidBlockText({
+        name: requiredBodyString(body, "name"),
+        line: positiveBodyLine(body, "line"),
+        text: optionalBodyString(body, "text"),
+        message: optionalBodyString(body, "message"),
+        approved: booleanBody(body, "approved"),
+        coAuthor: optionalBodyString(body, "coAuthor"),
+        expectedFileCommit: optionalBodyString(body, "expectedFileCommit"),
+      });
+    }),
+  );
+
+  app.post(
+    "/api/ui/table-text",
+    ...protect,
+    jsonRoute(async (req) => {
+      const body = bodyRecord(req);
+      return service.updateMarkdownTable({
         name: requiredBodyString(body, "name"),
         line: positiveBodyLine(body, "line"),
         text: optionalBodyString(body, "text"),
