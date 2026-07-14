@@ -546,6 +546,11 @@ the index when your workflow checks in that file.`,
     "section_anchor",
     "derived_from",
     "contradicts",
+    "depends_on",
+    "implements",
+    "supersedes",
+    "related_to",
+    "owned_by",
   ]);
 
   server.registerTool(
@@ -564,6 +569,25 @@ the index when your workflow checks in that file.`,
       annotations: { readOnlyHint: true },
     },
     async (input) => jsonResult(await service.graphNeighbors(input)),
+  );
+
+  const CoverageStateSchema = z.enum(["structured", "partial", "prose_only", "ambiguous", "dangling", "malformed"]);
+
+  server.registerTool(
+    "graphCoverage",
+    {
+      title: "Graph Coverage",
+      description:
+        "Read-only structural coverage report over the anchor tree (Goal 0 Phase 1): for every anchor and every claim, one of structured | partial | prose_only | ambiguous | dangling | malformed, with machine-readable reasons and descriptive (non-executing) suggestedOperations. Includes tree-level summary counts by state/project/anchor-type, duplicate anchor_id findings, the identity contract version, and the graph generation/HEAD this reflects. Bounded and paginated (never returns the unbounded record set) — pass the returned cursor back to page through the rest. Nothing here validates, blocks, or mutates a write; it only reports what is (and is not yet) structured.",
+      inputSchema: z.object({
+        project: z.string().optional().describe("Restrict to this project slug."),
+        states: z.array(CoverageStateSchema).optional().describe("Restrict returned records to these coverage states. Omit for every state."),
+        limit: z.number().int().min(1).max(500).optional().describe("Maximum records to return, clamped 1-500. Default 100."),
+        cursor: z.string().optional().describe("Opaque cursor from a previous response's nextCursor, to fetch the next page."),
+      }),
+      annotations: { readOnlyHint: true },
+    },
+    async (input) => jsonResult(await service.graphCoverage(input)),
   );
 
   server.registerTool(

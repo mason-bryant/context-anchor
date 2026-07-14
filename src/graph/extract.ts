@@ -33,9 +33,16 @@ import {
   taskNodeId,
   teamNodeId,
   type GraphEdge,
+  type GraphEdgeType,
 } from "./model.js";
 import type { AnchorFrontmatter, PeopleRegistry, ProjectMappings } from "../types.js";
 import { EDGE_TARGET_PATTERN, extractClaims } from "../claims.js";
+import {
+  parseRelationTarget,
+  relationTargetKindAllowed,
+  relationVocabularyEntry,
+  type ParsedRelationTarget,
+} from "../relations/vocabulary.js";
 
 /** Minimal per-document input every extractor needs. */
 export type DocumentInput = {
@@ -57,6 +64,23 @@ export type ExtractDocumentEdgesContext = {
   peopleRegistry: PeopleRegistry;
   peopleIndex: PeopleIndex;
   mappings: ProjectMappings;
+  /**
+   * Resolve a canonical typed-relation `anchor:<anchor-id>` target
+   * (`src/relations/vocabulary.ts`) to its v1 anchor name, or undefined when
+   * no anchor in the tree declares that `anchor_id` (Goal 0 Phase 1 WP3).
+   */
+  resolveAnchorId?: (anchorId: string) => string | undefined;
+  /**
+   * True when `goalId` is defined by a `project-roadmap` anchor belonging to
+   * the given (already canonical) project slug — PROJECT-SCOPED, so a typed
+   * `goal:<project-slug>:<goal-id>` target only resolves against the named
+   * project's own roadmap, never against a same-numbered goal in some other
+   * project (the exact collision Goal 0's scoped-goal contract exists to
+   * prevent). Absent/undefined treats no goal as known (conservative: typed
+   * goal refs fall back to legacy handling rather than being asserted
+   * resolved).
+   */
+  goalExistsInProject?: (projectSlug: string, goalId: string) => boolean;
 };
 
 // ---------------------------------------------------------------------------
@@ -81,10 +105,13 @@ export function extractProjectEdges(doc: DocumentInput, ctx: ExtractDocumentEdge
   return edges;
 }
 
-function frontmatterProjectSlugs(frontmatter: AnchorFrontmatter): string[] {
+export function frontmatterProjectSlugs(frontmatter: AnchorFrontmatter): string[] {
   const raw = frontmatter.project;
   if (Array.isArray(raw)) {
-    return raw.filter((item): item is string => typeof item === "string" && item.trim().length > 0);
+    return raw
+      .filter((item): item is string => typeof item === "string")
+      .map((item) => item.trim())
+      .filter((item) => item.length > 0);
   }
   if (typeof raw === "string" && raw.trim().length > 0) {
     return [raw.trim()];
@@ -109,6 +136,20 @@ function frontmatterProjectSlugs(frontmatter: AnchorFrontmatter): string[] {
  * (unresolved) reading `findReferencingAnchorMetas` needs to stay
  * byte-parity with its pre-WP3 full-scan behavior — that one does NOT
  * resolve `goal_ids` specially, unlike this semantic extractor.
+ *
+ * WP3 addition (typed relation vocabulary, `src/relations/vocabulary.ts`):
+ * for a registered relation key (`depends_on`, `implements`, `supersedes`,
+ * `related_to`, `owned_by` — NOT `goal_ids`, handled above, and NOT
+ * `derived_from`/`contradicts`, claim-annotation grammar) whose target parses
+ * as a canonical typed ref (`anchor:a-xxxxxx`, `goal:<project-slug>:G-123`,
+ * `person:<id>`, `team:<id>`) AND resolves to a real, kind-valid node, emit
+ * the typed edge INSTEAD of the legacy `anchor_anchor` edge for that one
+ * target (`related_to` emits both directions, since it is symmetric). Every
+ * other case — unregistered key, legacy bare string, unparseable/malformed
+ * typed ref, wrong-kind target, or a typed ref that fails to resolve — falls
+ * through to the exact pre-WP3 `anchor_anchor` behavior for that key
+ * (`emitLegacyAnchorAnchor` below), so no relation target the graph tracked
+ * before this phase can disappear.
  */
 export function extractRelationsEdges(doc: DocumentInput, ctx: ExtractDocumentEdgesContext): GraphEdge[] {
   const relRaw = doc.frontmatter.relations;
@@ -141,19 +182,117 @@ export function extractRelationsEdges(doc: DocumentInput, ctx: ExtractDocumentEd
       continue;
     }
 
+    const vocabEntry = relationVocabularyEntry(key);
+
     for (const target of values) {
       if (typeof target !== "string" || target.length === 0) {
         continue;
       }
-      const resolved = ctx.resolveAnchorName(target);
-      if (!resolved) {
-        continue;
+
+      if (vocabEntry) {
+        const typedEdges = tryEmitTypedRelationEdges(vocabEntry.key, from, target, ctx);
+        if (typedEdges) {
+          edges.push(...typedEdges);
+          continue;
+        }
       }
-      edges.push({ from, to: anchorNodeId(resolved), type: "anchor_anchor", sourceOfTruth: "front-matter" });
+
+      emitLegacyAnchorAnchor(edges, from, target, ctx);
     }
   }
 
   return edges;
+}
+
+/**
+ * Attempt to resolve one relation target as a registered vocabulary key's
+ * typed edge. Returns undefined (never an empty array) when the target
+ * should fall back to legacy `anchor_anchor` handling instead — a legacy bare
+ * string, a malformed typed ref, a wrong-kind target, or a typed ref that
+ * fails to resolve against the tree are all "not typed-resolvable" cases the
+ * caller treats identically.
+ */
+function tryEmitTypedRelationEdges(
+  relationKey: string,
+  from: string,
+  target: string,
+  ctx: ExtractDocumentEdgesContext,
+): GraphEdge[] | undefined {
+  const entry = relationVocabularyEntry(relationKey);
+  if (!entry) {
+    return undefined;
+  }
+  const parseResult = parseRelationTarget(target);
+  if (parseResult.legacy || !parseResult.parsed) {
+    // Legacy bare string, or a recognized-but-malformed typed ref (WP5
+    // reports the malformed reason; extraction just falls back).
+    return undefined;
+  }
+  if (!relationTargetKindAllowed(entry, parseResult.parsed)) {
+    return undefined;
+  }
+  const to = resolveTypedRelationTarget(parseResult.parsed, ctx);
+  if (!to) {
+    return undefined;
+  }
+  const edgeType = relationKey as GraphEdgeType;
+  const edges: GraphEdge[] = [{ from, to, type: edgeType, sourceOfTruth: "front-matter" }];
+  if (entry.symmetric) {
+    edges.push({ from: to, to: from, type: edgeType, sourceOfTruth: "front-matter" });
+  }
+  return edges;
+}
+
+/** Resolve a parsed canonical typed-relation target to a v1 node id, or undefined if it does not resolve against the tree. */
+function resolveTypedRelationTarget(
+  parsed: ParsedRelationTarget,
+  ctx: ExtractDocumentEdgesContext,
+): string | undefined {
+  switch (parsed.kind) {
+    case "anchor": {
+      const resolvedName = ctx.resolveAnchorId?.(parsed.id);
+      return resolvedName ? anchorNodeId(resolvedName) : undefined;
+    }
+    case "goal": {
+      const resolvedSlug = ctx.resolveProjectSlug(parsed.projectSlug);
+      if (!resolvedSlug) {
+        return undefined;
+      }
+      if (!ctx.goalExistsInProject?.(resolvedSlug, parsed.goalId)) {
+        return undefined;
+      }
+      // Goal nodes stay unscoped (v1) in this phase (plan decision 2): the
+      // typed ref's project scope gates resolution (the goal must be defined
+      // by the NAMED project's own roadmap — never a same-numbered goal in
+      // another project), but the emitted edge still targets the existing
+      // unscoped `goal:<id>` node — no v2 re-key happens here.
+      return goalNodeId(parsed.goalId);
+    }
+    case "person": {
+      const person = ctx.peopleIndex.getPersonById(parsed.id);
+      return person ? personNodeId(person.id) : undefined;
+    }
+    case "team": {
+      const team = ctx.peopleIndex.getTeamById(parsed.id);
+      return team ? teamNodeId(team.id) : undefined;
+    }
+    default:
+      return undefined;
+  }
+}
+
+/** The exact pre-WP3 legacy `anchor_anchor` edge emission for one relation target. */
+function emitLegacyAnchorAnchor(
+  edges: GraphEdge[],
+  from: string,
+  target: string,
+  ctx: ExtractDocumentEdgesContext,
+): void {
+  const resolved = ctx.resolveAnchorName(target);
+  if (!resolved) {
+    return;
+  }
+  edges.push({ from, to: anchorNodeId(resolved), type: "anchor_anchor", sourceOfTruth: "front-matter" });
 }
 
 // ---------------------------------------------------------------------------
@@ -361,6 +500,21 @@ function stripLinkFragmentAndQuery(target: string): string {
  * nodes are only materialized when a claim actually cites one (never one
  * node per H2 heading in every anchor).
  *
+ * Goal 0 Phase 1 WP4 addition: a claim with an `id` but no provenance
+ * (`status === "unannotated"`, id-only annotation — `src/claims.ts`'s
+ * `parseIdOnlyAnnotationBody`) still gets its `claim:` node, so it appears in
+ * the graph as unverified rather than disappearing (design doc acceptance
+ * criterion: "an unannotated claim can have a stable identity and appears as
+ * unverified rather than disappearing from the graph"). Since it has no
+ * `sources` to derive a cited section from, its containment into the graph
+ * is anchored via the claim's OWN H2 section (`claim.section`, e.g. "Current
+ * State") rather than a section a source row cites — the same
+ * `claim_section` + `section_anchor` edge types, just a different section
+ * (the claim's home section instead of a cited one). An annotated claim's
+ * edges are completely unchanged by this addition: it never gains an
+ * own-section edge, only the pre-existing cited-section edges from its
+ * sources.
+ *
  * Edge targets whose anchor side doesn't resolve to a real anchor are silently
  * skipped here; the extractor does NOT check whether the target claim id
  * exists (that tree-wide check belongs to the write-time validator). Dangling
@@ -386,11 +540,38 @@ export function extractClaimEdges(doc: DocumentInput, ctx: ExtractDocumentEdgesC
     },
   };
 
+  // Containment `section_anchor` edges are structural facts about the
+  // section, not about any one claim: several claims in (or citing) the same
+  // section must produce ONE section -> anchor edge, not one per claim or per
+  // source row — GraphIndex does not dedupe edges, so emitting duplicates
+  // here would inflate the adjacency lists and every downstream traversal.
+  const seenSectionAnchorEdges = new Set<string>();
+  const pushSectionAnchorEdge = (fromSection: string, toAnchor: string): void => {
+    const key = `${fromSection}\n${toAnchor}`;
+    if (seenSectionAnchorEdges.has(key)) {
+      return;
+    }
+    seenSectionAnchorEdges.add(key);
+    edges.push({ from: fromSection, to: toAnchor, type: "section_anchor", sourceOfTruth: "containment" });
+  };
+
   for (const claim of claims) {
-    if (claim.status !== "annotated" || !claim.id) {
+    if (!claim.id) {
       continue;
     }
     const from = claimNodeId(doc.anchorName, claim.id);
+
+    if (claim.status !== "annotated") {
+      // Id-only claim (WP4): no sources to derive a cited-section edge from,
+      // so anchor it into the graph via its own containing section instead —
+      // see the function docstring above. `derived_from`/`contradicts` below
+      // still run (id-only claims can, in principle, carry them via a
+      // reworded document, though the annotation grammar only sets those on
+      // real source rows today), harmlessly no-op-ing over an empty array.
+      const ownSection = sectionNodeId(doc.anchorName, normalizeSectionTitle(claim.section));
+      edges.push({ from, to: ownSection, type: "claim_section", sourceOfTruth: "containment" });
+      pushSectionAnchorEdge(ownSection, anchorNodeId(doc.anchorName));
+    }
 
     for (const source of claim.sources) {
       const result = parseClaimSource(source, sourceCtx);
@@ -401,12 +582,7 @@ export function extractClaimEdges(doc: DocumentInput, ctx: ExtractDocumentEdgesC
           edges.push({ from, to: result.node.nodeId, type: "claim_section", sourceOfTruth: "claim-annotation" });
           const sectionAnchor = sectionNodeAnchorName(result.node.nodeId);
           if (sectionAnchor) {
-            edges.push({
-              from: result.node.nodeId,
-              to: anchorNodeId(sectionAnchor),
-              type: "section_anchor",
-              sourceOfTruth: "containment",
-            });
+            pushSectionAnchorEdge(result.node.nodeId, anchorNodeId(sectionAnchor));
           }
         } else {
           edges.push({ from, to: result.node.nodeId, type: "claim_source", sourceOfTruth: "claim-annotation" });

@@ -342,6 +342,285 @@ describe("GraphIndex reverse edges", () => {
   });
 });
 
+describe("GraphIndex typed relation vocabulary end-to-end (WP3)", () => {
+  const ANCHOR_WITH_ID = `---
+project:
+  - demo
+type: context-anchor
+tags: []
+summary: Anchor with a server-minted anchor_id.
+read_this_if:
+  - Testing typed relation vocabulary.
+last_validated: 2026-07-07
+anchor_id: a-abc123
+---
+
+# Anchor With Id
+
+## Current State
+
+None.
+`;
+
+  const ANCHOR_REFERRING = `---
+project:
+  - demo
+type: context-anchor
+tags: []
+summary: Anchor referring to another via typed relations.
+read_this_if:
+  - Testing typed relation vocabulary.
+last_validated: 2026-07-07
+relations:
+  depends_on:
+    - "anchor:a-abc123"
+  related_to:
+    - "anchor:a-abc123"
+  implements:
+    - "goal:demo:G-001"
+---
+
+# Anchor Referring
+
+## Current State
+
+None.
+`;
+
+  async function seedTypedRelationRepo(repo: AnchorRepository): Promise<void> {
+    await repo.writePeopleRegistryRaw({ people: [], teams: [] });
+    await repo.writeProjectMappingsRaw({ projects: [] });
+    await repo.commitAnchor({ name: "projects/demo/with-id.md", content: ANCHOR_WITH_ID });
+    await repo.commitAnchor({ name: "projects/demo/referring.md", content: ANCHOR_REFERRING });
+    await repo.commitAnchor({ name: "projects/demo/demo-roadmap.md", content: ROADMAP });
+  }
+
+  it("resolves a canonical anchor:<anchor-id> depends_on target to a typed depends_on edge via a real GraphIndex build", async () => {
+    const repo = new AnchorRepository({ repoPath: tmpDir });
+    await repo.ensureReady();
+    await seedTypedRelationRepo(repo);
+
+    const graph = new GraphIndex(repo, graphDeps(repo));
+    const edges = await graph.edgesFrom("anchor:projects/demo/referring.md", "depends_on");
+    expect(edges).toEqual([
+      {
+        from: "anchor:projects/demo/referring.md",
+        to: "anchor:projects/demo/with-id.md",
+        type: "depends_on",
+        sourceOfTruth: "front-matter",
+      },
+    ]);
+  });
+
+  it("never resolves a typed target through a MALFORMED declared anchor_id (format-gated at the resolver map)", async () => {
+    const repo = new AnchorRepository({ repoPath: tmpDir });
+    await repo.ensureReady();
+    await seedTypedRelationRepo(repo);
+    // "bogus-id" fails ANCHOR_ID_PATTERN but the repo layer (unlike the
+    // write-path validator) accepts it — e.g. a hand-edited file. The typed
+    // ref "anchor:bogus-id" parses (the parser only requires non-empty), so
+    // without the resolver-map format gate this WOULD resolve and emit a
+    // typed edge to the declaring anchor.
+    await repo.commitAnchor({
+      name: "projects/demo/bad-id.md",
+      content: `---
+project:
+  - demo
+type: context-anchor
+tags: []
+summary: Anchor declaring a malformed anchor_id.
+read_this_if:
+  - Testing malformed anchor_id resolution.
+last_validated: 2026-07-07
+anchor_id: bogus-id
+---
+
+# Bad Id
+
+## Current State
+
+None.
+`,
+    });
+    await repo.commitAnchor({
+      name: "projects/demo/cites-bad-id.md",
+      content: `---
+project:
+  - demo
+type: context-anchor
+tags: []
+summary: Anchor citing a malformed anchor_id.
+read_this_if:
+  - Testing malformed anchor_id resolution.
+last_validated: 2026-07-07
+relations:
+  depends_on:
+    - "anchor:bogus-id"
+---
+
+# Cites Bad Id
+
+## Current State
+
+None.
+`,
+    });
+
+    const graph = new GraphIndex(repo, graphDeps(repo));
+    const typed = await graph.edgesFrom("anchor:projects/demo/cites-bad-id.md", "depends_on");
+    expect(typed).toEqual([]);
+    const legacy = await graph.edgesFrom("anchor:projects/demo/cites-bad-id.md", "anchor_anchor");
+    expect(legacy).toEqual([]);
+  });
+
+  it("treats a typed target citing a DUPLICATED anchor_id as unresolvable (legacy fallback) instead of picking one anchor", async () => {
+    const repo = new AnchorRepository({ repoPath: tmpDir });
+    await repo.ensureReady();
+    await seedTypedRelationRepo(repo);
+    // Two more anchors that both (illegally — WP5 coverage reports this as a
+    // tree defect) declare the same anchor_id. A typed depends_on target
+    // citing that id must not resolve to whichever duplicate the resolver
+    // map happened to keep; it falls back to legacy handling, where the raw
+    // "anchor:a-dup999" string resolves to no anchor name, so no edge at all.
+    const dupFrontmatter = (title: string) => `---
+project:
+  - demo
+type: context-anchor
+tags: []
+summary: ${title} declaring a duplicated anchor_id.
+read_this_if:
+  - Testing duplicated anchor_id resolution.
+last_validated: 2026-07-07
+anchor_id: a-dup999
+---
+
+# ${title}
+
+## Current State
+
+None.
+`;
+    await repo.commitAnchor({ name: "projects/demo/dup-one.md", content: dupFrontmatter("Dup One") });
+    await repo.commitAnchor({ name: "projects/demo/dup-two.md", content: dupFrontmatter("Dup Two") });
+    await repo.commitAnchor({
+      name: "projects/demo/cites-dup.md",
+      content: `---
+project:
+  - demo
+type: context-anchor
+tags: []
+summary: Anchor citing a duplicated anchor_id.
+read_this_if:
+  - Testing duplicated anchor_id resolution.
+last_validated: 2026-07-07
+relations:
+  depends_on:
+    - "anchor:a-dup999"
+---
+
+# Cites Dup
+
+## Current State
+
+None.
+`,
+    });
+
+    const graph = new GraphIndex(repo, graphDeps(repo));
+    const typed = await graph.edgesFrom("anchor:projects/demo/cites-dup.md", "depends_on");
+    expect(typed).toEqual([]);
+    const legacy = await graph.edgesFrom("anchor:projects/demo/cites-dup.md", "anchor_anchor");
+    expect(legacy).toEqual([]);
+    // The unique anchor_id elsewhere in the tree still resolves normally.
+    const unaffected = await graph.edgesFrom("anchor:projects/demo/referring.md", "depends_on");
+    expect(unaffected).toHaveLength(1);
+  });
+
+  it("emits related_to symmetrically (both directions) for a canonical anchor:<anchor-id> target", async () => {
+    const repo = new AnchorRepository({ repoPath: tmpDir });
+    await repo.ensureReady();
+    await seedTypedRelationRepo(repo);
+
+    const graph = new GraphIndex(repo, graphDeps(repo));
+    const forward = await graph.edgesFrom("anchor:projects/demo/referring.md", "related_to");
+    const reverse = await graph.edgesFrom("anchor:projects/demo/with-id.md", "related_to");
+    expect(forward).toEqual([
+      {
+        from: "anchor:projects/demo/referring.md",
+        to: "anchor:projects/demo/with-id.md",
+        type: "related_to",
+        sourceOfTruth: "front-matter",
+      },
+    ]);
+    expect(reverse).toEqual([
+      {
+        from: "anchor:projects/demo/with-id.md",
+        to: "anchor:projects/demo/referring.md",
+        type: "related_to",
+        sourceOfTruth: "front-matter",
+      },
+    ]);
+  });
+
+  it("resolves a canonical goal:<project-slug>:<goal-id> implements target to the existing unscoped v1 goal node", async () => {
+    const repo = new AnchorRepository({ repoPath: tmpDir });
+    await repo.ensureReady();
+    await seedTypedRelationRepo(repo);
+
+    const graph = new GraphIndex(repo, graphDeps(repo));
+    const edges = await graph.edgesFrom("anchor:projects/demo/referring.md", "implements");
+    expect(edges).toEqual([
+      {
+        from: "anchor:projects/demo/referring.md",
+        to: "goal:G-001",
+        type: "implements",
+        sourceOfTruth: "front-matter",
+      },
+    ]);
+  });
+});
+
+describe("GraphIndex id-only claim node (Goal 0 Phase 1 WP4)", () => {
+  const ANCHOR_WITH_ID_ONLY_CLAIM = `---
+project:
+  - demo
+type: context-anchor
+tags: []
+summary: Anchor with an id-only claim.
+read_this_if:
+  - Testing WP4 id-only claim graph nodes.
+last_validated: 2026-07-07
+---
+
+# Anchor With Id Only Claim
+
+## Current State
+
+- Legacy claim with a stable id but no provenance.
+  {id: c-legacy1}
+`;
+
+  it("materializes a claim: node for an id-only (unannotated) claim through a real GraphIndex build", async () => {
+    const repo = new AnchorRepository({ repoPath: tmpDir });
+    await repo.ensureReady();
+    await repo.writePeopleRegistryRaw({ people: [], teams: [] });
+    await repo.writeProjectMappingsRaw({ projects: [] });
+    await repo.commitAnchor({ name: "projects/demo/id-only.md", content: ANCHOR_WITH_ID_ONLY_CLAIM });
+
+    const graph = new GraphIndex(repo, graphDeps(repo));
+    const claimNode = "claim:projects/demo/id-only.md#c-legacy1";
+    const forward = await graph.edgesFrom(claimNode);
+    expect(forward).toEqual([
+      {
+        from: claimNode,
+        to: "section:projects/demo/id-only.md#Current State",
+        type: "claim_section",
+        sourceOfTruth: "containment",
+      },
+    ]);
+  });
+});
+
 describe("AnchorService graph wiring", () => {
   it("does not construct a GraphIndex until a graph-consuming call happens (writeAnchor works without ever building the graph)", async () => {
     const repo = new AnchorRepository({ repoPath: tmpDir });
@@ -425,5 +704,79 @@ describe("AnchorService graph wiring", () => {
     // pre-write registry edges).
     const after = await graph.allEdges();
     expect(after.some((edge) => edge.from === "person:bob" && edge.to === "project:demo")).toBe(true);
+  });
+});
+
+describe("AnchorService.graphCoverage (Goal 0 Phase 1 WP6)", () => {
+  it("reports coverage records, summary, identity contract version, and graph generation/HEAD for a real tree", async () => {
+    const repo = new AnchorRepository({ repoPath: tmpDir });
+    await repo.ensureReady();
+    await seedRepo(repo);
+    const service = new AnchorService(repo, { pushOnWrite: false, migrationWarnOnly: false, staleAfterDays: 45 });
+
+    const result = await service.graphCoverage({});
+
+    expect(result.records.length).toBeGreaterThan(0);
+    expect(
+      result.records.some((record) => record.kind === "anchor" && record.anchorName === "projects/demo/demo-project-context.md"),
+    ).toBe(true);
+    expect(result.summary.totalAnchors).toBeGreaterThan(0);
+    expect(result.identityContractVersion).toBe(2);
+    expect(typeof result.graphGeneration).toBe("number");
+    expect(result.totalMatching).toBeGreaterThanOrEqual(result.records.length);
+    expect(result.limit).toBe(100);
+  });
+
+  it("filters graphCoverage results by project", async () => {
+    const repo = new AnchorRepository({ repoPath: tmpDir });
+    await repo.ensureReady();
+    await seedRepo(repo);
+    const service = new AnchorService(repo, { pushOnWrite: false, migrationWarnOnly: false, staleAfterDays: 45 });
+
+    const result = await service.graphCoverage({ project: "demo" });
+    const anchorRecords = result.records.filter((record) => record.kind === "anchor");
+    expect(anchorRecords.length).toBeGreaterThan(0);
+    for (const record of anchorRecords) {
+      expect(record.anchorName.startsWith("projects/demo/")).toBe(true);
+    }
+  });
+
+  it("filters graphCoverage results by state", async () => {
+    const repo = new AnchorRepository({ repoPath: tmpDir });
+    await repo.ensureReady();
+    await seedRepo(repo);
+    const service = new AnchorService(repo, { pushOnWrite: false, migrationWarnOnly: false, staleAfterDays: 45 });
+
+    const result = await service.graphCoverage({ states: ["prose_only"] });
+    expect(result.records.every((record) => record.state === "prose_only")).toBe(true);
+  });
+
+  it("bounds and paginates graphCoverage with a cursor that eventually terminates", async () => {
+    const repo = new AnchorRepository({ repoPath: tmpDir });
+    await repo.ensureReady();
+    await seedRepo(repo);
+    const service = new AnchorService(repo, { pushOnWrite: false, migrationWarnOnly: false, staleAfterDays: 45 });
+
+    const firstPage = await service.graphCoverage({ limit: 1 });
+    expect(firstPage.records.length).toBeLessThanOrEqual(1);
+    expect(firstPage.limit).toBe(1);
+
+    if (firstPage.nextCursor) {
+      const secondPage = await service.graphCoverage({ limit: 1, cursor: firstPage.nextCursor });
+      expect(secondPage.records).not.toEqual(firstPage.records);
+    }
+  });
+
+  it("summary counts agree with the returned+total record counts for an unfiltered, unpaginated request", async () => {
+    const repo = new AnchorRepository({ repoPath: tmpDir });
+    await repo.ensureReady();
+    await seedRepo(repo);
+    const service = new AnchorService(repo, { pushOnWrite: false, migrationWarnOnly: false, staleAfterDays: 45 });
+
+    const result = await service.graphCoverage({ limit: 500 });
+    const anchorCount = result.records.filter((record) => record.kind === "anchor").length;
+    const claimCount = result.records.filter((record) => record.kind === "claim").length;
+    expect(result.summary.totalAnchors).toBe(anchorCount);
+    expect(result.summary.totalClaims).toBe(claimCount);
   });
 });

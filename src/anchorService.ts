@@ -194,6 +194,15 @@ import {
   type GraphNeighborsResult,
   type GraphNeighborsResultNode,
 } from "./graph/neighbors.js";
+import {
+  analyzeCoverage,
+  pageCoverageRecords,
+  type CoverageAnalysisResult,
+  type CoverageDocumentInput,
+  type CoverageRecordKind,
+  type CoverageState,
+} from "./graph/coverage.js";
+import { GRAPH_IDENTITY_VERSION } from "./graph/identity.js";
 import { buildPeopleIndex, parsePeopleRegistry, type PeopleIndex } from "./peopleRegistry.js";
 import { findMarkdownLinkSuggestions, suggestMarkdownLinks } from "./markdownLinks.js";
 import {
@@ -248,6 +257,33 @@ import {
 import { deleteEditableBullet, locateEditableBullet, replaceEditableBulletText } from "./editableBullets.js";
 
 const BM25_INDEX_READ_CONCURRENCY = 8;
+/** Bounded whole-tree read concurrency for graphCoverage (WP6), matching BM25_INDEX_READ_CONCURRENCY's pattern for the same kind of I/O-bound whole-tree read. */
+const GRAPH_COVERAGE_READ_CONCURRENCY = 8;
+
+/** Input for `AnchorService.graphCoverage` (Goal 0 Phase 1 WP6). */
+export type GraphCoverageInput = {
+  /** Restrict the tree read + analysis to this project slug. */
+  project?: string;
+  /** Restrict returned records to these coverage states. */
+  states?: CoverageState[];
+  /** Max records to return, clamped 1-`GRAPH_COVERAGE_MAX_LIMIT` (default `GRAPH_COVERAGE_DEFAULT_LIMIT`). */
+  limit?: number;
+  /** Opaque cursor from a previous page's `nextCursor`. */
+  cursor?: string;
+};
+
+/** Output of `AnchorService.graphCoverage` — the single shape both the MCP tool and the HTTP route return, so they always agree for the same tree. */
+export type GraphCoverageResult = {
+  records: CoverageRecordKind[];
+  nextCursor?: string;
+  totalMatching: number;
+  limit: number;
+  summary: CoverageAnalysisResult["summary"];
+  duplicateAnchorIds: CoverageAnalysisResult["duplicateAnchorIds"];
+  identityContractVersion: number;
+  graphGeneration: number;
+  graphHead?: string;
+};
 
 type MilestoneListRow = {
   name: string;
@@ -4476,6 +4512,79 @@ None.
     );
 
     return { resolvedNode: resolution.resolved, nodes: enrichedNodes, edges };
+  }
+
+  /**
+   * Read-only structural coverage surface (Goal 0 Phase 1 WP6). Reads every
+   * anchor's front matter + content (bounded worker-pool concurrency,
+   * mirroring `buildBM25SearchIndex`'s whole-tree read pattern), reuses the
+   * derived `GraphIndex`'s already-built resolvers via `buildCoverageContext`
+   * (no second full-tree resolver build), runs the pure `analyzeCoverage`
+   * (WP5), then bounds/paginates the combined anchor+claim record set via
+   * `pageCoverageRecords` — this endpoint must never return the unbounded
+   * record set by accident. Response includes the identity contract version,
+   * the graph generation/HEAD this reflects, applied clamps, and total vs
+   * returned counts, so the MCP tool and the HTTP route (which both call
+   * this one method) always agree for the same tree.
+   */
+  async graphCoverage(input: GraphCoverageInput = {}): Promise<GraphCoverageResult> {
+    const graph = this.getGraphIndex();
+    await graph.ensureBuilt();
+
+    const metas = await this.repo.listAnchors();
+    const readable = metas.filter((meta) => !isBuiltInAnchorName(meta.name));
+    // Resolve the project filter through the same alias/unresolved handling
+    // every other project-scoped surface uses (resolveProjectFilter), so
+    // `graphCoverage({ project: "<alias>" })` scopes to the canonical slug
+    // instead of silently matching nothing.
+    const { effectiveProject } = await this.resolveProjectFilter(input.project);
+    const filteredByProject = effectiveProject
+      ? readable.filter((meta) => meta.projectSlug === effectiveProject)
+      : readable;
+
+    const docs: CoverageDocumentInput[] = [];
+    let nextIndex = 0;
+    const workerCount = Math.min(GRAPH_COVERAGE_READ_CONCURRENCY, filteredByProject.length);
+    await Promise.all(
+      Array.from({ length: workerCount }, async () => {
+        for (;;) {
+          const meta = filteredByProject[nextIndex];
+          nextIndex += 1;
+          if (!meta) {
+            return;
+          }
+          try {
+            const read = await this.repo.readAnchor(meta.name);
+            docs.push({ anchorName: meta.name, frontmatter: read.frontmatter, content: read.content });
+          } catch {
+            // Skip unreadable anchors, same as GraphIndex's own tree read.
+          }
+        }
+      }),
+    );
+
+    const coverageCtx = await graph.buildCoverageContext();
+    const analysis = analyzeCoverage(docs, coverageCtx);
+
+    const page = pageCoverageRecords(analysis, {
+      states: input.states,
+      limit: input.limit,
+      cursor: input.cursor,
+    });
+
+    const { head, generation } = graph.graphVersion();
+
+    return {
+      records: page.records,
+      nextCursor: page.nextCursor,
+      totalMatching: page.totalMatching,
+      limit: page.limit,
+      summary: analysis.summary,
+      duplicateAnchorIds: analysis.duplicateAnchorIds,
+      identityContractVersion: GRAPH_IDENTITY_VERSION,
+      graphGeneration: generation,
+      ...(head !== undefined ? { graphHead: head } : {}),
+    };
   }
 
   /** Best-effort anchor-name resolution used by graph node resolution: normalizes and checks existence against the known anchor set, mirroring `GraphIndex`'s own `resolveAnchorName` context builder. */

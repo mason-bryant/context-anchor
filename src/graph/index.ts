@@ -23,12 +23,16 @@ import type { AnchorStore } from "../storage/store.js";
 import { parseAnchor } from "../storage/markdown.js";
 import { buildProjectAliasIndex } from "../projectAliases.js";
 import { normalizeRelative } from "../utils/path.js";
+import { anchorIdFromFrontmatter, isValidAnchorId } from "./identity.js";
+import { listRoadmapGoalsWithStatus } from "../roadmap/analyzeRoadmap.js";
+import type { CoverageAnalysisContext } from "./coverage.js";
 import type { AnchorMeta, PeopleRegistry, ProjectMappings } from "../types.js";
 import {
   extractDocumentEdges,
   extractLiteralRelationsEdges,
   extractRegistryPersonProjectEdges,
   extractRegistryProjectRepoEdges,
+  frontmatterProjectSlugs,
   type DocumentInput,
   type ExtractDocumentEdgesContext,
   type LiteralRelationEdge,
@@ -72,11 +76,37 @@ export class GraphIndex {
   // getAnchorSectionTitles can resolve ANY anchor's sections (a claim can
   // cite a section of a different anchor than the one being extracted).
   private sectionTitlesByAnchor = new Map<string, ReadonlySet<string>>();
+  // Goal 0 Phase 1 WP3 (typed relation vocabulary): reverse anchor_id -> name
+  // lookup and tree-wide known goal ids, both populated only during a full
+  // `rebuild` pass (which reads every anchor's content already) and reused
+  // as-is by `invalidateDocument` rather than recomputed there, so the
+  // incremental per-document path stays cheap. This means a brand-new
+  // anchor_id or goal heading introduced purely via invalidateDocument calls
+  // (no intervening rebuild) is not yet resolvable for typed-relation
+  // targets until the next full rebuild — safe by construction, since an
+  // unresolved typed target simply falls back to the pre-WP3 anchor_anchor
+  // legacy edge (see `extractRelationsEdges` in extract.ts), never drops.
+  private anchorIdByName = new Map<string, string | undefined>();
+  /** Goal ids keyed by the canonical project slug whose roadmap defines them — PROJECT-SCOPED so `goal:<project>:<goal-id>` refs never cross-resolve against a same-numbered goal in another project. */
+  private knownGoalIdsByProject = new Map<string, Set<string>>();
 
   constructor(
     private readonly repo: Pick<AnchorStore, "repoPath" | "listAnchors" | "readAnchor">,
     private readonly deps: GraphIndexDeps,
   ) {}
+
+  /**
+   * The repo HEAD this graph was last built from, and the in-process
+   * generation counter (bumped on every out-of-band mutation) — exposed for
+   * read-only callers (WP6's `graphCoverage`) that report "which graph
+   * generation this response reflects" alongside their data, so a client can
+   * tell whether two responses came from the same graph snapshot. Call
+   * `ensureBuilt()` first if the caller needs this to reflect the CURRENT
+   * HEAD rather than whatever was last built.
+   */
+  graphVersion(): { head: string | undefined; generation: number } {
+    return { head: this.head, generation: this.generation };
+  }
 
   /** Ensure the graph reflects the current repo HEAD, rebuilding if stale. Never called from the constructor — first graph query triggers the initial build. */
   async ensureBuilt(): Promise<void> {
@@ -124,6 +154,40 @@ export class GraphIndex {
     }
     out.push(...this.registryEdges);
     return out;
+  }
+
+  /**
+   * Build the resolver context `analyzeCoverage` (`src/graph/coverage.ts`,
+   * WP5) needs, reusing this index's already-built anchor_id/goal/people
+   * lookups rather than re-scanning the tree a second time (the caller —
+   * `AnchorService.graphCoverage`, WP6 — still needs its own read of every
+   * anchor's front matter/content for `CoverageDocumentInput`, since this
+   * index does not retain raw content after a rebuild, only derived edges).
+   */
+  async buildCoverageContext(): Promise<CoverageAnalysisContext> {
+    await this.ensureBuilt();
+    const metas = await this.repo.listAnchors();
+    const ctx = await this.buildExtractContext(metas);
+
+    const anchorNamesByAnchorId = new Map<string, string[]>();
+    for (const [name, anchorId] of this.anchorIdByName) {
+      if (!anchorId) {
+        continue;
+      }
+      const names = anchorNamesByAnchorId.get(anchorId) ?? [];
+      names.push(name);
+      anchorNamesByAnchorId.set(anchorId, names);
+    }
+
+    return {
+      anchorNames: ctx.anchorNames,
+      resolveAnchorName: ctx.resolveAnchorName,
+      resolveProjectSlug: ctx.resolveProjectSlug,
+      anchorNamesForAnchorId: (anchorId: string) => anchorNamesByAnchorId.get(anchorId) ?? [],
+      goalExistsInProject: ctx.goalExistsInProject ?? (() => false),
+      personExists: (id: string) => Boolean(ctx.peopleIndex.getPersonById(id)),
+      teamExists: (id: string) => Boolean(ctx.peopleIndex.getTeamById(id)),
+    };
   }
 
   /**
@@ -228,6 +292,8 @@ export class GraphIndex {
     this.literalRelationsReverse = new Map();
     this.anchorMetaByName = new Map();
     this.sectionTitlesByAnchor = new Map();
+    this.anchorIdByName = new Map();
+    this.knownGoalIdsByProject = new Map();
   }
 
   private async resolveHead(): Promise<string | undefined> {
@@ -242,6 +308,10 @@ export class GraphIndex {
     const reverse = new Map<string, GraphEdge[]>();
     const literalRelationsReverse = new Map<string, LiteralRelationEdge[]>();
     const sectionTitlesByAnchor = new Map<string, ReadonlySet<string>>();
+    // Goal 0 Phase 1 WP3: populated alongside section titles in pass 1 below
+    // (both need the same per-anchor content read).
+    const anchorIdByName = new Map<string, string | undefined>();
+    const knownGoalIdsByProject = new Map<string, Set<string>>();
 
     const metas = await this.repo.listAnchors();
 
@@ -269,6 +339,33 @@ export class GraphIndex {
             anchorMetaByName.set(meta.name, meta);
             contentByAnchor.set(meta.name, { read, body: parsed.body });
             sectionTitlesByAnchor.set(meta.name, new Set(parsed.sections.keys()));
+            // Format-gate here (the single population site): a malformed
+            // anchor_id must never participate in typed-relation resolution
+            // or coverage's anchorNamesForAnchorId as if it were resolvable —
+            // WP5 coverage reports the malformed value from the raw front
+            // matter separately.
+            const anchorId = anchorIdFromFrontmatter(read.frontmatter);
+            anchorIdByName.set(meta.name, anchorId && isValidAnchorId(anchorId) ? anchorId : undefined);
+            if (frontmatterTypeIncludesRoadmap(read.frontmatter.type)) {
+              // Key each goal by every project the roadmap belongs to (its
+              // path-derived slug plus declared front-matter slugs), so a
+              // typed goal:<project>:<goal-id> ref only resolves within the
+              // named project — never against a same-numbered goal elsewhere.
+              const roadmapSlugs = new Set<string>([
+                ...(meta.projectSlug ? [meta.projectSlug] : []),
+                ...frontmatterProjectSlugs(read.frontmatter),
+              ]);
+              for (const row of listRoadmapGoalsWithStatus(read.content)) {
+                if (!row.id) {
+                  continue;
+                }
+                for (const slug of roadmapSlugs) {
+                  const goals = knownGoalIdsByProject.get(slug) ?? new Set<string>();
+                  goals.add(row.id);
+                  knownGoalIdsByProject.set(slug, goals);
+                }
+              }
+            }
           } catch {
             // Skip unreadable anchors during graph indexing.
           }
@@ -276,7 +373,7 @@ export class GraphIndex {
       }),
     );
 
-    const ctx = await this.buildExtractContext(metas, sectionTitlesByAnchor);
+    const ctx = await this.buildExtractContext(metas, sectionTitlesByAnchor, anchorIdByName, knownGoalIdsByProject);
 
     // Pass 2: extract edges per document (pure, no I/O — uses the content and
     // parsed body already read in pass 1).
@@ -311,17 +408,26 @@ export class GraphIndex {
     this.reverse = reverse;
     this.literalRelationsReverse = literalRelationsReverse;
     this.sectionTitlesByAnchor = sectionTitlesByAnchor;
+    this.anchorIdByName = anchorIdByName;
+    this.knownGoalIdsByProject = knownGoalIdsByProject;
   }
 
   private async buildExtractContext(
     metas: AnchorMeta[],
     sectionTitlesByAnchor?: ReadonlyMap<string, ReadonlySet<string>>,
+    anchorIdByName?: ReadonlyMap<string, string | undefined>,
+    knownGoalIdsByProject?: ReadonlyMap<string, ReadonlySet<string>>,
   ): Promise<ExtractDocumentEdgesContext & { peopleRegistry: PeopleRegistry }> {
     const anchorNames = new Set(metas.map((meta) => meta.name));
     const peopleRegistry = await this.deps.loadPeopleRegistry();
     const mappings = await this.deps.loadProjectMappings();
     const peopleIndex: PeopleIndex = buildPeopleIndex(peopleRegistry);
     const titles = sectionTitlesByAnchor ?? this.sectionTitlesByAnchor;
+    // Goal 0 Phase 1 WP3: reused from the last full rebuild when this call
+    // comes from invalidateDocument (see the field docstrings above) rather
+    // than recomputed, keeping the incremental path cheap.
+    const anchorIds = anchorIdByName ?? this.anchorIdByName;
+    const goalIdsByProject = knownGoalIdsByProject ?? this.knownGoalIdsByProject;
     // Same alias resolution resolveProjectFilter uses elsewhere (project
     // scoping in listAnchors/loadContext/etc), so a project slug in front
     // matter that is actually a declared alias resolves to the same
@@ -355,6 +461,28 @@ export class GraphIndex {
       return trimmed;
     };
 
+    // Goal 0 Phase 1 WP3: reverse anchor_id -> name lookup for typed
+    // `anchor:<anchor-id>` relation targets. Built once per context (not per
+    // target) since a document's relations can cite several anchor_ids. An
+    // anchor_id declared by MORE than one anchor is a tree-level defect (WP5
+    // coverage reports it as malformed/ambiguous); a typed target citing it
+    // must resolve to NO anchor — falling back to legacy handling — rather
+    // than to whichever duplicate happened to be inserted last.
+    const anchorNameByAnchorId = new Map<string, string>();
+    const duplicatedAnchorIds = new Set<string>();
+    for (const [name, anchorId] of anchorIds) {
+      if (!anchorId) {
+        continue;
+      }
+      if (anchorNameByAnchorId.has(anchorId)) {
+        duplicatedAnchorIds.add(anchorId);
+        continue;
+      }
+      anchorNameByAnchorId.set(anchorId, name);
+    }
+    const resolveAnchorId = (anchorId: string): string | undefined =>
+      duplicatedAnchorIds.has(anchorId) ? undefined : anchorNameByAnchorId.get(anchorId);
+
     return {
       anchorNames,
       resolveAnchorName,
@@ -363,6 +491,9 @@ export class GraphIndex {
       peopleRegistry,
       peopleIndex,
       mappings,
+      resolveAnchorId,
+      goalExistsInProject: (projectSlug: string, goalId: string) =>
+        goalIdsByProject.get(projectSlug)?.has(goalId) ?? false,
     };
   }
 
@@ -375,6 +506,14 @@ export class GraphIndex {
     removeEdgesFromIndex(existing.edges, this.forward, this.reverse);
     removeLiteralRelationsFromIndex(anchorName, this.literalRelationsReverse);
   }
+}
+
+/** Front-matter `type` includes `project-roadmap` (string or array form). */
+function frontmatterTypeIncludesRoadmap(type: unknown): boolean {
+  if (type === "project-roadmap") {
+    return true;
+  }
+  return Array.isArray(type) && type.some((item) => item === "project-roadmap");
 }
 
 function indexGroup(
