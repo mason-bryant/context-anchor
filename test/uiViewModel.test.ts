@@ -375,6 +375,22 @@ describe("Schema Coverage view model", () => {
     expect(restored.states).toEqual(["dangling", "malformed"]);
   });
 
+  it("trims whitespace-padded project and search values when parsing from the URL (matching the ES5 mirror)", () => {
+    const restored = coverageFiltersFromUrlParams((key) => {
+      if (key === "coverageProject") return "  alpha  ";
+      if (key === "coverageSearch") return "  roadmap  ";
+      return null;
+    });
+    expect(restored.project).toBe("alpha");
+    expect(restored.anchorText).toBe("roadmap");
+
+    const whitespaceOnly = coverageFiltersFromUrlParams((key) =>
+      key === "coverageProject" || key === "coverageSearch" ? "   " : null,
+    );
+    expect(whitespaceOnly.project).toBeUndefined();
+    expect(whitespaceOnly.anchorText).toBeUndefined();
+  });
+
   it("deduplicates repeated state tokens from the URL in order (set semantics — a single toggle must clear a state)", () => {
     const restored = coverageFiltersFromUrlParams((key) =>
       key === "coverageStates" ? "dangling,dangling,malformed,dangling" : null,

@@ -480,7 +480,9 @@ function isCoverageStateValue(value: string): value is CoverageState {
 
 /** Parse the Coverage tab's filter state back out of a `URLSearchParams`-like plain object (already split into individual `get(key)` string-or-null values), mirroring how the Tasks tab's filters round-trip through the URL in `src/ui/assets.ts`. Unknown state tokens are silently dropped rather than rejected, since they may be from a stale/foreign link — never worth hard-failing a read-only filter UI over. Repeated tokens (`states=dangling,dangling`) are deduplicated in order: `states` has set semantics, and a duplicate would make a single card toggle remove only one occurrence. */
 export function coverageFiltersFromUrlParams(getParam: (key: string) => string | null): CoverageFilters {
-  const project = getParam(COVERAGE_URL_PARAM_KEYS.project) || "";
+  // Trimmed on read (like the ES5 mirror), so a whitespace-padded URL never
+  // restores stray spaces into filter state or sticky whitespace-only keys.
+  const project = (getParam(COVERAGE_URL_PARAM_KEYS.project) || "").trim();
   const statesRaw = getParam(COVERAGE_URL_PARAM_KEYS.states) || "";
   const seenStates = new Set<CoverageState>();
   const states = statesRaw
@@ -493,7 +495,7 @@ export function coverageFiltersFromUrlParams(getParam: (key: string) => string |
       seenStates.add(value);
       return true;
     });
-  const anchorText = getParam(COVERAGE_URL_PARAM_KEYS.anchorText) || "";
+  const anchorText = (getParam(COVERAGE_URL_PARAM_KEYS.anchorText) || "").trim();
   return {
     ...(project ? { project } : {}),
     ...(states.length > 0 ? { states } : {}),

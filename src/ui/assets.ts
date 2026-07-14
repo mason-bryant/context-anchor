@@ -542,7 +542,7 @@ export const UI_HTML = `<!doctype html>
               </label>
               <button id="coverage-clear-filters" type="button">Clear filters</button>
             </div>
-            <div id="coverage-empty" class="empty-state" hidden>No coverage records match the current filters.</div>
+            <div id="coverage-empty" class="empty-state" hidden>No loaded coverage records match the current filters. If more pages are available, Load more may reveal matches.</div>
             <div class="markdown-table-scroll">
               <table id="coverage-table" hidden>
                 <caption class="sr-only">Structural coverage records for anchors and claims</caption>
