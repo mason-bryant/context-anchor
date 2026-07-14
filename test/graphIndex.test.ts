@@ -342,6 +342,120 @@ describe("GraphIndex reverse edges", () => {
   });
 });
 
+describe("GraphIndex typed relation vocabulary end-to-end (WP3)", () => {
+  const ANCHOR_WITH_ID = `---
+project:
+  - demo
+type: context-anchor
+tags: []
+summary: Anchor with a server-minted anchor_id.
+read_this_if:
+  - Testing typed relation vocabulary.
+last_validated: 2026-07-07
+anchor_id: a-abc123
+---
+
+# Anchor With Id
+
+## Current State
+
+None.
+`;
+
+  const ANCHOR_REFERRING = `---
+project:
+  - demo
+type: context-anchor
+tags: []
+summary: Anchor referring to another via typed relations.
+read_this_if:
+  - Testing typed relation vocabulary.
+last_validated: 2026-07-07
+relations:
+  depends_on:
+    - "anchor:a-abc123"
+  related_to:
+    - "anchor:a-abc123"
+  implements:
+    - "goal:demo:G-001"
+---
+
+# Anchor Referring
+
+## Current State
+
+None.
+`;
+
+  async function seedTypedRelationRepo(repo: AnchorRepository): Promise<void> {
+    await repo.writePeopleRegistryRaw({ people: [], teams: [] });
+    await repo.writeProjectMappingsRaw({ projects: [] });
+    await repo.commitAnchor({ name: "projects/demo/with-id.md", content: ANCHOR_WITH_ID });
+    await repo.commitAnchor({ name: "projects/demo/referring.md", content: ANCHOR_REFERRING });
+    await repo.commitAnchor({ name: "projects/demo/demo-roadmap.md", content: ROADMAP });
+  }
+
+  it("resolves a canonical anchor:<anchor-id> depends_on target to a typed depends_on edge via a real GraphIndex build", async () => {
+    const repo = new AnchorRepository({ repoPath: tmpDir });
+    await repo.ensureReady();
+    await seedTypedRelationRepo(repo);
+
+    const graph = new GraphIndex(repo, graphDeps(repo));
+    const edges = await graph.edgesFrom("anchor:projects/demo/referring.md", "depends_on");
+    expect(edges).toEqual([
+      {
+        from: "anchor:projects/demo/referring.md",
+        to: "anchor:projects/demo/with-id.md",
+        type: "depends_on",
+        sourceOfTruth: "front-matter",
+      },
+    ]);
+  });
+
+  it("emits related_to symmetrically (both directions) for a canonical anchor:<anchor-id> target", async () => {
+    const repo = new AnchorRepository({ repoPath: tmpDir });
+    await repo.ensureReady();
+    await seedTypedRelationRepo(repo);
+
+    const graph = new GraphIndex(repo, graphDeps(repo));
+    const forward = await graph.edgesFrom("anchor:projects/demo/referring.md", "related_to");
+    const reverse = await graph.edgesFrom("anchor:projects/demo/with-id.md", "related_to");
+    expect(forward).toEqual([
+      {
+        from: "anchor:projects/demo/referring.md",
+        to: "anchor:projects/demo/with-id.md",
+        type: "related_to",
+        sourceOfTruth: "front-matter",
+      },
+    ]);
+    expect(reverse).toEqual([
+      {
+        from: "anchor:projects/demo/with-id.md",
+        to: "anchor:projects/demo/referring.md",
+        type: "related_to",
+        sourceOfTruth: "front-matter",
+      },
+    ]);
+  });
+
+  it("resolves a canonical goal:<project-slug>:<goal-id> implements target to the existing unscoped v1 goal node", async () => {
+    const repo = new AnchorRepository({ repoPath: tmpDir });
+    await repo.ensureReady();
+    await seedTypedRelationRepo(repo);
+
+    const graph = new GraphIndex(repo, graphDeps(repo));
+    const edges = await graph.edgesFrom("anchor:projects/demo/referring.md", "implements");
+    expect(edges).toEqual([
+      {
+        from: "anchor:projects/demo/referring.md",
+        to: "goal:G-001",
+        type: "implements",
+        sourceOfTruth: "front-matter",
+      },
+    ]);
+  });
+});
+
 describe("AnchorService graph wiring", () => {
   it("does not construct a GraphIndex until a graph-consuming call happens (writeAnchor works without ever building the graph)", async () => {
     const repo = new AnchorRepository({ repoPath: tmpDir });

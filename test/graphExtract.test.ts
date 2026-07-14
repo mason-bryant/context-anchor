@@ -129,6 +129,164 @@ describe("extractRelationsEdges", () => {
   });
 });
 
+describe("extractRelationsEdges: typed relation vocabulary (WP3)", () => {
+  it("depends_on with a canonical anchor:<anchor-id> target resolves via resolveAnchorId to a typed depends_on edge", () => {
+    const ctx = makeCtx({
+      anchorNames: new Set(["projects/demo/a.md", "projects/demo/b.md"]),
+      resolveAnchorId: (id) => (id === "a-abc123" ? "projects/demo/b.md" : undefined),
+    });
+    const d = doc({
+      anchorName: "projects/demo/a.md",
+      frontmatter: { relations: { depends_on: ["anchor:a-abc123"] } },
+    });
+    expect(extractRelationsEdges(d, ctx)).toEqual([
+      { from: "anchor:projects/demo/a.md", to: "anchor:projects/demo/b.md", type: "depends_on", sourceOfTruth: "front-matter" },
+    ]);
+  });
+
+  it("supersedes with a canonical anchor:<anchor-id> target resolves to a typed supersedes edge", () => {
+    const ctx = makeCtx({
+      resolveAnchorId: (id) => (id === "a-old111" ? "projects/demo/old.md" : undefined),
+    });
+    const d = doc({
+      anchorName: "projects/demo/new.md",
+      frontmatter: { relations: { supersedes: ["anchor:a-old111"] } },
+    });
+    expect(extractRelationsEdges(d, ctx)).toEqual([
+      { from: "anchor:projects/demo/new.md", to: "anchor:projects/demo/old.md", type: "supersedes", sourceOfTruth: "front-matter" },
+    ]);
+  });
+
+  it("implements with a canonical goal:<project-slug>:<goal-id> target resolves to the unscoped v1 goal node via a typed implements edge", () => {
+    const ctx = makeCtx({
+      resolveProjectSlug: (slug) => (slug === "demo" ? "demo" : undefined),
+      knownGoalIds: new Set(["G-001"]),
+    });
+    const d = doc({
+      anchorName: "projects/demo/context.md",
+      frontmatter: { relations: { implements: ["goal:demo:G-001"] } },
+    });
+    expect(extractRelationsEdges(d, ctx)).toEqual([
+      { from: "anchor:projects/demo/context.md", to: "goal:G-001", type: "implements", sourceOfTruth: "front-matter" },
+    ]);
+  });
+
+  it("implements falls back to legacy (no edge) when the goal id is not in knownGoalIds", () => {
+    const ctx = makeCtx({
+      resolveProjectSlug: (slug) => (slug === "demo" ? "demo" : undefined),
+      knownGoalIds: new Set(), // G-001 unknown
+    });
+    const d = doc({
+      anchorName: "projects/demo/context.md",
+      frontmatter: { relations: { implements: ["goal:demo:G-001"] } },
+    });
+    expect(extractRelationsEdges(d, ctx)).toEqual([]);
+  });
+
+  it("implements falls back to legacy (no edge) when the project slug does not resolve", () => {
+    const ctx = makeCtx({
+      resolveProjectSlug: () => undefined,
+      knownGoalIds: new Set(["G-001"]),
+    });
+    const d = doc({
+      anchorName: "projects/demo/context.md",
+      frontmatter: { relations: { implements: ["goal:demo:G-001"] } },
+    });
+    expect(extractRelationsEdges(d, ctx)).toEqual([]);
+  });
+
+  it("owned_by with a canonical person:<id> target resolves to a typed owned_by edge", () => {
+    const peopleRegistry: PeopleRegistry = { people: [{ id: "alice", displayName: "Alice" }], teams: [] };
+    const ctx = makeCtx({ peopleRegistry, peopleIndex: buildPeopleIndex(peopleRegistry) });
+    const d = doc({
+      anchorName: "projects/demo/context.md",
+      frontmatter: { relations: { owned_by: ["person:alice"] } },
+    });
+    expect(extractRelationsEdges(d, ctx)).toEqual([
+      { from: "anchor:projects/demo/context.md", to: "person:alice", type: "owned_by", sourceOfTruth: "front-matter" },
+    ]);
+  });
+
+  it("owned_by with a canonical team:<id> target resolves to a typed owned_by edge", () => {
+    const peopleRegistry: PeopleRegistry = { people: [], teams: [{ id: "platform", displayName: "Platform" }] };
+    const ctx = makeCtx({ peopleRegistry, peopleIndex: buildPeopleIndex(peopleRegistry) });
+    const d = doc({
+      anchorName: "projects/demo/context.md",
+      frontmatter: { relations: { owned_by: ["team:platform"] } },
+    });
+    expect(extractRelationsEdges(d, ctx)).toEqual([
+      { from: "anchor:projects/demo/context.md", to: "team:platform", type: "owned_by", sourceOfTruth: "front-matter" },
+    ]);
+  });
+
+  it("owned_by falls back to legacy anchor_anchor semantics (no edge) when the person/team id is unknown", () => {
+    const ctx = makeCtx();
+    const d = doc({
+      anchorName: "projects/demo/context.md",
+      frontmatter: { relations: { owned_by: ["person:unknown-person"] } },
+    });
+    expect(extractRelationsEdges(d, ctx)).toEqual([]);
+  });
+
+  it("related_to is symmetric: emits both directions for a canonical anchor:<anchor-id> target", () => {
+    const ctx = makeCtx({
+      resolveAnchorId: (id) => (id === "a-abc123" ? "projects/demo/b.md" : undefined),
+    });
+    const d = doc({
+      anchorName: "projects/demo/a.md",
+      frontmatter: { relations: { related_to: ["anchor:a-abc123"] } },
+    });
+    expect(extractRelationsEdges(d, ctx)).toEqual([
+      { from: "anchor:projects/demo/a.md", to: "anchor:projects/demo/b.md", type: "related_to", sourceOfTruth: "front-matter" },
+      { from: "anchor:projects/demo/b.md", to: "anchor:projects/demo/a.md", type: "related_to", sourceOfTruth: "front-matter" },
+    ]);
+  });
+
+  it("a wrong-kind target (e.g. depends_on -> person:) falls back to legacy handling (no edge, since person: is not a legacy-resolvable bare string)", () => {
+    const peopleRegistry: PeopleRegistry = { people: [{ id: "alice", displayName: "Alice" }], teams: [] };
+    const ctx = makeCtx({ peopleRegistry, peopleIndex: buildPeopleIndex(peopleRegistry) });
+    const d = doc({
+      anchorName: "projects/demo/a.md",
+      frontmatter: { relations: { depends_on: ["person:alice"] } },
+    });
+    // depends_on only allows anchor-kind targets; person: is wrong-kind, so it
+    // is NOT emitted as a typed edge, and (being a canonical-shaped, not bare,
+    // string) also does not resolve via legacy resolveAnchorName.
+    expect(extractRelationsEdges(d, ctx)).toEqual([]);
+  });
+
+  it("a malformed typed ref (goal: missing goal-id half) falls back to legacy handling (no edge)", () => {
+    const ctx = makeCtx({ knownGoalIds: new Set(["G-001"]), resolveProjectSlug: (s) => s });
+    const d = doc({
+      anchorName: "projects/demo/a.md",
+      frontmatter: { relations: { implements: ["goal:demo:"] } },
+    });
+    expect(extractRelationsEdges(d, ctx)).toEqual([]);
+  });
+
+  it("an unregistered relation key keeps today's exact legacy anchor_anchor behavior unchanged", () => {
+    const ctx = makeCtx({ anchorNames: new Set(["projects/demo/a.md", "projects/demo/b.md"]) });
+    const d = doc({
+      anchorName: "projects/demo/a.md",
+      frontmatter: { relations: { custom_unregistered_key: ["projects/demo/b"] } },
+    });
+    expect(extractRelationsEdges(d, ctx)).toEqual([
+      { from: "anchor:projects/demo/a.md", to: "anchor:projects/demo/b.md", type: "anchor_anchor", sourceOfTruth: "front-matter" },
+    ]);
+  });
+
+  it("a registered key with a legacy bare-string target still falls back to the exact legacy anchor_anchor edge", () => {
+    const ctx = makeCtx({ anchorNames: new Set(["projects/demo/a.md", "projects/demo/b.md"]) });
+    const d = doc({
+      anchorName: "projects/demo/a.md",
+      frontmatter: { relations: { depends_on: ["projects/demo/b.md"] } },
+    });
+    expect(extractRelationsEdges(d, ctx)).toEqual([
+      { from: "anchor:projects/demo/a.md", to: "anchor:projects/demo/b.md", type: "anchor_anchor", sourceOfTruth: "front-matter" },
+    ]);
+  });
+});
+
 describe("extractLiteralRelationsEdges", () => {
   it("does NOT resolve goal_ids on project-milestone to the roadmap sibling (literal semantics for findReferencingAnchorMetas parity)", () => {
     const d = doc({

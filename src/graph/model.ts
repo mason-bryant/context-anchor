@@ -177,7 +177,21 @@ export type GraphEdgeType =
   | "claim_section"
   | "section_anchor"
   | "derived_from"
-  | "contradicts";
+  | "contradicts"
+  /**
+   * Typed relation vocabulary edges (Goal 0 Phase 1 WP3,
+   * `src/relations/vocabulary.ts`): emitted for a `relations.<key>` entry
+   * whose key is registered AND whose target parses to a kind-valid,
+   * resolved canonical ref. An unregistered key or an unparseable/wrong-kind
+   * target keeps today's `anchor_anchor` fallback instead (these five never
+   * replace `anchor_anchor`, they are additive). `related_to` is symmetric:
+   * `extractRelationsEdges` emits it in both directions.
+   */
+  | "depends_on"
+  | "implements"
+  | "supersedes"
+  | "related_to"
+  | "owned_by";
 
 /**
  * Where an edge's fact was read from. `front-matter` covers project slugs,

@@ -546,6 +546,11 @@ the index when your workflow checks in that file.`,
     "section_anchor",
     "derived_from",
     "contradicts",
+    "depends_on",
+    "implements",
+    "supersedes",
+    "related_to",
+    "owned_by",
   ]);
 
   server.registerTool(
