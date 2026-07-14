@@ -582,3 +582,77 @@ describe("AnchorService graph wiring", () => {
     expect(after.some((edge) => edge.from === "person:bob" && edge.to === "project:demo")).toBe(true);
   });
 });
+
+describe("AnchorService.graphCoverage (Goal 0 Phase 1 WP6)", () => {
+  it("reports coverage records, summary, identity contract version, and graph generation/HEAD for a real tree", async () => {
+    const repo = new AnchorRepository({ repoPath: tmpDir });
+    await repo.ensureReady();
+    await seedRepo(repo);
+    const service = new AnchorService(repo, { pushOnWrite: false, migrationWarnOnly: false, staleAfterDays: 45 });
+
+    const result = await service.graphCoverage({});
+
+    expect(result.records.length).toBeGreaterThan(0);
+    expect(
+      result.records.some((record) => record.kind === "anchor" && record.anchorName === "projects/demo/demo-project-context.md"),
+    ).toBe(true);
+    expect(result.summary.totalAnchors).toBeGreaterThan(0);
+    expect(result.identityContractVersion).toBe(2);
+    expect(typeof result.graphGeneration).toBe("number");
+    expect(result.totalMatching).toBeGreaterThanOrEqual(result.records.length);
+    expect(result.limit).toBe(100);
+  });
+
+  it("filters graphCoverage results by project", async () => {
+    const repo = new AnchorRepository({ repoPath: tmpDir });
+    await repo.ensureReady();
+    await seedRepo(repo);
+    const service = new AnchorService(repo, { pushOnWrite: false, migrationWarnOnly: false, staleAfterDays: 45 });
+
+    const result = await service.graphCoverage({ project: "demo" });
+    const anchorRecords = result.records.filter((record) => record.kind === "anchor");
+    expect(anchorRecords.length).toBeGreaterThan(0);
+    for (const record of anchorRecords) {
+      expect(record.anchorName.startsWith("projects/demo/")).toBe(true);
+    }
+  });
+
+  it("filters graphCoverage results by state", async () => {
+    const repo = new AnchorRepository({ repoPath: tmpDir });
+    await repo.ensureReady();
+    await seedRepo(repo);
+    const service = new AnchorService(repo, { pushOnWrite: false, migrationWarnOnly: false, staleAfterDays: 45 });
+
+    const result = await service.graphCoverage({ states: ["prose_only"] });
+    expect(result.records.every((record) => record.state === "prose_only")).toBe(true);
+  });
+
+  it("bounds and paginates graphCoverage with a cursor that eventually terminates", async () => {
+    const repo = new AnchorRepository({ repoPath: tmpDir });
+    await repo.ensureReady();
+    await seedRepo(repo);
+    const service = new AnchorService(repo, { pushOnWrite: false, migrationWarnOnly: false, staleAfterDays: 45 });
+
+    const firstPage = await service.graphCoverage({ limit: 1 });
+    expect(firstPage.records.length).toBeLessThanOrEqual(1);
+    expect(firstPage.limit).toBe(1);
+
+    if (firstPage.nextCursor) {
+      const secondPage = await service.graphCoverage({ limit: 1, cursor: firstPage.nextCursor });
+      expect(secondPage.records).not.toEqual(firstPage.records);
+    }
+  });
+
+  it("summary counts agree with the returned+total record counts for an unfiltered, unpaginated request", async () => {
+    const repo = new AnchorRepository({ repoPath: tmpDir });
+    await repo.ensureReady();
+    await seedRepo(repo);
+    const service = new AnchorService(repo, { pushOnWrite: false, migrationWarnOnly: false, staleAfterDays: 45 });
+
+    const result = await service.graphCoverage({ limit: 500 });
+    const anchorCount = result.records.filter((record) => record.kind === "anchor").length;
+    const claimCount = result.records.filter((record) => record.kind === "claim").length;
+    expect(result.summary.totalAnchors).toBe(anchorCount);
+    expect(result.summary.totalClaims).toBe(claimCount);
+  });
+});

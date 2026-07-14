@@ -16,6 +16,7 @@ import type {
   ProposeChangeInput,
 } from "../types.js";
 import type { GraphEdgeType } from "../graph/model.js";
+import type { CoverageState } from "../graph/coverage.js";
 import { aggregateBudget, aggregateFollowUps, aggregateFrequency, filterEvents, filterSessions } from "../trace/aggregate.js";
 import type { TraceIndex } from "../trace/index.js";
 import type { TraceRatingsStore, TraceRatingValue } from "../trace/ratings.js";
@@ -558,6 +559,29 @@ export function registerUiRoutes(
         ...(limit !== undefined ? { limit } : {}),
         ...(direction ? { direction } : {}),
         ...(edgeTypes && edgeTypes.length > 0 ? { edgeTypes } : {}),
+      });
+    }),
+  );
+
+  app.get(
+    "/api/ui/graph-coverage",
+    ...protect,
+    jsonRoute(async (req) => {
+      const project = optionalQueryString(req, "project");
+      const statesRaw = optionalQueryString(req, "states");
+      const states = statesRaw
+        ? statesRaw
+            .split(",")
+            .map((value) => value.trim())
+            .filter(isCoverageState)
+        : undefined;
+      const limit = positiveIntQuery(req, "limit", 500);
+      const cursor = optionalQueryString(req, "cursor");
+      return service.graphCoverage({
+        ...(project ? { project } : {}),
+        ...(states && states.length > 0 ? { states } : {}),
+        ...(limit !== undefined ? { limit } : {}),
+        ...(cursor ? { cursor } : {}),
       });
     }),
   );
@@ -1207,6 +1231,17 @@ function isProposedChangeStatus(value: string): value is ProposedChangeStatus {
     value === "rejected" ||
     value === "changes_requested" ||
     value === "superseded"
+  );
+}
+
+function isCoverageState(value: string): value is CoverageState {
+  return (
+    value === "structured" ||
+    value === "partial" ||
+    value === "prose_only" ||
+    value === "ambiguous" ||
+    value === "dangling" ||
+    value === "malformed"
   );
 }
 

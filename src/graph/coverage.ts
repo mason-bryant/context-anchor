@@ -533,6 +533,85 @@ function emptyStateCounts(): Record<CoverageState, number> {
   return { structured: 0, partial: 0, prose_only: 0, ambiguous: 0, dangling: 0, malformed: 0 };
 }
 
+// ---------------------------------------------------------------------------
+// Bounded paging (Goal 0 Phase 1 WP6: the read-only coverage endpoints must
+// never return the unbounded record set by accident). Mirrors the clamp
+// pattern `src/graph/neighbors.ts` already establishes for graphNeighbors.
+// ---------------------------------------------------------------------------
+
+export const GRAPH_COVERAGE_DEFAULT_LIMIT = 100;
+export const GRAPH_COVERAGE_MAX_LIMIT = 500;
+
+export function clampCoverageLimit(limit: number | undefined): number {
+  if (limit === undefined || !Number.isFinite(limit)) {
+    return GRAPH_COVERAGE_DEFAULT_LIMIT;
+  }
+  return Math.min(GRAPH_COVERAGE_MAX_LIMIT, Math.max(1, Math.floor(limit)));
+}
+
+export type CoverageRecordKind =
+  | ({ kind: "anchor" } & AnchorCoverageRecord)
+  | ({ kind: "claim" } & ClaimCoverageRecord);
+
+/** Deterministic sort key: anchor name, then (for claims) line number, so anchor records and their claims interleave in a stable, cursor-friendly order. */
+function coverageSortKey(record: CoverageRecordKind): string {
+  const line = record.kind === "claim" ? record.line : -1;
+  return `${record.anchorName} ${String(line).padStart(10, "0")} ${record.kind}`;
+}
+
+export type PageCoverageInput = {
+  /** Restrict to these states; omit for every state. */
+  states?: readonly CoverageState[];
+  limit?: number;
+  /** Opaque cursor: the sort key of the last record returned by the previous page. */
+  cursor?: string;
+};
+
+export type PageCoverageResult = {
+  records: CoverageRecordKind[];
+  /** Cursor to pass as `cursor` for the next page, or undefined when this page reached the end. */
+  nextCursor?: string;
+  /** Total records matching the state filter, before pagination. */
+  totalMatching: number;
+  limit: number;
+};
+
+/**
+ * Bound and paginate combined anchor + claim coverage records, filtered by
+ * `states` when given. Ordering is deterministic (anchor name, then claim
+ * line, then anchor-before-claim) so a cursor built from one page's last
+ * record reliably resumes the next, and repeated calls against the same
+ * analysis result always agree.
+ */
+export function pageCoverageRecords(
+  result: CoverageAnalysisResult,
+  input: PageCoverageInput,
+): PageCoverageResult {
+  const stateFilter = input.states && input.states.length > 0 ? new Set(input.states) : undefined;
+  const limit = clampCoverageLimit(input.limit);
+
+  const all: CoverageRecordKind[] = [
+    ...result.anchors.map((anchor): CoverageRecordKind => ({ kind: "anchor" as const, ...anchor })),
+    ...result.claims.map((claim): CoverageRecordKind => ({ kind: "claim" as const, ...claim })),
+  ]
+    .filter((record) => !stateFilter || stateFilter.has(record.state))
+    .sort((left, right) => coverageSortKey(left).localeCompare(coverageSortKey(right)));
+
+  const startIndex = input.cursor
+    ? all.findIndex((record) => coverageSortKey(record) > input.cursor!)
+    : 0;
+  const effectiveStart = startIndex === -1 ? all.length : startIndex;
+  const page = all.slice(effectiveStart, effectiveStart + limit);
+  const nextIndex = effectiveStart + page.length;
+
+  return {
+    records: page,
+    ...(nextIndex < all.length ? { nextCursor: coverageSortKey(page[page.length - 1]) } : {}),
+    totalMatching: all.length,
+    limit,
+  };
+}
+
 function summarizeCoverage(
   anchors: readonly AnchorCoverageRecord[],
   claims: readonly ClaimCoverageRecord[],

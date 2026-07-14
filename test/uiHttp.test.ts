@@ -1494,6 +1494,71 @@ describe("UI HTTP routes", () => {
     expect(response.status).toBe(400);
     expect(body.error.message).toContain("depth");
   });
+
+  type GraphCoverageHttpResult = {
+    records: Array<{ kind: string; anchorName: string; state: string }>;
+    nextCursor?: string;
+    totalMatching: number;
+    limit: number;
+    summary: { totalAnchors: number; totalClaims: number; byState: Record<string, number> };
+    duplicateAnchorIds: Array<{ anchorId: string; anchorNames: string[] }>;
+    identityContractVersion: number;
+    graphGeneration: number;
+    graphHead?: string;
+  };
+
+  it("requires auth and reports structural coverage through /api/ui/graph-coverage", async () => {
+    const unauthed = await fetch(`${baseUrl}/api/ui/graph-coverage`);
+    expect(unauthed.status).toBe(401);
+
+    const result = await fetchJson<GraphCoverageHttpResult>("/api/ui/graph-coverage");
+    expect(result.records.some((record) => record.kind === "anchor" && record.anchorName === "projects/demo/demo.md")).toBe(
+      true,
+    );
+    expect(result.summary.totalAnchors).toBeGreaterThan(0);
+    expect(result.identityContractVersion).toBe(2);
+    expect(typeof result.graphGeneration).toBe("number");
+    expect(result.limit).toBe(100);
+  });
+
+  it("filters /api/ui/graph-coverage by state", async () => {
+    const result = await fetchJson<GraphCoverageHttpResult>("/api/ui/graph-coverage?states=prose_only");
+    expect(result.records.every((record) => record.state === "prose_only")).toBe(true);
+  });
+
+  it("filters /api/ui/graph-coverage by project", async () => {
+    const result = await fetchJson<GraphCoverageHttpResult>("/api/ui/graph-coverage?project=demo");
+    expect(result.records.some((record) => record.anchorName === "projects/demo/demo.md")).toBe(true);
+  });
+
+  it("bounds and paginates /api/ui/graph-coverage with a cursor", async () => {
+    const firstPage = await fetchJson<GraphCoverageHttpResult>("/api/ui/graph-coverage?limit=1");
+    expect(firstPage.records.length).toBeLessThanOrEqual(1);
+    expect(firstPage.limit).toBe(1);
+    if (firstPage.nextCursor) {
+      const secondPage = await fetchJson<GraphCoverageHttpResult>(
+        `/api/ui/graph-coverage?limit=1&cursor=${encodeURIComponent(firstPage.nextCursor)}`,
+      );
+      expect(secondPage.records).not.toEqual(firstPage.records);
+    }
+  });
+
+  it("rejects an out-of-range limit for /api/ui/graph-coverage with 400", async () => {
+    const response = await fetch(`${baseUrl}/api/ui/graph-coverage?limit=5000`, {
+      headers: { Authorization: `Bearer ${TOKEN}` },
+    });
+    const body = (await response.json()) as { error: { message: string } };
+    expect(response.status).toBe(400);
+    expect(body.error.message).toContain("limit");
+  });
+
+  it("MCP graphCoverage tool and the HTTP route agree for the same tree", async () => {
+    const httpResult = await fetchJson<GraphCoverageHttpResult>("/api/ui/graph-coverage");
+    const mcpResult = await service.graphCoverage({});
+    expect(mcpResult.summary).toEqual(httpResult.summary);
+    expect(mcpResult.duplicateAnchorIds).toEqual(httpResult.duplicateAnchorIds);
+    expect(mcpResult.identityContractVersion).toBe(httpResult.identityContractVersion);
+  });
 });
 
 describe("UI HTTP trace routes", () => {

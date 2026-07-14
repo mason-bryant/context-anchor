@@ -25,6 +25,7 @@ import { buildProjectAliasIndex } from "../projectAliases.js";
 import { normalizeRelative } from "../utils/path.js";
 import { anchorIdFromFrontmatter } from "./identity.js";
 import { listRoadmapGoalsWithStatus } from "../roadmap/analyzeRoadmap.js";
+import type { CoverageAnalysisContext } from "./coverage.js";
 import type { AnchorMeta, PeopleRegistry, ProjectMappings } from "../types.js";
 import {
   extractDocumentEdges,
@@ -92,6 +93,19 @@ export class GraphIndex {
     private readonly deps: GraphIndexDeps,
   ) {}
 
+  /**
+   * The repo HEAD this graph was last built from, and the in-process
+   * generation counter (bumped on every out-of-band mutation) — exposed for
+   * read-only callers (WP6's `graphCoverage`) that report "which graph
+   * generation this response reflects" alongside their data, so a client can
+   * tell whether two responses came from the same graph snapshot. Call
+   * `ensureBuilt()` first if the caller needs this to reflect the CURRENT
+   * HEAD rather than whatever was last built.
+   */
+  graphVersion(): { head: string | undefined; generation: number } {
+    return { head: this.head, generation: this.generation };
+  }
+
   /** Ensure the graph reflects the current repo HEAD, rebuilding if stale. Never called from the constructor — first graph query triggers the initial build. */
   async ensureBuilt(): Promise<void> {
     for (;;) {
@@ -138,6 +152,40 @@ export class GraphIndex {
     }
     out.push(...this.registryEdges);
     return out;
+  }
+
+  /**
+   * Build the resolver context `analyzeCoverage` (`src/graph/coverage.ts`,
+   * WP5) needs, reusing this index's already-built anchor_id/goal/people
+   * lookups rather than re-scanning the tree a second time (the caller —
+   * `AnchorService.graphCoverage`, WP6 — still needs its own read of every
+   * anchor's front matter/content for `CoverageDocumentInput`, since this
+   * index does not retain raw content after a rebuild, only derived edges).
+   */
+  async buildCoverageContext(): Promise<CoverageAnalysisContext> {
+    await this.ensureBuilt();
+    const metas = await this.repo.listAnchors();
+    const ctx = await this.buildExtractContext(metas);
+
+    const anchorNamesByAnchorId = new Map<string, string[]>();
+    for (const [name, anchorId] of this.anchorIdByName) {
+      if (!anchorId) {
+        continue;
+      }
+      const names = anchorNamesByAnchorId.get(anchorId) ?? [];
+      names.push(name);
+      anchorNamesByAnchorId.set(anchorId, names);
+    }
+
+    return {
+      anchorNames: ctx.anchorNames,
+      resolveAnchorName: ctx.resolveAnchorName,
+      resolveProjectSlug: ctx.resolveProjectSlug,
+      anchorNamesForAnchorId: (anchorId: string) => anchorNamesByAnchorId.get(anchorId) ?? [],
+      knownGoalIds: this.knownGoalIds,
+      personExists: (id: string) => Boolean(ctx.peopleIndex.getPersonById(id)),
+      teamExists: (id: string) => Boolean(ctx.peopleIndex.getTeamById(id)),
+    };
   }
 
   /**

@@ -2,6 +2,10 @@ import { describe, expect, it } from "vitest";
 
 import {
   analyzeCoverage,
+  clampCoverageLimit,
+  pageCoverageRecords,
+  GRAPH_COVERAGE_DEFAULT_LIMIT,
+  GRAPH_COVERAGE_MAX_LIMIT,
   type CoverageAnalysisContext,
   type CoverageDocumentInput,
 } from "../src/graph/coverage.js";
@@ -391,5 +395,110 @@ describe("analyzeCoverage: summary-count consistency", () => {
     const result = analyzeCoverage(docs, ctx);
     expect(result.summary.duplicateAnchorIdCount).toBe(result.duplicateAnchorIds.length);
     expect(result.summary.duplicateAnchorIdCount).toBe(1);
+  });
+});
+
+describe("clampCoverageLimit (Goal 0 Phase 1 WP6)", () => {
+  it("defaults when omitted", () => {
+    expect(clampCoverageLimit(undefined)).toBe(GRAPH_COVERAGE_DEFAULT_LIMIT);
+  });
+
+  it("clamps to the max", () => {
+    expect(clampCoverageLimit(10000)).toBe(GRAPH_COVERAGE_MAX_LIMIT);
+  });
+
+  it("clamps to a minimum of 1", () => {
+    expect(clampCoverageLimit(0)).toBe(1);
+    expect(clampCoverageLimit(-5)).toBe(1);
+  });
+
+  it("floors a fractional value", () => {
+    expect(clampCoverageLimit(4.9)).toBe(4);
+  });
+});
+
+describe("pageCoverageRecords (Goal 0 Phase 1 WP6)", () => {
+  function buildManyAnchorsResult(count: number) {
+    const ctx = makeCtx();
+    const docs = Array.from({ length: count }, (_, index) =>
+      makeDoc({
+        anchorName: `projects/demo/anchor-${String(index).padStart(3, "0")}.md`,
+        frontmatter: { ...BASE_FRONTMATTER },
+      }),
+    );
+    return analyzeCoverage(docs, ctx);
+  }
+
+  it("never returns more than the clamped limit", () => {
+    const result = buildManyAnchorsResult(10);
+    const page = pageCoverageRecords(result, { limit: 3 });
+    expect(page.records.length).toBe(3);
+    expect(page.limit).toBe(3);
+    expect(page.totalMatching).toBe(10);
+    expect(page.nextCursor).toBeDefined();
+  });
+
+  it("defaults to GRAPH_COVERAGE_DEFAULT_LIMIT when no limit is given, never the unbounded set", () => {
+    const result = buildManyAnchorsResult(GRAPH_COVERAGE_DEFAULT_LIMIT + 50);
+    const page = pageCoverageRecords(result, {});
+    expect(page.records.length).toBe(GRAPH_COVERAGE_DEFAULT_LIMIT);
+    expect(page.totalMatching).toBe(GRAPH_COVERAGE_DEFAULT_LIMIT + 50);
+  });
+
+  it("pages through the full set via nextCursor with no gaps or duplicates", () => {
+    const result = buildManyAnchorsResult(25);
+    const seen = new Set<string>();
+    let cursor: string | undefined;
+    let iterations = 0;
+    for (;;) {
+      const page = pageCoverageRecords(result, { limit: 7, cursor });
+      for (const record of page.records) {
+        const key = `${record.kind}:${record.anchorName}`;
+        expect(seen.has(key)).toBe(false);
+        seen.add(key);
+      }
+      if (!page.nextCursor) {
+        break;
+      }
+      cursor = page.nextCursor;
+      iterations += 1;
+      expect(iterations).toBeLessThan(20); // guard against an infinite loop bug
+    }
+    expect(seen.size).toBe(25);
+  });
+
+  it("filters by state before paginating, and totalMatching reflects the filtered count", () => {
+    const anchorNames = new Set(["projects/demo/a.md"]);
+    const ctx = makeCtx({ anchorNames });
+    const docs = [
+      makeDoc({ anchorName: "projects/demo/a.md", frontmatter: { ...BASE_FRONTMATTER, anchor_id: "a-abc123", schema_version: 1 } }),
+      makeDoc({ anchorName: "projects/demo/b.md", frontmatter: { ...BASE_FRONTMATTER } }),
+    ];
+    const result = analyzeCoverage(docs, ctx);
+    const page = pageCoverageRecords(result, { states: ["structured"] });
+    expect(page.records.every((record) => record.state === "structured")).toBe(true);
+    expect(page.totalMatching).toBe(1);
+  });
+
+  it("includes both anchor and claim records, distinguishable by kind", () => {
+    const ctx = makeCtx();
+    const docs = [
+      makeDoc({
+        anchorName: "projects/demo/a.md",
+        content: "## Current State\n\n- A claim.\n  {id: c-abc123}\n",
+      }),
+    ];
+    const result = analyzeCoverage(docs, ctx);
+    const page = pageCoverageRecords(result, {});
+    const kinds = new Set(page.records.map((record) => record.kind));
+    expect(kinds.has("anchor")).toBe(true);
+    expect(kinds.has("claim")).toBe(true);
+  });
+
+  it("has no nextCursor when the page reaches the end", () => {
+    const result = buildManyAnchorsResult(3);
+    const page = pageCoverageRecords(result, { limit: 100 });
+    expect(page.records.length).toBe(3);
+    expect(page.nextCursor).toBeUndefined();
   });
 });
