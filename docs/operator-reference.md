@@ -74,8 +74,11 @@ npx -y @mason/anchor-mcp@latest \
   --config ./anchor-mcp.config.json
 ```
 
-The same HTTP server serves a read-only explorer UI at `http://127.0.0.1:3333/ui`.
-Enter the same bearer token used for MCP requests.
+The same HTTP server serves an explorer and guarded editor UI at
+`http://127.0.0.1:3333/ui`. Enter the same bearer token used for MCP requests. In the
+rendered anchor view, supported content includes inline editors for claims, summary
+bullets, Mermaid diagrams, and Markdown pipe tables; writes use the same validation,
+approval, and optimistic-concurrency checks as other server mutations.
 
 Add the server to Cursor MCP settings (`~/.cursor/mcp.json`):
 

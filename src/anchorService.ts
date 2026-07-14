@@ -218,6 +218,12 @@ import {
   upsertMermaidBlockSources,
   type MermaidBlock,
 } from "./mermaidBlocks.js";
+import {
+  extractMarkdownTables,
+  isCompleteMarkdownTable,
+  replaceMarkdownTable,
+  type MarkdownTable,
+} from "./markdownTables.js";
 import { runValidators } from "./validators/pipeline.js";
 import {
   ANCHOR_SECTION_DEFINITIONS,
@@ -3287,6 +3293,53 @@ None.
     });
   }
 
+  async listMarkdownTables(input: { name: string }): Promise<{ tables: (MarkdownTable & { anchor: string })[] }> {
+    const content = await this.repo.readRaw(input.name);
+    if (content === undefined) {
+      return { tables: [] };
+    }
+    return {
+      tables: extractMarkdownTables(content).map((table) => ({ ...table, anchor: input.name })),
+    };
+  }
+
+  async updateMarkdownTable(input: {
+    name: string;
+    line: number;
+    text?: string;
+    message?: string;
+    approved?: boolean;
+    coAuthor?: string;
+    expectedFileCommit?: string;
+  }): Promise<WriteAnchorResult> {
+    const text = input.text?.trim();
+    if (!text) {
+      return AnchorService.blockResult("markdown_table_text_missing", "Markdown table text is required.");
+    }
+    if (!isCompleteMarkdownTable(text)) {
+      return AnchorService.blockResult(
+        "markdown_table_invalid",
+        "Table text must contain one complete Markdown pipe table with a header, separator row, and matching column count in every row.",
+      );
+    }
+    return this.applyAnchorContentPatch({
+      name: input.name,
+      message: input.message ?? `chore: update Markdown table in ${input.name}`,
+      approved: input.approved,
+      coAuthor: input.coAuthor,
+      expectedFileCommit: input.expectedFileCommit,
+      precondition: (old) =>
+        extractMarkdownTables(old).some((table) => table.line === input.line)
+          ? undefined
+          : {
+              severity: "BLOCK",
+              code: "markdown_table_not_found",
+              message: `No Markdown table starts on line ${input.line} in ${input.name}.`,
+            },
+      mutate: (old) => replaceMarkdownTable(old, input.line, text),
+    });
+  }
+
   async updateClaimText(input: {
     name: string;
     claim?: string;
@@ -3767,6 +3820,7 @@ None.
     coAuthor?: string;
     expectedFileCommit?: string;
     carryClaimAnnotations?: boolean;
+    precondition?: (oldContent: string) => ValidationViolation | undefined;
     mutate: (oldContent: string) => string;
   }): Promise<WriteAnchorResult> {
     if (isBuiltInAnchorName(input.name)) {
@@ -3791,6 +3845,10 @@ None.
           },
         ],
       };
+    }
+    const preconditionViolation = input.precondition?.(oldContent);
+    if (preconditionViolation) {
+      return { warnings: [preconditionViolation] };
     }
     let newContent: string;
     try {
