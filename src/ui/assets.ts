@@ -3404,7 +3404,10 @@ export const UI_JS = `(function () {
   // Mirrors coverageQueryParams in src/ui/viewModel.ts.
   function coverageQueryString(filters, cursor) {
     var qs = [];
-    if (filters.project) qs.push("project=" + encodeURIComponent(filters.project));
+    // Trim like coverageQueryParams (the viewModel mirror) does: whitespace
+    // around a project slug must not reach the server as part of project=.
+    var project = (filters.project || "").trim();
+    if (project) qs.push("project=" + encodeURIComponent(project));
     if (filters.states && filters.states.length > 0) qs.push("states=" + encodeURIComponent(filters.states.join(",")));
     qs.push("limit=" + COVERAGE_PAGE_LIMIT);
     if (cursor) qs.push("cursor=" + encodeURIComponent(cursor));
@@ -3511,10 +3514,11 @@ export const UI_JS = `(function () {
 
     // Mirrors coverageFiltersFromUrlParams in src/ui/viewModel.ts (the URL
     // round-trip runs through this generic tab URL wiring, not a dedicated
-    // coverage function).
-    state.coverageProject = params.get("coverageProject") || "";
+    // coverage function). Trimmed on read like the viewModel helper, so a
+    // whitespace-padded URL never populates controls with stray spaces.
+    state.coverageProject = (params.get("coverageProject") || "").trim();
     state.coverageStates = validCoverageStates(params.get("coverageStates"));
-    state.coverageText = params.get("coverageSearch") || "";
+    state.coverageText = (params.get("coverageSearch") || "").trim();
     setSelectValueAllowingNew("coverage-project-filter", state.coverageProject);
     setControlValue("coverage-text-filter", state.coverageText);
   }
@@ -3613,12 +3617,15 @@ export const UI_JS = `(function () {
     }
 
     // Mirrors coverageUrlParamsFromFilters in src/ui/viewModel.ts (see the
-    // matching read-side note in applyUrlStateToControls).
-    setParam(params, "coverageProject", controlValue("coverage-project-filter", sourceParams.get("coverageProject") || ""));
+    // matching read-side note in applyUrlStateToControls). Trimmed before
+    // setParam so a whitespace-only value is omitted (setParam treats any
+    // non-empty string as truthy) instead of becoming a sticky,
+    // non-functional URL filter.
+    setParam(params, "coverageProject", controlValue("coverage-project-filter", sourceParams.get("coverageProject") || "").trim());
     if (state.coverageStates && state.coverageStates.length > 0) {
       params.set("coverageStates", state.coverageStates.join(","));
     }
-    setParam(params, "coverageSearch", controlValue("coverage-text-filter", sourceParams.get("coverageSearch") || ""));
+    setParam(params, "coverageSearch", controlValue("coverage-text-filter", sourceParams.get("coverageSearch") || "").trim());
 
     return params;
   }
