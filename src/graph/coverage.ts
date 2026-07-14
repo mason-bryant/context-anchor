@@ -596,6 +596,11 @@ function coverageSortKey(record: CoverageRecordKind): string {
   return `${record.anchorName}\n${String(line).padStart(10, "0")}\n${record.kind}`;
 }
 
+/** Code-unit ordering is stable across runtimes/locales and is also used when advancing a cursor. */
+function compareCoverageSortKeys(left: string, right: string): number {
+  return left < right ? -1 : left > right ? 1 : 0;
+}
+
 export type PageCoverageInput = {
   /** Restrict to these states; omit for every state. */
   states?: readonly CoverageState[];
@@ -632,10 +637,10 @@ export function pageCoverageRecords(
     ...result.claims.map((claim): CoverageRecordKind => ({ kind: "claim" as const, ...claim })),
   ]
     .filter((record) => !stateFilter || stateFilter.has(record.state))
-    .sort((left, right) => coverageSortKey(left).localeCompare(coverageSortKey(right)));
+    .sort((left, right) => compareCoverageSortKeys(coverageSortKey(left), coverageSortKey(right)));
 
   const startIndex = input.cursor
-    ? all.findIndex((record) => coverageSortKey(record) > input.cursor!)
+    ? all.findIndex((record) => compareCoverageSortKeys(coverageSortKey(record), input.cursor!) > 0)
     : 0;
   const effectiveStart = startIndex === -1 ? all.length : startIndex;
   const page = all.slice(effectiveStart, effectiveStart + limit);

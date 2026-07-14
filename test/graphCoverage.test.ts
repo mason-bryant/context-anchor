@@ -582,6 +582,25 @@ describe("pageCoverageRecords (Goal 0 Phase 1 WP6)", () => {
     expect(seen.size).toBe(25);
   });
 
+  it("uses the same locale-independent ordering for sorting and cursor advancement", () => {
+    const ctx = makeCtx();
+    const result = analyzeCoverage(
+      [
+        makeDoc({ anchorName: "projects/demo/a.md", frontmatter: { ...BASE_FRONTMATTER } }),
+        makeDoc({ anchorName: "projects/demo/Z.md", frontmatter: { ...BASE_FRONTMATTER } }),
+      ],
+      ctx,
+    );
+
+    const first = pageCoverageRecords(result, { limit: 1 });
+    expect(first.records.map((record) => record.anchorName)).toEqual(["projects/demo/Z.md"]);
+    expect(first.nextCursor).toBeDefined();
+
+    const second = pageCoverageRecords(result, { limit: 1, cursor: first.nextCursor });
+    expect(second.records.map((record) => record.anchorName)).toEqual(["projects/demo/a.md"]);
+    expect(second.nextCursor).toBeUndefined();
+  });
+
   it("filters by state before paginating, and totalMatching reflects the filtered count", () => {
     const anchorNames = new Set(["projects/demo/a.md"]);
     const ctx = makeCtx({ anchorNames });
