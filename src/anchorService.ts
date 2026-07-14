@@ -202,7 +202,7 @@ import {
   type CoverageRecordKind,
   type CoverageState,
 } from "./graph/coverage.js";
-import { GRAPH_IDENTITY_VERSION } from "./graph/identity.js";
+import { anchorIdFromFrontmatter, GRAPH_IDENTITY_VERSION, mintAnchorId } from "./graph/identity.js";
 import { buildPeopleIndex, parsePeopleRegistry, type PeopleIndex } from "./peopleRegistry.js";
 import { findMarkdownLinkSuggestions, suggestMarkdownLinks } from "./markdownLinks.js";
 import {
@@ -1060,6 +1060,31 @@ export class AnchorService {
           warnings: [...idBlocks, ...carryWarnings],
           requiresApproval: false,
         };
+      }
+    }
+
+    // Mint `anchor_id` + `schema_version` on create only (Goal 0 Phase 2 WP-A:
+    // `goal0_phase2_mint_on_create_and_coverage_ui_plan.md`). Only real anchors
+    // are eligible — generated docs (CONTEXT-ROOT.md) and anything that fails
+    // taxonomy classification are left untouched; `validateDirectoryTaxonomy`
+    // still blocks invalid paths downstream. This happens before validation so
+    // the committed document is exactly what was validated, and it never runs
+    // on an update: legacy anchors stay id-less until an explicit migration
+    // write adds an id (still subject to the same duplicate check, just via
+    // the `anchor_id_duplicate` validator below rather than this mint path).
+    if (oldContent === undefined && classifyAnchorPath(resolved.name).kind === "anchor") {
+      const fm = parseAnchor(content).frontmatter;
+      const suppliedId = anchorIdFromFrontmatter(fm);
+      const updates: Record<string, unknown> = {};
+      if (!suppliedId) {
+        const treeAnchorIds = await this.collectTreeAnchorIds(resolved.name);
+        updates.anchor_id = mintAnchorId(treeAnchorIds);
+      }
+      if (fm.schema_version === undefined) {
+        updates.schema_version = 1;
+      }
+      if (Object.keys(updates).length > 0) {
+        content = mergeAnchorFrontmatter(content, updates);
       }
     }
 
@@ -1943,6 +1968,33 @@ None.
         continue;
       }
       for (const id of collectClaimIds(extractClaims(content))) {
+        ids.add(id);
+      }
+    }
+    return ids;
+  }
+
+  /**
+   * Every front-matter `anchor_id` currently in the tree, for mint-on-create
+   * collision checks and the `anchor_id_duplicate` validator (Goal 0 Phase 2
+   * WP-A: `goal0_phase2_mint_on_create_and_coverage_ui_plan.md`). Mirrors
+   * `collectTreeClaimIds`'s walk/exclude shape exactly. `excludeAnchor` skips
+   * one anchor's on-disk content (the anchor currently being written, whose
+   * id the caller supplies separately from its in-flight content).
+   */
+  private async collectTreeAnchorIds(excludeAnchor?: string): Promise<Set<string>> {
+    const metas = await this.repo.listAnchors();
+    const ids = new Set<string>();
+    for (const meta of metas) {
+      if (isBuiltInAnchorName(meta.name) || meta.name === excludeAnchor) {
+        continue;
+      }
+      const content = await this.repo.readRaw(meta.name);
+      if (content === undefined) {
+        continue;
+      }
+      const id = anchorIdFromFrontmatter(parseAnchor(content).frontmatter);
+      if (id) {
         ids.add(id);
       }
     }

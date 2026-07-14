@@ -529,12 +529,19 @@ last_validated: 2026-05-10
       message: "test: add demo anchor",
     });
 
+    // mint-on-create (Goal 0 Phase 2 WP-A) injects an immutable anchor_id on
+    // the first write; subsequent full-content rewrites must carry it
+    // forward rather than reconstructing content from the pre-mint fixture,
+    // or they trip the anchor_id_immutable BLOCK on top of (and unrelated to)
+    // this test's own requires_approval assertion.
+    const committed = (await service.readAnchor("projects/demo/demo")).content;
+    const updatedContent = committed
+      .replace(/last_validated: \S+/, "last_validated: 2026-05-11")
+      .replace("- Keep storage git-backed.", "- New decision.");
+
     const blocked = await service.writeAnchor({
       name: "projects/demo/demo",
-      content: projectAnchorContent({
-        lastValidated: "2026-05-11",
-        decisions: "- New decision.",
-      }),
+      content: updatedContent,
       message: "test: update decision",
     });
 
@@ -543,10 +550,7 @@ last_validated: 2026-05-10
 
     const approved = await service.writeAnchor({
       name: "projects/demo/demo",
-      content: projectAnchorContent({
-        lastValidated: "2026-05-11",
-        decisions: "- New decision.",
-      }),
+      content: updatedContent,
       message: "test: update decision",
       approved: true,
     });
