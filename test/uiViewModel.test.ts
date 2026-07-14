@@ -1,7 +1,21 @@
 import { describe, expect, it } from "vitest";
 
-import { requiredSectionStatus, toAnchorUiDetail, toAnchorUiMeta } from "../src/ui/viewModel.js";
+import {
+  appendCoverageRecords,
+  coverageFiltersFromUrlParams,
+  coverageKindLabel,
+  coverageQueryParams,
+  coverageRecordKey,
+  coverageStateLabel,
+  coverageUrlParamsFromFilters,
+  deriveCoverageProjects,
+  filterCoverageRecords,
+  requiredSectionStatus,
+  toAnchorUiDetail,
+  toAnchorUiMeta,
+} from "../src/ui/viewModel.js";
 import type { AnchorMeta, AnchorRead } from "../src/types.js";
+import type { CoverageRecordKind } from "../src/graph/coverage.js";
 
 describe("UI view model", () => {
   it("detects required H2 sections", () => {
@@ -258,6 +272,176 @@ None.
     ]);
   });
 });
+
+describe("Schema Coverage view model", () => {
+  it("labels every coverage state with human text, not a bare code", () => {
+    expect(coverageStateLabel("structured")).toBe("Structured");
+    expect(coverageStateLabel("partial")).toBe("Partial");
+    expect(coverageStateLabel("prose_only")).toBe("Prose only");
+    expect(coverageStateLabel("ambiguous")).toBe("Ambiguous");
+    expect(coverageStateLabel("dangling")).toBe("Dangling");
+    expect(coverageStateLabel("malformed")).toBe("Malformed");
+  });
+
+  it("labels the anchor/claim record kind", () => {
+    expect(coverageKindLabel("anchor")).toBe("Anchor");
+    expect(coverageKindLabel("claim")).toBe("Claim");
+  });
+
+  it("derives the sorted, deduplicated set of projects from anchor records only", () => {
+    const records: CoverageRecordKind[] = [
+      anchorRecord({ anchorName: "projects/beta/beta.md", projectSlug: "beta" }),
+      anchorRecord({ anchorName: "projects/alpha/alpha.md", projectSlug: "alpha" }),
+      anchorRecord({ anchorName: "projects/alpha/other.md", projectSlug: "alpha" }),
+      anchorRecord({ anchorName: "shared/notes.md", projectSlug: undefined }),
+      claimRecord({ anchorName: "projects/beta/beta.md", line: 5 }),
+    ];
+
+    expect(deriveCoverageProjects(records)).toEqual(["alpha", "beta"]);
+  });
+
+  it("filters records by state", () => {
+    const records: CoverageRecordKind[] = [
+      anchorRecord({ anchorName: "a.md", state: "structured" }),
+      anchorRecord({ anchorName: "b.md", state: "dangling" }),
+      claimRecord({ anchorName: "a.md", line: 3, state: "partial" }),
+    ];
+
+    const filtered = filterCoverageRecords(records, { states: ["dangling", "partial"] });
+    expect(filtered.map((record) => record.anchorName + ":" + record.state)).toEqual(["b.md:dangling", "a.md:partial"]);
+  });
+
+  it("does NOT filter by project client-side: project scoping is server-side, so claim rows (which carry no projectSlug) survive", () => {
+    // Regression guard for review feedback on PR #90: a client-side project
+    // comparison silently dropped every claim row because claims have no
+    // projectSlug of their own. The server already scopes the fetched page
+    // via the project= query param (coverageQueryParams), so client-side
+    // filtering must pass ALL records through when a project is selected.
+    const records: CoverageRecordKind[] = [
+      anchorRecord({ anchorName: "projects/alpha/alpha.md", projectSlug: "alpha" }),
+      claimRecord({ anchorName: "projects/alpha/alpha.md", line: 2 }),
+    ];
+
+    const filtered = filterCoverageRecords(records, { project: "alpha" });
+    expect(filtered.map((record) => record.kind + ":" + record.anchorName)).toEqual([
+      "anchor:projects/alpha/alpha.md",
+      "claim:projects/alpha/alpha.md",
+    ]);
+  });
+
+  it("filters records by a case-insensitive anchor-name substring", () => {
+    const records: CoverageRecordKind[] = [
+      anchorRecord({ anchorName: "projects/alpha/Roadmap.md" }),
+      anchorRecord({ anchorName: "projects/alpha/design.md" }),
+    ];
+
+    const filtered = filterCoverageRecords(records, { anchorText: "roadmap" });
+    expect(filtered.map((record) => record.anchorName)).toEqual(["projects/alpha/Roadmap.md"]);
+  });
+
+  it("combines state and text filters (AND semantics); project is ignored client-side", () => {
+    const records: CoverageRecordKind[] = [
+      anchorRecord({ anchorName: "projects/alpha/roadmap.md", projectSlug: "alpha", state: "dangling" }),
+      anchorRecord({ anchorName: "projects/alpha/design.md", projectSlug: "alpha", state: "structured" }),
+      anchorRecord({ anchorName: "projects/beta/notes.md", projectSlug: "beta", state: "dangling" }),
+    ];
+
+    const filtered = filterCoverageRecords(records, { states: ["dangling"], project: "alpha", anchorText: "road" });
+    expect(filtered.map((record) => record.anchorName)).toEqual(["projects/alpha/roadmap.md"]);
+  });
+
+  it("builds server query params from project/state filters, omitting anchor text (server has no text param)", () => {
+    expect(coverageQueryParams({ project: "alpha", states: ["dangling", "malformed"], anchorText: "road" })).toEqual({
+      project: "alpha",
+      states: "dangling,malformed",
+    });
+    expect(coverageQueryParams({})).toEqual({});
+    expect(coverageQueryParams({}, "cursor-value", 50)).toEqual({ cursor: "cursor-value", limit: "50" });
+  });
+
+  it("round-trips filters through URL query params", () => {
+    const filters = { project: "alpha", states: ["dangling", "malformed"] as const, anchorText: "roadmap" };
+    const params = coverageUrlParamsFromFilters(filters);
+    const restored = coverageFiltersFromUrlParams((key) => params[key] ?? null);
+    expect(restored).toEqual(filters);
+  });
+
+  it("omits empty filter keys when serializing to URL params", () => {
+    expect(coverageUrlParamsFromFilters({})).toEqual({});
+  });
+
+  it("drops unknown state tokens instead of throwing when parsing from the URL", () => {
+    const restored = coverageFiltersFromUrlParams((key) =>
+      key === "coverageStates" ? "dangling,not_a_real_state,malformed" : null,
+    );
+    expect(restored.states).toEqual(["dangling", "malformed"]);
+  });
+
+  it("trims whitespace-padded project and search values when parsing from the URL (matching the ES5 mirror)", () => {
+    const restored = coverageFiltersFromUrlParams((key) => {
+      if (key === "coverageProject") return "  alpha  ";
+      if (key === "coverageSearch") return "  roadmap  ";
+      return null;
+    });
+    expect(restored.project).toBe("alpha");
+    expect(restored.anchorText).toBe("roadmap");
+
+    const whitespaceOnly = coverageFiltersFromUrlParams((key) =>
+      key === "coverageProject" || key === "coverageSearch" ? "   " : null,
+    );
+    expect(whitespaceOnly.project).toBeUndefined();
+    expect(whitespaceOnly.anchorText).toBeUndefined();
+  });
+
+  it("deduplicates repeated state tokens from the URL in order (set semantics — a single toggle must clear a state)", () => {
+    const restored = coverageFiltersFromUrlParams((key) =>
+      key === "coverageStates" ? "dangling,dangling,malformed,dangling" : null,
+    );
+    expect(restored.states).toEqual(["dangling", "malformed"]);
+  });
+
+  it("computes a stable per-record key from kind/anchorName/line", () => {
+    expect(coverageRecordKey(anchorRecord({ anchorName: "a.md" }))).toBe("anchor\na.md\n-1");
+    expect(coverageRecordKey(claimRecord({ anchorName: "a.md", line: 7 }))).toBe("claim\na.md\n7");
+  });
+
+  it("appends a cursor page to existing records without duplicating rows", () => {
+    const page1: CoverageRecordKind[] = [anchorRecord({ anchorName: "a.md" }), anchorRecord({ anchorName: "b.md" })];
+    const page2: CoverageRecordKind[] = [anchorRecord({ anchorName: "b.md" }), anchorRecord({ anchorName: "c.md" })];
+
+    const combined = appendCoverageRecords(page1, page2);
+    expect(combined.map((record) => record.anchorName)).toEqual(["a.md", "b.md", "c.md"]);
+  });
+
+  it("appends an empty page as a no-op", () => {
+    const page1: CoverageRecordKind[] = [anchorRecord({ anchorName: "a.md" })];
+    expect(appendCoverageRecords(page1, [])).toEqual(page1);
+  });
+});
+
+function anchorRecord(overrides: Partial<Extract<CoverageRecordKind, { kind: "anchor" }>> = {}): CoverageRecordKind {
+  return {
+    kind: "anchor",
+    anchorName: "projects/demo/demo.md",
+    anchorType: "context-anchor",
+    state: "structured",
+    reasons: [],
+    suggestedOperations: [],
+    ...overrides,
+  };
+}
+
+function claimRecord(overrides: Partial<Extract<CoverageRecordKind, { kind: "claim" }>> = {}): CoverageRecordKind {
+  return {
+    kind: "claim",
+    anchorName: "projects/demo/demo.md",
+    line: 1,
+    state: "structured",
+    reasons: [],
+    suggestedOperations: [],
+    ...overrides,
+  };
+}
 
 function validMeta(overrides: Partial<AnchorMeta> = {}): AnchorMeta {
   return {

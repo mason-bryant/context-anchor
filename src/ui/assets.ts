@@ -139,6 +139,7 @@ export const UI_HTML = `<!doctype html>
             <button class="tab" data-tab="mappings" type="button"><span class="icon-label"><svg class="icon" aria-hidden="true"><use href="#icon-filter"></use></svg><span>Mappings</span></span></button>
             <button class="tab" data-tab="review" type="button"><span class="icon-label"><svg class="icon" aria-hidden="true"><use href="#icon-save"></use></svg><span>Review</span></span></button>
             <button class="tab" data-tab="traces" type="button"><span class="icon-label"><svg class="icon" aria-hidden="true"><use href="#icon-plan"></use></svg><span>Traces</span></span></button>
+            <button class="tab" data-tab="coverage" type="button"><span class="icon-label"><svg class="icon" aria-hidden="true"><use href="#icon-object-graph"></use></svg><span>Coverage</span></span></button>
             <button class="tab" data-tab="detail" type="button" disabled><span class="icon-label"><svg class="icon" aria-hidden="true"><use href="#icon-anchor"></use></svg><span>Selected Anchor</span></span></button>
           </nav>
 
@@ -515,6 +516,44 @@ export const UI_HTML = `<!doctype html>
                 <tbody id="traces-dry-rows"></tbody>
               </table>
             </div>
+          </section>
+
+          <section id="coverage-view" class="view">
+            <div class="view-header">
+              <div>
+                <h2>Schema Coverage</h2>
+                <p id="coverage-summary">Structural coverage across every anchor and claim.</p>
+              </div>
+              <div class="tasks-filters">
+                <button id="coverage-refresh" type="button">Refresh</button>
+              </div>
+            </div>
+            <div id="coverage-cards" class="coverage-cards" role="group" aria-label="Coverage summary and state filters"></div>
+            <div class="coverage-filters">
+              <label>
+                Project
+                <select id="coverage-project-filter" aria-label="Filter coverage by project">
+                  <option value="">All projects</option>
+                </select>
+              </label>
+              <label>
+                Anchor name contains
+                <input id="coverage-text-filter" type="search" placeholder="e.g. roadmap" aria-label="Filter coverage by anchor name">
+              </label>
+              <button id="coverage-clear-filters" type="button">Clear filters</button>
+            </div>
+            <div id="coverage-empty" class="empty-state" hidden>No loaded coverage records match the current filters. If more pages are available, Load more may reveal matches.</div>
+            <div class="markdown-table-scroll">
+              <table id="coverage-table" hidden>
+                <caption class="sr-only">Structural coverage records for anchors and claims</caption>
+                <thead>
+                  <tr><th scope="col">Kind</th><th scope="col">Anchor</th><th scope="col">State</th><th scope="col">Reasons</th><th scope="col">Suggested operations</th></tr>
+                </thead>
+                <tbody id="coverage-rows"></tbody>
+              </table>
+            </div>
+            <p id="coverage-count" class="coverage-count" aria-live="polite"></p>
+            <button id="coverage-load-more" type="button" hidden>Load more</button>
           </section>
 
           <section id="detail-view" class="view">
@@ -2886,6 +2925,123 @@ textarea {
   font-size: 12px;
   color: var(--muted);
 }
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.coverage-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.coverage-card {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px;
+  background: var(--panel);
+  box-shadow: var(--shadow);
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.coverage-card strong {
+  font-size: 20px;
+  line-height: 1.2;
+}
+
+.coverage-card span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.coverage-card.active {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent) inset;
+}
+
+.coverage-card.coverage-card-total {
+  cursor: default;
+  background: var(--panel-strong);
+}
+
+.coverage-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: flex-end;
+  margin-bottom: 12px;
+}
+
+.coverage-filters label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.coverage-filters select,
+.coverage-filters input[type="search"] {
+  font: inherit;
+  font-size: 13px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 4px 8px;
+  color: var(--text);
+  min-width: 200px;
+}
+
+#coverage-table th,
+#coverage-table td {
+  text-align: left;
+  vertical-align: top;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+  font-size: 13px;
+}
+
+#coverage-table .coverage-reason,
+#coverage-table .coverage-operation {
+  display: block;
+  margin-bottom: 4px;
+}
+
+#coverage-table .coverage-reason:last-child,
+#coverage-table .coverage-operation:last-child {
+  margin-bottom: 0;
+}
+
+#coverage-table .coverage-reason-code,
+#coverage-table .coverage-operation-code {
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 11px;
+  color: var(--muted);
+  margin-right: 5px;
+}
+
+.coverage-count {
+  font-size: 12px;
+  color: var(--muted);
+  margin: 10px 0;
+}
 `;
 
 export const UI_JS = `(function () {
@@ -2930,6 +3086,9 @@ export const UI_JS = `(function () {
     "tasksModifiedAfter",
     "tasksNoDue",
     "tasksUnassigned",
+    "coverageProject",
+    "coverageStates",
+    "coverageSearch",
     // Legacy standalone Claims tab parameters; keep them here so URL rewrites
     // drop stale filters after that tab was folded into inline anchor editing.
     "claimsProject",
@@ -3007,7 +3166,23 @@ export const UI_JS = `(function () {
     claimPersonMatchCache: [],
     claimPersonSearchTimer: null,
     claimPersonSearchSeq: 0,
-    claimPersonInput: null
+    claimPersonInput: null,
+    coverage: null,
+    coverageRecords: [],
+    coverageNextCursor: null,
+    coverageLoading: false,
+    coverageLoadMoreLoading: false,
+    // Monotonic id guarding coverage loads against out-of-order responses;
+    // see loadCoverage/loadMoreCoverage (mirrors anchorLoadId above).
+    coverageLoadId: 0,
+    coverageProject: "",
+    coverageStates: [],
+    coverageText: "",
+    // Union of every project slug seen across any coverage load, so the
+    // project filter's own option list never shrinks just because a project
+    // filter is currently narrowing state.coverageRecords server-side (the
+    // dropdown must still offer every other project to switch back to).
+    coverageKnownProjects: []
   };
 
   var categories = ["", "server-rules", "agent-rules", "projects", "invariants", "conflicts", "shared", "archive"];
@@ -3103,7 +3278,7 @@ export const UI_JS = `(function () {
   }
 
   function validTab(value) {
-    return value === "root" || value === "planner" || value === "tasks" || value === "traces" || value === "people" || value === "teams" || value === "mappings" || value === "review" || value === "detail" ? value : null;
+    return value === "root" || value === "planner" || value === "tasks" || value === "traces" || value === "coverage" || value === "people" || value === "teams" || value === "mappings" || value === "review" || value === "detail" ? value : null;
   }
 
   function validRootMode(value) {
@@ -3127,6 +3302,136 @@ export const UI_JS = `(function () {
       || value === "modifiedDesc"
       ? value
       : DEFAULT_TASK_SORT;
+  }
+
+  // ---------------------------------------------------------------------
+  // Schema Coverage tab (Goal 0 Phase 2, WP-B). Mirrors, in plain ES5, the
+  // pure filtering/labeling/URL-round-trip/cursor-append semantics unit
+  // tested in src/ui/viewModel.ts (that module cannot be imported into this
+  // browser-served string -- see UI_JS's own module boundary -- so the
+  // logic is intentionally duplicated here, the same way Tasks' group/sort
+  // validators and taskGroupsForDisplay have no server-side counterpart).
+  // ---------------------------------------------------------------------
+  var COVERAGE_STATE_ORDER = ["malformed", "dangling", "ambiguous", "partial", "structured", "prose_only"];
+  var COVERAGE_STATE_LABELS = {
+    structured: "Structured",
+    partial: "Partial",
+    prose_only: "Prose only",
+    ambiguous: "Ambiguous",
+    dangling: "Dangling",
+    malformed: "Malformed"
+  };
+  var COVERAGE_PAGE_LIMIT = 100;
+
+  function isValidCoverageState(value) {
+    return Object.prototype.hasOwnProperty.call(COVERAGE_STATE_LABELS, value);
+  }
+
+  function validCoverageStates(raw) {
+    if (!raw) {
+      return [];
+    }
+    // Dedupe in order: states has set semantics, and a repeated URL token
+    // (states=dangling,dangling) would make a single card toggle remove only
+    // one occurrence. Mirrors coverageFiltersFromUrlParams in
+    // src/ui/viewModel.ts.
+    var seen = {};
+    return String(raw).split(",").map(function (value) {
+      return value.trim();
+    }).filter(function (value) {
+      if (!isValidCoverageState(value) || seen[value]) {
+        return false;
+      }
+      seen[value] = true;
+      return true;
+    });
+  }
+
+  // Coverage helpers below (coverageStateLabel, coverageKindLabel,
+  // coverageRecordKey, appendCoverageRecords, filterCoverageRecords) are ES5
+  // mirrors of the same-named unit-tested exports in src/ui/viewModel.ts;
+  // behavior changes must land in both. The URL round-trip and server query
+  // mirrors are annotated at their sites (coverageQueryString and the
+  // coverage blocks in applyUrlStateToControls/paramsForState).
+  function coverageStateLabel(state) {
+    return COVERAGE_STATE_LABELS[state] || state;
+  }
+
+  function coverageKindLabel(kind) {
+    return kind === "claim" ? "Claim" : "Anchor";
+  }
+
+  function coverageRecordKey(record) {
+    var line = record.kind === "claim" ? record.line : -1;
+    return record.kind + "\\n" + record.anchorName + "\\n" + line;
+  }
+
+  function appendCoverageRecords(existing, nextPage) {
+    var seen = {};
+    existing.forEach(function (record) {
+      seen[coverageRecordKey(record)] = true;
+    });
+    var appended = nextPage.filter(function (record) {
+      var key = coverageRecordKey(record);
+      if (seen[key]) {
+        return false;
+      }
+      seen[key] = true;
+      return true;
+    });
+    return existing.concat(appended);
+  }
+
+  function deriveCoverageProjects(records) {
+    var set = {};
+    records.forEach(function (record) {
+      if (record.kind === "anchor" && record.projectSlug) {
+        set[record.projectSlug] = true;
+      }
+    });
+    return Object.keys(set).sort();
+  }
+
+  function currentCoverageFilters() {
+    return {
+      project: controlValue("coverage-project-filter", state.coverageProject),
+      states: state.coverageStates || [],
+      text: controlValue("coverage-text-filter", state.coverageText).trim().toLowerCase()
+    };
+  }
+
+  function filterCoverageRecords(records, filters) {
+    var stateSet = filters.states && filters.states.length > 0 ? {} : null;
+    if (stateSet) {
+      filters.states.forEach(function (value) { stateSet[value] = true; });
+    }
+    var text = filters.text;
+    // Project scoping is server-side only (the project= query param): claim
+    // records carry no projectSlug, so a client-side project comparison
+    // would silently drop every claim row. Mirrors filterCoverageRecords in
+    // src/ui/viewModel.ts.
+    return records.filter(function (record) {
+      if (stateSet && !stateSet[record.state]) {
+        return false;
+      }
+      if (text && record.anchorName.toLowerCase().indexOf(text) === -1) {
+        return false;
+      }
+      return true;
+    });
+  }
+
+  // Mirrors coverageQueryParams in src/ui/viewModel.ts.
+  function coverageQueryString(filters, cursor) {
+    var qs = [];
+    // Trim like coverageQueryParams (the viewModel mirror) does: whitespace
+    // around a project slug must not reach the server as part of project=.
+    var project = (filters.project || "").trim();
+    if (project) qs.push("project=" + encodeURIComponent(project));
+    if (filters.states && filters.states.length > 0) qs.push("states=" + encodeURIComponent(filters.states.join(",")));
+    qs.push("limit=" + COVERAGE_PAGE_LIMIT);
+    if (cursor) qs.push("cursor=" + encodeURIComponent(cursor));
+    return qs.join("&");
   }
 
   function todayIso() {
@@ -3226,6 +3531,16 @@ export const UI_JS = `(function () {
     setControlValue("tasks-modified-after", state.tasksModifiedAfter);
     setControlChecked("tasks-no-due", state.tasksNoDue);
     setControlChecked("tasks-unassigned", state.tasksUnassigned);
+
+    // Mirrors coverageFiltersFromUrlParams in src/ui/viewModel.ts (the URL
+    // round-trip runs through this generic tab URL wiring, not a dedicated
+    // coverage function). Trimmed on read like the viewModel helper, so a
+    // whitespace-padded URL never populates controls with stray spaces.
+    state.coverageProject = (params.get("coverageProject") || "").trim();
+    state.coverageStates = validCoverageStates(params.get("coverageStates"));
+    state.coverageText = (params.get("coverageSearch") || "").trim();
+    setSelectValueAllowingNew("coverage-project-filter", state.coverageProject);
+    setControlValue("coverage-text-filter", state.coverageText);
   }
 
   function urlForState(overrides) {
@@ -3320,6 +3635,17 @@ export const UI_JS = `(function () {
     if (controlChecked("tasks-unassigned", state.tasksUnassigned)) {
       params.set("tasksUnassigned", "true");
     }
+
+    // Mirrors coverageUrlParamsFromFilters in src/ui/viewModel.ts (see the
+    // matching read-side note in applyUrlStateToControls). Trimmed before
+    // setParam so a whitespace-only value is omitted (setParam treats any
+    // non-empty string as truthy) instead of becoming a sticky,
+    // non-functional URL filter.
+    setParam(params, "coverageProject", controlValue("coverage-project-filter", sourceParams.get("coverageProject") || "").trim());
+    if (state.coverageStates && state.coverageStates.length > 0) {
+      params.set("coverageStates", state.coverageStates.join(","));
+    }
+    setParam(params, "coverageSearch", controlValue("coverage-text-filter", sourceParams.get("coverageSearch") || "").trim());
 
     return params;
   }
@@ -3820,6 +4146,9 @@ export const UI_JS = `(function () {
     }
     if (state.activeTab === "traces" && !state.traces) {
       await loadTraces();
+    }
+    if (state.activeTab === "coverage" && !state.coverage) {
+      await loadCoverage();
     }
     // Anchors are now loaded; re-render the registry views so soft project-slug
     // validation (which reads state.anchors) runs even when the user landed
@@ -5001,6 +5330,20 @@ export const UI_JS = `(function () {
     showTab("traces");
     if (!state.traces && !state.tracesLoading) {
       loadTraces();
+    }
+  }
+
+  function showCoverageView(options) {
+    var opts = options || {};
+    if (!opts.skipLocationUpdate) {
+      updateLocationFromState({ anchor: null, view: "coverage", history: "push" });
+    }
+    state.pendingAnchor = null;
+    showTab("coverage");
+    if (!state.coverage && !state.coverageLoading) {
+      loadCoverage();
+    } else {
+      renderCoverage();
     }
   }
 
@@ -6229,6 +6572,216 @@ export const UI_JS = `(function () {
         });
       }
     });
+  }
+
+  function mergeCoverageKnownProjects(records) {
+    var seen = {};
+    state.coverageKnownProjects.forEach(function (project) { seen[project] = true; });
+    deriveCoverageProjects(records).forEach(function (project) { seen[project] = true; });
+    state.coverageKnownProjects = Object.keys(seen).sort();
+  }
+
+  // Monotonic load id guarding against out-of-order responses (mirrors the
+  // anchor list's anchorLoadId pattern): refresh, state-card toggles, and
+  // project changes can all fire loadCoverage while an older request is
+  // in-flight, and an older response resolving later must not overwrite the
+  // newer dataset. loadMoreCoverage captures the CURRENT id without
+  // incrementing (it extends the active dataset rather than replacing it),
+  // so any reload invalidates a pending load-more automatically.
+  async function loadCoverage() {
+    state.coverageLoadId += 1;
+    var loadId = state.coverageLoadId;
+    state.coverageLoading = true;
+    // A reload invalidates any in-flight load-more (its captured id no
+    // longer matches), so clear its UI flag immediately — otherwise the new
+    // dataset could render with "Load more" stuck disabled/"Loading..."
+    // until the stale request settles.
+    state.coverageLoadMoreLoading = false;
+    var filters = currentCoverageFilters();
+    try {
+      var result = await api("/api/ui/graph-coverage?" + coverageQueryString(filters));
+      if (loadId !== state.coverageLoadId) {
+        return;
+      }
+      state.coverage = result;
+      state.coverageRecords = result.records || [];
+      state.coverageNextCursor = result.nextCursor || null;
+      mergeCoverageKnownProjects(state.coverageRecords);
+      renderCoverage();
+    } catch (error) {
+      if (loadId === state.coverageLoadId) {
+        setBanner(error.message, "error");
+      }
+    } finally {
+      if (loadId === state.coverageLoadId) {
+        state.coverageLoading = false;
+      }
+    }
+  }
+
+  async function loadMoreCoverage() {
+    if (!state.coverageNextCursor || state.coverageLoadMoreLoading) {
+      return;
+    }
+    var loadId = state.coverageLoadId;
+    state.coverageLoadMoreLoading = true;
+    var filters = currentCoverageFilters();
+    try {
+      var result = await api("/api/ui/graph-coverage?" + coverageQueryString(filters, state.coverageNextCursor));
+      if (loadId !== state.coverageLoadId) {
+        return;
+      }
+      state.coverageRecords = appendCoverageRecords(state.coverageRecords, result.records || []);
+      state.coverageNextCursor = result.nextCursor || null;
+      mergeCoverageKnownProjects(result.records || []);
+      renderCoverage();
+    } catch (error) {
+      if (loadId === state.coverageLoadId) {
+        setBanner(error.message, "error");
+      }
+    } finally {
+      // Only the load-more that still owns the current dataset clears the
+      // flag: a stale one settling late must not release the re-entry guard
+      // out from under a newer load-more (loadCoverage already cleared the
+      // flag for the stale one at reload time).
+      if (loadId === state.coverageLoadId) {
+        state.coverageLoadMoreLoading = false;
+      }
+    }
+  }
+
+  function coverageReasonsHtml(reasons) {
+    if (!reasons || reasons.length === 0) {
+      return "<span>None</span>";
+    }
+    return reasons.map(function (reason) {
+      var location = reason.line ? " (line " + escapeHtml(String(reason.line)) + ")" : "";
+      return "<span class=\\"coverage-reason\\"><span class=\\"coverage-reason-code\\">" + escapeHtml(reason.code) + "</span>" + escapeHtml(reason.message) + escapeHtml(location) + "</span>";
+    }).join("");
+  }
+
+  function coverageOperationsHtml(operations) {
+    if (!operations || operations.length === 0) {
+      return "<span>None</span>";
+    }
+    // Inert labels only -- there is no write tooling yet, so these are never
+    // rendered as buttons that pretend to migrate anything.
+    return operations.map(function (operation) {
+      return "<span class=\\"coverage-operation\\"><span class=\\"coverage-operation-code\\">" + escapeHtml(operation.code) + "</span>" + escapeHtml(operation.message) + "</span>";
+    }).join("");
+  }
+
+  function coverageRowHtml(record) {
+    var anchorLink = "<a href=\\"" + escapeHtml(anchorHref(record.anchorName)) + "\\" data-anchor-name=\\"" + escapeHtml(record.anchorName) + "\\">" + escapeHtml(record.anchorName) + "</a>";
+    var lineSuffix = record.kind === "claim" ? " (line " + escapeHtml(String(record.line)) + ")" : "";
+    return "<tr>"
+      + "<td>" + escapeHtml(coverageKindLabel(record.kind)) + "</td>"
+      + "<td>" + anchorLink + lineSuffix + "</td>"
+      + "<td><span class=\\"badge\\">" + escapeHtml(coverageStateLabel(record.state)) + "</span></td>"
+      + "<td>" + coverageReasonsHtml(record.reasons) + "</td>"
+      + "<td>" + coverageOperationsHtml(record.suggestedOperations) + "</td>"
+      + "</tr>";
+  }
+
+  function coverageCardHtml(key, count, label, active, isTotal) {
+    var classes = "coverage-card" + (active ? " active" : "") + (isTotal ? " coverage-card-total" : "");
+    var tag = isTotal ? "div" : "button";
+    var typeAttr = isTotal ? "" : " type=\\"button\\"";
+    var pressedAttr = isTotal ? "" : " aria-pressed=\\"" + (active ? "true" : "false") + "\\"";
+    var dataAttr = isTotal ? "" : " data-coverage-state=\\"" + escapeHtml(key) + "\\"";
+    return "<" + tag + " class=\\"" + classes + "\\"" + typeAttr + pressedAttr + dataAttr + ">"
+      + "<strong>" + escapeHtml(String(count)) + "</strong><span>" + escapeHtml(label) + "</span>"
+      + "</" + tag + ">";
+  }
+
+  function renderCoverageCards() {
+    var data = state.coverage;
+    var container = el("coverage-cards");
+    if (!data) {
+      container.innerHTML = "";
+      return;
+    }
+    var summary = data.summary || { totalAnchors: 0, totalClaims: 0, byState: {} };
+    var activeStates = {};
+    (state.coverageStates || []).forEach(function (value) { activeStates[value] = true; });
+    var cards = [];
+    cards.push(coverageCardHtml("total", summary.totalAnchors + summary.totalClaims, "Total anchors + claims", false, true));
+    COVERAGE_STATE_ORDER.forEach(function (stateKey) {
+      var count = (summary.byState && summary.byState[stateKey]) || 0;
+      cards.push(coverageCardHtml(stateKey, count, coverageStateLabel(stateKey), !!activeStates[stateKey], false));
+    });
+    var duplicateCount = (data.duplicateAnchorIds || []).length;
+    if (duplicateCount > 0) {
+      cards.push(coverageCardHtml("duplicate", duplicateCount, "Duplicate anchor_id", false, true));
+    }
+    container.innerHTML = cards.join("");
+    container.querySelectorAll("[data-coverage-state]").forEach(function (button) {
+      button.addEventListener("click", function () {
+        toggleCoverageStateFilter(button.dataset.coverageState);
+      });
+    });
+  }
+
+  function toggleCoverageStateFilter(stateKey) {
+    var current = state.coverageStates || [];
+    var idx = current.indexOf(stateKey);
+    if (idx === -1) {
+      state.coverageStates = current.concat([stateKey]);
+    } else {
+      state.coverageStates = current.slice(0, idx).concat(current.slice(idx + 1));
+    }
+    updateLocationFromState({ anchor: null, view: "coverage", history: "push" });
+    state.coverage = null;
+    state.coverageRecords = [];
+    state.coverageNextCursor = null;
+    loadCoverage();
+  }
+
+  function refreshCoverageProjectOptions() {
+    var select = el("coverage-project-filter");
+    var current = controlValue("coverage-project-filter", state.coverageProject);
+    var projects = state.coverageKnownProjects || [];
+    select.innerHTML = optionList(projects, "All projects");
+    setSelectValueAllowingNew("coverage-project-filter", current);
+  }
+
+  function renderCoverage() {
+    renderCoverageCards();
+    refreshCoverageProjectOptions();
+    var filters = currentCoverageFilters();
+    var filtered = filterCoverageRecords(state.coverageRecords, filters);
+    var tableEl = el("coverage-table");
+    var emptyEl = el("coverage-empty");
+    var bodyEl = el("coverage-rows");
+    var countEl = el("coverage-count");
+    var loadMoreEl = el("coverage-load-more");
+    var summaryEl = el("coverage-summary");
+
+    if (state.coverage && state.coverage.summary) {
+      var summary = state.coverage.summary;
+      // The endpoint scopes server-side when a project filter is set, so the
+      // summary must name the scope instead of claiming "across the tree".
+      var activeProject = controlValue("coverage-project-filter", state.coverageProject).trim();
+      var scopeText = activeProject ? " in project " + activeProject + "." : " across the tree.";
+      summaryEl.textContent = summary.totalAnchors + " anchor" + (summary.totalAnchors === 1 ? "" : "s") + " · " + summary.totalClaims + " claim" + (summary.totalClaims === 1 ? "" : "s") + scopeText;
+    }
+
+    if (filtered.length === 0) {
+      tableEl.hidden = true;
+      emptyEl.hidden = false;
+      bodyEl.innerHTML = "";
+    } else {
+      emptyEl.hidden = true;
+      tableEl.hidden = false;
+      bodyEl.innerHTML = filtered.map(coverageRowHtml).join("");
+    }
+
+    var totalMatching = state.coverage ? state.coverage.totalMatching : 0;
+    countEl.textContent = "Showing " + filtered.length + " of " + (state.coverageRecords || []).length + " loaded record" + ((state.coverageRecords || []).length === 1 ? "" : "s") + " (" + totalMatching + " match the server-side filters" + (state.coverageNextCursor ? "; more available" : "") + ").";
+
+    loadMoreEl.hidden = !state.coverageNextCursor;
+    loadMoreEl.disabled = !!state.coverageLoadMoreLoading;
+    loadMoreEl.textContent = state.coverageLoadMoreLoading ? "Loading..." : "Load more";
   }
 
   async function openDrySessionTimeline(sessionId) {
@@ -9663,6 +10216,8 @@ export const UI_JS = `(function () {
       showPlanner({ skipLocationUpdate: true });
     } else if (state.activeTab === "tasks") {
       showTasksView({ skipLocationUpdate: true });
+    } else if (state.activeTab === "coverage") {
+      showCoverageView({ skipLocationUpdate: true });
     } else if (state.activeTab === "people") {
       showPeopleView({ skipLocationUpdate: true });
     } else if (state.activeTab === "teams") {
@@ -9915,6 +10470,10 @@ export const UI_JS = `(function () {
           showTracesView();
           return;
         }
+        if (button.dataset.tab === "coverage") {
+          showCoverageView();
+          return;
+        }
         if (button.dataset.tab === "people") {
           showPeopleView();
           return;
@@ -9974,6 +10533,45 @@ export const UI_JS = `(function () {
       state.dryQueriesThinNoFollowUp = el("traces-dry-thin").checked;
       state.dryQueries = null;
       loadDryQueries();
+    });
+    el("coverage-refresh").addEventListener("click", function () {
+      state.coverage = null;
+      state.coverageRecords = [];
+      state.coverageNextCursor = null;
+      loadCoverage();
+    });
+    el("coverage-project-filter").addEventListener("change", function () {
+      // Reload from the server (like the state-card filter) rather than just
+      // re-rendering: project scoping affects claim records too (a claim has
+      // no projectSlug of its own -- only its owning anchor does -- so a
+      // client-side-only project filter would silently drop every claim row)
+      // and keeps "Load more" paging within the same project scope.
+      state.coverageProject = controlValue("coverage-project-filter", state.coverageProject);
+      updateLocationFromState({ anchor: null, view: "coverage", history: "push" });
+      state.coverage = null;
+      state.coverageRecords = [];
+      state.coverageNextCursor = null;
+      loadCoverage();
+    });
+    el("coverage-text-filter").addEventListener("input", debounce(function () {
+      state.coverageText = controlValue("coverage-text-filter", state.coverageText);
+      updateLocationFromState({ anchor: null, view: "coverage", history: "replace" });
+      renderCoverage();
+    }, 150));
+    el("coverage-clear-filters").addEventListener("click", function () {
+      state.coverageProject = "";
+      state.coverageStates = [];
+      state.coverageText = "";
+      setControlValue("coverage-project-filter", "");
+      setControlValue("coverage-text-filter", "");
+      updateLocationFromState({ anchor: null, view: "coverage", history: "push" });
+      state.coverage = null;
+      state.coverageRecords = [];
+      state.coverageNextCursor = null;
+      loadCoverage();
+    });
+    el("coverage-load-more").addEventListener("click", function () {
+      loadMoreCoverage().catch(function (error) { setBanner(error.message, "error"); });
     });
     el("mappings-save").addEventListener("click", function () { saveProjectMappings(); });
     el("mappings-refresh").addEventListener("click", function () {

@@ -79,6 +79,36 @@ describe("UI HTTP routes", () => {
     expect(html).toContain("/ui/app.js");
   });
 
+  it("includes the Schema Coverage tab shell (cards, filter rail, and an accessible records table) in the UI HTML", async () => {
+    const response = await fetch(`${baseUrl}/ui`);
+    const html = await response.text();
+
+    expect(response.status).toBe(200);
+    // Tab nav button.
+    expect(html).toContain('data-tab="coverage"');
+    expect(html).toContain(">Coverage<");
+    // The view shell: summary/state cards container, filter rail, and a real
+    // <table> with <th scope="col"> headers (accessible, not color-only).
+    expect(html).toContain('id="coverage-view"');
+    expect(html).toContain('id="coverage-cards"');
+    expect(html).toContain('id="coverage-project-filter"');
+    expect(html).toContain('id="coverage-text-filter"');
+    expect(html).toContain('id="coverage-table"');
+    expect(html).toContain('scope="col"');
+    expect(html).toContain('id="coverage-load-more"');
+  });
+
+  it("serves Coverage tab filtering/rendering logic in the UI JS bundle", async () => {
+    const response = await fetch(`${baseUrl}/ui/app.js`);
+    const js = await response.text();
+
+    expect(response.status).toBe(200);
+    expect(js).toContain("function loadCoverage");
+    expect(js).toContain("function filterCoverageRecords");
+    expect(js).toContain("function showCoverageView");
+    expect(js).toContain("/api/ui/graph-coverage");
+  });
+
   it("serves the local Mermaid browser bundle without API auth", async () => {
     const response = await fetch(`${baseUrl}/ui/vendor/mermaid/mermaid.esm.min.mjs`);
     const js = await response.text();
