@@ -82,7 +82,9 @@ export const validateAnchorIdIntegrity: Validator = async (context) => {
     return [];
   }
 
-  const metas = await context.repo.listAnchors();
+  // includeArchive: uniqueness is tree-wide, archived anchors included —
+  // mirrors collectTreeAnchorIds in src/anchorService.ts.
+  const metas = await context.repo.listAnchors({ includeArchive: true });
   for (const meta of metas) {
     if (isBuiltInAnchorName(meta.name) || meta.name === context.name) {
       continue;

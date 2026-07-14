@@ -2034,7 +2034,10 @@ None.
    * whose ids the caller supplies separately from its in-flight content).
    */
   private async collectTreeClaimIds(excludeAnchor?: string): Promise<Set<string>> {
-    const metas = await this.repo.listAnchors();
+    // includeArchive: same tree-wide identity rule as collectTreeAnchorIds
+    // below — a claim id minted today must not collide with one living in an
+    // archived anchor that may be unarchived later.
+    const metas = await this.repo.listAnchors({ includeArchive: true });
     const ids = new Set<string>();
     for (const meta of metas) {
       if (isBuiltInAnchorName(meta.name) || meta.name === excludeAnchor) {
@@ -2061,7 +2064,10 @@ None.
    * the caller supplies separately from its in-flight content).
    */
   private async collectTreeAnchorIds(excludeAnchor?: string): Promise<Map<string, string>> {
-    const metas = await this.repo.listAnchors();
+    // includeArchive: identity uniqueness is TREE-wide — an archived anchor
+    // keeps its anchor_id, and unarchiving one must never collide with an id
+    // minted or accepted while it sat in archive/.
+    const metas = await this.repo.listAnchors({ includeArchive: true });
     const ids = new Map<string, string>();
     for (const meta of metas) {
       if (isBuiltInAnchorName(meta.name) || meta.name === excludeAnchor) {

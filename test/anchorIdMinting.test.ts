@@ -370,6 +370,40 @@ describe("mint-on-create: anchor_id + schema_version", () => {
     expect(result.warnings.some((w) => w.severity === "BLOCK" && w.code === "generated_file_reserved")).toBe(true);
   });
 
+  it("duplicate checks see ARCHIVED anchors: a create supplying an archived anchor's id blocks", async () => {
+    // listAnchors() excludes archive/ by default; identity uniqueness is
+    // tree-wide, so the id scans must pass includeArchive — otherwise
+    // unarchiving would surface a collision minted while the anchor sat in
+    // archive/.
+    await repo.commitAnchor({
+      name: "archive/old-anchor.md",
+      content: anchorContent({ anchorId: "a-arch01" }),
+      message: "test: seed archived anchor with an id",
+    });
+
+    const create = await service.writeAnchor({
+      name: "projects/demo/new-anchor.md",
+      content: anchorContent({ anchorId: "a-arch01" }),
+      message: "test: create colliding with archived id",
+    });
+    expect(create.warnings.some((w) => w.severity === "BLOCK" && w.code === "anchor_id_duplicate")).toBe(true);
+
+    // The update-time adoption path (the validator's own scan) must see
+    // archived ids too: an id-less legacy anchor (seeded via direct repo
+    // commit, bypassing mint-on-create) adopting the archived id must block.
+    await repo.commitAnchor({
+      name: "projects/demo/legacy.md",
+      content: anchorContent(),
+      message: "test: seed id-less legacy anchor",
+    });
+    const adoptArchived = await service.writeAnchor({
+      name: "projects/demo/legacy.md",
+      content: anchorContent({ anchorId: "a-arch01" }),
+      message: "test: adopt archived id on update",
+    });
+    expect(adoptArchived.warnings.some((w) => w.severity === "BLOCK" && w.code === "anchor_id_duplicate")).toBe(true);
+  });
+
   it("CONCURRENT creates supplying the same anchor_id: exactly one commits, the other blocks (writeAnchor is serialized)", async () => {
     // TOCTOU regression guard (review feedback on #89): the tree snapshot for
     // the duplicate check is read outside the repo's commit lock, so without
