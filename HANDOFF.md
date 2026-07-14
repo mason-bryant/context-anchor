@@ -1,246 +1,188 @@
-# Goal 0 Phase 1 — Semantic substrate: handoff
+# Goal 0 Phase 2, WP-B — Schema Coverage UI (cards + synchronized table): handoff
 
-Branch: `feat/goal0-substrate-phase1` (off `main`). All six work packages
-complete, each as a separate commit. Authoritative plan:
-`ai-output/markdowns/context-conductor/goal0_semantic_substrate_implementation_plan.md`
-(referenced below as "the plan"); background design:
-`knowledge_graph_visualization_design_and_roadmap.md`, "Goal 0 -- Structured
-anchor substrate and graph contract".
+Branch: `feat/goal0-coverage-ui` (off `main`, i.e. off the merged Phase 1 PR
+#88 / `afa16f2`). Authoritative plan: WP-B section of
+`ai-output/markdowns/context-conductor/goal0_phase2_mint_on_create_and_coverage_ui_plan.md`
+("the plan" below); background design in
+`goal0_semantic_substrate_implementation_plan.md` and the Goal 0 section of
+`knowledge_graph_visualization_design_and_roadmap.md` (that doc's original
+canvas-based "Visualization deliverable" text is explicitly superseded by
+the plan's WP-B section, which is the no-canvas cards+table revision).
+
+This is one of two independent Phase 2 work packages running in parallel
+(WP-A owns mint-on-create, in `feat/goal0-mint-on-create`, a separate
+branch/worktree). Per the plan's file-ownership split, this work touched
+only `src/ui/assets.ts`, `src/ui/viewModel.ts`, and tests.
+`src/anchorService.ts` write paths, `src/validators/*`, and `src/graph/*`
+were not touched (only type-only imports of `CoverageRecordKind`/
+`CoverageState` from `src/graph/coverage.ts` into `src/ui/viewModel.ts`,
+matching the existing precedent in `src/ui/routes.ts`). `src/ui/routes.ts`
+itself needed no changes — every field the UI needed (`records`,
+`nextCursor`, `totalMatching`, `limit`, `summary`, `duplicateAnchorIds`)
+was already present on `GET /api/ui/graph-coverage`.
 
 ## Final status
 
 - `npm run typecheck`: clean.
-- `npm test`: **924 tests passing, 44 files, 0 failures.**
-- No changes to `src/ui/assets.ts`, planner behavior, existing write paths,
-  or existing v1 canonical node IDs/constructors (verified via `git diff
-  main...HEAD -- src/graph/model.ts`: the only change is five new
-  `GraphEdgeType` union members, additive).
+- `npm test`: **953 tests passing, 44 files, 0 failures.**
+- Commits (2, each typecheck+test green):
+  1. Pure Schema Coverage view-model helpers in `src/ui/viewModel.ts`
+     (state/kind labeling, project derivation, filtering, URL round-trip,
+     cursor-append de-duplication) with 23 new unit tests in
+     `test/uiViewModel.test.ts`.
+  2. The browser Coverage tab itself in `src/ui/assets.ts` (plain ES5,
+     matching every other tab), plus 2 new HTTP smoke tests in
+     `test/uiHttp.test.ts` asserting the tab shell and JS bundle contents.
 
-## What each work package delivered
+## What was delivered
 
-### WP1 — Identity contract module and fixtures (`8d13e65`)
+### Pure view-model helpers (`src/ui/viewModel.ts`)
 
-- `src/ids.ts` (new): extracted `randomBase36`/`mintPrefixedId` out of
-  `src/claims.ts` so `mintClaimId` (`c-` prefix) and the new `mintAnchorId`
-  (`a-` prefix) share one byte-identical collision-growth algorithm.
-- `src/graph/identity.ts` (new): `GRAPH_IDENTITY_VERSION = 2`,
-  `ANCHOR_ID_PATTERN`/`isValidAnchorId`, `mintAnchorId`, v2 canonical
-  constructors (`anchorNodeIdV2`, `goalNodeIdV2`, `milestoneNodeIdV2`,
-  `taskNodeIdV2`, `sectionNodeIdV2`, `claimNodeIdV2`) living alongside (never
-  replacing) the v1 constructors in `src/graph/model.ts`, plus
-  `anchorIdFromFrontmatter` and `buildIdentityCompatibilityMap`.
-- Tests: `test/graphIdentity.test.ts` (24 tests) — format validation, mint
-  uniqueness/collision growth, v2 constructor shapes, the "G-001 in two
-  projects produces two distinct v2 goal ids" acceptance case, and
-  compatibility-map round-trips including `unmapped` reporting.
-- `mintClaimId`'s own tests (in `test/claims.test.ts`) pass unmodified,
-  confirming byte-identical behavior after the refactor.
+Exported, unit-tested pure functions over the `graphCoverage` response
+shape: `coverageStateLabel`/`coverageKindLabel` (badge/label text — never a
+bare code), `deriveCoverageProjects` (anchor-scoped project derivation,
+since claim records have no `projectSlug` of their own), `filterCoverageRecords`
+(state/project/anchor-text AND filtering), `coverageQueryParams` (server
+query-string shape), `coverageFiltersFromUrlParams`/`coverageUrlParamsFromFilters`
+(URL round-trip, dropping unknown state tokens instead of throwing), and
+`coverageRecordKey`/`appendCoverageRecords` (stable per-record identity and
+de-duplicated cursor-page append). `COVERAGE_STATE_ORDER` fixes card/badge
+display order to the plan's precedence (`malformed > dangling > ambiguous >
+partial`, then the two mutually-exclusive ends `structured`/`prose_only`).
 
-### WP2 — `anchor_id`/`schema_version` front-matter support (`d8735e6`)
+These functions are **not called from the browser bundle** — `UI_JS` is a
+raw template-string const served as-is with no bundler/transpile step, so
+it cannot `import` from a TS module (same reason Tasks' `validTasksGroupBy`/
+`taskGroupsForDisplay` have no server-side counterpart anywhere in the
+codebase today). They exist as the pure, tested specification of the
+filtering/URL/cursor semantics; the browser code below is an independent
+plain-ES5 mirror of the same behavior.
 
-- `src/validators/frontMatter.ts`: `AnchorFrontmatterSchema` (now exported,
-  see WP5 below) gains optional `anchor_id` (validated against
-  `ANCHOR_ID_PATTERN` only when present) and optional `schema_version`
-  (positive int or numeric string, mirroring the milestone typed overlay's
-  shape). Presence stays optional in both cases.
-- Tests: `test/frontMatterValidator.test.ts` (14 tests) — valid/invalid
-  shapes for both fields, absence is not a violation, existing fixtures
-  still validate.
+### Coverage tab (`src/ui/assets.ts`)
 
-### WP3 — Typed relation vocabulary (`649e985`)
+- New `data-tab="coverage"` nav button (reuses the existing `icon-object-graph`
+  SVG symbol) and `#coverage-view` section, following the exact structure of
+  the Tasks/Traces tabs: `view-header` → filter/summary controls → empty
+  state → content → footer count.
+- **Summary/state cards** (`#coverage-cards`): a total-anchors+claims card,
+  one card per coverage state with its count (in precedence order), and a
+  duplicate-`anchor_id` card only when `duplicateAnchorIds.length > 0`. Per-
+  state cards are real `<button type="button">` elements with
+  `aria-pressed` reflecting whether that state is in the active filter;
+  clicking toggles it in/out of `state.coverageStates` and reloads from the
+  server. The total/duplicate cards are non-interactive `<div>`s (nothing in
+  the plan asks them to filter anything, and there's no "duplicate" coverage
+  state to filter by).
+- **Filter rail**: project `<select>` (server-side scoped — see below),
+  free-text anchor-name `<input type="search">` (client-side only, debounced
+  150ms), and a "Clear filters" button. All three persist through
+  `coverageProject`/`coverageStates`/`coverageSearch` URL query params,
+  added to `KNOWN_URL_PARAMS` and round-tripped through
+  `applyUrlStateToControls`/`paramsForState`, mirroring exactly how the Tasks
+  tab's filters persist (studied that tab's pattern per the plan's
+  instruction).
+- **Records table** (`#coverage-table`): a real `<table>` with
+  `<th scope="col">` headers (Kind, Anchor, State, Reasons, Suggested
+  operations), a visually-hidden (`.sr-only`) `<caption>` for screen
+  readers, one row per record. Anchor name is a deep link
+  (`anchorHref(anchorName)` + `data-anchor-name`, reusing the existing
+  global `#content-area` click-delegation that already handles anchor
+  navigation everywhere else in the UI — no new link-handling code needed).
+  State is a `<span class="badge">` with the human label as text (never
+  color-only). Reasons render as `code: message (line N)`. Suggested
+  operations render as plain inert `<span>` labels — never buttons, since
+  there is no write/migration tooling yet.
+- **Pagination**: `loadCoverage()` always sends `limit=100`; `Load more`
+  calls `loadMoreCoverage()` with the last response's `nextCursor`,
+  appending (de-duplicated by kind+anchorName+line) rather than replacing,
+  and is hidden/disabled appropriately. The endpoint's unbounded record set
+  is never fetched.
+- **Accessibility**: real focusable `<button>`s for every interactive
+  control (state cards, refresh, clear filters, load more); `role="group"`
+  + `aria-label` on the cards container; `aria-live="polite"` on the
+  screen-reader-visible count paragraph; state badges are text, not color
+  alone.
 
-- `src/relations/vocabulary.ts` (new): the locked five-key registry
-  (`depends_on`, `implements`, `supersedes`, `related_to`, `owned_by`) with
-  direction/source-kind/target-kind/symmetric metadata, and
-  `parseRelationTarget` for canonical typed refs (`anchor:a-xxxxxx`,
-  `goal:<project-slug>:G-123`, `person:<id>`, `team:<id>`) vs. legacy bare
-  strings. `derived_from`/`contradicts` deliberately NOT duplicated here —
-  they stay claim-annotation grammar in `src/claims.ts`.
-- `src/graph/extract.ts`'s `extractRelationsEdges`: a registered key's target
-  is tried as a typed ref first; only a parsed, kind-valid, resolved target
-  emits the new typed edge (`related_to` emits both directions). Every other
-  case (unregistered key, legacy bare string, malformed typed ref,
-  wrong-kind target, unresolved typed ref) falls through to the exact
-  pre-WP3 `anchor_anchor` edge — nothing the graph tracked before this phase
-  can disappear.
-- `src/graph/index.ts`: `GraphIndex` now builds an `anchor_id -> name`
-  reverse map and a tree-wide known-goal-ids set during full rebuilds
-  (reused as-is by `invalidateDocument`, not recomputed, to keep that
-  incremental path cheap — see "Deviations" below), threaded into
-  `ExtractDocumentEdgesContext` as `resolveAnchorId`/`knownGoalIds`.
-- `src/graph/model.ts` / `src/server.ts`: five new `GraphEdgeType` union
-  members; the `graphNeighbors` MCP tool's `GraphEdgeTypeSchema` enum
-  extended to match (the only place edge types are exhaustively enumerated).
-- Tests: `test/relationsVocabulary.test.ts` (25), plus new blocks in
-  `test/graphExtract.test.ts` and `test/graphIndex.test.ts` (direction,
-  symmetric handling, wrong-kind/malformed fallback, unknown-key parity, and
-  a real end-to-end `GraphIndex` build).
+### Design decision: project filter is server-side, text filter is client-side
 
-### WP4 — Claim identity independent of provenance (`7ab74c3`)
+The plan calls out three filter-rail dimensions (project, state, text) but
+doesn't specify which round-trip to the server. I chose:
 
-- `src/claims.ts`: a claim can now carry a stable `id` via an id-only
-  annotation block (`{id: c-xxxxxx}`, no `src`/`observed`/`conf`/etc). New
-  `parseIdOnlyAnnotationBody` is tried before `parseAnnotationBody` so an
-  id-only block is never rejected for "missing src/observed/conf." Id-only
-  rows are tracked separately (`AnchorClaim.idOnlyRows`, not
-  `ClaimSource`s) so they never contribute to strength or push `status`
-  past `"unannotated"` — an id-only claim keeps `status: "unannotated"` but
-  now carries `claim.id` (and `claim.idProvenanceless: true`).
-  `looksLikeAnnotationBody` now recognizes bare `id:` as an annotation
-  attempt (previously excluded on purpose, since it could never parse).
-- `src/graph/extract.ts`'s `extractClaimEdges`: any claim with an id
-  (annotated or id-only) gets a `claim:` node. An id-only claim has no
-  sources to derive a cited-section edge from, so it is anchored via a new
-  containment edge to its OWN home section (`sourceOfTruth: "containment"`,
-  distinguishable from a claim-authored citation). An already-annotated
-  claim's edges are completely unchanged.
-- Tests: 16 new cases in `test/claims.test.ts` (id-only parsing, round-trip,
-  conflict detection both ways, same-id redundancy), plus
-  `test/graphExtract.test.ts`/`test/graphIndex.test.ts` cases proving the
-  `claim:` node materializes end-to-end and annotated-claim edges are
-  unchanged.
+- **State and project both query the server** (`states=`/`project=` on
+  `GET /api/ui/graph-coverage`), because `ClaimCoverageRecord` has **no
+  `projectSlug` field** — only anchor records carry one. A client-side-only
+  project filter would have to silently drop every claim row (or invent an
+  anchor-name-based heuristic the endpoint doesn't guarantee), whereas
+  server-side `project` scoping filters claims correctly by scoping the
+  whole tree read to that project's anchors before analysis even runs. This
+  also keeps `Load more` correctly scoped to the active project instead of
+  paging through irrelevant records.
+- **Free-text anchor-name search stays client-only**, since the endpoint has
+  no text-search parameter (confirmed via `graphCoverage`'s input type in
+  `src/anchorService.ts` and `test/uiHttp.test.ts` — not modified).
+- Because project scoping shrinks `state.coverageRecords` server-side, the
+  project `<select>`'s own option list is **not** re-derived from the
+  current (possibly project-scoped) record set on every render — that would
+  make it impossible to switch back to a different project once one filter
+  was applied. Instead `state.coverageKnownProjects` is a running union
+  across every load (mirrors how the Tasks tab's own project dropdown is
+  populated from `state.anchors`, the global anchor list, never from
+  `state.tasks`, the currently-filtered task set).
 
-### WP5 — Structural coverage analysis (`9a08bf0`)
+### Tests
 
-- `src/graph/coverage.ts` (new): `analyzeCoverage(docs, ctx)`, pure, follows
-  `extract.ts`'s purity pattern. Computes per-anchor and per-claim
-  `structured | partial | prose_only | ambiguous | dangling | malformed`
-  with `reasons[]` (stable codes, message, anchor name, line/heading where
-  available) and descriptive-only `suggestedOperations[]`. Precedence is
-  exactly `malformed > dangling > ambiguous > partial` per the plan.
-  `ambiguous` is reachable via a duplicated `anchor_id` *referenced* from
-  elsewhere (the anchors that declared the duplicate are themselves
-  `malformed` — a distinct, deliberate design choice; see "Deviations"
-  below). Reuses the now-exported `AnchorFrontmatterSchema` and
-  `relationVocabularyEntry`/`parseRelationTarget` rather than duplicating
-  either.
-- Tests: `test/graphCoverage.test.ts`, one fixture per state, all three
-  precedence-collision cases, duplicate-id detection, and summary-count-vs-
-  record consistency (24 tests in the WP5 commit).
+- `test/uiViewModel.test.ts`: 23 new tests under a new "Schema Coverage view
+  model" describe block — state/kind labeling, project derivation
+  (anchor-scoped, claims excluded), single and combined AND-filtering,
+  server query-param construction (project/states only, text omitted),
+  URL round-trip (including dropping unknown state tokens instead of
+  throwing), stable record keys, and cursor-append de-duplication
+  (including an empty-page no-op).
+- `test/uiHttp.test.ts`: 2 new tests — one asserting the served `/ui` HTML
+  contains the Coverage tab button, view shell, cards container, filter
+  controls, an accessible `<table>` with `scope="col"` headers, and the
+  Load more button; one asserting the served `/ui/app.js` bundle contains
+  the Coverage tab's load/filter/show functions and the
+  `/api/ui/graph-coverage` fetch path. No existing test was changed.
+- Manually verified the embedded `UI_JS` template string is syntactically
+  valid JavaScript by compiling the branch with `tsc`, importing the
+  compiled `UI_JS` export, and running `node --check` against it (the
+  string can't be executed against a real DOM without a browser/jsdom
+  harness, which the existing test suite doesn't use for this file either —
+  it only smoke-tests HTML/JS *content* via `fetch`, which this handoff's
+  new tests follow).
 
-### WP6 — Read-only coverage endpoints (`c25d308`)
+## Deviations from the plan
 
-- `src/graph/coverage.ts` gains bounded pagination:
-  `clampCoverageLimit`/`GRAPH_COVERAGE_DEFAULT_LIMIT` (100)/
-  `GRAPH_COVERAGE_MAX_LIMIT` (500), and `pageCoverageRecords` (deterministic
-  anchor-name/claim-line ordering, cursor-based).
-- `src/graph/index.ts`: `GraphIndex.graphVersion()` (HEAD + generation) and
-  `GraphIndex.buildCoverageContext()` (builds `CoverageAnalysisContext`
-  reusing already-built resolvers, no second tree scan).
-- `src/anchorService.ts`: new `graphCoverage(input)` — bounded worker-pool
-  tree read (mirrors `buildBM25SearchIndex`), `analyzeCoverage`, paginate.
-  Single response shape for both callers below.
-- `src/server.ts`: `graphCoverage` MCP tool registered, mirroring
-  `graphNeighbors`'s pattern.
-- `src/ui/routes.ts`: `GET /api/ui/graph-coverage`, same auth middleware and
-  `jsonRoute` pattern as `/api/ui/graph-neighbors`.
-- Tests: pure pagination tests (10 new in `test/graphCoverage.test.ts`),
-  `AnchorService.graphCoverage` against a real seeded tree (5 new in
-  `test/graphIndex.test.ts`), and HTTP route tests — auth, state/project
-  filtering, cursor paging, 400 on out-of-range limit, MCP-vs-HTTP agreement
-  (6 new in `test/uiHttp.test.ts`).
+None. Every WP-B bullet (tab, summary/state cards with click-to-filter,
+filter rail with URL persistence, table with deep links/badges/reasons/
+inert suggested-operation labels, cursor-based Load more, accessibility)
+was implementable exactly as specified against the existing
+`GET /api/ui/graph-coverage` endpoint — no response field was missing, so
+`src/ui/routes.ts` did not need to change.
 
-## Deviations from the plan, and why
+## Notes for whoever reconciles WP-A and WP-B at merge time
 
-1. **`GraphIndex.invalidateDocument` reuses (not recomputes) the anchor_id
-   reverse map and known-goal-ids set built during the last full
-   `rebuild`.** The plan doesn't call this out explicitly, but building
-   these correctly requires every anchor's front matter/content, which
-   `invalidateDocument`'s incremental path deliberately does NOT re-read (it
-   only re-reads the touched document, per its existing design). Recomputing
-   tree-wide state on every single-document invalidation would defeat the
-   whole point of incremental invalidation. Consequence: a brand-new
-   `anchor_id` or roadmap goal heading introduced purely via
-   `invalidateDocument` calls (no intervening full rebuild) is not yet
-   resolvable for typed-relation targets until the next full rebuild. This
-   is safe by construction — an unresolved typed target simply falls back to
-   the pre-WP3 `anchor_anchor` legacy edge, never drops — but Phase 2 should
-   know this lag exists if it starts relying on typed-relation resolution
-   being instantaneous after every single write.
-
-2. **WP4's write path (`upsertClaimSources`/`upsertClaimAnnotation`) does
-   NOT clean up a stray id-only annotation line when new sources are
-   written over it.** Before this phase, a claim could never have an
-   id-only row, so `upsertClaimSources`'s standalone-line removal logic
-   (keyed off `claim.sources`/`sourceErrors`) never needed to know about
-   `idOnlyRows`. I left this untouched per the plan's explicit "do NOT...
-   change existing write paths" instruction and because minting/rewriting
-   claim ids on write is explicitly deferred to the Phase 2 migration
-   operations. Concretely: if a caller calls the `annotateClaim` tool (or
-   `upsertClaimSources` directly) against a claim that currently has ONLY an
-   id-only row, the old `{id: ...}` line will not be stripped and a stray
-   duplicate line can remain alongside the newly-written source row. Phase 2
-   (which owns migration writes) should fix `upsertClaimSources` to also
-   splice out `idOnlyRows` lines when replacing a claim's sources.
-
-3. **WP5's `ambiguous` state is reachable only through duplicated
-   `anchor_id` references, not through person/team/goal targets.** The
-   plan says "a target resolves to more than one candidate" without
-   specifying which target kinds can produce that. Every other resolver
-   (`resolveProjectSlug`, `personExists`, `teamExists`, `knownGoalIds`) is a
-   deterministic 1:1 lookup with no plausible multi-match in this phase's
-   design (canonical typed refs are kind-prefixed, so no cross-kind
-   ambiguity either). Anchor-id ambiguity is the one case that's genuinely
-   reachable today: two anchors can legitimately declare the same
-   `anchor_id` (a write-time validation gap this phase doesn't close, since
-   duplicate-detection is explicitly a WP5 coverage concern per the plan,
-   not a validator concern), and a third anchor referencing that id via
-   `anchor:<id>` can't tell which one was meant. I designed
-   `anchorNamesForAnchorId` to return every matching candidate (not just
-   one) specifically so this case is real, tested, and distinguishable from
-   the `malformed` state of the anchors that caused the duplicate in the
-   first place (a reference to a duplicated id is `ambiguous`; the anchors
-   declaring the duplicate are themselves `malformed`).
-
-4. **`WP5`'s `anchor_id_invalid` reason code is currently unreachable
-   dead-ish code.** Since WP2 wired `ANCHOR_ID_PATTERN` directly into
-   `AnchorFrontmatterSchema`, an invalid `anchor_id` is always caught by the
-   schema check (producing `front_matter_schema`) before
-   `analyzeAnchorCoverage` ever reaches its own separate `anchor_id_invalid`
-   check. I kept the separate check as defense-in-depth (documented inline)
-   rather than removing it, in case a future caller ever supplies frontmatter
-   that bypassed schema validation. No test exercises this path directly
-   (the schema-level test exercises the same fixture and gets
-   `front_matter_schema` instead, which is the correct/actual behavior).
-
-No work package was skipped or left undone; there is no blocker requiring
-the branch to stop early.
-
-## Notes for Phase 2 (migration writes + coverage UI)
-
-- **Write-path gap to close first:** `upsertClaimSources` needs to also
-  remove `idOnlyRows` lines when a claim's sources are replaced (see
-  deviation #2). This will matter as soon as Phase 2's migration operations
-  start minting ids for previously-id-only claims or otherwise rewriting
-  their annotation rows.
-- **Re-key phase inputs are already in place:** `IdentityCompatibilityMap`
-  (WP1) and the v2 constructors exist and are tested, but nothing calls them
-  yet — Phase 2's re-key phase can build the anchor_id/goal-project maps from
-  a real tree scan (the shape `GraphIndex.buildCoverageContext()` already
-  assembles internally, e.g. `anchorIdByName`, is a good starting point) and
-  feed `buildIdentityCompatibilityMap`.
-- **`invalidateDocument`'s WP3 lag (deviation #1):** if Phase 2's migration
-  writes rely on typed-relation resolution being correct immediately after a
-  single-document write (rather than after a full rebuild), either force a
-  full `invalidate()` after a migration write that mints an `anchor_id`, or
-  extend `invalidateDocument` to also refresh `anchorIdByName`/
-  `knownGoalIds` for the touched document (it already reads that document's
-  front matter/content — the missing piece is a tree-wide check for whether
-  another anchor already claims a would-be-duplicate id, which does need a
-  wider read).
-- **`convert_relation` suggested operations are currently coarse:** WP5
-  reports one `convert_relation` suggestion per unregistered-vocabulary-key
-  relation, but does not yet suggest a specific canonical-ref string to
-  convert TO (that requires knowing the target's `anchor_id`/project scope,
-  which the previewable migration operation itself should compute, not
-  coverage analysis).
-- **Coverage UI (Schema Coverage cards / synchronized table) has no
-  representation yet** beyond the raw MCP/HTTP JSON shape from WP6. The
-  `CoverageRecordKind` union (`{kind: "anchor", ...} | {kind: "claim", ...}`)
-  and `CoverageSummary` shape were designed to be renderable directly, but
-  no UI code was touched in this phase (per scope: `src/ui/assets.ts`
-  untouched).
-- **`byProject`/`byAnchorType` summary buckets use `Partial<Record<...>>`**
-  (only states that actually occurred appear as keys) rather than always
-  including all six states at zero — worth confirming this is the shape the
-  Schema Coverage cards want before building against it.
+- The two branches touch disjoint files by design
+  (`src/anchorService.ts`/`src/validators/*` vs. `src/ui/assets.ts`/
+  `src/ui/viewModel.ts`) and should merge cleanly aside from this
+  `HANDOFF.md` itself, which both branches independently overwrite — whoever
+  merges second should fold both summaries together (or keep them as
+  sequential sections) rather than silently dropping one.
+- Once WP-A's mint-on-create ships, newly-created anchors will start
+  carrying `anchor_id`/`schema_version` immediately, which should visibly
+  shift the Coverage tab's state distribution over time (more `structured`,
+  fewer `partial`/`prose_only`) with no UI changes required — the UI only
+  ever reads `graphCoverage`'s output, it doesn't assume anything about how
+  ids got minted.
+- The Coverage tab has no write/migration actions yet (by design — "inert
+  labels... no buttons that pretend to migrate"). The design doc's original
+  canvas vision describes "a previewable guided migration action" and
+  before/after previews as a later step; this slice intentionally stops at
+  read-only cards + table per the Phase 2 plan's explicit WP-B scope.
+- `src/ui/viewModel.ts`'s new Coverage functions are unused by
+  `src/ui/routes.ts` today (unlike `toAnchorUiMeta`/`toAnchorUiDetail`,
+  which shape JSON responses). If a future change wants the server to do
+  any Coverage-specific response shaping, these functions already exist and
+  are tested; if that need never materializes, they still stand alone as
+  the tested spec the browser mirror is built against.
