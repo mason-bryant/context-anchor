@@ -74,5 +74,7 @@ describe("editable Markdown tables", () => {
     expect(isCompleteMarkdownTable("Intro\n\n| A | B |\n|---|---|")).toBe(false);
     expect(isCompleteMarkdownTable("| A | B |\n| 1 | 2 |")).toBe(false);
     expect(isCompleteMarkdownTable("| A | B |\n|---|---|\n\nOutro")).toBe(false);
+    expect(isCompleteMarkdownTable("| A | B |\n|---|---|\n| 1 | 2 | 3 |")).toBe(false);
+    expect(isCompleteMarkdownTable("| A | B |\n|---|---|\n| 1 |")).toBe(false);
   });
 });

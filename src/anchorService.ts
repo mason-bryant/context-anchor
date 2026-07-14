@@ -3143,7 +3143,7 @@ None.
     if (!isCompleteMarkdownTable(text)) {
       return AnchorService.blockResult(
         "markdown_table_invalid",
-        "Table text must contain one complete Markdown pipe table with a header and separator row.",
+        "Table text must contain one complete Markdown pipe table with a header, separator row, and matching column count in every row.",
       );
     }
     return this.applyAnchorContentPatch({
@@ -3152,6 +3152,14 @@ None.
       approved: input.approved,
       coAuthor: input.coAuthor,
       expectedFileCommit: input.expectedFileCommit,
+      precondition: (old) =>
+        extractMarkdownTables(old).some((table) => table.line === input.line)
+          ? undefined
+          : {
+              severity: "BLOCK",
+              code: "markdown_table_not_found",
+              message: `No Markdown table starts on line ${input.line} in ${input.name}.`,
+            },
       mutate: (old) => replaceMarkdownTable(old, input.line, text),
     });
   }
@@ -3636,6 +3644,7 @@ None.
     coAuthor?: string;
     expectedFileCommit?: string;
     carryClaimAnnotations?: boolean;
+    precondition?: (oldContent: string) => ValidationViolation | undefined;
     mutate: (oldContent: string) => string;
   }): Promise<WriteAnchorResult> {
     if (isBuiltInAnchorName(input.name)) {
@@ -3660,6 +3669,10 @@ None.
           },
         ],
       };
+    }
+    const preconditionViolation = input.precondition?.(oldContent);
+    if (preconditionViolation) {
+      return { warnings: [preconditionViolation] };
     }
     let newContent: string;
     try {

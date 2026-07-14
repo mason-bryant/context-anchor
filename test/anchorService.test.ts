@@ -1463,6 +1463,37 @@ None.
     expect(result.warnings.some((w) => w.code === "section_not_found")).toBe(true);
   });
 
+  it("returns table-specific blocks for malformed replacements and missing table lines", async () => {
+    await service.writeAnchor({
+      name: "projects/demo/tables",
+      content: projectAnchorContent({
+        currentState: "| A | B |\n|---|---|\n| 1 | 2 |",
+      }),
+      message: "test: add tables anchor",
+    });
+    const table = (await service.listMarkdownTables({ name: "projects/demo/tables" })).tables[0];
+    expect(table).toBeDefined();
+
+    const malformed = await service.updateMarkdownTable({
+      name: "projects/demo/tables",
+      line: table.line,
+      text: "| A | B |\n|---|---|\n| 1 | 2 | 3 |",
+    });
+    expect(malformed.version).toBeUndefined();
+    expect(malformed.warnings.map((warning) => warning.code)).toContain("markdown_table_invalid");
+
+    const missing = await service.updateMarkdownTable({
+      name: "projects/demo/tables",
+      line: table.line + 1,
+      text: "| A | B |\n|---|---|\n| 3 | 4 |",
+    });
+    expect(missing.version).toBeUndefined();
+    expect(missing.warnings).toEqual([
+      expect.objectContaining({ severity: "BLOCK", code: "markdown_table_not_found" }),
+    ]);
+    expect(missing.warnings.map((warning) => warning.code)).not.toContain("section_not_found");
+  });
+
   it("updateAnchorFrontmatter returns missing_anchor when file does not exist", async () => {
     const result = await service.updateAnchorFrontmatter({
       name: "shared/no-such-anchor",

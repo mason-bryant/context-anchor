@@ -48,7 +48,11 @@ export function replaceMarkdownTable(content: string, line: number, text: string
 export function isCompleteMarkdownTable(text: string): boolean {
   const lines = text.split(/\r?\n/);
   const tables = extractMarkdownTables(text);
-  return tables.length === 1 && tables[0].line === 1 && tables[0].endLine === lines.length;
+  if (tables.length !== 1 || tables[0].line !== 1 || tables[0].endLine !== lines.length) {
+    return false;
+  }
+  const columnCount = splitTableRow(lines[0]).length;
+  return lines.slice(2).every((line) => splitTableRow(line).length === columnCount);
 }
 
 function locateMarkdownTableByLine(content: string, line: number): MarkdownTable {
