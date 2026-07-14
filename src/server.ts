@@ -590,6 +590,56 @@ the index when your workflow checks in that file.`,
     async (input) => jsonResult(await service.graphCoverage(input)),
   );
 
+  const MigrationOperationCodeSchema = z.enum([
+    "mint_anchor_id",
+    "add_schema_version",
+    "convert_relation",
+    "scope_goal_reference",
+    "mint_claim_ids",
+  ]);
+  const AnchorMigrationInputSchema = z.object({
+    name: z.string().min(1).describe("Anchor name to migrate."),
+    operations: z
+      .array(MigrationOperationCodeSchema)
+      .optional()
+      .describe("Subset of migration operations to run. Omit to run every applicable operation."),
+  });
+
+  server.registerTool(
+    "previewAnchorMigration",
+    {
+      title: "Preview Anchor Migration",
+      description:
+        "Read-only preview of the Goal 0 Phase 2 previewable migration write operations for one anchor: mint_anchor_id, add_schema_version, convert_relation (legacy bare-string relation targets on registered keys -> anchor:<anchor-id>, only when the target already has a valid anchor_id), scope_goal_reference (legacy bare goal ids under `implements` -> goal:<project-slug>:<goal-id>, only when exactly one project's roadmap defines that goal id), and mint_claim_ids (id-only annotation lines for unannotated claims lacking an id). Returns the exact byte-level content applyAnchorMigration would commit for the same fileCommit, a unified-diff-style summary, one outcome per requested operation (applied/skipped/not_applicable with a stable reason code), and the validation result the normal write pipeline's validators would produce against that content. Never mutates the anchor. Everything outside the targeted front-matter fields and inserted annotation lines is byte-identical to the source.",
+      inputSchema: AnchorMigrationInputSchema,
+      annotations: { readOnlyHint: true },
+    },
+    async (input) => jsonResult(await service.previewAnchorMigration(input)),
+  );
+
+  server.registerTool(
+    "applyAnchorMigration",
+    {
+      title: "Apply Anchor Migration",
+      description:
+        "Apply the Goal 0 Phase 2 previewable migration write operations to one anchor, funneling through the normal writeAnchor pipeline (write lock, validators, stale_base, revision/recovery guarantees). Requires approved: true. When a prior previewAnchorMigration call for the same anchor, base fileCommit, and operation set is still the most recent preview, apply commits content byte-identical to it (mint_anchor_id/mint_claim_ids draw fresh randomness on every independent plan, so this cache is what makes preview and apply agree) — otherwise it plans fresh. Apply with nothing applicable (the anchor already reflects every requested operation) is a no-op success (noChangesNeeded: true), never an error.",
+      inputSchema: AnchorMigrationInputSchema.extend({
+        approved: z.boolean().default(false),
+        message: z.string().optional(),
+        coAuthor: z.string().optional(),
+        expectedFileCommit: z
+          .string()
+          .optional()
+          .describe("Must match readAnchor(...).fileCommit or a prior preview's fileCommit, or the write is rejected with stale_base."),
+      }),
+      annotations: { destructiveHint: false, idempotentHint: true },
+    },
+    async (input) => {
+      const result = await service.applyAnchorMigration(input);
+      return jsonResult(result, result.version || result.noChangesNeeded ? false : hasBlockingWarnings(result.warnings));
+    },
+  );
+
   server.registerTool(
     "proposeChange",
     {

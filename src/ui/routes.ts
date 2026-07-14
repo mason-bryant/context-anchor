@@ -17,6 +17,7 @@ import type {
 } from "../types.js";
 import type { GraphEdgeType } from "../graph/model.js";
 import type { CoverageState } from "../graph/coverage.js";
+import type { MigrationOperationCode } from "../migration/anchorMigration.js";
 import { aggregateBudget, aggregateFollowUps, aggregateFrequency, filterEvents, filterSessions } from "../trace/aggregate.js";
 import type { TraceIndex } from "../trace/index.js";
 import type { TraceRatingsStore, TraceRatingValue } from "../trace/ratings.js";
@@ -591,6 +592,35 @@ export function registerUiRoutes(
         ...(states && states.length > 0 ? { states: states as CoverageState[] } : {}),
         ...(limit !== undefined ? { limit } : {}),
         ...(cursor ? { cursor } : {}),
+      });
+    }),
+  );
+
+  app.post(
+    "/api/ui/anchor-migration-preview",
+    ...protect,
+    jsonRoute(async (req) => {
+      const body = bodyRecord(req);
+      const name = requiredBodyString(body, "name");
+      const operations = readMigrationOperationsBody(body);
+      return service.previewAnchorMigration({ name, ...(operations ? { operations } : {}) });
+    }),
+  );
+
+  app.post(
+    "/api/ui/anchor-migration-apply",
+    ...protect,
+    jsonRoute(async (req) => {
+      const body = bodyRecord(req);
+      const name = requiredBodyString(body, "name");
+      const operations = readMigrationOperationsBody(body);
+      return service.applyAnchorMigration({
+        name,
+        ...(operations ? { operations } : {}),
+        approved: booleanBody(body, "approved") ?? false,
+        message: optionalBodyString(body, "message"),
+        coAuthor: optionalBodyString(body, "coAuthor"),
+        expectedFileCommit: optionalBodyString(body, "expectedFileCommit"),
       });
     }),
   );
@@ -1269,6 +1299,32 @@ function isCoverageState(value: string): value is CoverageState {
     value === "dangling" ||
     value === "malformed"
   );
+}
+
+function isMigrationOperationCode(value: string): value is MigrationOperationCode {
+  return (
+    value === "mint_anchor_id" ||
+    value === "add_schema_version" ||
+    value === "convert_relation" ||
+    value === "scope_goal_reference" ||
+    value === "mint_claim_ids"
+  );
+}
+
+/** Read an optional `operations` array off a migration-route body: undefined when absent (run every applicable operation), or a validated `MigrationOperationCode[]`. */
+function readMigrationOperationsBody(body: Record<string, unknown>): MigrationOperationCode[] | undefined {
+  const value = body.operations;
+  if (value === undefined) {
+    return undefined;
+  }
+  if (!Array.isArray(value) || value.some((item) => typeof item !== "string")) {
+    throw new UiHttpError(400, "Invalid operations: expected an array of strings.");
+  }
+  const invalid = value.find((item) => !isMigrationOperationCode(item as string));
+  if (invalid !== undefined) {
+    throw new UiHttpError(400, `Invalid operations: unknown migration operation ${invalid}`);
+  }
+  return value as MigrationOperationCode[];
 }
 
 function isReviewStatus(
