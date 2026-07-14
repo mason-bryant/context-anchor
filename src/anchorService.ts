@@ -929,8 +929,10 @@ export class AnchorService {
    * the same anchor_id (review feedback on #89). Every other mutating
    * service method (chunked section/front-matter tools, proposed-change
    * apply, task writes) funnels through this method, so the lock covers all
-   * of them; `renameAnchor`/`deleteAnchor` allocate no identity and stay on
-   * the repo's own lock. Writes are rare and human-paced — correctness over
+   * of them; `renameAnchor`/`deleteAnchor` allocate no identity but take
+   * the same lock too — a git mv or delete landing mid-scan could hide an
+   * existing anchor's ids from the snapshot and let a colliding mint or
+   * supplied id through. Writes are rare and human-paced — correctness over
    * write throughput.
    */
   async writeAnchor(input: WriteAnchorInput): Promise<WriteAnchorResult> {
@@ -1199,7 +1201,18 @@ export class AnchorService {
     return { version, warnings };
   }
 
+  /** Serialized through `writeAnchorLock` — see `writeAnchor`'s docstring: a delete (or rename) landing mid-identity-scan could hide an anchor's ids from a concurrent write's tree snapshot. */
   async deleteAnchor(input: {
+    name: string;
+    approved?: boolean;
+    message?: string;
+    coAuthor?: string;
+    expectedFileCommit?: string;
+  }): Promise<WriteAnchorResult> {
+    return this.writeAnchorLock.runExclusive(() => this.deleteAnchorExclusive(input));
+  }
+
+  private async deleteAnchorExclusive(input: {
     name: string;
     approved?: boolean;
     message?: string;
@@ -1293,7 +1306,19 @@ export class AnchorService {
     }
   }
 
+  /** Serialized through `writeAnchorLock` — see `writeAnchor`'s docstring: a rename (git mv) landing mid-identity-scan could hide an anchor's ids from a concurrent write's tree snapshot, letting a colliding mint or supplied id through. */
   async renameAnchor(input: {
+    from: string;
+    to: string;
+    approved?: boolean;
+    message?: string;
+    coAuthor?: string;
+    expectedFileCommit?: string;
+  }): Promise<WriteAnchorResult> {
+    return this.writeAnchorLock.runExclusive(() => this.renameAnchorExclusive(input));
+  }
+
+  private async renameAnchorExclusive(input: {
     from: string;
     to: string;
     approved?: boolean;

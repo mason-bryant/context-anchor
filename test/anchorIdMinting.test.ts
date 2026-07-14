@@ -429,6 +429,32 @@ describe("mint-on-create: anchor_id + schema_version", () => {
     expect(succeeded).toHaveLength(1);
   });
 
+  it("a CONCURRENT rename cannot hide an anchor's id from a create's duplicate scan (rename is serialized too)", async () => {
+    await service.writeAnchor({
+      name: "projects/demo/moving.md",
+      content: anchorContent({ anchorId: "a-mv0001" }),
+      message: "test: seed anchor that will be renamed",
+    });
+
+    // Rename and a colliding create race: with rename serialized on the same
+    // lock, the create's snapshot sees a-mv0001 under either the old or the
+    // new path — it must block either way, never mint/accept a duplicate.
+    const [, create] = await Promise.all([
+      service.renameAnchor({
+        from: "projects/demo/moving.md",
+        to: "projects/demo/moved.md",
+        approved: true,
+        message: "test: concurrent rename",
+      }),
+      service.writeAnchor({
+        name: "projects/demo/collider.md",
+        content: anchorContent({ anchorId: "a-mv0001" }),
+        message: "test: concurrent colliding create",
+      }),
+    ]);
+    expect(create.warnings.some((w) => w.severity === "BLOCK" && w.code === "anchor_id_duplicate")).toBe(true);
+  });
+
   it("mints distinct anchor_ids for two rapid creates in the same session (no collisions)", async () => {
     const [first, second] = await Promise.all([
       service.writeAnchor({
