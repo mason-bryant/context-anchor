@@ -338,6 +338,41 @@ describe("planAnchorMigration: byte preservation", () => {
     expect(filteredNewLines).toEqual(oldLines);
   });
 
+  it("inserts the id-only annotation correctly when a claim bullet is immediately followed by the next H2 heading (no blank line)", () => {
+    const content = doc(
+      "",
+      `## Current State
+
+- Claim directly before the next heading.
+## Decisions
+
+- A decision.
+`,
+    );
+    const result = planAnchorMigration(content, makeCtx(), ["mint_claim_ids"]);
+    const lines = result.newContent.split("\n");
+    const bulletIndex = lines.findIndex((line) => line === "- Claim directly before the next heading.");
+    expect(lines[bulletIndex + 1]).toMatch(/^ {2}\{id: c-[0-9a-z]{6,8}\}$/);
+    expect(lines[bulletIndex + 2]).toBe("## Decisions");
+
+    // Round-trips cleanly: extractClaims still finds exactly two claims and
+    // does not fold the heading into the first claim's annotation block.
+    const claims = extractClaims(result.newContent);
+    expect(claims).toHaveLength(2);
+    expect(claims[0].id).toBeDefined();
+    expect(claims[0].section).toBe("Current State");
+    expect(claims[1].section).toBe("Decisions");
+  });
+
+  it("inserts the id-only annotation correctly when the claim bullet is the very last line of the file", () => {
+    const content = doc("", "## Current State\n\n- Last line claim.");
+    const result = planAnchorMigration(content, makeCtx(), ["mint_claim_ids"]);
+    const claims = extractClaims(result.newContent);
+    expect(claims).toHaveLength(1);
+    expect(claims[0].id).toBeDefined();
+    expect(result.newContent.endsWith("}")).toBe(true);
+  });
+
   it("running every operation with nothing applicable leaves content completely unchanged", () => {
     const content = doc(
       "anchor_id: a-abc123\nschema_version: 1",
