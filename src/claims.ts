@@ -36,8 +36,8 @@
  * a kebab slug; only the `c-` form is newly minted.
  */
 
-import { randomBytes } from "node:crypto";
 import { CLAIM_BEARING_SECTIONS } from "./anchorStructure.js";
+import { mintPrefixedId } from "./ids.js";
 
 export const CLAIM_SECTIONS = CLAIM_BEARING_SECTIONS;
 
@@ -354,40 +354,16 @@ export function formatAnnotationBody(annotation: ClaimAnnotation): string {
   return `{${parts.join("; ")}}`;
 }
 
-const BASE36_ALPHABET = "0123456789abcdefghijklmnopqrstuvwxyz";
-
-/** Draw `length` random base36 characters using crypto-strength randomness. */
-function randomBase36(length: number): string {
-  const bytes = randomBytes(length);
-  let out = "";
-  for (let index = 0; index < length; index += 1) {
-    out += BASE36_ALPHABET[bytes[index] % BASE36_ALPHABET.length];
-  }
-  return out;
-}
-
 /**
  * Mint a new claim-level id: `c-` + 6 random base36 chars, grown to 8 chars
  * if that collides with `existing` (collision-checked against the full set
  * of ids already present in the tree, passed in by the caller). Opaque,
  * immutable once minted, and never content-derived (see module docstring).
+ * Delegates to the shared `mintPrefixedId` (`src/ids.ts`, Goal 0 Phase 1 WP1)
+ * so this algorithm and `mintAnchorId`'s stay byte-identical by construction.
  */
 export function mintClaimId(existing: ReadonlySet<string>): string {
-  for (let attempt = 0; attempt < 50; attempt += 1) {
-    const candidate = `c-${randomBase36(6)}`;
-    if (!existing.has(candidate)) {
-      return candidate;
-    }
-  }
-  // Six-char space exhausted after 50 tries (astronomically unlikely at any
-  // real tree size) — grow to 8 chars for a much larger collision space.
-  for (let attempt = 0; attempt < 50; attempt += 1) {
-    const candidate = `c-${randomBase36(8)}`;
-    if (!existing.has(candidate)) {
-      return candidate;
-    }
-  }
-  throw new Error("mintClaimId: unable to mint a unique claim id after repeated attempts.");
+  return mintPrefixedId("c", existing);
 }
 
 /** Collect every id already present on a list of claims (annotated claims may have at most one each). */
