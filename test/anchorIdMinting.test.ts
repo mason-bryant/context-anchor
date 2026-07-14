@@ -114,6 +114,20 @@ describe("mint-on-create: anchor_id + schema_version", () => {
     expect(isValidAnchorId(match![1])).toBe(true);
   });
 
+  it("replaces an INVALID caller-supplied schema_version with 1 on create (schema_version_replaced WARN)", async () => {
+    const result = await service.writeAnchor({
+      name: "projects/demo/bad-schema-version.md",
+      content: anchorContent({ schemaVersion: "banana" }),
+      message: "test: create with invalid supplied schema_version",
+    });
+    expect(result.warnings.some((w) => w.severity === "BLOCK")).toBe(false);
+    expect(result.warnings.some((w) => w.severity === "WARN" && w.code === "schema_version_replaced")).toBe(true);
+
+    const read = await service.readAnchor("projects/demo/bad-schema-version");
+    expect(read.content).not.toContain("banana");
+    expect(read.content).toContain("schema_version: 1");
+  });
+
   it("keeps a caller-supplied schema_version on create instead of overwriting it", async () => {
     await service.writeAnchor({
       name: "projects/demo/demo",

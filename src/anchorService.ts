@@ -1136,8 +1136,29 @@ export class AnchorService {
           });
         }
       }
-      if (fm.schema_version === undefined) {
+      // Same policy as anchor_id above: an INVALID supplied schema_version is
+      // treated as absent and replaced (with a WARN), so migrationWarnOnly
+      // can never commit a newly created anchor without a valid schema
+      // version. Validity mirrors the universal front-matter SchemaVersion
+      // shape (`src/validators/frontMatter.ts`): a positive integer, or an
+      // all-digits string encoding one.
+      const suppliedSchemaVersion = fm.schema_version;
+      const schemaVersionValid =
+        (typeof suppliedSchemaVersion === "number" &&
+          Number.isInteger(suppliedSchemaVersion) &&
+          suppliedSchemaVersion > 0) ||
+        (typeof suppliedSchemaVersion === "string" &&
+          /^\d+$/.test(suppliedSchemaVersion) &&
+          Number(suppliedSchemaVersion) > 0);
+      if (!schemaVersionValid) {
         updates.schema_version = 1;
+        if (suppliedSchemaVersion !== undefined && suppliedSchemaVersion !== null) {
+          carryWarnings.push({
+            severity: "WARN",
+            code: "schema_version_replaced",
+            message: `Supplied schema_version "${String(suppliedSchemaVersion)}" is not a positive integer and was replaced with 1.`,
+          });
+        }
       }
       if (Object.keys(updates).length > 0) {
         content = mergeAnchorFrontmatter(content, updates);
