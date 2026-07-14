@@ -202,7 +202,8 @@ import {
   type CoverageRecordKind,
   type CoverageState,
 } from "./graph/coverage.js";
-import { GRAPH_IDENTITY_VERSION } from "./graph/identity.js";
+import { AsyncLock } from "./git/lock.js";
+import { anchorIdFromFrontmatter, GRAPH_IDENTITY_VERSION, isValidAnchorId, mintAnchorId } from "./graph/identity.js";
 import { buildPeopleIndex, parsePeopleRegistry, type PeopleIndex } from "./peopleRegistry.js";
 import { findMarkdownLinkSuggestions, suggestMarkdownLinks } from "./markdownLinks.js";
 import {
@@ -317,6 +318,19 @@ type ClaimResolutionInputs = {
 };
 
 export class AnchorService {
+  /** Serializes `writeAnchor` end-to-end so identity snapshot + duplicate check + commit are atomic with respect to other writes — see `writeAnchor`'s docstring. */
+  private readonly writeAnchorLock = new AsyncLock();
+
+  /**
+   * Run `fn` holding the write lock. For EXTERNAL repo mutators that do not
+   * flow through this service's write methods — today that is AutoSync's
+   * background pull (wired in `src/runtime.ts`) — so a repo-wide
+   * pull/rebase can never interleave with a write's identity snapshot +
+   * duplicate check + commit.
+   */
+  runExclusiveWrite<T>(fn: () => Promise<T>): Promise<T> {
+    return this.writeAnchorLock.runExclusive(fn);
+  }
   private _peopleRegistry: PeopleRegistry | undefined;
   /** Git commit the cached registry was parsed from; used to detect out-of-band changes (e.g. AutoSync rebases). */
   private _peopleRegistryCommit: string | undefined;
@@ -923,7 +937,26 @@ export class AnchorService {
     return this.repo.diffAnchor(name, fromVersion, toVersion);
   }
 
+  /**
+   * Serialized end-to-end via `writeAnchorLock`: the identity checks inside
+   * (claim-id and anchor_id tree snapshots, duplicate checks, mint collision
+   * checks) read the tree OUTSIDE `AnchorRepository`'s internal commit lock,
+   * so two concurrent writes could otherwise both pass a duplicate check
+   * against the same snapshot and both commit — e.g. two creates supplying
+   * the same anchor_id (review feedback on #89). Every other mutating
+   * service method (chunked section/front-matter tools, proposed-change
+   * apply, task writes) funnels through this method, so the lock covers all
+   * of them; `renameAnchor`/`deleteAnchor` allocate no identity but take
+   * the same lock too — a git mv or delete landing mid-scan could hide an
+   * existing anchor's ids from the snapshot and let a colliding mint or
+   * supplied id through. Writes are rare and human-paced — correctness over
+   * write throughput.
+   */
   async writeAnchor(input: WriteAnchorInput): Promise<WriteAnchorResult> {
+    return this.writeAnchorLock.runExclusive(() => this.writeAnchorExclusive(input));
+  }
+
+  private async writeAnchorExclusive(input: WriteAnchorInput): Promise<WriteAnchorResult> {
     if (isBuiltInAnchorName(input.name)) {
       return {
         warnings: [
@@ -1069,6 +1102,92 @@ export class AnchorService {
       }
     }
 
+    // Mint `anchor_id` + `schema_version` on create only (Goal 0 Phase 2 WP-A:
+    // `goal0_phase2_mint_on_create_and_coverage_ui_plan.md`). Only real anchors
+    // are eligible — generated docs (CONTEXT-ROOT.md) and anything that fails
+    // taxonomy classification are left untouched; `validateDirectoryTaxonomy`
+    // still blocks invalid paths downstream. This happens before validation so
+    // the committed document is exactly what was validated, and it never runs
+    // on an update: legacy anchors stay id-less until an explicit migration
+    // write adds an id (still subject to the same duplicate check, just via
+    // the `anchor_id_duplicate` validator below rather than this mint path).
+    if (oldContent === undefined && classifyAnchorPath(resolved.name).kind === "anchor") {
+      const fm = parseAnchor(content).frontmatter;
+      const suppliedId = anchorIdFromFrontmatter(fm);
+      // One tree scan serves both the mint collision check and the
+      // caller-supplied duplicate check. The create-path duplicate check
+      // lives HERE (not in `validateAnchorIdIntegrity`, which only scans on
+      // update) so creating an anchor costs exactly one tree walk — see the
+      // validator's docstring for the split.
+      const treeAnchorIds = await this.collectTreeAnchorIds(resolved.name);
+      // An invalid-format supplied id is treated as ABSENT for minting: the
+      // server owns identity allocation, and letting a malformed value
+      // through (possible when migrationWarnOnly downgrades the schema BLOCK
+      // to a WARN) would commit a newly created anchor without a valid
+      // identity. It is replaced by a fresh mint, reported via the
+      // anchor_id_replaced WARN below — mirroring the claim_id_minted WARN
+      // pattern above.
+      const validSuppliedId = suppliedId && isValidAnchorId(suppliedId) ? suppliedId : undefined;
+      if (validSuppliedId) {
+        const owner = treeAnchorIds.get(validSuppliedId);
+        if (owner) {
+          return {
+            warnings: [
+              {
+                severity: "BLOCK",
+                code: "anchor_id_duplicate",
+                message: `anchor_id "${validSuppliedId}" already exists on "${owner}". anchor_id must be unique across the tree.`,
+                path: resolved.path,
+              },
+            ],
+            requiresApproval: false,
+          };
+        }
+      }
+      const updates: Record<string, unknown> = {};
+      if (!validSuppliedId) {
+        updates.anchor_id = mintAnchorId(new Set(treeAnchorIds.keys()));
+        if (suppliedId) {
+          carryWarnings.push({
+            severity: "WARN",
+            code: "anchor_id_replaced",
+            message: `Supplied anchor_id "${suppliedId}" does not match the required format and was replaced with server-minted "${String(updates.anchor_id)}". The server mints anchor identity; ids must match ^a-[0-9a-z]{6,8}$.`,
+          });
+        }
+      }
+      // Same policy as anchor_id above: an INVALID supplied schema_version is
+      // treated as absent and replaced (with a WARN), so migrationWarnOnly
+      // can never commit a newly created anchor without a valid schema
+      // version. Validity mirrors the universal front-matter SchemaVersion
+      // shape (`src/validators/frontMatter.ts`): a positive integer, or an
+      // all-digits string encoding one.
+      const suppliedSchemaVersion = fm.schema_version;
+      const schemaVersionValid =
+        (typeof suppliedSchemaVersion === "number" &&
+          Number.isInteger(suppliedSchemaVersion) &&
+          suppliedSchemaVersion > 0) ||
+        (typeof suppliedSchemaVersion === "string" &&
+          /^\d+$/.test(suppliedSchemaVersion) &&
+          Number(suppliedSchemaVersion) > 0);
+      if (!schemaVersionValid) {
+        updates.schema_version = 1;
+        // WARN whenever the author actually WROTE the field, `null`
+        // included (`schema_version:` with no value parses to null) — every
+        // supplied-but-invalid value gets the same "your value was not
+        // used" transparency. Only true absence is replaced silently.
+        if (Object.prototype.hasOwnProperty.call(fm, "schema_version")) {
+          carryWarnings.push({
+            severity: "WARN",
+            code: "schema_version_replaced",
+            message: `Supplied schema_version "${String(suppliedSchemaVersion)}" is not a positive integer and was replaced with 1.`,
+          });
+        }
+      }
+      if (Object.keys(updates).length > 0) {
+        content = mergeAnchorFrontmatter(content, updates);
+      }
+    }
+
     const violations = await runValidators({
       name: resolved.name,
       path: resolved.path,
@@ -1103,7 +1222,18 @@ export class AnchorService {
     return { version, warnings };
   }
 
+  /** Serialized through `writeAnchorLock` — see `writeAnchor`'s docstring: a delete (or rename) landing mid-identity-scan could hide an anchor's ids from a concurrent write's tree snapshot. */
   async deleteAnchor(input: {
+    name: string;
+    approved?: boolean;
+    message?: string;
+    coAuthor?: string;
+    expectedFileCommit?: string;
+  }): Promise<WriteAnchorResult> {
+    return this.writeAnchorLock.runExclusive(() => this.deleteAnchorExclusive(input));
+  }
+
+  private async deleteAnchorExclusive(input: {
     name: string;
     approved?: boolean;
     message?: string;
@@ -1197,7 +1327,19 @@ export class AnchorService {
     }
   }
 
+  /** Serialized through `writeAnchorLock` — see `writeAnchor`'s docstring: a rename (git mv) landing mid-identity-scan could hide an anchor's ids from a concurrent write's tree snapshot, letting a colliding mint or supplied id through. */
   async renameAnchor(input: {
+    from: string;
+    to: string;
+    approved?: boolean;
+    message?: string;
+    coAuthor?: string;
+    expectedFileCommit?: string;
+  }): Promise<WriteAnchorResult> {
+    return this.writeAnchorLock.runExclusive(() => this.renameAnchorExclusive(input));
+  }
+
+  private async renameAnchorExclusive(input: {
     from: string;
     to: string;
     approved?: boolean;
@@ -1938,7 +2080,10 @@ None.
    * whose ids the caller supplies separately from its in-flight content).
    */
   private async collectTreeClaimIds(excludeAnchor?: string): Promise<Set<string>> {
-    const metas = await this.repo.listAnchors();
+    // includeArchive: same tree-wide identity rule as collectTreeAnchorIds
+    // below — a claim id minted today must not collide with one living in an
+    // archived anchor that may be unarchived later.
+    const metas = await this.repo.listAnchors({ includeArchive: true });
     const ids = new Set<string>();
     for (const meta of metas) {
       if (isBuiltInAnchorName(meta.name) || meta.name === excludeAnchor) {
@@ -1950,6 +2095,37 @@ None.
       }
       for (const id of collectClaimIds(extractClaims(content))) {
         ids.add(id);
+      }
+    }
+    return ids;
+  }
+
+  /**
+   * Every front-matter `anchor_id` currently in the tree, mapped to the
+   * anchor name declaring it, for mint-on-create collision checks and the
+   * create-path duplicate check (Goal 0 Phase 2 WP-A:
+   * `goal0_phase2_mint_on_create_and_coverage_ui_plan.md`). Mirrors
+   * `collectTreeClaimIds`'s walk/exclude shape. `excludeAnchor` skips one
+   * anchor's on-disk content (the anchor currently being written, whose id
+   * the caller supplies separately from its in-flight content).
+   */
+  private async collectTreeAnchorIds(excludeAnchor?: string): Promise<Map<string, string>> {
+    // includeArchive: identity uniqueness is TREE-wide — an archived anchor
+    // keeps its anchor_id, and unarchiving one must never collide with an id
+    // minted or accepted while it sat in archive/.
+    const metas = await this.repo.listAnchors({ includeArchive: true });
+    const ids = new Map<string, string>();
+    for (const meta of metas) {
+      if (isBuiltInAnchorName(meta.name) || meta.name === excludeAnchor) {
+        continue;
+      }
+      const content = await this.repo.readRaw(meta.name);
+      if (content === undefined) {
+        continue;
+      }
+      const id = anchorIdFromFrontmatter(parseAnchor(content).frontmatter);
+      if (id && !ids.has(id)) {
+        ids.set(id, meta.name);
       }
     }
     return ids;

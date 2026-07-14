@@ -54,7 +54,10 @@ export async function createAnchorRuntime(
     graphScoring: config.graphScoring,
   });
   const mcpServer = createAnchorMcpServer(service, { requestLogger, trace: { logger: traceLogger } });
-  const autoSync = new AutoSync(repo, config.syncIntervalMs, logger);
+  // AutoSync pulls serialize on the service's write lock so a background
+  // pull/rebase can never interleave with a write's identity snapshot +
+  // duplicate check + commit (see AnchorService.runExclusiveWrite).
+  const autoSync = new AutoSync(repo, config.syncIntervalMs, logger, (fn) => service.runExclusiveWrite(fn));
 
   return {
     repo,
