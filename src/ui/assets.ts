@@ -6644,7 +6644,11 @@ export const UI_JS = `(function () {
 
     if (state.coverage && state.coverage.summary) {
       var summary = state.coverage.summary;
-      summaryEl.textContent = summary.totalAnchors + " anchor" + (summary.totalAnchors === 1 ? "" : "s") + " · " + summary.totalClaims + " claim" + (summary.totalClaims === 1 ? "" : "s") + " across the tree.";
+      // The endpoint scopes server-side when a project filter is set, so the
+      // summary must name the scope instead of claiming "across the tree".
+      var activeProject = controlValue("coverage-project-filter", state.coverageProject).trim();
+      var scopeText = activeProject ? " in project " + activeProject + "." : " across the tree.";
+      summaryEl.textContent = summary.totalAnchors + " anchor" + (summary.totalAnchors === 1 ? "" : "s") + " · " + summary.totalClaims + " claim" + (summary.totalClaims === 1 ? "" : "s") + scopeText;
     }
 
     if (filtered.length === 0) {

@@ -276,7 +276,9 @@ None.
 describe("Schema Coverage view model", () => {
   it("labels every coverage state with human text, not a bare code", () => {
     expect(coverageStateLabel("structured")).toBe("Structured");
+    expect(coverageStateLabel("partial")).toBe("Partial");
     expect(coverageStateLabel("prose_only")).toBe("Prose only");
+    expect(coverageStateLabel("ambiguous")).toBe("Ambiguous");
     expect(coverageStateLabel("dangling")).toBe("Dangling");
     expect(coverageStateLabel("malformed")).toBe("Malformed");
   });
