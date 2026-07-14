@@ -19,7 +19,7 @@ import { AnchorFrontmatterSchema } from "../validators/frontMatter.js";
 import { extractClaims } from "../claims.js";
 import { classifyAnchorPath } from "../taxonomy.js";
 import { anchorIdFromFrontmatter, isValidAnchorId } from "./identity.js";
-import { relationVocabularyEntry, parseRelationTarget } from "../relations/vocabulary.js";
+import { relationVocabularyEntry, parseRelationTarget, relationTargetKindAllowed } from "../relations/vocabulary.js";
 import type { AnchorClaim } from "../claims.js";
 
 export type CoverageState = "structured" | "partial" | "prose_only" | "ambiguous" | "dangling" | "malformed";
@@ -278,6 +278,7 @@ const MALFORMED_REASON_CODES = new Set([
   "anchor_id_invalid",
   "anchor_id_duplicate",
   "relation_target_malformed",
+  "relation_target_wrong_kind",
 ]);
 
 function finalizeAnchorRecord(
@@ -381,6 +382,20 @@ function analyzeAnchorRelations(doc: CoverageDocumentInput, ctx: CoverageAnalysi
         // malformed either — falls back to legacy anchor_anchor territory,
         // same as extract.ts.
         outcome.allRelationTargetsTyped = false;
+        continue;
+      }
+
+      if (!relationTargetKindAllowed(vocabEntry, parseResult.parsed)) {
+        // Mirrors extract.ts: a wrong-kind typed ref (e.g. depends_on ->
+        // person:alice) never becomes a typed edge, so coverage must not
+        // count it as resolved/structured either. Structured syntax is
+        // present but invalid for this key -> a malformed finding.
+        outcome.allRelationTargetsTyped = false;
+        reasons.push({
+          code: "relation_target_wrong_kind",
+          message: `relations.${key} target "${target}" has kind "${parseResult.parsed.kind}", which relations.${key} does not allow.`,
+          anchorName: doc.anchorName,
+        });
         continue;
       }
 

@@ -103,6 +103,33 @@ describe("analyzeCoverage: state fixtures", () => {
     );
   });
 
+  it("malformed: a wrong-kind typed target (depends_on -> person:) is never counted as resolved/structured", () => {
+    const anchorNames = new Set(["projects/demo/a.md"]);
+    const ctx = makeCtx({
+      anchorNames,
+      // The person genuinely exists — kind-validity, not existence, is what
+      // must fail here, exactly like extract.ts's relationTargetKindAllowed
+      // gate that refuses the typed edge.
+      personExists: (id) => id === "alice",
+    });
+    const docs = [
+      makeDoc({
+        anchorName: "projects/demo/a.md",
+        frontmatter: {
+          ...BASE_FRONTMATTER,
+          anchor_id: "a-abc123",
+          schema_version: 1,
+          relations: { depends_on: ["person:alice"] },
+        },
+      }),
+    ];
+    const result = analyzeCoverage(docs, ctx);
+    expect(result.anchors[0].state).toBe("malformed");
+    expect(result.anchors[0].reasons).toContainEqual(
+      expect.objectContaining({ code: "relation_target_wrong_kind" }),
+    );
+  });
+
   it("registered key with only canonical typed targets suggests no convert_relation", () => {
     const anchorNames = new Set(["projects/demo/a.md", "projects/demo/b.md"]);
     const ctx = makeCtx({
