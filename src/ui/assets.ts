@@ -6470,6 +6470,11 @@ export const UI_JS = `(function () {
     state.coverageLoadId += 1;
     var loadId = state.coverageLoadId;
     state.coverageLoading = true;
+    // A reload invalidates any in-flight load-more (its captured id no
+    // longer matches), so clear its UI flag immediately — otherwise the new
+    // dataset could render with "Load more" stuck disabled/"Loading..."
+    // until the stale request settles.
+    state.coverageLoadMoreLoading = false;
     var filters = currentCoverageFilters();
     try {
       var result = await api("/api/ui/graph-coverage?" + coverageQueryString(filters));
@@ -6513,7 +6518,13 @@ export const UI_JS = `(function () {
         setBanner(error.message, "error");
       }
     } finally {
-      state.coverageLoadMoreLoading = false;
+      // Only the load-more that still owns the current dataset clears the
+      // flag: a stale one settling late must not release the re-entry guard
+      // out from under a newer load-more (loadCoverage already cleared the
+      // flag for the stale one at reload time).
+      if (loadId === state.coverageLoadId) {
+        state.coverageLoadMoreLoading = false;
+      }
     }
   }
 
