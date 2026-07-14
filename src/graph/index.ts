@@ -201,14 +201,31 @@ export class GraphIndex {
    * method's (it only reports what exists).
    */
   async projectsForGoalId(goalId: string): Promise<string[]> {
+    const snapshot = await this.goalIdOwnersSnapshot();
+    return [...(snapshot.get(goalId) ?? [])];
+  }
+
+  /**
+   * Bulk inversion of `knownGoalIdsByProject` (goal id -> every project slug
+   * whose roadmap defines it), for callers that need a synchronous lookup
+   * over several goal ids in one request (e.g. `AnchorService`'s migration
+   * context, whose planner-facing resolver must be a plain sync function) —
+   * one await instead of one `projectsForGoalId` call per relation target.
+   */
+  async goalIdOwnersSnapshot(): Promise<ReadonlyMap<string, readonly string[]>> {
     await this.ensureBuilt();
-    const owners: string[] = [];
+    const owners = new Map<string, string[]>();
     for (const [projectSlug, goalIds] of this.knownGoalIdsByProject) {
-      if (goalIds.has(goalId)) {
-        owners.push(projectSlug);
+      for (const goalId of goalIds) {
+        const list = owners.get(goalId) ?? [];
+        list.push(projectSlug);
+        owners.set(goalId, list);
       }
     }
-    return owners.sort();
+    for (const list of owners.values()) {
+      list.sort();
+    }
+    return owners;
   }
 
   /**
