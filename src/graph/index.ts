@@ -191,6 +191,27 @@ export class GraphIndex {
   }
 
   /**
+   * Every canonical project slug whose roadmap defines `goalId` (Goal 0 Phase
+   * 2 migration: `scope_goal_reference` needs "is this goal id owned by
+   * exactly one project?" to rewrite a legacy bare goal target to a scoped
+   * `goal:<project-slug>:<goal-id>` ref). Reuses the same
+   * `knownGoalIdsByProject` map `goalExistsInProject` above closes over — no
+   * extra tree scan. Zero entries means unknown-everywhere; two or more means
+   * ambiguous; both cases are the migration planner's job to skip, not this
+   * method's (it only reports what exists).
+   */
+  async projectsForGoalId(goalId: string): Promise<string[]> {
+    await this.ensureBuilt();
+    const owners: string[] = [];
+    for (const [projectSlug, goalIds] of this.knownGoalIdsByProject) {
+      if (goalIds.has(goalId)) {
+        owners.push(projectSlug);
+      }
+    }
+    return owners.sort();
+  }
+
+  /**
    * Literal (unresolved) `relations.<kind>` reverse lookup: anchors whose
    * literal target list contains `normalizedTarget` (already `.md`-suffixed),
    * optionally filtered by relation kind. Powers
