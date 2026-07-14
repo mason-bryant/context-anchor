@@ -226,6 +226,40 @@ describe("mint-on-create: anchor_id + schema_version", () => {
     expect(after.frontmatter.anchor_id).toBe(originalId);
   });
 
+  it("a MALFORMED anchor_id that slipped into the tree is not locked in: it can be corrected to a fresh valid id", async () => {
+    // A malformed id can only exist on disk via a path that bypassed the
+    // universal front-matter schema (e.g. a hand edit, or a write while
+    // migrationWarnOnly softened the schema BLOCK to a WARN) — simulate that
+    // with a direct repo commit.
+    await repo.commitAnchor({
+      name: "projects/demo/bad-id.md",
+      content: anchorContent({ anchorId: "not-a-valid-id", schemaVersion: "1" }),
+      message: "test: seed malformed anchor_id",
+    });
+
+    // Correcting the malformed id to a valid one must NOT trip
+    // anchor_id_immutable — format-invalid values are treated as absent by
+    // the integrity validator, so this is id ADOPTION, not mutation.
+    const corrected = await service.writeAnchor({
+      name: "projects/demo/bad-id.md",
+      content: anchorContent({ anchorId: "a-fixed01", schemaVersion: "1" }),
+      message: "test: correct malformed anchor_id",
+    });
+    expect(corrected.warnings.some((w) => w.code === "anchor_id_immutable")).toBe(false);
+    expect(corrected.warnings.some((w) => w.severity === "BLOCK")).toBe(false);
+
+    const read = await service.readAnchor("projects/demo/bad-id");
+    expect(read.content).toContain("anchor_id: a-fixed01");
+
+    // ...and the corrected valid id is then immutable like any other.
+    const mutate = await service.writeAnchor({
+      name: "projects/demo/bad-id.md",
+      content: anchorContent({ anchorId: "a-other02", schemaVersion: "1" }),
+      message: "test: attempt to change corrected id",
+    });
+    expect(mutate.warnings.some((w) => w.severity === "BLOCK" && w.code === "anchor_id_immutable")).toBe(true);
+  });
+
   it("allows adding an anchor_id to a legacy (id-less) anchor and still duplicate-checks it", async () => {
     await repo.commitAnchor({
       name: "projects/demo/legacy",

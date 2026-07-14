@@ -21,11 +21,24 @@
  * correctness break, not a legacy-shape migration nicety.
  */
 import { isBuiltInAnchorName } from "../builtin/serverPolicy.js";
-import { anchorIdFromFrontmatter } from "../graph/identity.js";
+import { anchorIdFromFrontmatter, isValidAnchorId } from "../graph/identity.js";
 import { parseAnchor } from "../storage/markdown.js";
 import { classifyAnchorPath } from "../taxonomy.js";
 import type { Validator } from "./types.js";
 import { violation } from "./types.js";
+
+/**
+ * Format-gated read: a front-matter `anchor_id` that fails
+ * `ANCHOR_ID_PATTERN` is treated as absent here, so a malformed value that
+ * slipped into the tree (e.g. while `migrationWarnOnly` softened the
+ * front-matter schema BLOCK to a WARN) never gets locked in as immutable
+ * identity and can be corrected or removed by a later write. Reporting the
+ * format violation itself stays the universal front-matter schema's job.
+ */
+function validAnchorIdFromContent(content: string): string | undefined {
+  const raw = anchorIdFromFrontmatter(parseAnchor(content).frontmatter);
+  return raw && isValidAnchorId(raw) ? raw : undefined;
+}
 
 export const validateAnchorIdIntegrity: Validator = async (context) => {
   if (isBuiltInAnchorName(context.name)) {
@@ -34,10 +47,18 @@ export const validateAnchorIdIntegrity: Validator = async (context) => {
   if (classifyAnchorPath(context.name).kind !== "anchor") {
     return [];
   }
+  if (context.oldContent === undefined) {
+    // Create path: `AnchorService.writeAnchor` (the only anchor-creation
+    // path) already duplicate-checks a caller-supplied id against the same
+    // tree snapshot it mints from, so scanning again here would double the
+    // I/O cost of every create. This validator owns the UPDATE-time
+    // invariants only: immutability, and duplicate-checking an id newly
+    // adopted by a previously id-less anchor.
+    return [];
+  }
 
-  const newId = anchorIdFromFrontmatter(parseAnchor(context.newContent).frontmatter);
-  const oldId =
-    context.oldContent !== undefined ? anchorIdFromFrontmatter(parseAnchor(context.oldContent).frontmatter) : undefined;
+  const newId = validAnchorIdFromContent(context.newContent);
+  const oldId = validAnchorIdFromContent(context.oldContent);
 
   if (oldId && oldId !== newId) {
     return [

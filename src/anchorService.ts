@@ -202,7 +202,7 @@ import {
   type CoverageRecordKind,
   type CoverageState,
 } from "./graph/coverage.js";
-import { anchorIdFromFrontmatter, GRAPH_IDENTITY_VERSION, mintAnchorId } from "./graph/identity.js";
+import { anchorIdFromFrontmatter, GRAPH_IDENTITY_VERSION, isValidAnchorId, mintAnchorId } from "./graph/identity.js";
 import { buildPeopleIndex, parsePeopleRegistry, type PeopleIndex } from "./peopleRegistry.js";
 import { findMarkdownLinkSuggestions, suggestMarkdownLinks } from "./markdownLinks.js";
 import {
@@ -1075,10 +1075,31 @@ export class AnchorService {
     if (oldContent === undefined && classifyAnchorPath(resolved.name).kind === "anchor") {
       const fm = parseAnchor(content).frontmatter;
       const suppliedId = anchorIdFromFrontmatter(fm);
+      // One tree scan serves both the mint collision check and the
+      // caller-supplied duplicate check. The create-path duplicate check
+      // lives HERE (not in `validateAnchorIdIntegrity`, which only scans on
+      // update) so creating an anchor costs exactly one tree walk — see the
+      // validator's docstring for the split.
+      const treeAnchorIds = await this.collectTreeAnchorIds(resolved.name);
+      if (suppliedId && isValidAnchorId(suppliedId)) {
+        const owner = treeAnchorIds.get(suppliedId);
+        if (owner) {
+          return {
+            warnings: [
+              {
+                severity: "BLOCK",
+                code: "anchor_id_duplicate",
+                message: `anchor_id "${suppliedId}" already exists on "${owner}". anchor_id must be unique across the tree.`,
+                path: resolved.path,
+              },
+            ],
+            requiresApproval: false,
+          };
+        }
+      }
       const updates: Record<string, unknown> = {};
       if (!suppliedId) {
-        const treeAnchorIds = await this.collectTreeAnchorIds(resolved.name);
-        updates.anchor_id = mintAnchorId(treeAnchorIds);
+        updates.anchor_id = mintAnchorId(new Set(treeAnchorIds.keys()));
       }
       if (fm.schema_version === undefined) {
         updates.schema_version = 1;
@@ -1975,16 +1996,17 @@ None.
   }
 
   /**
-   * Every front-matter `anchor_id` currently in the tree, for mint-on-create
-   * collision checks and the `anchor_id_duplicate` validator (Goal 0 Phase 2
-   * WP-A: `goal0_phase2_mint_on_create_and_coverage_ui_plan.md`). Mirrors
-   * `collectTreeClaimIds`'s walk/exclude shape exactly. `excludeAnchor` skips
-   * one anchor's on-disk content (the anchor currently being written, whose
-   * id the caller supplies separately from its in-flight content).
+   * Every front-matter `anchor_id` currently in the tree, mapped to the
+   * anchor name declaring it, for mint-on-create collision checks and the
+   * create-path duplicate check (Goal 0 Phase 2 WP-A:
+   * `goal0_phase2_mint_on_create_and_coverage_ui_plan.md`). Mirrors
+   * `collectTreeClaimIds`'s walk/exclude shape. `excludeAnchor` skips one
+   * anchor's on-disk content (the anchor currently being written, whose id
+   * the caller supplies separately from its in-flight content).
    */
-  private async collectTreeAnchorIds(excludeAnchor?: string): Promise<Set<string>> {
+  private async collectTreeAnchorIds(excludeAnchor?: string): Promise<Map<string, string>> {
     const metas = await this.repo.listAnchors();
-    const ids = new Set<string>();
+    const ids = new Map<string, string>();
     for (const meta of metas) {
       if (isBuiltInAnchorName(meta.name) || meta.name === excludeAnchor) {
         continue;
@@ -1994,8 +2016,8 @@ None.
         continue;
       }
       const id = anchorIdFromFrontmatter(parseAnchor(content).frontmatter);
-      if (id) {
-        ids.add(id);
+      if (id && !ids.has(id)) {
+        ids.set(id, meta.name);
       }
     }
     return ids;
