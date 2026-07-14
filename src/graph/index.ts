@@ -32,6 +32,7 @@ import {
   extractLiteralRelationsEdges,
   extractRegistryPersonProjectEdges,
   extractRegistryProjectRepoEdges,
+  frontmatterProjectSlugs,
   type DocumentInput,
   type ExtractDocumentEdgesContext,
   type LiteralRelationEdge,
@@ -86,7 +87,8 @@ export class GraphIndex {
   // unresolved typed target simply falls back to the pre-WP3 anchor_anchor
   // legacy edge (see `extractRelationsEdges` in extract.ts), never drops.
   private anchorIdByName = new Map<string, string | undefined>();
-  private knownGoalIds = new Set<string>();
+  /** Goal ids keyed by the canonical project slug whose roadmap defines them — PROJECT-SCOPED so `goal:<project>:<goal-id>` refs never cross-resolve against a same-numbered goal in another project. */
+  private knownGoalIdsByProject = new Map<string, Set<string>>();
 
   constructor(
     private readonly repo: Pick<AnchorStore, "repoPath" | "listAnchors" | "readAnchor">,
@@ -182,7 +184,7 @@ export class GraphIndex {
       resolveAnchorName: ctx.resolveAnchorName,
       resolveProjectSlug: ctx.resolveProjectSlug,
       anchorNamesForAnchorId: (anchorId: string) => anchorNamesByAnchorId.get(anchorId) ?? [],
-      knownGoalIds: this.knownGoalIds,
+      goalExistsInProject: ctx.goalExistsInProject ?? (() => false),
       personExists: (id: string) => Boolean(ctx.peopleIndex.getPersonById(id)),
       teamExists: (id: string) => Boolean(ctx.peopleIndex.getTeamById(id)),
     };
@@ -291,7 +293,7 @@ export class GraphIndex {
     this.anchorMetaByName = new Map();
     this.sectionTitlesByAnchor = new Map();
     this.anchorIdByName = new Map();
-    this.knownGoalIds = new Set();
+    this.knownGoalIdsByProject = new Map();
   }
 
   private async resolveHead(): Promise<string | undefined> {
@@ -309,7 +311,7 @@ export class GraphIndex {
     // Goal 0 Phase 1 WP3: populated alongside section titles in pass 1 below
     // (both need the same per-anchor content read).
     const anchorIdByName = new Map<string, string | undefined>();
-    const knownGoalIds = new Set<string>();
+    const knownGoalIdsByProject = new Map<string, Set<string>>();
 
     const metas = await this.repo.listAnchors();
 
@@ -345,9 +347,22 @@ export class GraphIndex {
             const anchorId = anchorIdFromFrontmatter(read.frontmatter);
             anchorIdByName.set(meta.name, anchorId && isValidAnchorId(anchorId) ? anchorId : undefined);
             if (frontmatterTypeIncludesRoadmap(read.frontmatter.type)) {
+              // Key each goal by every project the roadmap belongs to (its
+              // path-derived slug plus declared front-matter slugs), so a
+              // typed goal:<project>:<goal-id> ref only resolves within the
+              // named project — never against a same-numbered goal elsewhere.
+              const roadmapSlugs = new Set<string>([
+                ...(meta.projectSlug ? [meta.projectSlug] : []),
+                ...frontmatterProjectSlugs(read.frontmatter),
+              ]);
               for (const row of listRoadmapGoalsWithStatus(read.content)) {
-                if (row.id) {
-                  knownGoalIds.add(row.id);
+                if (!row.id) {
+                  continue;
+                }
+                for (const slug of roadmapSlugs) {
+                  const goals = knownGoalIdsByProject.get(slug) ?? new Set<string>();
+                  goals.add(row.id);
+                  knownGoalIdsByProject.set(slug, goals);
                 }
               }
             }
@@ -358,7 +373,7 @@ export class GraphIndex {
       }),
     );
 
-    const ctx = await this.buildExtractContext(metas, sectionTitlesByAnchor, anchorIdByName, knownGoalIds);
+    const ctx = await this.buildExtractContext(metas, sectionTitlesByAnchor, anchorIdByName, knownGoalIdsByProject);
 
     // Pass 2: extract edges per document (pure, no I/O — uses the content and
     // parsed body already read in pass 1).
@@ -394,14 +409,14 @@ export class GraphIndex {
     this.literalRelationsReverse = literalRelationsReverse;
     this.sectionTitlesByAnchor = sectionTitlesByAnchor;
     this.anchorIdByName = anchorIdByName;
-    this.knownGoalIds = knownGoalIds;
+    this.knownGoalIdsByProject = knownGoalIdsByProject;
   }
 
   private async buildExtractContext(
     metas: AnchorMeta[],
     sectionTitlesByAnchor?: ReadonlyMap<string, ReadonlySet<string>>,
     anchorIdByName?: ReadonlyMap<string, string | undefined>,
-    knownGoalIds?: ReadonlySet<string>,
+    knownGoalIdsByProject?: ReadonlyMap<string, ReadonlySet<string>>,
   ): Promise<ExtractDocumentEdgesContext & { peopleRegistry: PeopleRegistry }> {
     const anchorNames = new Set(metas.map((meta) => meta.name));
     const peopleRegistry = await this.deps.loadPeopleRegistry();
@@ -412,7 +427,7 @@ export class GraphIndex {
     // comes from invalidateDocument (see the field docstrings above) rather
     // than recomputed, keeping the incremental path cheap.
     const anchorIds = anchorIdByName ?? this.anchorIdByName;
-    const goalIds = knownGoalIds ?? this.knownGoalIds;
+    const goalIdsByProject = knownGoalIdsByProject ?? this.knownGoalIdsByProject;
     // Same alias resolution resolveProjectFilter uses elsewhere (project
     // scoping in listAnchors/loadContext/etc), so a project slug in front
     // matter that is actually a declared alias resolves to the same
@@ -477,7 +492,8 @@ export class GraphIndex {
       peopleIndex,
       mappings,
       resolveAnchorId,
-      knownGoalIds: goalIds,
+      goalExistsInProject: (projectSlug: string, goalId: string) =>
+        goalIdsByProject.get(projectSlug)?.has(goalId) ?? false,
     };
   }
 

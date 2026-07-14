@@ -39,7 +39,7 @@ function makeCtx(overrides: Partial<CoverageAnalysisContext> = {}): CoverageAnal
     },
     resolveProjectSlug: (slug) => slug.trim() || undefined,
     anchorNamesForAnchorId: () => [],
-    knownGoalIds: new Set(),
+    goalExistsInProject: () => false,
     personExists: () => false,
     teamExists: () => false,
     ...overrides,
@@ -215,6 +215,29 @@ describe("analyzeCoverage: state fixtures", () => {
           anchor_id: "a-abc123",
           schema_version: 1,
           relations: { depends_on: ["anchor:a-ghost1"] },
+        },
+      }),
+    ];
+    const result = analyzeCoverage(docs, ctx);
+    expect(result.anchors[0].state).toBe("dangling");
+    expect(result.anchors[0].reasons).toContainEqual(expect.objectContaining({ code: "relation_target_dangling" }));
+  });
+
+  it("dangling: a goal target whose goal id exists only in ANOTHER project's roadmap (scoped-goal contract)", () => {
+    const ctx = makeCtx({
+      // G-001 is real — but only under project "other". The typed ref names
+      // project "demo", so it must NOT count as resolved (same rule as
+      // extract.ts: scoped goals never cross-resolve between projects).
+      goalExistsInProject: (slug, id) => slug === "other" && id === "G-001",
+    });
+    const docs = [
+      makeDoc({
+        anchorName: "projects/demo/a.md",
+        frontmatter: {
+          ...BASE_FRONTMATTER,
+          anchor_id: "a-abc123",
+          schema_version: 1,
+          relations: { implements: ["goal:demo:G-001"] },
         },
       }),
     ];

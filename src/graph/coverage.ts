@@ -107,8 +107,8 @@ export type CoverageAnalysisContext = {
    * from the malformed anchors that caused it).
    */
   anchorNamesForAnchorId: (anchorId: string) => readonly string[];
-  /** Every goal id known anywhere in the tree (from roadmap goal headings). */
-  knownGoalIds: ReadonlySet<string>;
+  /** True when the goal id is defined by a roadmap belonging to the given canonical project slug (PROJECT-SCOPED, matching extract.ts's typed-goal resolution). */
+  goalExistsInProject: (projectSlug: string, goalId: string) => boolean;
   personExists: (id: string) => boolean;
   teamExists: (id: string) => boolean;
 };
@@ -470,7 +470,7 @@ function resolveTypedTargetForCoverage(
       if (!resolvedSlug) {
         return "dangling";
       }
-      return ctx.knownGoalIds.has(parsed.goalId) ? "resolved" : "dangling";
+      return ctx.goalExistsInProject(resolvedSlug, parsed.goalId) ? "resolved" : "dangling";
     }
     case "person":
       return ctx.personExists(parsed.id) ? "resolved" : "dangling";

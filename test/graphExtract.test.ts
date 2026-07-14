@@ -160,7 +160,7 @@ describe("extractRelationsEdges: typed relation vocabulary (WP3)", () => {
   it("implements with a canonical goal:<project-slug>:<goal-id> target resolves to the unscoped v1 goal node via a typed implements edge", () => {
     const ctx = makeCtx({
       resolveProjectSlug: (slug) => (slug === "demo" ? "demo" : undefined),
-      knownGoalIds: new Set(["G-001"]),
+      goalExistsInProject: (slug, id) => slug === "demo" && id === "G-001",
     });
     const d = doc({
       anchorName: "projects/demo/context.md",
@@ -171,10 +171,25 @@ describe("extractRelationsEdges: typed relation vocabulary (WP3)", () => {
     ]);
   });
 
-  it("implements falls back to legacy (no edge) when the goal id is not in knownGoalIds", () => {
+  it("implements falls back to legacy (no edge) when the goal id is not defined in any project", () => {
     const ctx = makeCtx({
       resolveProjectSlug: (slug) => (slug === "demo" ? "demo" : undefined),
-      knownGoalIds: new Set(), // G-001 unknown
+      goalExistsInProject: () => false, // G-001 unknown everywhere
+    });
+    const d = doc({
+      anchorName: "projects/demo/context.md",
+      frontmatter: { relations: { implements: ["goal:demo:G-001"] } },
+    });
+    expect(extractRelationsEdges(d, ctx)).toEqual([]);
+  });
+
+  it("implements falls back to legacy (no edge) when the goal id exists only in ANOTHER project's roadmap", () => {
+    const ctx = makeCtx({
+      resolveProjectSlug: (slug) => slug.trim() || undefined,
+      // G-001 is real — but it belongs to project "other", not the "demo"
+      // scope the typed ref names. The scoped-goal contract (Goal 0: "G-001
+      // in two different projects ... cannot cross-resolve") requires NO edge.
+      goalExistsInProject: (slug, id) => slug === "other" && id === "G-001",
     });
     const d = doc({
       anchorName: "projects/demo/context.md",
@@ -186,7 +201,7 @@ describe("extractRelationsEdges: typed relation vocabulary (WP3)", () => {
   it("implements falls back to legacy (no edge) when the project slug does not resolve", () => {
     const ctx = makeCtx({
       resolveProjectSlug: () => undefined,
-      knownGoalIds: new Set(["G-001"]),
+      goalExistsInProject: (_slug, id) => id === "G-001",
     });
     const d = doc({
       anchorName: "projects/demo/context.md",
@@ -256,7 +271,7 @@ describe("extractRelationsEdges: typed relation vocabulary (WP3)", () => {
   });
 
   it("a malformed typed ref (goal: missing goal-id half) falls back to legacy handling (no edge)", () => {
-    const ctx = makeCtx({ knownGoalIds: new Set(["G-001"]), resolveProjectSlug: (s) => s });
+    const ctx = makeCtx({ goalExistsInProject: (_slug, id) => id === "G-001", resolveProjectSlug: (s) => s });
     const d = doc({
       anchorName: "projects/demo/a.md",
       frontmatter: { relations: { implements: ["goal:demo:"] } },

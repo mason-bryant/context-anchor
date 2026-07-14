@@ -71,14 +71,16 @@ export type ExtractDocumentEdgesContext = {
    */
   resolveAnchorId?: (anchorId: string) => string | undefined;
   /**
-   * Every `G-###` goal id known anywhere in the tree (from every
-   * `project-roadmap` anchor's goal headings), for validating a typed
-   * `implements`/relation `goal:<project-slug>:<goal-id>` target actually
-   * names a real goal (Goal 0 Phase 1 WP3). Absent/undefined treats no goal
-   * as known (conservative: typed goal refs fall back to legacy handling
-   * rather than being asserted resolved).
+   * True when `goalId` is defined by a `project-roadmap` anchor belonging to
+   * the given (already canonical) project slug — PROJECT-SCOPED, so a typed
+   * `goal:<project-slug>:<goal-id>` target only resolves against the named
+   * project's own roadmap, never against a same-numbered goal in some other
+   * project (the exact collision Goal 0's scoped-goal contract exists to
+   * prevent). Absent/undefined treats no goal as known (conservative: typed
+   * goal refs fall back to legacy handling rather than being asserted
+   * resolved).
    */
-  knownGoalIds?: ReadonlySet<string>;
+  goalExistsInProject?: (projectSlug: string, goalId: string) => boolean;
 };
 
 // ---------------------------------------------------------------------------
@@ -103,7 +105,7 @@ export function extractProjectEdges(doc: DocumentInput, ctx: ExtractDocumentEdge
   return edges;
 }
 
-function frontmatterProjectSlugs(frontmatter: AnchorFrontmatter): string[] {
+export function frontmatterProjectSlugs(frontmatter: AnchorFrontmatter): string[] {
   const raw = frontmatter.project;
   if (Array.isArray(raw)) {
     return raw.filter((item): item is string => typeof item === "string" && item.trim().length > 0);
@@ -253,12 +255,13 @@ function resolveTypedRelationTarget(
       if (!resolvedSlug) {
         return undefined;
       }
-      if (!ctx.knownGoalIds?.has(parsed.goalId)) {
+      if (!ctx.goalExistsInProject?.(resolvedSlug, parsed.goalId)) {
         return undefined;
       }
       // Goal nodes stay unscoped (v1) in this phase (plan decision 2): the
-      // typed ref's project scope gates resolution (the goal must belong to
-      // a known project), but the emitted edge still targets the existing
+      // typed ref's project scope gates resolution (the goal must be defined
+      // by the NAMED project's own roadmap — never a same-numbered goal in
+      // another project), but the emitted edge still targets the existing
       // unscoped `goal:<id>` node — no v2 re-key happens here.
       return goalNodeId(parsed.goalId);
     }
