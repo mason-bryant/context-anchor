@@ -1526,6 +1526,15 @@ describe("UI HTTP routes", () => {
     expect(result.records.every((record) => record.state === "prose_only")).toBe(true);
   });
 
+  it("rejects unknown /api/ui/graph-coverage states instead of silently dropping them", async () => {
+    const response = await fetch(`${baseUrl}/api/ui/graph-coverage?states=prose_only,not_a_state`, {
+      headers: { Authorization: `Bearer ${TOKEN}` },
+    });
+    const body = (await response.json()) as { error: { message: string } };
+    expect(response.status).toBe(400);
+    expect(body.error.message).toContain("not_a_state");
+  });
+
   it("filters /api/ui/graph-coverage by project", async () => {
     const result = await fetchJson<GraphCoverageHttpResult>("/api/ui/graph-coverage?project=demo");
     expect(result.records.some((record) => record.anchorName === "projects/demo/demo.md")).toBe(true);

@@ -569,17 +569,16 @@ export function registerUiRoutes(
     jsonRoute(async (req) => {
       const project = optionalQueryString(req, "project");
       const statesRaw = optionalQueryString(req, "states");
-      const states = statesRaw
-        ? statesRaw
-            .split(",")
-            .map((value) => value.trim())
-            .filter(isCoverageState)
-        : undefined;
+      const states = statesRaw?.split(",").map((value) => value.trim());
+      const invalidState = states?.find((value) => !isCoverageState(value));
+      if (invalidState !== undefined) {
+        throw new UiHttpError(400, `Invalid states: unknown coverage state ${invalidState || "(empty)"}`);
+      }
       const limit = positiveIntQuery(req, "limit", 500);
       const cursor = optionalQueryString(req, "cursor");
       return service.graphCoverage({
         ...(project ? { project } : {}),
-        ...(states && states.length > 0 ? { states } : {}),
+        ...(states && states.length > 0 ? { states: states as CoverageState[] } : {}),
         ...(limit !== undefined ? { limit } : {}),
         ...(cursor ? { cursor } : {}),
       });

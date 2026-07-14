@@ -282,7 +282,7 @@ export type GraphCoverageResult = {
   duplicateAnchorIds: CoverageAnalysisResult["duplicateAnchorIds"];
   identityContractVersion: number;
   graphGeneration: number;
-  graphHead: string | undefined;
+  graphHead?: string;
 };
 
 type MilestoneListRow = {
@@ -4583,7 +4583,7 @@ None.
       duplicateAnchorIds: analysis.duplicateAnchorIds,
       identityContractVersion: GRAPH_IDENTITY_VERSION,
       graphGeneration: generation,
-      graphHead: head,
+      ...(head !== undefined ? { graphHead: head } : {}),
     };
   }
 
