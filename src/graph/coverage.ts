@@ -553,10 +553,18 @@ export type CoverageRecordKind =
   | ({ kind: "anchor" } & AnchorCoverageRecord)
   | ({ kind: "claim" } & ClaimCoverageRecord);
 
-/** Deterministic sort key: anchor name, then (for claims) line number, so anchor records and their claims interleave in a stable, cursor-friendly order. */
+/**
+ * Deterministic sort key: anchor name, then (for claims) line number, so
+ * anchor records and their claims interleave in a stable, cursor-friendly
+ * order. Newline is the field delimiter: it cannot appear in an anchor name
+ * (single-line relative path) or a record kind, sorts below every printable
+ * character, and — unlike a NUL byte — keeps this file plain text and keeps
+ * cursors (which are these keys verbatim) transport-safe through URL
+ * encoding and JSON.
+ */
 function coverageSortKey(record: CoverageRecordKind): string {
   const line = record.kind === "claim" ? record.line : -1;
-  return `${record.anchorName} ${String(line).padStart(10, "0")} ${record.kind}`;
+  return `${record.anchorName}\n${String(line).padStart(10, "0")}\n${record.kind}`;
 }
 
 export type PageCoverageInput = {

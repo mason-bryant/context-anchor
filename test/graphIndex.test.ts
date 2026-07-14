@@ -412,6 +412,69 @@ None.
     ]);
   });
 
+  it("treats a typed target citing a DUPLICATED anchor_id as unresolvable (legacy fallback) instead of picking one anchor", async () => {
+    const repo = new AnchorRepository({ repoPath: tmpDir });
+    await repo.ensureReady();
+    await seedTypedRelationRepo(repo);
+    // Two more anchors that both (illegally — WP5 coverage reports this as a
+    // tree defect) declare the same anchor_id. A typed depends_on target
+    // citing that id must not resolve to whichever duplicate the resolver
+    // map happened to keep; it falls back to legacy handling, where the raw
+    // "anchor:a-dup999" string resolves to no anchor name, so no edge at all.
+    const dupFrontmatter = (title: string) => `---
+project:
+  - demo
+type: context-anchor
+tags: []
+summary: ${title} declaring a duplicated anchor_id.
+read_this_if:
+  - Testing duplicated anchor_id resolution.
+last_validated: 2026-07-07
+anchor_id: a-dup999
+---
+
+# ${title}
+
+## Current State
+
+None.
+`;
+    await repo.commitAnchor({ name: "projects/demo/dup-one.md", content: dupFrontmatter("Dup One") });
+    await repo.commitAnchor({ name: "projects/demo/dup-two.md", content: dupFrontmatter("Dup Two") });
+    await repo.commitAnchor({
+      name: "projects/demo/cites-dup.md",
+      content: `---
+project:
+  - demo
+type: context-anchor
+tags: []
+summary: Anchor citing a duplicated anchor_id.
+read_this_if:
+  - Testing duplicated anchor_id resolution.
+last_validated: 2026-07-07
+relations:
+  depends_on:
+    - "anchor:a-dup999"
+---
+
+# Cites Dup
+
+## Current State
+
+None.
+`,
+    });
+
+    const graph = new GraphIndex(repo, graphDeps(repo));
+    const typed = await graph.edgesFrom("anchor:projects/demo/cites-dup.md", "depends_on");
+    expect(typed).toEqual([]);
+    const legacy = await graph.edgesFrom("anchor:projects/demo/cites-dup.md", "anchor_anchor");
+    expect(legacy).toEqual([]);
+    // The unique anchor_id elsewhere in the tree still resolves normally.
+    const unaffected = await graph.edgesFrom("anchor:projects/demo/referring.md", "depends_on");
+    expect(unaffected).toHaveLength(1);
+  });
+
   it("emits related_to symmetrically (both directions) for a canonical anchor:<anchor-id> target", async () => {
     const repo = new AnchorRepository({ repoPath: tmpDir });
     await repo.ensureReady();

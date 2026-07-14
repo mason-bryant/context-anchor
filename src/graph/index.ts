@@ -442,14 +442,25 @@ export class GraphIndex {
 
     // Goal 0 Phase 1 WP3: reverse anchor_id -> name lookup for typed
     // `anchor:<anchor-id>` relation targets. Built once per context (not per
-    // target) since a document's relations can cite several anchor_ids.
+    // target) since a document's relations can cite several anchor_ids. An
+    // anchor_id declared by MORE than one anchor is a tree-level defect (WP5
+    // coverage reports it as malformed/ambiguous); a typed target citing it
+    // must resolve to NO anchor — falling back to legacy handling — rather
+    // than to whichever duplicate happened to be inserted last.
     const anchorNameByAnchorId = new Map<string, string>();
+    const duplicatedAnchorIds = new Set<string>();
     for (const [name, anchorId] of anchorIds) {
-      if (anchorId) {
-        anchorNameByAnchorId.set(anchorId, name);
+      if (!anchorId) {
+        continue;
       }
+      if (anchorNameByAnchorId.has(anchorId)) {
+        duplicatedAnchorIds.add(anchorId);
+        continue;
+      }
+      anchorNameByAnchorId.set(anchorId, name);
     }
-    const resolveAnchorId = (anchorId: string): string | undefined => anchorNameByAnchorId.get(anchorId);
+    const resolveAnchorId = (anchorId: string): string | undefined =>
+      duplicatedAnchorIds.has(anchorId) ? undefined : anchorNameByAnchorId.get(anchorId);
 
     return {
       anchorNames,
