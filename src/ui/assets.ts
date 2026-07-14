@@ -3152,6 +3152,9 @@ export const UI_JS = `(function () {
     coverageNextCursor: null,
     coverageLoading: false,
     coverageLoadMoreLoading: false,
+    // Monotonic id guarding coverage loads against out-of-order responses;
+    // see loadCoverage/loadMoreCoverage (mirrors anchorLoadId above).
+    coverageLoadId: 0,
     coverageProject: "",
     coverageStates: [],
     coverageText: "",
@@ -3308,9 +3311,20 @@ export const UI_JS = `(function () {
     if (!raw) {
       return [];
     }
+    // Dedupe in order: states has set semantics, and a repeated URL token
+    // (states=dangling,dangling) would make a single card toggle remove only
+    // one occurrence. Mirrors coverageFiltersFromUrlParams in
+    // src/ui/viewModel.ts.
+    var seen = {};
     return String(raw).split(",").map(function (value) {
       return value.trim();
-    }).filter(isValidCoverageState);
+    }).filter(function (value) {
+      if (!isValidCoverageState(value) || seen[value]) {
+        return false;
+      }
+      seen[value] = true;
+      return true;
+    });
   }
 
   // Coverage helpers below (coverageStateLabel, coverageKindLabel,
@@ -6445,20 +6459,36 @@ export const UI_JS = `(function () {
     state.coverageKnownProjects = Object.keys(seen).sort();
   }
 
+  // Monotonic load id guarding against out-of-order responses (mirrors the
+  // anchor list's anchorLoadId pattern): refresh, state-card toggles, and
+  // project changes can all fire loadCoverage while an older request is
+  // in-flight, and an older response resolving later must not overwrite the
+  // newer dataset. loadMoreCoverage captures the CURRENT id without
+  // incrementing (it extends the active dataset rather than replacing it),
+  // so any reload invalidates a pending load-more automatically.
   async function loadCoverage() {
+    state.coverageLoadId += 1;
+    var loadId = state.coverageLoadId;
     state.coverageLoading = true;
     var filters = currentCoverageFilters();
     try {
       var result = await api("/api/ui/graph-coverage?" + coverageQueryString(filters));
+      if (loadId !== state.coverageLoadId) {
+        return;
+      }
       state.coverage = result;
       state.coverageRecords = result.records || [];
       state.coverageNextCursor = result.nextCursor || null;
       mergeCoverageKnownProjects(state.coverageRecords);
       renderCoverage();
     } catch (error) {
-      setBanner(error.message, "error");
+      if (loadId === state.coverageLoadId) {
+        setBanner(error.message, "error");
+      }
     } finally {
-      state.coverageLoading = false;
+      if (loadId === state.coverageLoadId) {
+        state.coverageLoading = false;
+      }
     }
   }
 
@@ -6466,16 +6496,22 @@ export const UI_JS = `(function () {
     if (!state.coverageNextCursor || state.coverageLoadMoreLoading) {
       return;
     }
+    var loadId = state.coverageLoadId;
     state.coverageLoadMoreLoading = true;
     var filters = currentCoverageFilters();
     try {
       var result = await api("/api/ui/graph-coverage?" + coverageQueryString(filters, state.coverageNextCursor));
+      if (loadId !== state.coverageLoadId) {
+        return;
+      }
       state.coverageRecords = appendCoverageRecords(state.coverageRecords, result.records || []);
       state.coverageNextCursor = result.nextCursor || null;
       mergeCoverageKnownProjects(result.records || []);
       renderCoverage();
     } catch (error) {
-      setBanner(error.message, "error");
+      if (loadId === state.coverageLoadId) {
+        setBanner(error.message, "error");
+      }
     } finally {
       state.coverageLoadMoreLoading = false;
     }

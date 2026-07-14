@@ -375,6 +375,13 @@ describe("Schema Coverage view model", () => {
     expect(restored.states).toEqual(["dangling", "malformed"]);
   });
 
+  it("deduplicates repeated state tokens from the URL in order (set semantics — a single toggle must clear a state)", () => {
+    const restored = coverageFiltersFromUrlParams((key) =>
+      key === "coverageStates" ? "dangling,dangling,malformed,dangling" : null,
+    );
+    expect(restored.states).toEqual(["dangling", "malformed"]);
+  });
+
   it("computes a stable per-record key from kind/anchorName/line", () => {
     expect(coverageRecordKey(anchorRecord({ anchorName: "a.md" }))).toBe("anchor\na.md\n-1");
     expect(coverageRecordKey(claimRecord({ anchorName: "a.md", line: 7 }))).toBe("claim\na.md\n7");
