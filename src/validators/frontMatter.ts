@@ -29,7 +29,12 @@ const SchemaVersion = z.union([
 /** Format validated only when present (Goal 0 Phase 1 WP1/WP2): see `ANCHOR_ID_PATTERN` in `src/graph/identity.ts`. */
 const AnchorId = z.string().regex(ANCHOR_ID_PATTERN, "anchor_id must match ^a-[0-9a-z]{6,8}$");
 
-const AnchorFrontmatterSchema = z
+/**
+ * Exported so `src/graph/coverage.ts` (Goal 0 Phase 1 WP5) can reuse the exact
+ * same universal schema for its "front matter fails the universal schema"
+ * malformed check, rather than duplicating a second copy that could drift.
+ */
+export const AnchorFrontmatterSchema = z
   .object({
     type: z.union([z.string().min(1), z.array(z.string().min(1)).min(1)]),
     tags: z.array(z.string()),
