@@ -23,7 +23,7 @@ import type { AnchorStore } from "../storage/store.js";
 import { parseAnchor } from "../storage/markdown.js";
 import { buildProjectAliasIndex } from "../projectAliases.js";
 import { normalizeRelative } from "../utils/path.js";
-import { anchorIdFromFrontmatter } from "./identity.js";
+import { anchorIdFromFrontmatter, isValidAnchorId } from "./identity.js";
 import { listRoadmapGoalsWithStatus } from "../roadmap/analyzeRoadmap.js";
 import type { CoverageAnalysisContext } from "./coverage.js";
 import type { AnchorMeta, PeopleRegistry, ProjectMappings } from "../types.js";
@@ -337,7 +337,13 @@ export class GraphIndex {
             anchorMetaByName.set(meta.name, meta);
             contentByAnchor.set(meta.name, { read, body: parsed.body });
             sectionTitlesByAnchor.set(meta.name, new Set(parsed.sections.keys()));
-            anchorIdByName.set(meta.name, anchorIdFromFrontmatter(read.frontmatter));
+            // Format-gate here (the single population site): a malformed
+            // anchor_id must never participate in typed-relation resolution
+            // or coverage's anchorNamesForAnchorId as if it were resolvable —
+            // WP5 coverage reports the malformed value from the raw front
+            // matter separately.
+            const anchorId = anchorIdFromFrontmatter(read.frontmatter);
+            anchorIdByName.set(meta.name, anchorId && isValidAnchorId(anchorId) ? anchorId : undefined);
             if (frontmatterTypeIncludesRoadmap(read.frontmatter.type)) {
               for (const row of listRoadmapGoalsWithStatus(read.content)) {
                 if (row.id) {

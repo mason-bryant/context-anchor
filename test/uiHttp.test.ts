@@ -1531,6 +1531,24 @@ describe("UI HTTP routes", () => {
     expect(result.records.some((record) => record.anchorName === "projects/demo/demo.md")).toBe(true);
   });
 
+  it("resolves a project ALIAS for the /api/ui/graph-coverage project filter, like other project-scoped endpoints", async () => {
+    const aliasedContent = projectAnchorContent("aliased-proj").replace(
+      "type: context-anchor",
+      "type: context-anchor\naliases:\n  - ali",
+    );
+    const write = await service.writeAnchor({
+      name: "projects/aliased-proj/aliased-proj.md",
+      content: aliasedContent,
+      message: "test: add aliased project anchor",
+      approved: true,
+    });
+    expect(write.warnings.filter((warning) => warning.severity === "BLOCK")).toEqual([]);
+
+    const result = await fetchJson<GraphCoverageHttpResult>("/api/ui/graph-coverage?project=ali");
+    expect(result.records.some((record) => record.anchorName === "projects/aliased-proj/aliased-proj.md")).toBe(true);
+    expect(result.records.some((record) => record.anchorName === "projects/demo/demo.md")).toBe(false);
+  });
+
   it("bounds and paginates /api/ui/graph-coverage with a cursor", async () => {
     const firstPage = await fetchJson<GraphCoverageHttpResult>("/api/ui/graph-coverage?limit=1");
     expect(firstPage.records.length).toBeLessThanOrEqual(1);

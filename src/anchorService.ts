@@ -4533,8 +4533,13 @@ None.
 
     const metas = await this.repo.listAnchors();
     const readable = metas.filter((meta) => !isBuiltInAnchorName(meta.name));
-    const filteredByProject = input.project
-      ? readable.filter((meta) => meta.projectSlug === input.project)
+    // Resolve the project filter through the same alias/unresolved handling
+    // every other project-scoped surface uses (resolveProjectFilter), so
+    // `graphCoverage({ project: "<alias>" })` scopes to the canonical slug
+    // instead of silently matching nothing.
+    const { effectiveProject } = await this.resolveProjectFilter(input.project);
+    const filteredByProject = effectiveProject
+      ? readable.filter((meta) => meta.projectSlug === effectiveProject)
       : readable;
 
     const docs: CoverageDocumentInput[] = [];

@@ -412,6 +412,67 @@ None.
     ]);
   });
 
+  it("never resolves a typed target through a MALFORMED declared anchor_id (format-gated at the resolver map)", async () => {
+    const repo = new AnchorRepository({ repoPath: tmpDir });
+    await repo.ensureReady();
+    await seedTypedRelationRepo(repo);
+    // "bogus-id" fails ANCHOR_ID_PATTERN but the repo layer (unlike the
+    // write-path validator) accepts it — e.g. a hand-edited file. The typed
+    // ref "anchor:bogus-id" parses (the parser only requires non-empty), so
+    // without the resolver-map format gate this WOULD resolve and emit a
+    // typed edge to the declaring anchor.
+    await repo.commitAnchor({
+      name: "projects/demo/bad-id.md",
+      content: `---
+project:
+  - demo
+type: context-anchor
+tags: []
+summary: Anchor declaring a malformed anchor_id.
+read_this_if:
+  - Testing malformed anchor_id resolution.
+last_validated: 2026-07-07
+anchor_id: bogus-id
+---
+
+# Bad Id
+
+## Current State
+
+None.
+`,
+    });
+    await repo.commitAnchor({
+      name: "projects/demo/cites-bad-id.md",
+      content: `---
+project:
+  - demo
+type: context-anchor
+tags: []
+summary: Anchor citing a malformed anchor_id.
+read_this_if:
+  - Testing malformed anchor_id resolution.
+last_validated: 2026-07-07
+relations:
+  depends_on:
+    - "anchor:bogus-id"
+---
+
+# Cites Bad Id
+
+## Current State
+
+None.
+`,
+    });
+
+    const graph = new GraphIndex(repo, graphDeps(repo));
+    const typed = await graph.edgesFrom("anchor:projects/demo/cites-bad-id.md", "depends_on");
+    expect(typed).toEqual([]);
+    const legacy = await graph.edgesFrom("anchor:projects/demo/cites-bad-id.md", "anchor_anchor");
+    expect(legacy).toEqual([]);
+  });
+
   it("treats a typed target citing a DUPLICATED anchor_id as unresolvable (legacy fallback) instead of picking one anchor", async () => {
     const repo = new AnchorRepository({ repoPath: tmpDir });
     await repo.ensureReady();
