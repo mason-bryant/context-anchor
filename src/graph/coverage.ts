@@ -136,9 +136,12 @@ export function analyzeCoverage(
       anchorIdOwners.set(anchorId, owners);
     }
   }
+  // Sorted by anchorId so the findings list (and therefore API responses)
+  // is deterministic regardless of the docs' Map-insertion/read order.
   const duplicateAnchorIds: DuplicateAnchorIdFinding[] = [...anchorIdOwners.entries()]
     .filter(([, names]) => names.length > 1)
-    .map(([anchorId, anchorNames]) => ({ anchorId, anchorNames: [...anchorNames].sort() }));
+    .map(([anchorId, anchorNames]) => ({ anchorId, anchorNames: [...anchorNames].sort() }))
+    .sort((a, b) => a.anchorId.localeCompare(b.anchorId));
   const duplicatedAnchorIdSet = new Set(duplicateAnchorIds.map((entry) => entry.anchorId));
 
   const anchors: AnchorCoverageRecord[] = [];
@@ -338,6 +341,7 @@ function analyzeAnchorRelations(doc: CoverageDocumentInput, ctx: CoverageAnalysi
       continue;
     }
     const vocabEntry = relationVocabularyEntry(key);
+    let keyHasLegacyTarget = false;
 
     for (const target of values) {
       if (typeof target !== "string" || target.length === 0) {
@@ -347,6 +351,7 @@ function analyzeAnchorRelations(doc: CoverageDocumentInput, ctx: CoverageAnalysi
 
       const parseResult = parseRelationTarget(target);
       if (parseResult.legacy) {
+        keyHasLegacyTarget = true;
         outcome.hasLegacyTarget = true;
         outcome.allRelationTargetsTyped = false;
         if (!ctx.resolveAnchorName(target)) {
@@ -408,10 +413,19 @@ function analyzeAnchorRelations(doc: CoverageDocumentInput, ctx: CoverageAnalysi
       // resolved: fully typed and resolved, contributes to "structured".
     }
 
-    if (values.some((value) => typeof value === "string" && value.length > 0 && !relationVocabularyEntry(key))) {
+    const keyHasStringTargets = values.some((value) => typeof value === "string" && value.length > 0);
+    if (keyHasStringTargets && !vocabEntry) {
       suggestedOperations.push({
         code: "convert_relation",
         message: `Convert relations.${key} targets to a canonical typed reference.`,
+      });
+    } else if (keyHasLegacyTarget && vocabEntry) {
+      // The primary migration case: a REGISTERED key (depends_on, owned_by,
+      // ...) still pointing at legacy bare-string targets. These are exactly
+      // the targets the guided migration converts to canonical typed refs.
+      suggestedOperations.push({
+        code: "convert_relation",
+        message: `Convert relations.${key} legacy bare-string targets to canonical typed references.`,
       });
     }
   }

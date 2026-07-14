@@ -96,6 +96,50 @@ describe("analyzeCoverage: state fixtures", () => {
     ];
     const result = analyzeCoverage(docs, ctx);
     expect(result.anchors[0].state).toBe("partial");
+    // The primary migration case: a REGISTERED key with a legacy bare-string
+    // target must carry the actionable convert_relation suggestion.
+    expect(result.anchors[0].suggestedOperations).toContainEqual(
+      expect.objectContaining({ code: "convert_relation" }),
+    );
+  });
+
+  it("registered key with only canonical typed targets suggests no convert_relation", () => {
+    const anchorNames = new Set(["projects/demo/a.md", "projects/demo/b.md"]);
+    const ctx = makeCtx({
+      anchorNames,
+      anchorNamesForAnchorId: (id) => (id === "a-target1" ? ["projects/demo/b.md"] : []),
+    });
+    const docs = [
+      makeDoc({
+        anchorName: "projects/demo/a.md",
+        frontmatter: {
+          ...BASE_FRONTMATTER,
+          anchor_id: "a-abc123",
+          schema_version: 1,
+          relations: { depends_on: ["anchor:a-target1"] },
+        },
+      }),
+    ];
+    const result = analyzeCoverage(docs, ctx);
+    expect(result.anchors[0].suggestedOperations).not.toContainEqual(
+      expect.objectContaining({ code: "convert_relation" }),
+    );
+  });
+
+  it("duplicateAnchorIds findings are sorted by anchorId regardless of document order", () => {
+    const ctx = makeCtx();
+    const dup = (name: string, anchorId: string) =>
+      makeDoc({ anchorName: name, frontmatter: { ...BASE_FRONTMATTER, anchor_id: anchorId } });
+    // The z-duplicate pair is encountered first in document order; the
+    // findings list must still come back a-first.
+    const docs = [
+      dup("projects/demo/z1.md", "a-zzz111"),
+      dup("projects/demo/z2.md", "a-zzz111"),
+      dup("projects/demo/a1.md", "a-aaa111"),
+      dup("projects/demo/a2.md", "a-aaa111"),
+    ];
+    const result = analyzeCoverage(docs, ctx);
+    expect(result.duplicateAnchorIds.map((finding) => finding.anchorId)).toEqual(["a-aaa111", "a-zzz111"]);
   });
 
   it("prose_only: a generated document (e.g. CONTEXT-ROOT.md)", () => {
