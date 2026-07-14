@@ -9014,7 +9014,7 @@ export const UI_JS = `(function () {
   function isTableStart(lines, index, opts, sourceLines, lineOffset) {
     var current = lines[index] || "";
     var next = lines[index + 1] || "";
-    if (!looksLikeTableRow(current) || !isTableSeparator(next)) {
+    if (!looksLikeTableRow(current) || !isTableSeparator(next) || splitTableRow(current).length !== splitTableRow(next).length) {
       return false;
     }
     var nextLine = lineOffset + index + 2;
@@ -9096,12 +9096,18 @@ export const UI_JS = `(function () {
     }
     var cells = [];
     var cell = "";
-    var inCode = false;
+    var codeDelimiterLength = 0;
     for (var index = 0; index < text.length; index += 1) {
       var char = text.charAt(index);
       if (char === tick) {
-        inCode = !inCode;
-        cell += char;
+        var delimiterLength = backtickRunLength(text, index);
+        if (codeDelimiterLength === 0) {
+          codeDelimiterLength = delimiterLength;
+        } else if (delimiterLength === codeDelimiterLength) {
+          codeDelimiterLength = 0;
+        }
+        cell += text.slice(index, index + delimiterLength);
+        index += delimiterLength - 1;
         continue;
       }
       if (char === "\\\\" && text.charAt(index + 1) === "|") {
@@ -9109,7 +9115,7 @@ export const UI_JS = `(function () {
         index += 1;
         continue;
       }
-      if (char === "|" && !inCode) {
+      if (char === "|" && codeDelimiterLength === 0) {
         cells.push(cell.trim());
         cell = "";
         continue;
@@ -9118,6 +9124,14 @@ export const UI_JS = `(function () {
     }
     cells.push(cell.trim());
     return cells;
+  }
+
+  function backtickRunLength(text, startIndex) {
+    var length = 1;
+    while (text.charAt(startIndex + length) === String.fromCharCode(96)) {
+      length += 1;
+    }
+    return length;
   }
 
   function loadMermaidRuntime() {

@@ -50,16 +50,23 @@ describe("editable Markdown tables", () => {
     expect(updated).toContain("### CTE Translation Pipeline\n\n- Pipeline details remain after the table.");
   });
 
-  it("ignores table-shaped text in fenced code blocks", () => {
-    const content = "```markdown\n| Not | A table |\n|-----|---------|\n| one | row |\n```\n\n| Real | Table |\n|------|-------|";
+  it("ignores table-shaped text in backtick and tilde fenced code blocks", () => {
+    const content = "```markdown\n| Not | A table |\n|-----|---------|\n| one | row |\n```\n\n~~~markdown\n| Also | Not a table |\n|------|-------------|\n| two | row |\n~~~\n\n| Real | Table |\n|------|-------|";
 
     expect(extractMarkdownTables(content)).toEqual([
       {
-        line: 7,
-        endLine: 8,
+        line: 13,
+        endLine: 14,
         text: "| Real | Table |\n|------|-------|",
       },
     ]);
+  });
+
+  it("does not split table cells on pipes inside multi-backtick code spans", () => {
+    const table = "Name | Query\n---|---\nExample | ``code | with pipe``";
+
+    expect(isCompleteMarkdownTable(table)).toBe(true);
+    expect(extractMarkdownTables(table)).toEqual([{ line: 1, endLine: 3, text: table }]);
   });
 
   it("accepts one complete table and rejects surrounding or malformed content", () => {
