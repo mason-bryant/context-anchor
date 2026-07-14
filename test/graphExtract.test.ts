@@ -86,6 +86,19 @@ describe("extractProjectEdges", () => {
       { from: "anchor:projects/demo/legacy-anchor.md", to: "project:demo", type: "anchor_project", sourceOfTruth: "front-matter" },
     ]);
   });
+
+  it("trims array-form project slugs before resolving them", () => {
+    const ctx = makeCtx({ resolveProjectSlug: (slug) => (slug === "demo" ? slug : undefined) });
+    const d = doc({ anchorName: "projects/demo/context.md", frontmatter: { project: ["  demo  ", "  "] } });
+    expect(extractProjectEdges(d, ctx)).toEqual([
+      {
+        from: "anchor:projects/demo/context.md",
+        to: "project:demo",
+        type: "anchor_project",
+        sourceOfTruth: "front-matter",
+      },
+    ]);
+  });
 });
 
 describe("extractRelationsEdges", () => {

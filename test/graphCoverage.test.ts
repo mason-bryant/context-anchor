@@ -153,6 +153,27 @@ describe("analyzeCoverage: state fixtures", () => {
     );
   });
 
+  it("tells unregistered relation keys to migrate the key before converting targets", () => {
+    const ctx = makeCtx({ anchorNames: new Set(["projects/demo/a.md", "projects/demo/b.md"]) });
+    const docs = [
+      makeDoc({
+        anchorName: "projects/demo/a.md",
+        frontmatter: {
+          ...BASE_FRONTMATTER,
+          anchor_id: "a-abc123",
+          schema_version: 1,
+          relations: { custom_key: ["projects/demo/b.md"] },
+        },
+      }),
+    ];
+    const result = analyzeCoverage(docs, ctx);
+    expect(result.anchors[0].suggestedOperations).toContainEqual({
+      code: "convert_relation",
+      message:
+        "Migrate unregistered relations.custom_key to a supported relation key before converting its targets to canonical typed references.",
+    });
+  });
+
   it("duplicateAnchorIds findings are sorted by anchorId regardless of document order", () => {
     const ctx = makeCtx();
     const dup = (name: string, anchorId: string) =>

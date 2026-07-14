@@ -108,7 +108,10 @@ export function extractProjectEdges(doc: DocumentInput, ctx: ExtractDocumentEdge
 export function frontmatterProjectSlugs(frontmatter: AnchorFrontmatter): string[] {
   const raw = frontmatter.project;
   if (Array.isArray(raw)) {
-    return raw.filter((item): item is string => typeof item === "string" && item.trim().length > 0);
+    return raw
+      .filter((item): item is string => typeof item === "string")
+      .map((item) => item.trim())
+      .filter((item) => item.length > 0);
   }
   if (typeof raw === "string" && raw.trim().length > 0) {
     return [raw.trim()];

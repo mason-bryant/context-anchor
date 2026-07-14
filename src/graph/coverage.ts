@@ -432,7 +432,7 @@ function analyzeAnchorRelations(doc: CoverageDocumentInput, ctx: CoverageAnalysi
     if (keyHasStringTargets && !vocabEntry) {
       suggestedOperations.push({
         code: "convert_relation",
-        message: `Convert relations.${key} targets to a canonical typed reference.`,
+        message: `Migrate unregistered relations.${key} to a supported relation key before converting its targets to canonical typed references.`,
       });
     } else if (keyHasLegacyTarget && vocabEntry) {
       // The primary migration case: a REGISTERED key (depends_on, owned_by,
