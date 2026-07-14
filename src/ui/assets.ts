@@ -3313,6 +3313,12 @@ export const UI_JS = `(function () {
     }).filter(isValidCoverageState);
   }
 
+  // Coverage helpers below (coverageStateLabel, coverageKindLabel,
+  // coverageRecordKey, appendCoverageRecords, filterCoverageRecords) are ES5
+  // mirrors of the same-named unit-tested exports in src/ui/viewModel.ts;
+  // behavior changes must land in both. The URL round-trip and server query
+  // mirrors are annotated at their sites (coverageQueryString and the
+  // coverage blocks in applyUrlStateToControls/paramsForState).
   function coverageStateLabel(state) {
     return COVERAGE_STATE_LABELS[state] || state;
   }
@@ -3381,6 +3387,7 @@ export const UI_JS = `(function () {
     });
   }
 
+  // Mirrors coverageQueryParams in src/ui/viewModel.ts.
   function coverageQueryString(filters, cursor) {
     var qs = [];
     if (filters.project) qs.push("project=" + encodeURIComponent(filters.project));
@@ -3488,6 +3495,9 @@ export const UI_JS = `(function () {
     setControlChecked("tasks-no-due", state.tasksNoDue);
     setControlChecked("tasks-unassigned", state.tasksUnassigned);
 
+    // Mirrors coverageFiltersFromUrlParams in src/ui/viewModel.ts (the URL
+    // round-trip runs through this generic tab URL wiring, not a dedicated
+    // coverage function).
     state.coverageProject = params.get("coverageProject") || "";
     state.coverageStates = validCoverageStates(params.get("coverageStates"));
     state.coverageText = params.get("coverageSearch") || "";
@@ -3588,6 +3598,8 @@ export const UI_JS = `(function () {
       params.set("tasksUnassigned", "true");
     }
 
+    // Mirrors coverageUrlParamsFromFilters in src/ui/viewModel.ts (see the
+    // matching read-side note in applyUrlStateToControls).
     setParam(params, "coverageProject", controlValue("coverage-project-filter", sourceParams.get("coverageProject") || ""));
     if (state.coverageStates && state.coverageStates.length > 0) {
       params.set("coverageStates", state.coverageStates.join(","));

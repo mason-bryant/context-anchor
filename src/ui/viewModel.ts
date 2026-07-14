@@ -346,8 +346,12 @@ function frontmatterValueIncludes(value: unknown, expected: string): boolean {
 // (`src/ui/assets.ts`) is plain ES5 embedded in template strings and cannot
 // import TypeScript modules, so it MIRRORS this logic inline; these exports
 // are the unit-tested reference implementation, and any behavior change here
-// must be applied to the corresponding function in `assets.ts` (each mirror
-// names its counterpart) — the pair drifting apart is a bug.
+// must be applied to the corresponding code in `assets.ts` — the pair
+// drifting apart is a bug. Most mirrors share this file's function names
+// and are annotated as mirrors at their definition; the URL round-trip is
+// the exception, living in the coverage blocks of the generic
+// `applyUrlStateToControls`/`paramsForState` tab-URL wiring (annotated
+// there too).
 // ---------------------------------------------------------------------------
 
 /** Display order for coverage-state badges/cards: worst-to-best structural signal first, matching WP5's precedence (malformed > dangling > ambiguous > partial), with the two mutually exclusive "happy"/"inert" ends last. */
