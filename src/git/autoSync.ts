@@ -11,6 +11,14 @@ export class AutoSync {
     private readonly repo: SyncableAnchorStore,
     private readonly intervalMs: number,
     private readonly logger: AppLogger = noopLogger,
+    /**
+     * Serialization hook for the pull itself. The runtime passes
+     * `AnchorService.runExclusiveWrite` so a background pull can never
+     * interleave with a write's identity snapshot + duplicate check +
+     * commit (which read the tree outside the repo's commit lock).
+     * Defaults to a pass-through for callers without a service.
+     */
+    private readonly runExclusive: <T>(fn: () => Promise<T>) => Promise<T> = (fn) => fn(),
   ) {}
 
   start(): void {
@@ -66,7 +74,7 @@ export class AutoSync {
 
     this.missingUpstreamLogged = false;
     try {
-      await this.repo.pullRebase();
+      await this.runExclusive(() => this.repo.pullRebase());
       this.lastConflict = await this.repo.conflictStatus();
     } catch (error) {
       this.logger.warn("auto sync pull failed", { error: errorMetadata(error) });

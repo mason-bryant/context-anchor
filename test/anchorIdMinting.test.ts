@@ -371,7 +371,7 @@ describe("mint-on-create: anchor_id + schema_version", () => {
     expect(after.frontmatter.anchor_id).toBe(originalId);
   });
 
-  it("generated documents (CONTEXT-ROOT.md) are never minted: writeAnchor rejects the write before mint logic runs", async () => {
+  it("generated documents (CONTEXT-ROOT.md) are never minted: classifyAnchorPath skips the mint branch, then the generated-file reservation validator blocks the write", async () => {
     const result = await service.writeAnchor({
       name: "CONTEXT-ROOT.md",
       content: "# Context Root\n",

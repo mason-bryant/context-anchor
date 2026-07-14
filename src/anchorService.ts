@@ -314,6 +314,17 @@ type ClaimResolutionInputs = {
 export class AnchorService {
   /** Serializes `writeAnchor` end-to-end so identity snapshot + duplicate check + commit are atomic with respect to other writes — see `writeAnchor`'s docstring. */
   private readonly writeAnchorLock = new AsyncLock();
+
+  /**
+   * Run `fn` holding the write lock. For EXTERNAL repo mutators that do not
+   * flow through this service's write methods — today that is AutoSync's
+   * background pull (wired in `src/runtime.ts`) — so a repo-wide
+   * pull/rebase can never interleave with a write's identity snapshot +
+   * duplicate check + commit.
+   */
+  runExclusiveWrite<T>(fn: () => Promise<T>): Promise<T> {
+    return this.writeAnchorLock.runExclusive(fn);
+  }
   private _peopleRegistry: PeopleRegistry | undefined;
   /** Git commit the cached registry was parsed from; used to detect out-of-band changes (e.g. AutoSync rebases). */
   private _peopleRegistryCommit: string | undefined;
