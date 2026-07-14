@@ -456,6 +456,47 @@ None.
   });
 });
 
+describe("GraphIndex id-only claim node (Goal 0 Phase 1 WP4)", () => {
+  const ANCHOR_WITH_ID_ONLY_CLAIM = `---
+project:
+  - demo
+type: context-anchor
+tags: []
+summary: Anchor with an id-only claim.
+read_this_if:
+  - Testing WP4 id-only claim graph nodes.
+last_validated: 2026-07-07
+---
+
+# Anchor With Id Only Claim
+
+## Current State
+
+- Legacy claim with a stable id but no provenance.
+  {id: c-legacy1}
+`;
+
+  it("materializes a claim: node for an id-only (unannotated) claim through a real GraphIndex build", async () => {
+    const repo = new AnchorRepository({ repoPath: tmpDir });
+    await repo.ensureReady();
+    await repo.writePeopleRegistryRaw({ people: [], teams: [] });
+    await repo.writeProjectMappingsRaw({ projects: [] });
+    await repo.commitAnchor({ name: "projects/demo/id-only.md", content: ANCHOR_WITH_ID_ONLY_CLAIM });
+
+    const graph = new GraphIndex(repo, graphDeps(repo));
+    const claimNode = "claim:projects/demo/id-only.md#c-legacy1";
+    const forward = await graph.edgesFrom(claimNode);
+    expect(forward).toEqual([
+      {
+        from: claimNode,
+        to: "section:projects/demo/id-only.md#Current State",
+        type: "claim_section",
+        sourceOfTruth: "containment",
+      },
+    ]);
+  });
+});
+
 describe("AnchorService graph wiring", () => {
   it("does not construct a GraphIndex until a graph-consuming call happens (writeAnchor works without ever building the graph)", async () => {
     const repo = new AnchorRepository({ repoPath: tmpDir });

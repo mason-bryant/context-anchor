@@ -604,6 +604,45 @@ type: context-anchor
     const edges = extractClaimEdges(d, ctx);
     expect(edges.some((edge) => edge.type === "derived_from")).toBe(false);
   });
+
+  it("gives an id-only claim (Goal 0 Phase 1 WP4) its own claim node via a containment edge to its home section, not by disappearing", () => {
+    const ctx = makeCtx();
+    const idOnlyContent = `---
+type: context-anchor
+---
+
+## Current State
+
+- Legacy claim with a stable id but no provenance.
+  {id: c-legacy1}
+`;
+    const d = doc({ anchorName: "projects/demo/a.md", content: idOnlyContent });
+    const edges = extractClaimEdges(d, ctx);
+    expect(edges).toEqual([
+      {
+        from: "claim:projects/demo/a.md#c-legacy1",
+        to: "section:projects/demo/a.md#Current State",
+        type: "claim_section",
+        sourceOfTruth: "containment",
+      },
+      {
+        from: "section:projects/demo/a.md#Current State",
+        to: "anchor:projects/demo/a.md",
+        type: "section_anchor",
+        sourceOfTruth: "containment",
+      },
+    ]);
+  });
+
+  it("does not add an own-section containment edge to an already-annotated claim (existing annotated-claim edges stay exactly as before WP4)", () => {
+    const ctx = makeCtx();
+    const d = doc({ anchorName: "projects/demo/a.md", content });
+    const edges = extractClaimEdges(d, ctx);
+    const ownSectionEdges = edges.filter(
+      (edge) => edge.type === "claim_section" && edge.sourceOfTruth === "containment",
+    );
+    expect(ownSectionEdges).toEqual([]);
+  });
 });
 
 describe("extractDocumentEdges", () => {

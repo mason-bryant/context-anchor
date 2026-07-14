@@ -34,6 +34,18 @@
  * kebab-case slugs (e.g. `owner-resolution`) and remain valid, parseable ids
  * forever — `ID_PATTERN` accepts both shapes — but the server never *mints*
  * a kebab slug; only the `c-` form is newly minted.
+ *
+ * Claim identity independent of provenance (Goal 0 Phase 1 WP4,
+ * `goal0_semantic_substrate_implementation_plan.md`): a claim may ALSO carry
+ * a stable id with no provenance at all, via an id-only annotation block
+ * (`{id: c-7f3a9d}`, no `src`/`observed`/`conf`). This never counts as a
+ * source (no strength, no `status: "annotated"`) — the claim's provenance
+ * state stays `"unannotated"`, but it is now graph-addressable
+ * (`AnchorClaim.id` is set, `AnchorClaim.idProvenanceless` is true) rather
+ * than anonymous. The server never mints an id for an unannotated claim in
+ * this phase (minting on write is a later migration operation); this grammar
+ * only lets a human or migration-authored id survive parsing instead of
+ * being rejected as malformed or silently dropped.
  */
 
 import { CLAIM_BEARING_SECTIONS } from "./anchorStructure.js";
@@ -91,11 +103,22 @@ export type AnchorClaim = {
   status: ClaimStatus;
   /**
    * Stable claim-level graph node id (opaque, server-minted for new ids;
-   * legacy kebab-case ids are grandfathered). Present only when at least one
-   * valid source row carries an `id`. Undefined for unannotated claims —
-   * ids are never minted or attached to plain bullets.
+   * legacy kebab-case ids are grandfathered). Present when a valid source row
+   * carries an `id`, OR (Goal 0 Phase 1 WP4) when the claim carries a valid
+   * id-only annotation (`{id: c-xxxxxx}`, no provenance fields) — an
+   * unannotated claim with an id keeps `status: "unannotated"` (it has no
+   * provenance), it is simply graph-addressable rather than anonymous. Ids
+   * are never minted for a claim automatically; a human or a later migration
+   * write attaches one.
    */
   id?: string;
+  /**
+   * True when this claim's `id` came from an id-only annotation (WP4) rather
+   * than a provenance source row. Undefined (not false) when the claim has no
+   * id at all, so callers can tell "no id" from "id, but unannotated" from
+   * "id, from an annotated source" using `id` + this flag together.
+   */
+  idProvenanceless?: boolean;
   /** Valid provenance sources attached to this claim. */
   sources: ClaimSource[];
   /**
@@ -120,6 +143,16 @@ export type AnchorClaim = {
   /** True when the annotation is a trailing block on the bullet line itself. */
   annotationInline?: boolean;
   sourceErrors?: { line: number; inline: boolean; errors: string[] }[];
+  /**
+   * Id-only annotation rows (WP4: `{id: c-xxxxxx}` with no provenance
+   * fields), tracked separately from `sources` since they carry no
+   * src/observed/conf and must never count as provenance. Present (possibly
+   * empty) whenever at least one id-only row was found on this claim; used by
+   * `finalizeClaim`/`claimLevelId` to fold the id into `claim.id` and to
+   * detect an id-only row conflicting with a differently-valued id elsewhere
+   * on the same claim.
+   */
+  idOnlyRows?: { id: string; line: number; inline: boolean }[];
 };
 
 export type InertClaimAnnotation = {
@@ -178,9 +211,18 @@ export type AnnotationParseResult =
   | { ok: true; annotation: ClaimAnnotation }
   | { ok: false; errors: string[] };
 
-/** True when a brace block's inner text is attempting the annotation grammar. */
+/**
+ * True when a brace block's inner text is attempting the annotation grammar.
+ * Includes bare `id:` (Goal 0 Phase 1 WP4, claim identity independent of
+ * provenance: `goal0_semantic_substrate_implementation_plan.md`) so a
+ * `{id: c-xxxxxx}`-only block is recognized as an annotation attempt (and
+ * routed to `parseIdOnlyAnnotationBody`) rather than left as literal bullet
+ * text — before WP4, `id` was deliberately excluded here because an id-only
+ * block could never parse successfully anyway (see `parseAnnotationBody`'s
+ * required src/observed/conf).
+ */
 export function looksLikeAnnotationBody(inner: string): boolean {
-  return /(^|;)\s*(src|observed|conf|kind|person|derived_from|contradicts)\s*:/.test(inner);
+  return /(^|;)\s*(src|observed|conf|id|kind|person|derived_from|contradicts)\s*:/.test(inner);
 }
 
 export function stripClaimAnnotations(content: string): string {
@@ -303,6 +345,81 @@ export function parseAnnotationBody(inner: string): AnnotationParseResult {
       ...(contradicts !== undefined ? { contradicts } : {}),
     },
   };
+}
+
+export type IdOnlyAnnotationParseResult =
+  | { ok: true; id: string }
+  | { ok: false; errors: string[] };
+
+/**
+ * Parse a brace block whose ONLY key is `id` (Goal 0 Phase 1 WP4: claim
+ * identity independent of provenance). Returns undefined when the block
+ * carries any other recognized annotation key (`src`, `observed`, `conf`,
+ * `kind`, `person`, `derived_from`, `contradicts`) — those blocks are a
+ * normal (possibly-id-carrying) provenance annotation and belong to
+ * `parseAnnotationBody` instead, never both.
+ *
+ * An id-only annotation intentionally produces NO `ClaimSource`: it carries
+ * no `src`/`observed`/`conf`, so it is not provenance and must never count
+ * toward `claim.sources`, `claim.strength`, or push `claim.status` to
+ * `"annotated"`. Its only effect is giving the claim a stable, graph-
+ * addressable `id` while the claim's provenance state stays `"unannotated"`
+ * (an unannotated claim is visibly unverified, not silently invisible — see
+ * the design doc's Goal 0 acceptance criterion "an unannotated claim can have
+ * a stable identity and appears as unverified rather than disappearing from
+ * the graph").
+ */
+export function parseIdOnlyAnnotationBody(inner: string): IdOnlyAnnotationParseResult | undefined {
+  const errors: string[] = [];
+  const fields = new Map<string, string>();
+
+  for (const rawPart of inner.split(";")) {
+    const part = rawPart.trim();
+    if (!part) {
+      continue;
+    }
+    const colon = part.indexOf(":");
+    if (colon === -1) {
+      errors.push(`Field "${part}" is missing a ':' separator.`);
+      continue;
+    }
+    const key = part.slice(0, colon).trim();
+    const value = part.slice(colon + 1).trim();
+    if (!ANNOTATION_KEYS.has(key)) {
+      errors.push(
+        `Unknown annotation key "${key}" (allowed: src, observed, conf, id, kind, person, derived_from, contradicts).`,
+      );
+      continue;
+    }
+    if (fields.has(key)) {
+      errors.push(`Duplicate annotation key "${key}".`);
+      continue;
+    }
+    fields.set(key, value);
+  }
+
+  const provenanceKeys = ["src", "observed", "conf", "kind", "person", "derived_from", "contradicts"];
+  if (provenanceKeys.some((key) => fields.has(key))) {
+    // Carries provenance-shaped keys too: not id-only, defer to parseAnnotationBody.
+    return undefined;
+  }
+  if (!fields.has("id")) {
+    // Neither id nor any provenance key parsed (e.g. only unknown keys / a
+    // stray colon-less fragment) — not an id-only body either; let the
+    // caller's normal parseAnnotationBody path surface those errors so
+    // behavior for genuinely malformed non-id blocks is unchanged.
+    return undefined;
+  }
+
+  const id = fields.get("id") as string;
+  if (!ID_PATTERN.test(id)) {
+    errors.push(`id must be kebab-case, got "${id}".`);
+  }
+
+  if (errors.length > 0) {
+    return { ok: false, errors };
+  }
+  return { ok: true, id };
 }
 
 function normalizeClaimSourceKind(rawKind: string | undefined, src: string): ClaimSourceKind | undefined {
@@ -612,11 +729,27 @@ function isClaimSection(section: string): boolean {
 }
 
 function applyParsedAnnotation(claim: AnchorClaim, inner: string, line: number, inline: boolean): void {
-  const parsed = parseAnnotationBody(inner);
   if (claim.annotationLine === undefined) {
     claim.annotationLine = line;
     claim.annotationInline = inline;
   }
+
+  // Id-only annotation (WP4): `{id: c-xxxxxx}` with no provenance fields.
+  // Tried before parseAnnotationBody so an id-only block never gets rejected
+  // for "missing src/observed/conf" — it was never claiming to be provenance.
+  const idOnly = parseIdOnlyAnnotationBody(inner);
+  if (idOnly) {
+    if (idOnly.ok) {
+      claim.idOnlyRows ??= [];
+      claim.idOnlyRows.push({ id: idOnly.id, line, inline });
+    } else {
+      claim.sourceErrors ??= [];
+      claim.sourceErrors.push({ line, inline, errors: idOnly.errors });
+    }
+    return;
+  }
+
+  const parsed = parseAnnotationBody(inner);
   if (parsed.ok) {
     const source: ClaimSource = { ...parsed.annotation, line, inline };
     claim.sources.push(source);
@@ -639,11 +772,19 @@ function finalizeClaim(claim: AnchorClaim): void {
   claim.derivedFrom = dedupeInOrder(claim.sources.map((source) => source.derivedFrom).filter(isDefined));
   claim.contradicts = dedupeInOrder(claim.sources.map((source) => source.contradicts).filter(isDefined));
 
-  // `id` is claim-level (WP1): accept it on any source row, but two rows of
-  // the same claim carrying *different* ids is a malformed annotation.
+  // `id` is claim-level (WP1; extended WP4 to also draw from id-only rows):
+  // accept it on any source row OR any id-only row, but two rows of the same
+  // claim carrying *different* ids is a malformed annotation.
   const idConflict = claimLevelId(claim);
   if (idConflict.ok) {
     claim.id = idConflict.id;
+    // The id is "provenanceless" (WP4) when nothing among the claim's actual
+    // provenance sources carries it — i.e. it came only from idOnlyRows. A
+    // claim can have both an annotated source AND a separate id-only row
+    // carrying the SAME id (redundant but not conflicting); in that case the
+    // id already has a source, so it is not provenanceless.
+    claim.idProvenanceless =
+      idConflict.id !== undefined && !claim.sources.some((source) => source.id === idConflict.id);
   } else {
     claim.sourceErrors ??= [];
     claim.sourceErrors.push({
@@ -665,9 +806,16 @@ function finalizeClaim(claim: AnchorClaim): void {
   }
 }
 
-/** Resolve the single id shared across a claim's source rows, or report a conflict. */
+/**
+ * Resolve the single id shared across a claim's source rows AND id-only rows
+ * (WP4), or report a conflict. Both row kinds feed the same claim-level id —
+ * a claim has at most one id regardless of which row(s) carry it.
+ */
 function claimLevelId(claim: AnchorClaim): { ok: true; id: string | undefined } | { ok: false; error: string } {
-  const ids = new Set(claim.sources.map((source) => source.id).filter((id): id is string => Boolean(id)));
+  const ids = new Set([
+    ...claim.sources.map((source) => source.id).filter((id): id is string => Boolean(id)),
+    ...(claim.idOnlyRows ?? []).map((row) => row.id),
+  ]);
   if (ids.size <= 1) {
     return { ok: true, id: [...ids][0] };
   }

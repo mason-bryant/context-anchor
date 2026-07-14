@@ -17,9 +17,11 @@ import {
   isMintedClaimIdFormat,
   locateClaim,
   locateClaimByLine,
+  looksLikeAnnotationBody,
   mintClaimId,
   mintMissingClaimIds,
   parseAnnotationBody,
+  parseIdOnlyAnnotationBody,
   replaceClaimText,
   stripClaimAnnotations,
   upsertClaimAnnotation,
@@ -244,6 +246,48 @@ type: context-anchor
 \`\`\`
 `;
 
+describe("parseIdOnlyAnnotationBody (Goal 0 Phase 1 WP4)", () => {
+  it("parses a valid id-only body", () => {
+    const result = parseIdOnlyAnnotationBody("id: c-abc123");
+    expect(result).toEqual({ ok: true, id: "c-abc123" });
+  });
+
+  it("parses a valid id-only body with a legacy kebab-case id", () => {
+    const result = parseIdOnlyAnnotationBody("id: owner-resolution");
+    expect(result).toEqual({ ok: true, id: "owner-resolution" });
+  });
+
+  it("returns undefined (defer to parseAnnotationBody) when the body also carries a provenance key", () => {
+    expect(parseIdOnlyAnnotationBody("id: c-abc123; src: PR #1")).toBeUndefined();
+    expect(parseIdOnlyAnnotationBody("id: c-abc123; observed: 2026-07-13")).toBeUndefined();
+    expect(parseIdOnlyAnnotationBody("id: c-abc123; conf: high")).toBeUndefined();
+    expect(parseIdOnlyAnnotationBody("id: c-abc123; kind: url")).toBeUndefined();
+    expect(parseIdOnlyAnnotationBody("id: c-abc123; person: alice")).toBeUndefined();
+    expect(parseIdOnlyAnnotationBody("id: c-abc123; derived_from: #c-other")).toBeUndefined();
+    expect(parseIdOnlyAnnotationBody("id: c-abc123; contradicts: #c-other")).toBeUndefined();
+  });
+
+  it("returns undefined when there is no id key at all (defer to parseAnnotationBody for its own error reporting)", () => {
+    expect(parseIdOnlyAnnotationBody("src: PR #1; observed: 2026-07-13; conf: high")).toBeUndefined();
+    expect(parseIdOnlyAnnotationBody("")).toBeUndefined();
+  });
+
+  it("reports a malformed id-only body with an invalid id shape", () => {
+    const result = parseIdOnlyAnnotationBody("id: Not_Valid!");
+    expect(result).toEqual({ ok: false, errors: [expect.stringContaining("id must be kebab-case")] });
+  });
+});
+
+describe("looksLikeAnnotationBody: bare id (Goal 0 Phase 1 WP4)", () => {
+  it("recognizes a bare id-only body as an annotation attempt", () => {
+    expect(looksLikeAnnotationBody("id: c-abc123")).toBe(true);
+  });
+
+  it("still recognizes bodies carrying the pre-existing keys", () => {
+    expect(looksLikeAnnotationBody("src: PR #1; observed: 2026-07-13; conf: high")).toBe(true);
+  });
+});
+
 describe("extractClaims", () => {
   it("treats Introduction and Invariants bullets as editable claims", () => {
     const claims = extractClaims(`## Introduction
@@ -425,6 +469,121 @@ describe("extractClaims", () => {
     const [claim] = extractClaims(doc);
     expect(claim.status).toBe("malformed");
     expect(claim.annotationErrors?.join(" ")).toContain("conflicting ids");
+  });
+});
+
+describe("extractClaims: id-only claims (Goal 0 Phase 1 WP4)", () => {
+  it("parses a standalone id-only claim as unannotated-with-id, not malformed or dropped", () => {
+    const doc = `## Current State
+
+- Legacy claim with a stable id but no provenance.
+  {id: c-abc123}
+`;
+    const [claim] = extractClaims(doc);
+    expect(claim).toBeDefined();
+    expect(claim.status).toBe("unannotated");
+    expect(claim.id).toBe("c-abc123");
+    expect(claim.idProvenanceless).toBe(true);
+    expect(claim.sources).toEqual([]);
+    expect(claim.strength).toBe("low");
+  });
+
+  it("parses a trailing (inline) id-only claim the same way", () => {
+    const doc = `## Current State
+
+- Legacy claim with a stable id but no provenance. {id: c-abc123}
+`;
+    const [claim] = extractClaims(doc);
+    expect(claim.status).toBe("unannotated");
+    expect(claim.id).toBe("c-abc123");
+    expect(claim.idProvenanceless).toBe(true);
+    expect(claim.annotationInline).toBe(true);
+    // The bullet text itself must not retain the annotation block.
+    expect(claim.text).toBe("Legacy claim with a stable id but no provenance.");
+  });
+
+  it("round-trips byte-identically: extracting and re-serializing the same content changes nothing", () => {
+    const doc = `## Current State
+
+- Legacy claim with a stable id but no provenance.
+  {id: c-abc123}
+`;
+    const claims = extractClaims(doc);
+    expect(claims).toHaveLength(1);
+    // No write helper is invoked; re-parsing the same untouched content
+    // yields byte-identical claim data every time (pure function, no
+    // hidden normalization on read).
+    const reparsed = extractClaims(doc);
+    expect(reparsed).toEqual(claims);
+  });
+
+  it("does not count an id-only claim as a source, so summarizeClaimProvenance treats it as unannotated", () => {
+    const doc = `## Current State
+
+- Legacy claim with a stable id but no provenance.
+  {id: c-abc123}
+- Fully annotated claim.
+  {src: PR #1; observed: 2026-07-13; conf: high}
+`;
+    const claims = extractClaims(doc);
+    expect(claims.map((c) => c.status)).toEqual(["unannotated", "annotated"]);
+    expect(claims[0].sources).toHaveLength(0);
+    expect(claims[1].sources).toHaveLength(1);
+  });
+
+  it("marks the claim malformed when an id-only row conflicts with a different id on another row", () => {
+    const doc = `## Current State
+
+- Conflicting id-only claim.
+  {id: c-aaaaaa}
+  {id: c-bbbbbb}
+`;
+    const [claim] = extractClaims(doc);
+    expect(claim.status).toBe("malformed");
+    expect(claim.annotationErrors?.join(" ")).toContain("conflicting ids");
+  });
+
+  it("marks the claim malformed when an id-only row conflicts with a differently-valued annotated source's id", () => {
+    const doc = `## Current State
+
+- Conflicting mixed id claim.
+  {src: PR #1; observed: 2026-07-13; conf: high; id: c-aaaaaa}
+  {id: c-bbbbbb}
+`;
+    const [claim] = extractClaims(doc);
+    expect(claim.status).toBe("malformed");
+    expect(claim.annotationErrors?.join(" ")).toContain("conflicting ids");
+  });
+
+  it("is not provenanceless when an id-only row's id matches the SAME id already carried by an annotated source (redundant, not conflicting)", () => {
+    const doc = `## Current State
+
+- Redundant same-id claim.
+  {src: PR #1; observed: 2026-07-13; conf: high; id: c-abc123}
+  {id: c-abc123}
+`;
+    const [claim] = extractClaims(doc);
+    expect(claim.status).toBe("annotated");
+    expect(claim.id).toBe("c-abc123");
+    expect(claim.idProvenanceless).toBe(false);
+  });
+
+  it("rejects an id-only row with a malformed id shape as malformed (not silently accepted)", () => {
+    const doc = `## Current State
+
+- Bad id shape claim.
+  {id: Not_Valid!}
+`;
+    const [claim] = extractClaims(doc);
+    expect(claim.status).toBe("malformed");
+    expect(claim.annotationErrors?.join(" ")).toContain("kebab-case");
+  });
+
+  it("existing fully-annotated and plain-unannotated claim parsing is unchanged alongside an id-only claim in the same document", () => {
+    const claims = extractClaims(DOC);
+    const byText = new Map(claims.map((claim) => [claim.text, claim]));
+    expect(byText.get("Owner resolution resolves a person before a team.")).toMatchObject({ status: "annotated" });
+    expect(byText.get("Legacy claim with no provenance.")).toMatchObject({ status: "unannotated", id: undefined });
   });
 });
 

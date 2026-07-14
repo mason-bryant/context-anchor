@@ -494,6 +494,21 @@ function stripLinkFragmentAndQuery(target: string): string {
  * nodes are only materialized when a claim actually cites one (never one
  * node per H2 heading in every anchor).
  *
+ * Goal 0 Phase 1 WP4 addition: a claim with an `id` but no provenance
+ * (`status === "unannotated"`, id-only annotation — `src/claims.ts`'s
+ * `parseIdOnlyAnnotationBody`) still gets its `claim:` node, so it appears in
+ * the graph as unverified rather than disappearing (design doc acceptance
+ * criterion: "an unannotated claim can have a stable identity and appears as
+ * unverified rather than disappearing from the graph"). Since it has no
+ * `sources` to derive a cited section from, its containment into the graph
+ * is anchored via the claim's OWN H2 section (`claim.section`, e.g. "Current
+ * State") rather than a section a source row cites — the same
+ * `claim_section` + `section_anchor` edge types, just a different section
+ * (the claim's home section instead of a cited one). An annotated claim's
+ * edges are completely unchanged by this addition: it never gains an
+ * own-section edge, only the pre-existing cited-section edges from its
+ * sources.
+ *
  * Edge targets whose anchor side doesn't resolve to a real anchor are silently
  * skipped here; the extractor does NOT check whether the target claim id
  * exists (that tree-wide check belongs to the write-time validator). Dangling
@@ -520,10 +535,22 @@ export function extractClaimEdges(doc: DocumentInput, ctx: ExtractDocumentEdgesC
   };
 
   for (const claim of claims) {
-    if (claim.status !== "annotated" || !claim.id) {
+    if (!claim.id) {
       continue;
     }
     const from = claimNodeId(doc.anchorName, claim.id);
+
+    if (claim.status !== "annotated") {
+      // Id-only claim (WP4): no sources to derive a cited-section edge from,
+      // so anchor it into the graph via its own containing section instead —
+      // see the function docstring above. `derived_from`/`contradicts` below
+      // still run (id-only claims can, in principle, carry them via a
+      // reworded document, though the annotation grammar only sets those on
+      // real source rows today), harmlessly no-op-ing over an empty array.
+      const ownSection = sectionNodeId(doc.anchorName, normalizeSectionTitle(claim.section));
+      edges.push({ from, to: ownSection, type: "claim_section", sourceOfTruth: "containment" });
+      edges.push({ from: ownSection, to: anchorNodeId(doc.anchorName), type: "section_anchor", sourceOfTruth: "containment" });
+    }
 
     for (const source of claim.sources) {
       const result = parseClaimSource(source, sourceCtx);
