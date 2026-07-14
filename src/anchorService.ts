@@ -1154,7 +1154,11 @@ export class AnchorService {
           Number(suppliedSchemaVersion) > 0);
       if (!schemaVersionValid) {
         updates.schema_version = 1;
-        if (suppliedSchemaVersion !== undefined && suppliedSchemaVersion !== null) {
+        // WARN whenever the author actually WROTE the field, `null`
+        // included (`schema_version:` with no value parses to null) — every
+        // supplied-but-invalid value gets the same "your value was not
+        // used" transparency. Only true absence is replaced silently.
+        if (Object.prototype.hasOwnProperty.call(fm, "schema_version")) {
           carryWarnings.push({
             severity: "WARN",
             code: "schema_version_replaced",

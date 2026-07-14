@@ -128,6 +128,17 @@ describe("mint-on-create: anchor_id + schema_version", () => {
     expect(read.content).toContain("schema_version: 1");
   });
 
+  it("an explicit schema_version: null also WARNs when replaced (no silent replacement for any authored value)", async () => {
+    const result = await service.writeAnchor({
+      name: "projects/demo/null-schema-version.md",
+      content: anchorContent({ schemaVersion: "null" }),
+      message: "test: create with explicit null schema_version",
+    });
+    expect(result.warnings.some((w) => w.severity === "WARN" && w.code === "schema_version_replaced")).toBe(true);
+    const read = await service.readAnchor("projects/demo/null-schema-version");
+    expect(read.content).toContain("schema_version: 1");
+  });
+
   it("keeps a caller-supplied schema_version on create instead of overwriting it", async () => {
     await service.writeAnchor({
       name: "projects/demo/demo",
