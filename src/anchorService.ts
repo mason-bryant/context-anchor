@@ -202,6 +202,7 @@ import {
   type CoverageRecordKind,
   type CoverageState,
 } from "./graph/coverage.js";
+import { AsyncLock } from "./git/lock.js";
 import { anchorIdFromFrontmatter, GRAPH_IDENTITY_VERSION, isValidAnchorId, mintAnchorId } from "./graph/identity.js";
 import { buildPeopleIndex, parsePeopleRegistry, type PeopleIndex } from "./peopleRegistry.js";
 import { findMarkdownLinkSuggestions, suggestMarkdownLinks } from "./markdownLinks.js";
@@ -311,6 +312,8 @@ type ClaimResolutionInputs = {
 };
 
 export class AnchorService {
+  /** Serializes `writeAnchor` end-to-end so identity snapshot + duplicate check + commit are atomic with respect to other writes — see `writeAnchor`'s docstring. */
+  private readonly writeAnchorLock = new AsyncLock();
   private _peopleRegistry: PeopleRegistry | undefined;
   /** Git commit the cached registry was parsed from; used to detect out-of-band changes (e.g. AutoSync rebases). */
   private _peopleRegistryCommit: string | undefined;
@@ -917,7 +920,24 @@ export class AnchorService {
     return this.repo.diffAnchor(name, fromVersion, toVersion);
   }
 
+  /**
+   * Serialized end-to-end via `writeAnchorLock`: the identity checks inside
+   * (claim-id and anchor_id tree snapshots, duplicate checks, mint collision
+   * checks) read the tree OUTSIDE `AnchorRepository`'s internal commit lock,
+   * so two concurrent writes could otherwise both pass a duplicate check
+   * against the same snapshot and both commit — e.g. two creates supplying
+   * the same anchor_id (review feedback on #89). Every other mutating
+   * service method (chunked section/front-matter tools, proposed-change
+   * apply, task writes) funnels through this method, so the lock covers all
+   * of them; `renameAnchor`/`deleteAnchor` allocate no identity and stay on
+   * the repo's own lock. Writes are rare and human-paced — correctness over
+   * write throughput.
+   */
   async writeAnchor(input: WriteAnchorInput): Promise<WriteAnchorResult> {
+    return this.writeAnchorLock.runExclusive(() => this.writeAnchorExclusive(input));
+  }
+
+  private async writeAnchorExclusive(input: WriteAnchorInput): Promise<WriteAnchorResult> {
     if (isBuiltInAnchorName(input.name)) {
       return {
         warnings: [

@@ -356,6 +356,31 @@ describe("mint-on-create: anchor_id + schema_version", () => {
     expect(result.warnings.some((w) => w.severity === "BLOCK" && w.code === "generated_file_reserved")).toBe(true);
   });
 
+  it("CONCURRENT creates supplying the same anchor_id: exactly one commits, the other blocks (writeAnchor is serialized)", async () => {
+    // TOCTOU regression guard (review feedback on #89): the tree snapshot for
+    // the duplicate check is read outside the repo's commit lock, so without
+    // writeAnchor-level serialization two concurrent creates could both pass
+    // the check against the same snapshot and both commit the same id.
+    const [first, second] = await Promise.all([
+      service.writeAnchor({
+        name: "projects/demo/race-one.md",
+        content: anchorContent({ anchorId: "a-race01" }),
+        message: "test: concurrent create one",
+      }),
+      service.writeAnchor({
+        name: "projects/demo/race-two.md",
+        content: anchorContent({ anchorId: "a-race01" }),
+        message: "test: concurrent create two",
+      }),
+    ]);
+
+    const results = [first, second];
+    const blocked = results.filter((r) => r.warnings.some((w) => w.severity === "BLOCK" && w.code === "anchor_id_duplicate"));
+    const succeeded = results.filter((r) => !r.warnings.some((w) => w.severity === "BLOCK"));
+    expect(blocked).toHaveLength(1);
+    expect(succeeded).toHaveLength(1);
+  });
+
   it("mints distinct anchor_ids for two rapid creates in the same session (no collisions)", async () => {
     const [first, second] = await Promise.all([
       service.writeAnchor({
