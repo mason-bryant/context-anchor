@@ -36,24 +36,28 @@ export const validateAnchorIdIntegrity: Validator = async (context) => {
   }
 
   const newId = anchorIdFromFrontmatter(parseAnchor(context.newContent).frontmatter);
+  const oldId =
+    context.oldContent !== undefined ? anchorIdFromFrontmatter(parseAnchor(context.oldContent).frontmatter) : undefined;
 
-  if (context.oldContent !== undefined) {
-    const oldId = anchorIdFromFrontmatter(parseAnchor(context.oldContent).frontmatter);
-    if (oldId && oldId !== newId) {
-      return [
-        violation(
-          "BLOCK",
-          "anchor_id_immutable",
-          newId
-            ? `This write changes anchor_id from "${oldId}" to "${newId}". anchor_id is immutable once set; it cannot be changed or removed.`
-            : `This write removes anchor_id "${oldId}". anchor_id is immutable once set; it cannot be changed or removed.`,
-          context.path,
-        ),
-      ];
-    }
+  if (oldId && oldId !== newId) {
+    return [
+      violation(
+        "BLOCK",
+        "anchor_id_immutable",
+        newId
+          ? `This write changes anchor_id from "${oldId}" to "${newId}". anchor_id is immutable once set; it cannot be changed or removed.`
+          : `This write removes anchor_id "${oldId}". anchor_id is immutable once set; it cannot be changed or removed.`,
+        context.path,
+      ),
+    ];
   }
 
-  if (!newId) {
+  if (!newId || newId === oldId) {
+    // No id, or an unchanged id that was already unique when it was first
+    // set/added — skip the tree-wide duplicate walk. Only a create-mint, a
+    // caller-supplied id on create, or adding an id to a previously id-less
+    // anchor reaches the scan below, so ordinary re-writes of an anchor that
+    // already carries its id stay cheap.
     return [];
   }
 
