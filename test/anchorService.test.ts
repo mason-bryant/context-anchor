@@ -529,12 +529,19 @@ last_validated: 2026-05-10
       message: "test: add demo anchor",
     });
 
+    // mint-on-create (Goal 0 Phase 2 WP-A) injects an immutable anchor_id on
+    // the first write; subsequent full-content rewrites must carry it
+    // forward rather than reconstructing content from the pre-mint fixture,
+    // or they trip the anchor_id_immutable BLOCK on top of (and unrelated to)
+    // this test's own requires_approval assertion.
+    const committed = (await service.readAnchor("projects/demo/demo")).content;
+    const updatedContent = committed
+      .replace(/last_validated: \S+/, "last_validated: 2026-05-11")
+      .replace("- Keep storage git-backed.", "- New decision.");
+
     const blocked = await service.writeAnchor({
       name: "projects/demo/demo",
-      content: projectAnchorContent({
-        lastValidated: "2026-05-11",
-        decisions: "- New decision.",
-      }),
+      content: updatedContent,
       message: "test: update decision",
     });
 
@@ -543,10 +550,7 @@ last_validated: 2026-05-10
 
     const approved = await service.writeAnchor({
       name: "projects/demo/demo",
-      content: projectAnchorContent({
-        lastValidated: "2026-05-11",
-        decisions: "- New decision.",
-      }),
+      content: updatedContent,
       message: "test: update decision",
       approved: true,
     });
@@ -1461,6 +1465,37 @@ None.
     });
     expect(result.version).toBeUndefined();
     expect(result.warnings.some((w) => w.code === "section_not_found")).toBe(true);
+  });
+
+  it("returns table-specific blocks for malformed replacements and missing table lines", async () => {
+    await service.writeAnchor({
+      name: "projects/demo/tables",
+      content: projectAnchorContent({
+        currentState: "| A | B |\n|---|---|\n| 1 | 2 |",
+      }),
+      message: "test: add tables anchor",
+    });
+    const table = (await service.listMarkdownTables({ name: "projects/demo/tables" })).tables[0];
+    expect(table).toBeDefined();
+
+    const malformed = await service.updateMarkdownTable({
+      name: "projects/demo/tables",
+      line: table.line,
+      text: "| A | B |\n|---|---|\n| 1 | 2 | 3 |",
+    });
+    expect(malformed.version).toBeUndefined();
+    expect(malformed.warnings.map((warning) => warning.code)).toContain("markdown_table_invalid");
+
+    const missing = await service.updateMarkdownTable({
+      name: "projects/demo/tables",
+      line: table.line + 1,
+      text: "| A | B |\n|---|---|\n| 3 | 4 |",
+    });
+    expect(missing.version).toBeUndefined();
+    expect(missing.warnings).toEqual([
+      expect.objectContaining({ severity: "BLOCK", code: "markdown_table_not_found" }),
+    ]);
+    expect(missing.warnings.map((warning) => warning.code)).not.toContain("section_not_found");
   });
 
   it("updateAnchorFrontmatter returns missing_anchor when file does not exist", async () => {

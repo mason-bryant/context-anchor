@@ -610,8 +610,15 @@ export class AnchorRepository implements AnchorStore, SyncableAnchorStore {
   }
 
   async pullRebase(): Promise<void> {
-    await this.git.pull(["--rebase"]);
-    this.invalidateReadIndex();
+    // Under the repo's exclusive lock so a pull can never interleave with a
+    // commit's internals. Callers that must also be atomic with respect to
+    // a SERVICE-level write (identity snapshot + duplicate check + commit)
+    // additionally serialize on AnchorService's write lock — see AutoSync's
+    // runExclusive wiring in src/runtime.ts.
+    await this.lock.runExclusive(async () => {
+      await this.git.pull(["--rebase"]);
+      this.invalidateReadIndex();
+    });
   }
 
   async push(): Promise<void> {

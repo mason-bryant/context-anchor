@@ -649,10 +649,18 @@ describe("AnchorService graph wiring", () => {
     const firstVersion = first.version;
     expect(firstVersion).toBeTruthy();
 
-    const secondContent = PROJECT_CONTEXT.replace(
-      "## Decisions\n\nNone.",
-      "## Decisions\n\n- A second claim was added.\n  {src: PR #56; observed: 2026-07-08; conf: medium; id: c-second1}",
-    ).replace("last_validated: 2026-07-07", "last_validated: 2026-07-08");
+    // Derive the second write from the actually-committed first content (not
+    // the static PROJECT_CONTEXT template): mint-on-create (Goal 0 Phase 2
+    // WP-A) injects an anchor_id on the first write, and anchor_id is
+    // immutable, so a second write must carry it forward rather than
+    // reconstructing content from the pre-mint fixture.
+    const firstContent = (await service.readAnchor("projects/demo/demo-project-context.md")).content;
+    const secondContent = firstContent
+      .replace(
+        "## Decisions\n\nNone.",
+        "## Decisions\n\n- A second claim was added.\n  {src: PR #56; observed: 2026-07-08; conf: medium; id: c-second1}",
+      )
+      .replace("last_validated: 2026-07-07", "last_validated: 2026-07-08");
     const secondResult = await service.writeAnchor({
       name: "projects/demo/demo-project-context.md",
       content: secondContent,

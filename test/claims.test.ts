@@ -1201,9 +1201,16 @@ None.
     });
 
     const read = await service.readAnchor("projects/demo/claims-demo");
+    // mint-on-create (Goal 0 Phase 2 WP-A) adds an anchor_id front-matter
+    // line, so the target line must be located dynamically rather than
+    // hardcoded against the pre-mint fixture in anchorContent().
+    const legacyClaimLine = read.content
+      .split(/\r?\n/)
+      .findIndex((line) => line.trim() === "- Legacy claim with no provenance.") + 1;
+    expect(legacyClaimLine).toBeGreaterThan(0);
     const set = await service.setClaimSources({
       name: "projects/demo/claims-demo",
-      line: 19,
+      line: legacyClaimLine,
       sources: [
         { src: "src/a.ts#L12", observed: "2026-07-08", conf: "high" },
         { src: "PR #42", observed: "2026-07-07", conf: "medium" },

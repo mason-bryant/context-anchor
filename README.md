@@ -125,10 +125,12 @@ retaining resolved questions as historical context.
 - Proposed changes: reviewable draft edits before they become durable context.
 
 The HTTP server also serves a browser UI at `/ui` for browsing the generated root,
-anchors, roadmap metadata, validation health, and planner output. Its Tasks view
-surfaces work across projects with filters, grouping, due and completed windows,
-assignment, priority edits, lifecycle actions, and links back to the milestone anchors
-that store the task metadata.
+anchors, roadmap metadata, validation health, and planner output. The rendered anchor
+view provides guarded inline editors for supported content, including claims, summary
+bullets, Mermaid diagrams, and Markdown pipe tables. Its Tasks view surfaces work
+across projects with filters, grouping, due and completed windows, assignment, priority
+edits, lifecycle actions, and links back to the milestone anchors that store the task
+metadata.
 
 ## Web UI Keyboard Support
 
@@ -141,7 +143,7 @@ selects, and links, so standard `Tab` / `Shift+Tab` navigation and `Enter` /
 | `Tab` / `Shift+Tab` | Everywhere | Move between interactive controls |
 | `Enter` / `Space` | Traces timeline query rows | Expand or collapse the query's considered/delivered/raw detail (state is announced via `aria-expanded`; key repeat is ignored) |
 | `Enter` / `Space` | Dry-queries table | Activate a row's open button (each button announces its tool and session id) to jump to that session's timeline |
-| `Escape` | Anchor detail editors | Close any open claim-source modal, claim/bullet text editor, or section-add editor |
+| `Escape` | Anchor detail editors | Close any open claim-source modal, claim/bullet text editor, diagram/table editor, or section-add editor |
 
 New interactive elements in the UI are expected to keep this bar: real
 `<button>` elements (or `role="button"` with `tabindex="0"` and key handling

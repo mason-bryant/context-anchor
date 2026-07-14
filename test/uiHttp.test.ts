@@ -545,6 +545,7 @@ describe("UI HTTP routes", () => {
     const restoreClaimText = stubAnchorServiceMethod("updateClaimText", vi.fn(async () => ({ version: "vc", warnings: [] })));
     const restoreQuestionText = stubAnchorServiceMethod("updateQuestionText", vi.fn(async () => ({ version: "vq", warnings: [] })));
     const restoreBulletText = stubAnchorServiceMethod("updateBulletText", vi.fn(async () => ({ version: "vb", warnings: [] })));
+    const restoreMarkdownTable = stubAnchorServiceMethod("updateMarkdownTable", vi.fn(async () => ({ version: "vt", warnings: [] })));
 
     try {
       await postJson("/api/ui/anchor-frontmatter", {
@@ -603,6 +604,13 @@ describe("UI HTTP routes", () => {
         name: "projects/demo/demo.md",
         line: 7,
         text: "Updated summary bullet.",
+        approved: true,
+        expectedFileCommit: "abc123",
+      });
+      await postJson("/api/ui/table-text", {
+        name: "projects/demo/demo.md",
+        line: 30,
+        text: "| File | Purpose |\n|------|---------|\n| app.py | Demo. |",
         approved: true,
         expectedFileCommit: "abc123",
       });
@@ -673,6 +681,16 @@ describe("UI HTTP routes", () => {
           coAuthor: undefined,
           expectedFileCommit: "abc123",
         });
+      expect((AnchorService.prototype as unknown as { updateMarkdownTable: ReturnType<typeof vi.fn> }).updateMarkdownTable)
+        .toHaveBeenCalledWith({
+          name: "projects/demo/demo.md",
+          line: 30,
+          text: "| File | Purpose |\n|------|---------|\n| app.py | Demo. |",
+          message: undefined,
+          approved: true,
+          coAuthor: undefined,
+          expectedFileCommit: "abc123",
+        });
       expect((AnchorService.prototype as unknown as { appendToAnchorSection: ReturnType<typeof vi.fn> }).appendToAnchorSection)
         .toHaveBeenCalledWith({
           name: "projects/demo/demo.md",
@@ -714,7 +732,41 @@ describe("UI HTTP routes", () => {
       restoreClaimText();
       restoreQuestionText();
       restoreBulletText();
+      restoreMarkdownTable();
     }
+  });
+
+  it("returns editable table metadata and replaces a table through the UI route", async () => {
+    const content = projectAnchorContent().replace(
+      "- The demo project exists.",
+      "| File | Purpose |\n|------|---------|\n| `app/views.py` | Registry. |",
+    );
+    const write = await service.writeAnchor({
+      name: "projects/demo/tables.md",
+      content,
+      message: "test: add table anchor",
+      approved: true,
+    });
+    expect(write.warnings.filter((warning) => warning.severity === "BLOCK")).toEqual([]);
+
+    const detail = await fetchJson<{
+      anchor: { ui: { markdownTables: Array<{ line: number; endLine: number; text: string }> } };
+    }>("/api/ui/anchor?name=projects%2Fdemo%2Ftables.md");
+    expect(detail.anchor.ui.markdownTables).toHaveLength(1);
+    expect(detail.anchor.ui.markdownTables[0].text).toContain("`app/views.py`");
+
+    const result = await postJson<{ warnings: Array<{ severity: string }> }>("/api/ui/table-text", {
+      name: "projects/demo/tables.md",
+      line: detail.anchor.ui.markdownTables[0].line,
+      text: "| File | Purpose | Owner |\n|------|---------|-------|\n| `app/views.py` | ZView registry. | Core RQL |",
+      approved: true,
+    });
+    expect(result.warnings.filter((warning) => warning.severity === "BLOCK")).toEqual([]);
+
+    const updated = await service.readAnchor("projects/demo/tables.md");
+    expect(updated.content).toContain("| File | Purpose | Owner |");
+    expect(updated.content).toContain("| `app/views.py` | ZView registry. | Core RQL |");
+    expect(updated.content).toContain("## Decisions\n\n- Keep the UI read-only for M1.");
   });
 
   it("persists people and teams with project associations through the registry round-trip", async () => {

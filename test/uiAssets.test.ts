@@ -928,6 +928,30 @@ describe("UI browser assets", () => {
     expect(html).toContain("<td>~380</td>");
   });
 
+  it("renders an edit control for an extracted Markdown table", () => {
+    const hooks = loadHooks();
+    const text = "| File | Purpose |\n|------|---------|\n| `app/views.py` | Registry. |";
+    const html = hooks.renderMarkdown(text, {
+      claimControls: true,
+      markdownTables: [{ line: 1, endLine: 3, text }],
+    });
+
+    expect(html).toContain('class="markdown-table-block" data-table-line="1"');
+    expect(html).toContain('class="markdown-table-edit-button" data-table-line="1"');
+    expect(html).toContain('aria-label="Edit Markdown table"');
+    expect(html).toContain('<td><code>app/views.py</code></td>');
+    expect(UI_JS).toContain('apiPost("/api/ui/table-text", payload)');
+    expect(UI_CSS).toContain(".markdown .markdown-table-block-toolbar");
+  });
+
+  it("keeps pipes inside multi-backtick code spans in one table cell", () => {
+    const hooks = loadHooks();
+    const html = hooks.renderMarkdown("Name | Query\n---|---\nExample | ``code | with pipe``");
+
+    expect((html.match(/<td>/g) ?? [])).toHaveLength(2);
+    expect(html).toContain("code | with pipe</code>");
+  });
+
   it("renders mermaid fences as diagram blocks and invokes the Mermaid runtime", async () => {
     const initialize = vi.fn();
     const run = vi.fn(async () => undefined);

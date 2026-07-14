@@ -11,6 +11,7 @@ import { parseAnchor } from "../storage/markdown.js";
 import type { AnchorMeta, AnchorRead, MilestonePlannerMeta, ValidationSeverity } from "../types.js";
 import type { ClaimWithCertainty } from "../certainty.js";
 import type { MermaidBlock } from "../mermaidBlocks.js";
+import type { MarkdownTable } from "../markdownTables.js";
 import type { AnchorQuestion } from "../questions.js";
 import {
   ALWAYS_REQUIRED_SECTIONS,
@@ -54,6 +55,7 @@ export type AnchorUiDetail = AnchorRead & {
     sectionDefinitions: Record<AnchorSectionName, string>;
     claims: (ClaimWithCertainty & { anchor: string })[];
     mermaidBlocks: (MermaidBlock & { anchor: string })[];
+    markdownTables: (MarkdownTable & { anchor: string })[];
     questions: (AnchorQuestion & { anchor: string })[];
   };
 };
@@ -74,6 +76,7 @@ export function toAnchorUiDetail(
   claims: (ClaimWithCertainty & { anchor: string })[] = [],
   questions: (AnchorQuestion & { anchor: string })[] = [],
   mermaidBlocks: (MermaidBlock & { anchor: string })[] = [],
+  markdownTables: (MarkdownTable & { anchor: string })[] = [],
 ): AnchorUiDetail {
   const displayMeta = meta ?? anchorReadToMeta(anchor);
   const analysis = analyzeAnchorStructure(anchor.name, anchor.content);
@@ -90,6 +93,7 @@ export function toAnchorUiDetail(
       sectionDefinitions: { ...ANCHOR_SECTION_DEFINITIONS },
       claims,
       mermaidBlocks,
+      markdownTables,
       questions,
     },
   };

@@ -113,4 +113,27 @@ describe("AutoSync", () => {
     expect(repo.pullRebase).toHaveBeenCalledOnce();
     expect(entries.filter((entry) => entry.level === "warn")).toEqual([]);
   });
+
+  it("runs the pull inside the injected runExclusive hook (write-lock serialization boundary)", async () => {
+    const repo = testRepo({ upstream: "origin/main" });
+    const { logger } = testLogger();
+    let insideExclusive = false;
+    let pulledInsideExclusive = false;
+    repo.pullRebase.mockImplementation(async () => {
+      pulledInsideExclusive = insideExclusive;
+    });
+    const autoSync = new AutoSync(repo, 45_000, logger, async (fn) => {
+      insideExclusive = true;
+      try {
+        return await fn();
+      } finally {
+        insideExclusive = false;
+      }
+    });
+
+    await autoSync.tick();
+
+    expect(repo.pullRebase).toHaveBeenCalledOnce();
+    expect(pulledInsideExclusive).toBe(true);
+  });
 });

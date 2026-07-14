@@ -1210,6 +1210,25 @@ textarea {
   border-radius: 7px;
 }
 
+.markdown .markdown-table-block {
+  margin: 0.9em 0;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+}
+
+.markdown .markdown-table-block-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.markdown .markdown-table-block .markdown-table-scroll {
+  margin: 0;
+  border: 0;
+  border-radius: 0 0 7px 7px;
+}
+
 .markdown table {
   width: 100%;
   min-width: 520px;
@@ -3142,6 +3161,7 @@ export const UI_JS = `(function () {
     claimTextEditor: null,
     bulletTextEditor: null,
     mermaidTextEditor: null,
+    tableTextEditor: null,
     sectionAddEditor: null,
     claimPersonMatchCache: [],
     claimPersonSearchTimer: null,
@@ -5389,6 +5409,22 @@ export const UI_JS = `(function () {
     });
   }
 
+  function wireMarkdownTableControls(container, anchor, readOnly) {
+    var tables = (anchor.ui && anchor.ui.markdownTables) || [];
+    container.querySelectorAll(".markdown-table-edit-button[data-table-line]").forEach(function (button) {
+      button.disabled = !!readOnly;
+      button.title = readOnly ? SERVER_RULE_READ_ONLY_MESSAGE : "Edit Markdown table";
+      button.addEventListener("click", function () {
+        if (readOnly) return;
+        var line = Number(button.dataset.tableLine || "0");
+        var table = tables.find(function (entry) { return entry.line === line; });
+        if (table) {
+          openMarkdownTableEditor(button, table, anchor);
+        }
+      });
+    });
+  }
+
   function closeClaimTextEditor() {
     var editor = state.claimTextEditor;
     if (!editor) return;
@@ -5409,6 +5445,17 @@ export const UI_JS = `(function () {
     }
     if (editor.button) editor.button.disabled = false;
     state.mermaidTextEditor = null;
+  }
+
+  function closeMarkdownTableEditor() {
+    var editor = state.tableTextEditor;
+    if (!editor) return;
+    if (editor.tableEl) editor.tableEl.hidden = false;
+    if (editor.editorEl && editor.editorEl.parentNode) {
+      editor.editorEl.parentNode.removeChild(editor.editorEl);
+    }
+    if (editor.button) editor.button.disabled = false;
+    state.tableTextEditor = null;
   }
 
   function closeBulletTextEditor() {
@@ -5446,6 +5493,7 @@ export const UI_JS = `(function () {
     closeClaimTextEditor();
     closeBulletTextEditor();
     closeMermaidTextEditor();
+    closeMarkdownTableEditor();
     closeSectionAddEditor();
     var headingEl = button.closest("h2, h3");
     if (!headingEl) return;
@@ -5510,6 +5558,7 @@ export const UI_JS = `(function () {
     closeClaimTextEditor();
     closeBulletTextEditor();
     closeMermaidTextEditor();
+    closeMarkdownTableEditor();
     var wrapper = button.closest(".mermaid-block");
     var diagramEl = wrapper ? wrapper.querySelector(".mermaid") : null;
     if (!wrapper || !diagramEl) return;
@@ -5566,9 +5615,73 @@ export const UI_JS = `(function () {
     }
   }
 
+  function openMarkdownTableEditor(button, table, anchor) {
+    closeClaimTextEditor();
+    closeBulletTextEditor();
+    closeMermaidTextEditor();
+    closeMarkdownTableEditor();
+    var wrapper = button.closest(".markdown-table-block");
+    var tableEl = wrapper ? wrapper.querySelector(".markdown-table-scroll") : null;
+    if (!wrapper || !tableEl) return;
+    button.disabled = true;
+    tableEl.hidden = true;
+    var editorEl = document.createElement("div");
+    editorEl.className = "claim-text-editor markdown-table-editor";
+    editorEl.innerHTML = "<textarea class=\\"claim-text-input\\" rows=\\"10\\" aria-label=\\"Markdown table source\\"></textarea>"
+      + "<span class=\\"claim-text-editor-actions\\">"
+      + "<button type=\\"button\\" class=\\"markdown-table-update\\">Update</button>"
+      + "<button type=\\"button\\" class=\\"markdown-table-cancel\\">Cancel</button>"
+      + "<span class=\\"claim-text-editor-result\\"></span>"
+      + "</span>";
+    wrapper.appendChild(editorEl);
+    var input = editorEl.querySelector(".claim-text-input");
+    input.value = table.text || "";
+    input.focus();
+    input.select();
+    state.tableTextEditor = { anchor: anchor, table: table, button: button, tableEl: tableEl, editorEl: editorEl };
+    editorEl.querySelector(".markdown-table-cancel").addEventListener("click", closeMarkdownTableEditor);
+    editorEl.querySelector(".markdown-table-update").addEventListener("click", function () {
+      saveMarkdownTableEditor().catch(function (error) {
+        editorEl.querySelector(".claim-text-editor-result").textContent = error.message;
+      });
+    });
+  }
+
+  async function saveMarkdownTableEditor() {
+    var editor = state.tableTextEditor;
+    if (!editor) return;
+    var resultEl = editor.editorEl.querySelector(".claim-text-editor-result");
+    var input = editor.editorEl.querySelector(".claim-text-input");
+    var nextText = (input.value || "").trim();
+    if (!nextText) {
+      resultEl.textContent = "Markdown table text is required.";
+      return;
+    }
+    resultEl.textContent = "Updating...";
+    var payload = {
+      name: editor.anchor.name,
+      line: editor.table.line,
+      text: nextText,
+      approved: true
+    };
+    if (editor.anchor.fileCommit) payload.expectedFileCommit = editor.anchor.fileCommit;
+    var res = await apiPost("/api/ui/table-text", payload);
+    if (res.warnings && res.warnings.some(function (warning) { return warning.severity === "BLOCK"; })) {
+      resultEl.textContent = res.warnings.map(function (warning) { return warning.message; }).join("; ");
+      return;
+    }
+    var anchorName = editor.anchor.name;
+    closeMarkdownTableEditor();
+    if (state.selectedName === anchorName) {
+      selectAnchor(anchorName, { skipLocationUpdate: true });
+    }
+  }
+
   function openClaimTextEditor(button, claim, anchor) {
     closeClaimTextEditor();
     closeBulletTextEditor();
+    closeMermaidTextEditor();
+    closeMarkdownTableEditor();
     var inline = button.closest(".claim-inline");
     var textEl = inline ? inline.querySelector(".claim-inline-text") : null;
     if (!inline || !textEl) return;
@@ -5663,6 +5776,8 @@ export const UI_JS = `(function () {
   function openBulletTextEditor(button, bullet, anchor) {
     closeClaimTextEditor();
     closeBulletTextEditor();
+    closeMermaidTextEditor();
+    closeMarkdownTableEditor();
     var inline = button.closest(".editable-bullet-inline");
     var textEl = inline ? inline.querySelector(".editable-bullet-inline-text") : null;
     if (!inline || !textEl) return;
@@ -8839,6 +8954,7 @@ export const UI_JS = `(function () {
       claims: anchor.ui.claims || [],
       questions: anchor.ui.questions || [],
       mermaidBlocks: anchor.ui.mermaidBlocks || [],
+      markdownTables: anchor.ui.markdownTables || [],
       lineOffset: markdownBodyLineOffset(anchor.content || ""),
       claimControls: true,
       sectionAddControls: !readOnly,
@@ -8848,6 +8964,7 @@ export const UI_JS = `(function () {
     wireSectionAddControls(el("detail-rendered"), anchor, readOnly);
     wireClaimEpistemologyControls(el("detail-rendered"), anchor, readOnly);
     wireMermaidBlockControls(el("detail-rendered"), anchor, readOnly);
+    wireMarkdownTableControls(el("detail-rendered"), anchor, readOnly);
     wireEditableBulletControls(el("detail-rendered"), anchor, readOnly);
     renderMermaidDiagrams(el("detail-rendered"));
     el("detail-raw").textContent = anchor.content || "";
@@ -9193,6 +9310,7 @@ export const UI_JS = `(function () {
     var claimsByLine = {};
     var questionsByLine = {};
     var mermaidByLine = {};
+    var tableByLine = {};
     var sourceLines = {};
     (opts.claims || []).forEach(function (claim) {
       claimsByLine[claim.line] = claim;
@@ -9222,6 +9340,9 @@ export const UI_JS = `(function () {
           sourceLines[entry.line] = true;
         }
       });
+    });
+    (opts.markdownTables || []).forEach(function (table) {
+      tableByLine[table.line] = table;
     });
     var html = "";
     var paragraph = [];
@@ -9293,7 +9414,7 @@ export const UI_JS = `(function () {
       if (isTableStart(lines, index, opts, sourceLines, lineOffset)) {
         flushParagraph();
         closeList();
-        var table = renderMarkdownTable(lines, index);
+        var table = renderMarkdownTable(lines, index, tableByLine[originalLine], opts);
         html += table.html;
         index = table.nextIndex - 1;
         continue;
@@ -9446,14 +9567,14 @@ export const UI_JS = `(function () {
   function isTableStart(lines, index, opts, sourceLines, lineOffset) {
     var current = lines[index] || "";
     var next = lines[index + 1] || "";
-    if (!looksLikeTableRow(current) || !isTableSeparator(next)) {
+    if (!looksLikeTableRow(current) || !isTableSeparator(next) || splitTableRow(current).length !== splitTableRow(next).length) {
       return false;
     }
     var nextLine = lineOffset + index + 2;
     return !(opts.claimControls && sourceLines[nextLine]);
   }
 
-  function renderMarkdownTable(lines, startIndex) {
+  function renderMarkdownTable(lines, startIndex, tableBlock, opts) {
     var headers = splitTableRow(lines[startIndex]);
     var alignments = tableAlignments(lines[startIndex + 1], headers.length);
     var rows = [];
@@ -9462,7 +9583,7 @@ export const UI_JS = `(function () {
       rows.push(splitTableRow(lines[index]));
       index += 1;
     }
-    var html = "<div class=\\"markdown-table-scroll\\"><table><thead><tr>"
+    var tableHtml = "<div class=\\"markdown-table-scroll\\"><table><thead><tr>"
       + headers.map(function (cell, cellIndex) {
         return "<th" + tableAlignAttribute(alignments[cellIndex]) + ">" + inlineMarkdown(cell) + "</th>";
       }).join("")
@@ -9473,6 +9594,17 @@ export const UI_JS = `(function () {
         }).join("") + "</tr>";
       }).join("")
       + "</tbody></table></div>";
+    var html = tableHtml;
+    if (opts.claimControls && tableBlock) {
+      html = "<div class=\\"markdown-table-block\\" data-table-line=\\"" + escapeHtml(String(tableBlock.line)) + "\\">"
+        + "<div class=\\"markdown-table-block-toolbar\\">"
+        + "<button type=\\"button\\" class=\\"markdown-table-edit-button\\" data-table-line=\\"" + escapeHtml(String(tableBlock.line)) + "\\" title=\\"Edit Markdown table\\" aria-label=\\"Edit Markdown table\\">"
+        + "<svg class=\\"icon\\" aria-hidden=\\"true\\"><use href=\\"#icon-pencil\\"></use></svg>"
+        + "</button>"
+        + "</div>"
+        + tableHtml
+        + "</div>";
+    }
     return { html: html, nextIndex: index };
   }
 
@@ -9517,12 +9649,18 @@ export const UI_JS = `(function () {
     }
     var cells = [];
     var cell = "";
-    var inCode = false;
+    var codeDelimiterLength = 0;
     for (var index = 0; index < text.length; index += 1) {
       var char = text.charAt(index);
       if (char === tick) {
-        inCode = !inCode;
-        cell += char;
+        var delimiterLength = backtickRunLength(text, index);
+        if (codeDelimiterLength === 0) {
+          codeDelimiterLength = delimiterLength;
+        } else if (delimiterLength === codeDelimiterLength) {
+          codeDelimiterLength = 0;
+        }
+        cell += text.slice(index, index + delimiterLength);
+        index += delimiterLength - 1;
         continue;
       }
       if (char === "\\\\" && text.charAt(index + 1) === "|") {
@@ -9530,7 +9668,7 @@ export const UI_JS = `(function () {
         index += 1;
         continue;
       }
-      if (char === "|" && !inCode) {
+      if (char === "|" && codeDelimiterLength === 0) {
         cells.push(cell.trim());
         cell = "";
         continue;
@@ -9539,6 +9677,14 @@ export const UI_JS = `(function () {
     }
     cells.push(cell.trim());
     return cells;
+  }
+
+  function backtickRunLength(text, startIndex) {
+    var length = 1;
+    while (text.charAt(startIndex + length) === String.fromCharCode(96)) {
+      length += 1;
+    }
+    return length;
   }
 
   function loadMermaidRuntime() {
@@ -10149,12 +10295,20 @@ export const UI_JS = `(function () {
       }
     });
     document.addEventListener("click", function (event) {
-      if (!state.claimTextEditor && !state.bulletTextEditor && !state.sectionAddEditor) return;
+      if (
+        !state.claimTextEditor
+        && !state.bulletTextEditor
+        && !state.mermaidTextEditor
+        && !state.tableTextEditor
+        && !state.sectionAddEditor
+      ) return;
       var target = event.target;
       if (target && target.closest && (
         target.closest(".claim-text-editor")
         || target.closest(".claim-text-edit-button")
         || target.closest(".bullet-text-edit-button")
+        || target.closest(".mermaid-text-edit-button")
+        || target.closest(".markdown-table-edit-button")
         || target.closest(".section-add-editor")
         || target.closest(".section-add-button")
       )) {
@@ -10162,6 +10316,8 @@ export const UI_JS = `(function () {
       }
       if (state.claimTextEditor) closeClaimTextEditor();
       if (state.bulletTextEditor) closeBulletTextEditor();
+      if (state.mermaidTextEditor) closeMermaidTextEditor();
+      if (state.tableTextEditor) closeMarkdownTableEditor();
       if (state.sectionAddEditor) closeSectionAddEditor();
     });
     window.addEventListener("keydown", function (event) {
@@ -10169,6 +10325,8 @@ export const UI_JS = `(function () {
         if (state.claimSourceModal) closeClaimSourceModal();
         if (state.claimTextEditor) closeClaimTextEditor();
         if (state.bulletTextEditor) closeBulletTextEditor();
+        if (state.mermaidTextEditor) closeMermaidTextEditor();
+        if (state.tableTextEditor) closeMarkdownTableEditor();
         if (state.sectionAddEditor) closeSectionAddEditor();
       }
     });
