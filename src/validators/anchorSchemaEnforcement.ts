@@ -65,6 +65,11 @@ const PERMISSIVE_COVERAGE_CONTEXT: CoverageAnalysisContext = {
   teamExists: () => true,
 };
 
+/** Stable identity for a structural gap: `code` alone collapses per-relation-key `convert_relation` gaps, so the message (which names the key) is part of the key. Newline-joined — neither field can contain one. */
+function gapKey(gap: AnchorCoverageRecord["suggestedOperations"][number]): string {
+  return gap.code + "\n" + gap.message;
+}
+
 /** The structural-completeness gaps this gate enforces, keyed to a `partial` coverage record's `suggestedOperations`. */
 function structuralGaps(content: string): AnchorCoverageRecord["suggestedOperations"] {
   const parsed = parseAnchor(content);
@@ -101,10 +106,14 @@ export const validateAnchorSchemaEnforcement: Validator = (context) => {
 
   // Update-scoping: enforce only gaps this write newly introduces, so an
   // unrelated edit to an already-legacy anchor never starts blocking it.
+  // Compare by code+message, not code alone: coverage emits one
+  // `convert_relation` gap PER relation key (with the key named in its
+  // message), so keying on the code would treat a legacy target newly added
+  // under a DIFFERENT key as pre-existing and silently skip it.
   let gapsToEnforce = newGaps;
   if (context.oldContent !== undefined) {
-    const oldGapCodes = new Set(structuralGaps(context.oldContent).map((gap) => gap.code));
-    gapsToEnforce = newGaps.filter((gap) => !oldGapCodes.has(gap.code));
+    const oldGapKeys = new Set(structuralGaps(context.oldContent).map(gapKey));
+    gapsToEnforce = newGaps.filter((gap) => !oldGapKeys.has(gapKey(gap)));
   }
   if (gapsToEnforce.length === 0) {
     return [];

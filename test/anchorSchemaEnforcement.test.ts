@@ -128,4 +128,23 @@ describe("validateAnchorSchemaEnforcement: update-scoping (never retroactively b
     const v = await validateAnchorSchemaEnforcement(makeContext({ oldContent: MISSING_ANCHOR_ID, newContent: STRUCTURED }));
     expect(v).toEqual([]);
   });
+
+  it("blocks a legacy target newly added under a DIFFERENT relation key (per-key gap identity, not just code)", async () => {
+    // Old: one legacy target under depends_on. New: adds a second legacy
+    // target under supersedes. Both are convert_relation gaps, but the
+    // supersedes one is newly introduced — comparing by code alone would
+    // wrongly treat it as pre-existing and skip enforcement.
+    const oldWithDependsOn = anchorDoc(
+      "anchor_id: a-abc123\nschema_version: 1\nrelations:\n  depends_on:\n    - projects/demo/other.md\n",
+    );
+    const newAddsSupersedes = anchorDoc(
+      "anchor_id: a-abc123\nschema_version: 1\nrelations:\n  depends_on:\n    - projects/demo/other.md\n  supersedes:\n    - projects/demo/another.md\n",
+    );
+    const v = await validateAnchorSchemaEnforcement(
+      makeContext({ oldContent: oldWithDependsOn, newContent: newAddsSupersedes }),
+    );
+    expect(v).toHaveLength(1);
+    expect(v[0].code).toBe("anchor_schema_convert_relation");
+    expect(v[0].message).toContain("supersedes");
+  });
 });
