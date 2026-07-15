@@ -318,3 +318,22 @@ describe("CLI args — file logging", () => {
   });
 
 });
+
+describe("CLI args — anchorSchema.mode (Goal 0 Phase 2 slice 3b)", () => {
+  it("defaults to legacy when unset", () => {
+    expect(parseCliArgs([], {}).config.anchorSchema?.mode).toBe("legacy");
+  });
+
+  it("reads the mode from the --anchor-schema-mode flag", () => {
+    expect(parseCliArgs(["--anchor-schema-mode", "warn"], {}).config.anchorSchema?.mode).toBe("warn");
+    expect(parseCliArgs(["--anchor-schema-mode", "enforce"], {}).config.anchorSchema?.mode).toBe("enforce");
+  });
+
+  it("reads the mode from the environment", () => {
+    expect(parseCliArgs([], { ANCHOR_MCP_ANCHOR_SCHEMA_MODE: "enforce" }).config.anchorSchema?.mode).toBe("enforce");
+  });
+
+  it("rejects an invalid mode with a fail-fast error", () => {
+    expect(() => parseCliArgs(["--anchor-schema-mode", "strict"], {})).toThrow(/anchorSchema\.mode/);
+  });
+});

@@ -1109,8 +1109,36 @@ export type ServerConfig = {
   staleAfterDays: number;
   /** WP7 planner graph-proximity scoring signal — config-gated, off by default. */
   graphScoring: GraphScoringConfig;
+  /** Goal 0 Phase 2 slice 3b: warn->block enforcement dial for graph-participating anchor structure. Optional; absent = `legacy` (today's behavior exactly), so callers/configs that predate it are unaffected. */
+  anchorSchema?: AnchorSchemaConfig;
   logging?: LoggingConfig;
 };
+
+/**
+ * Config for the write-time schema-enforcement dial (Goal 0 Phase 2 slice 3b:
+ * `goal0_phase2_enforcement_mode_plan.md`). `mode` is tri-state:
+ *
+ *   - `legacy` (default): no new violations at all — missing `anchor_id`,
+ *     `schema_version`, or a legacy relation target on a graph-participating
+ *     anchor stay silent (coverage still reports them; that is unchanged).
+ *     Reproduces every pre-slice-3b behavior exactly.
+ *   - `warn`: the same conditions emit WARN-level violations naming exactly
+ *     what is missing, never BLOCK.
+ *   - `enforce`: the same conditions BLOCK for NEW or EDITED
+ *     graph-participating anchors. Reading/leaving alone a legacy anchor is
+ *     never affected — this is a write-time gate, not a retroactive one.
+ *
+ * See `src/validators/anchorSchemaEnforcement.ts` for the exact predicate
+ * (reused from `src/graph/coverage.ts`'s `analyzeAnchorCoverage`) and the
+ * enforce-scoping rule (documented there and in the repo-root `HANDOFF.md`).
+ */
+export type AnchorSchemaConfig = {
+  mode: AnchorSchemaMode;
+};
+
+export const ANCHOR_SCHEMA_MODES = ["legacy", "warn", "enforce"] as const;
+
+export type AnchorSchemaMode = (typeof ANCHOR_SCHEMA_MODES)[number];
 
 /**
  * Config for the planner's graph-proximity scoring signal (WP7 of the claim

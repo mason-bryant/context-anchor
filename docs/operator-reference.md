@@ -406,6 +406,24 @@ Warnings cover:
 During migration, run with `--migration-warn-only` to downgrade schema and shape blocks
 into warnings while existing anchors are cleaned up.
 
+#### Structured-anchor enforcement (`--anchor-schema-mode`)
+
+`--anchor-schema-mode` (env `ANCHOR_MCP_ANCHOR_SCHEMA_MODE`) is the Goal 0 dial that
+graduates a repo from "structure is optional" to "structure is required for new and
+edited graph-participating anchors":
+
+- `legacy` (default) — no new violations; missing `anchor_id`/`schema_version` or legacy
+  relation targets stay silent (the Coverage view still reports them). Identical to
+  pre-dial behavior.
+- `warn` — a write that leaves a graph-participating anchor incompletely structured emits
+  a WARN naming exactly what is missing.
+- `enforce` — the same conditions BLOCK. New anchors are structured automatically by
+  mint-on-create, so `enforce` in practice catches hand-authored/imported anchors missing
+  the minted fields and legacy relation targets. It never blocks merely reading a legacy
+  anchor, and (by design) never starts blocking an unrelated edit to an already-legacy
+  anchor — only gaps a write newly introduces are enforced. Preview a fix with
+  `previewAnchorMigration`.
+
 ### Project context design header
 
 The durable `type: context-anchor` file directly under `projects/<slug>/` begins with
