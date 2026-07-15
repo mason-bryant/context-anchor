@@ -1,6 +1,7 @@
 import type { ValidationViolation } from "../types.js";
 import { validateAcceptanceCriteriaWriteGate } from "./acceptanceCriteriaWriteGate.js";
 import { validateAnchorIdIntegrity } from "./anchorIdIntegrity.js";
+import { validateAnchorSchemaEnforcement } from "./anchorSchemaEnforcement.js";
 import { validateApprovalGate } from "./approval.js";
 import { validateClaimAnnotations } from "./claimAnnotations.js";
 import { validateClaimEdgeTargets } from "./claimEdgeTargets.js";
@@ -29,6 +30,7 @@ import type { ValidationContext, Validator } from "./types.js";
 const VALIDATORS: Validator[] = [
   validateFrontMatter,
   validateAnchorIdIntegrity,
+  validateAnchorSchemaEnforcement,
   validateProposedChanges,
   validateProjectAliases,
   validatePolicyWeakeningDeclaration,

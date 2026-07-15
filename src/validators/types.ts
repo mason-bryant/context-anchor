@@ -1,5 +1,5 @@
 import type { AnchorStore } from "../storage/store.js";
-import type { ValidationViolation } from "../types.js";
+import type { AnchorSchemaMode, ValidationViolation } from "../types.js";
 
 export type ValidationContext = {
   name: string;
@@ -8,6 +8,8 @@ export type ValidationContext = {
   newContent: string;
   repo: AnchorStore;
   migrationWarnOnly: boolean;
+  /** Goal 0 Phase 2 slice 3b write-time enforcement dial. Absent = `legacy` (no enforcement), so every pre-slice-3b caller is unaffected. */
+  anchorSchemaMode?: AnchorSchemaMode;
   approved: boolean;
 };
 

@@ -1,7 +1,8 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
-import type { FileLoggingConfig, LoggingConfig, RequestLoggingConfig, ServerConfig, TraceLoggingConfig } from "../types.js";
+import type { AnchorSchemaMode, FileLoggingConfig, LoggingConfig, RequestLoggingConfig, ServerConfig, TraceLoggingConfig } from "../types.js";
+import { ANCHOR_SCHEMA_MODES } from "../types.js";
 import { expandHome } from "../utils/path.js";
 import { DEFAULT_GRAPH_SCORING_ENABLED, DEFAULT_GRAPH_SCORING_MAX_BOOST, clampGraphScoringMaxBoost } from "../graph/proximity.js";
 
@@ -85,6 +86,11 @@ export function parseCliArgs(argv: string[], env: NodeJS.ProcessEnv = process.en
             DEFAULT_GRAPH_SCORING_MAX_BOOST,
         ),
       },
+      anchorSchema: {
+        mode:
+          anchorSchemaModeValue(stringFlag(flags, "anchor-schema-mode") ?? env.ANCHOR_MCP_ANCHOR_SCHEMA_MODE) ??
+          "legacy",
+      },
       logging: loggingConfigValue(fileConfig.logging, "logging"),
     },
   };
@@ -92,6 +98,20 @@ export function parseCliArgs(argv: string[], env: NodeJS.ProcessEnv = process.en
 
 function booleanEnv(value: string | undefined): boolean {
   return value === "true" || value === "1";
+}
+
+/** Parse `--anchor-schema-mode` / `ANCHOR_MCP_ANCHOR_SCHEMA_MODE` against the tri-state enum; an unrecognized value throws so a typo fails fast rather than silently defaulting. Returns undefined only when unset (caller defaults to `legacy`). */
+function anchorSchemaModeValue(value: string | undefined): AnchorSchemaMode | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  const trimmed = value.trim();
+  if (!(ANCHOR_SCHEMA_MODES as readonly string[]).includes(trimmed)) {
+    throw new Error(
+      `Invalid anchorSchema.mode "${value}": expected one of ${ANCHOR_SCHEMA_MODES.join(", ")}.`,
+    );
+  }
+  return trimmed as AnchorSchemaMode;
 }
 
 type CliConfigFile = {

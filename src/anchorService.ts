@@ -154,6 +154,7 @@ import type {
   PeopleRegistryWithCommit,
   WritePeopleRegistryInput,
   WriteProjectMappingsInput,
+  AnchorSchemaMode,
 } from "./types.js";
 import {
   buildProjectAliasIndex,
@@ -430,6 +431,8 @@ export class AnchorService {
       certainty?: CertaintyConfig;
       /** WP7 planner graph-proximity scoring signal. Optional for callers/tests that predate WP7; defaults to disabled. */
       graphScoring?: GraphScoringConfig;
+      /** Goal 0 Phase 2 slice 3b write-time enforcement dial. Optional; absent = `legacy` (no enforcement), so callers/tests that predate it are unaffected. */
+      anchorSchemaMode?: AnchorSchemaMode;
     },
   ) {}
 
@@ -1263,6 +1266,7 @@ export class AnchorService {
       newContent: content,
       repo: this.repo,
       migrationWarnOnly: this.options.migrationWarnOnly,
+      anchorSchemaMode: this.options.anchorSchemaMode ?? "legacy",
       approved: input.approved ?? false,
     });
     const blocks = violations.filter((violation) => violation.severity === "BLOCK");
@@ -4069,6 +4073,7 @@ None.
           newContent: draftContent,
           repo: this.repo,
           migrationWarnOnly: this.options.migrationWarnOnly,
+          anchorSchemaMode: this.options.anchorSchemaMode ?? "legacy",
           approved,
         })),
       );
@@ -4964,6 +4969,7 @@ None.
           newContent,
           repo: this.repo,
           migrationWarnOnly: this.options.migrationWarnOnly,
+          anchorSchemaMode: this.options.anchorSchemaMode ?? "legacy",
           approved: true,
         })
       : [];

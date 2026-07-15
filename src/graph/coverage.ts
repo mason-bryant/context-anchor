@@ -163,7 +163,18 @@ export function analyzeCoverage(
 // Per-anchor analysis.
 // ---------------------------------------------------------------------------
 
-function analyzeAnchorCoverage(
+/**
+ * Exported for `src/validators/anchorSchemaEnforcement.ts` (Goal 0 Phase 2
+ * slice 3b: `goal0_phase2_enforcement_mode_plan.md`), so the write-time
+ * enforcement validator derives its "fully structured" decision from the
+ * exact same predicates this module's tree-wide `analyzeCoverage` uses,
+ * rather than inventing a second notion of structuredness. Callers scoring a
+ * single in-flight write (not a tree-wide pass) should pass an empty
+ * `duplicatedAnchorIdSet`: tree-wide `anchor_id` duplication is already an
+ * always-BLOCK invariant owned by `validateAnchorIdIntegrity`, orthogonal to
+ * "is this anchor's OWN structure complete."
+ */
+export function analyzeAnchorCoverage(
   doc: CoverageDocumentInput,
   ctx: CoverageAnalysisContext,
   duplicatedAnchorIdSet: ReadonlySet<string>,

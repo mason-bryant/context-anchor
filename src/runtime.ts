@@ -52,6 +52,7 @@ export async function createAnchorRuntime(
     migrationWarnOnly: config.migrationWarnOnly,
     staleAfterDays: config.staleAfterDays,
     graphScoring: config.graphScoring,
+    anchorSchemaMode: config.anchorSchema?.mode ?? "legacy",
   });
   const mcpServer = createAnchorMcpServer(service, { requestLogger, trace: { logger: traceLogger } });
   // AutoSync pulls serialize on the service's write lock so a background
