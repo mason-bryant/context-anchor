@@ -79,6 +79,7 @@ export type MigrationOperationStatus = "applied" | "skipped" | "not_applicable";
 export type MigrationSkipReason =
   | "already_present"
   | "target_missing_anchor_id"
+  | "target_duplicate_anchor_id"
   | "target_not_legacy"
   | "key_not_registered"
   | "key_wrong_target_kind"
@@ -111,6 +112,8 @@ export type AnchorMigrationContext = {
   resolveAnchorName: (value: string) => string | undefined;
   /** The `anchor_id` a resolved anchor name declares, or undefined if it has none. */
   anchorIdForAnchorName: (anchorName: string) => string | undefined;
+  /** True when the given anchor_id is declared by MORE than one anchor in the tree — converting a target to a duplicated id would author a typed ref the graph refuses to resolve (see `resolveAnchorId`'s duplicate handling in `src/graph/index.ts`), so `convert_relation` skips it. */
+  isDuplicateAnchorId: (anchorId: string) => boolean;
   /** Canonical project slug(s) whose roadmap defines this goal id — zero, one, or many. */
   projectsForGoalId: (goalId: string) => readonly string[];
 };
@@ -332,6 +335,15 @@ function planConvertRelations(
           status: "skipped",
           reason: "target_missing_anchor_id",
           detail: `relations.${key} target "${target}" resolves to "${resolvedAnchorName}", which has no anchor_id yet — migrate the target first.`,
+        });
+        continue;
+      }
+      if (ctx.isDuplicateAnchorId(targetAnchorId)) {
+        outcomes.push({
+          code: "convert_relation",
+          status: "skipped",
+          reason: "target_duplicate_anchor_id",
+          detail: `relations.${key} target "${target}" resolves to "${resolvedAnchorName}", whose anchor_id "${targetAnchorId}" is declared by more than one anchor — a typed ref to it would not resolve. Fix the duplicate first.`,
         });
         continue;
       }

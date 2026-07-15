@@ -274,6 +274,9 @@ const BM25_INDEX_READ_CONCURRENCY = 8;
 /** Bounded whole-tree read concurrency for graphCoverage (WP6), matching BM25_INDEX_READ_CONCURRENCY's pattern for the same kind of I/O-bound whole-tree read. */
 const GRAPH_COVERAGE_READ_CONCURRENCY = 8;
 
+/** Max anchors with a retained migration preview (FIFO eviction): bounds memory when many anchors are previewed without ever being applied — the cache is a mint-reproducibility optimization, so eviction only costs a fresh re-plan. */
+const MIGRATION_PREVIEW_CACHE_MAX = 32;
+
 /** Input for `AnchorService.graphCoverage` (Goal 0 Phase 1 WP6). */
 export type GraphCoverageInput = {
   /** Restrict the tree read + analysis to this project slug. */
@@ -1184,7 +1187,7 @@ export class AnchorService {
       // lives HERE (not in `validateAnchorIdIntegrity`, which only scans on
       // update) so creating an anchor costs exactly one tree walk — see the
       // validator's docstring for the split.
-      const treeAnchorIds = await this.collectTreeAnchorIds(resolved.name);
+      const { idToName: treeAnchorIds } = await this.collectTreeAnchorIds(resolved.name);
       // An invalid-format supplied id is treated as ABSENT for minting: the
       // server owns identity allocation, and letting a malformed value
       // through (possible when migrationWarnOnly downgrades the schema BLOCK
@@ -2174,12 +2177,21 @@ None.
    * anchor's on-disk content (the anchor currently being written, whose id
    * the caller supplies separately from its in-flight content).
    */
-  private async collectTreeAnchorIds(excludeAnchor?: string): Promise<Map<string, string>> {
+  private async collectTreeAnchorIds(excludeAnchor?: string): Promise<{
+    /** anchor_id -> FIRST anchor name declaring it (first-wins, for naming the collision in duplicate BLOCKs and for the mint-collision set). */
+    idToName: Map<string, string>;
+    /** anchor name -> its declared anchor_id, EVERY declarer included — duplicates are NOT dropped here, so a per-anchor lookup (migration's anchorIdForAnchorName) never falsely reports an id-bearing anchor as id-less. */
+    nameToId: Map<string, string>;
+    /** anchor_ids declared by more than one anchor. */
+    duplicatedIds: Set<string>;
+  }> {
     // includeArchive: identity uniqueness is TREE-wide — an archived anchor
     // keeps its anchor_id, and unarchiving one must never collide with an id
     // minted or accepted while it sat in archive/.
     const metas = await this.repo.listAnchors({ includeArchive: true });
-    const ids = new Map<string, string>();
+    const idToName = new Map<string, string>();
+    const nameToId = new Map<string, string>();
+    const duplicatedIds = new Set<string>();
     for (const meta of metas) {
       if (isBuiltInAnchorName(meta.name) || meta.name === excludeAnchor) {
         continue;
@@ -2189,11 +2201,17 @@ None.
         continue;
       }
       const id = anchorIdFromFrontmatter(parseAnchor(content).frontmatter);
-      if (id && !ids.has(id)) {
-        ids.set(id, meta.name);
+      if (!id) {
+        continue;
+      }
+      nameToId.set(meta.name, id);
+      if (idToName.has(id)) {
+        duplicatedIds.add(id);
+      } else {
+        idToName.set(id, meta.name);
       }
     }
-    return ids;
+    return { idToName, nameToId, duplicatedIds };
   }
 
   async listClaims(input: {
@@ -4899,24 +4917,22 @@ None.
    */
   private async buildAnchorMigrationContext(excludeAnchor: string): Promise<AnchorMigrationContext> {
     const graph = this.getGraphIndex();
-    const [treeAnchorIdsByName, treeClaimIds, coverageCtx, goalOwners] = await Promise.all([
+    const [treeAnchorIdState, treeClaimIds, coverageCtx, goalOwners] = await Promise.all([
       this.collectTreeAnchorIds(excludeAnchor),
       this.collectTreeClaimIds(excludeAnchor),
       graph.buildCoverageContext(),
       graph.goalIdOwnersSnapshot(),
     ]);
-    // collectTreeAnchorIds returns anchorId -> owning name; invert for the
-    // planner's anchorIdForAnchorName lookup (name -> anchorId), and keep the
-    // original key set as the mint-collision "existing ids" set.
-    const anchorIdByName = new Map<string, string>();
-    for (const [anchorId, name] of treeAnchorIdsByName) {
-      anchorIdByName.set(name, anchorId);
-    }
+    // nameToId includes EVERY id-bearing anchor (duplicates too), so an
+    // anchor whose id happens to collide is never falsely reported as
+    // id-less; the planner refuses to CONVERT to a duplicated id via
+    // isDuplicateAnchorId instead (a typed ref to it would not resolve).
     return {
-      treeAnchorIds: new Set(treeAnchorIdsByName.keys()),
+      treeAnchorIds: new Set(treeAnchorIdState.idToName.keys()),
       treeClaimIds,
       resolveAnchorName: coverageCtx.resolveAnchorName,
-      anchorIdForAnchorName: (anchorName: string) => anchorIdByName.get(anchorName),
+      anchorIdForAnchorName: (anchorName: string) => treeAnchorIdState.nameToId.get(anchorName),
+      isDuplicateAnchorId: (anchorId: string) => treeAnchorIdState.duplicatedIds.has(anchorId),
       projectsForGoalId: (goalId: string) => goalOwners.get(goalId) ?? [],
     };
   }
@@ -4966,6 +4982,15 @@ None.
       (o) => o.status === "applied" && (o.code === "mint_anchor_id" || o.code === "mint_claim_ids"),
     );
     if (changed && mintApplied) {
+      // Bounded FIFO (Map insertion order): the cache is a reproducibility
+      // optimization only, so evicting the oldest entry never breaks
+      // correctness — a later apply just re-plans with fresh mints.
+      if (!this.lastMigrationPreview.has(resolved.name) && this.lastMigrationPreview.size >= MIGRATION_PREVIEW_CACHE_MAX) {
+        const oldest = this.lastMigrationPreview.keys().next().value;
+        if (oldest !== undefined) {
+          this.lastMigrationPreview.delete(oldest);
+        }
+      }
       this.lastMigrationPreview.set(resolved.name, { fileCommit: read.fileCommit, operations, newContent, outcomes });
     }
 

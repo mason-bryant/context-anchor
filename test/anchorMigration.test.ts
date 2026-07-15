@@ -20,6 +20,7 @@ function makeCtx(overrides: Partial<AnchorMigrationContext> = {}): AnchorMigrati
     treeClaimIds: new Set(),
     resolveAnchorName: () => undefined,
     anchorIdForAnchorName: () => undefined,
+    isDuplicateAnchorId: () => false,
     projectsForGoalId: () => [],
     ...overrides,
   };
@@ -117,6 +118,26 @@ describe("planAnchorMigration: convert_relation", () => {
     expect(outcome.status).toBe("applied");
     expect(result.newContent).toContain("anchor:a-target1");
     expect(result.newContent).not.toContain("projects/demo/other.md");
+  });
+
+  it("skips with target_duplicate_anchor_id when the target's id is declared by more than one anchor (a typed ref to it would not resolve)", () => {
+    const content = doc(
+      "relations:\n  depends_on:\n    - projects/demo/other.md",
+      "## Current State\n\nNone.\n",
+    );
+    const ctx = makeCtx({
+      resolveAnchorName: (value) => (value === "projects/demo/other.md" ? "projects/demo/other.md" : undefined),
+      // The target HAS an id — it is just duplicated tree-wide, which must
+      // never be reported as target_missing_anchor_id (the anchor is not
+      // id-less) nor converted (extract.ts refuses duplicated typed refs).
+      anchorIdForAnchorName: (name) => (name === "projects/demo/other.md" ? "a-dup999" : undefined),
+      isDuplicateAnchorId: (id) => id === "a-dup999",
+    });
+    const result = planAnchorMigration(content, ctx, ["convert_relation"]);
+    const outcome = result.outcomes.find((o) => o.code === "convert_relation")!;
+    expect(outcome.status).toBe("skipped");
+    expect(outcome.reason).toBe("target_duplicate_anchor_id");
+    expect(result.newContent).toBe(content);
   });
 
   it("skips with target_missing_anchor_id when the resolvable target anchor has no anchor_id yet", () => {
