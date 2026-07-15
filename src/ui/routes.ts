@@ -17,7 +17,7 @@ import type {
 } from "../types.js";
 import type { GraphEdgeType } from "../graph/model.js";
 import type { CoverageState } from "../graph/coverage.js";
-import type { MigrationOperationCode } from "../migration/anchorMigration.js";
+import { MIGRATION_OPERATION_CODES, type MigrationOperationCode } from "../migration/anchorMigration.js";
 import { aggregateBudget, aggregateFollowUps, aggregateFrequency, filterEvents, filterSessions } from "../trace/aggregate.js";
 import type { TraceIndex } from "../trace/index.js";
 import type { TraceRatingsStore, TraceRatingValue } from "../trace/ratings.js";
@@ -1301,14 +1301,13 @@ function isCoverageState(value: string): value is CoverageState {
   );
 }
 
+// Derived from the planner's canonical list so route validation can never
+// drift from the operations planAnchorMigration actually implements (the MCP
+// schema in src/server.ts derives from the same constant).
+const MIGRATION_OPERATION_CODE_SET: ReadonlySet<string> = new Set(MIGRATION_OPERATION_CODES);
+
 function isMigrationOperationCode(value: string): value is MigrationOperationCode {
-  return (
-    value === "mint_anchor_id" ||
-    value === "add_schema_version" ||
-    value === "convert_relation" ||
-    value === "scope_goal_reference" ||
-    value === "mint_claim_ids"
-  );
+  return MIGRATION_OPERATION_CODE_SET.has(value);
 }
 
 /** Read an optional `operations` array off a migration-route body: undefined when absent (run every applicable operation), or a validated `MigrationOperationCode[]`. */

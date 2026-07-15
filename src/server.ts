@@ -6,6 +6,7 @@ import type { AnchorService } from "./anchorService.js";
 import { anchorSectionGuidance } from "./anchorStructure.js";
 import { PeopleRegistryConflictError, ProjectMappingsConflictError } from "./git/repo.js";
 import { errorMetadata, noopRequestLogger, type RequestLogger } from "./logger.js";
+import { MIGRATION_OPERATION_CODES, type MigrationOperationCode } from "./migration/anchorMigration.js";
 import { newTraceId } from "./trace/events.js";
 import type { TraceLogger } from "./trace/logger.js";
 import { TraceRecorder, type TraceConnection } from "./trace/recorder.js";
@@ -590,13 +591,11 @@ the index when your workflow checks in that file.`,
     async (input) => jsonResult(await service.graphCoverage(input)),
   );
 
-  const MigrationOperationCodeSchema = z.enum([
-    "mint_anchor_id",
-    "add_schema_version",
-    "convert_relation",
-    "scope_goal_reference",
-    "mint_claim_ids",
-  ]);
+  // Derived from the planner's canonical list so the MCP schema can never
+  // drift from the operations planAnchorMigration actually implements.
+  const MigrationOperationCodeSchema = z.enum(
+    MIGRATION_OPERATION_CODES as [MigrationOperationCode, ...MigrationOperationCode[]],
+  );
   const AnchorMigrationInputSchema = z.object({
     name: z.string().min(1).describe("Anchor name to migrate."),
     operations: z
