@@ -29,7 +29,7 @@ import {
   isValidAnchorId,
   type IdentityCompatibilityMap,
 } from "./identity.js";
-import { canonicalizeNodeId } from "./canonicalIds.js";
+import { canonicalizeNodeId, dedupeAnchorIdByName } from "./canonicalIds.js";
 import { listRoadmapGoalsWithStatus } from "../roadmap/analyzeRoadmap.js";
 import type { CoverageAnalysisContext } from "./coverage.js";
 import type { AnchorMeta, PeopleRegistry, ProjectMappings } from "../types.js";
@@ -93,8 +93,10 @@ export class GraphIndex {
   // unresolved typed target simply falls back to the pre-WP3 anchor_anchor
   // legacy edge (see `extractRelationsEdges` in extract.ts), never drops.
   private anchorIdByName = new Map<string, string | undefined>();
-  /** Memoized v1<->v2 compatibility map, keyed on the graph `generation` so repeated per-request `canonicalizeNodeId` calls within a stable graph reuse it instead of rebuilding the (O(#anchors + #goals)) map every call. Rebuilt on the first call after any mutation bumps `generation`. */
-  private compatMapCache: { generation: number; map: IdentityCompatibilityMap } | undefined;
+  /** Memoized v1<->v2 compatibility map + the deduped anchor-id map both derive from, keyed on the graph `generation` so repeated per-request `canonicalizeNodeId`/compat calls within a stable graph reuse them instead of rebuilding the (O(#anchors + #goals)) map every call. Rebuilt on the first call after any mutation bumps `generation`. */
+  private compatMapCache:
+    | { generation: number; map: IdentityCompatibilityMap; dedupedAnchorIdByName: ReadonlyMap<string, string | undefined> }
+    | undefined;
   /** Goal ids keyed by the canonical project slug whose roadmap defines them — PROJECT-SCOPED so `goal:<project>:<goal-id>` refs never cross-resolve against a same-numbered goal in another project. */
   private knownGoalIdsByProject = new Map<string, Set<string>>();
 
@@ -141,11 +143,15 @@ export class GraphIndex {
       // Exactly one owner -> scoped v2; zero/many -> unmapped (stays v1).
       projectSlugByGoalId.set(goalId, projectSlugs.length === 1 ? projectSlugs[0] : undefined);
     }
+    // Deduped so a duplicated anchor_id is unmapped (stays v1) rather than
+    // producing multiple v1->same-v2 entries and a last-write-wins v2->v1
+    // reverse mapping. Cached alongside the map for `canonicalizeNodeId`.
+    const dedupedAnchorIdByName = dedupeAnchorIdByName(this.anchorIdByName);
     const map = buildIdentityCompatibilityMap({
-      anchorIdByName: this.anchorIdByName,
+      anchorIdByName: dedupedAnchorIdByName,
       projectSlugByGoalId,
     });
-    this.compatMapCache = { generation: this.generation, map };
+    this.compatMapCache = { generation: this.generation, map, dedupedAnchorIdByName };
     return map;
   }
 
@@ -159,7 +165,11 @@ export class GraphIndex {
    */
   async canonicalizeNodeId(nodeId: string): Promise<string> {
     const compat = await this.identityCompatibilityMap();
-    return canonicalizeNodeId(nodeId, compat, this.anchorIdByName);
+    // Use the deduped map cached alongside the compat map (built in the same
+    // call above), so a duplicated anchor_id never structurally re-keys a
+    // milestone/task/section/claim id onto a v2 node the graph never emits.
+    const dedupedAnchorIdByName = this.compatMapCache?.dedupedAnchorIdByName ?? this.anchorIdByName;
+    return canonicalizeNodeId(nodeId, compat, dedupedAnchorIdByName);
   }
 
   /** Ensure the graph reflects the current repo HEAD, rebuilding if stale. Never called from the constructor — first graph query triggers the initial build. */
@@ -627,7 +637,10 @@ export class GraphIndex {
       goalExistsInProject: (projectSlug: string, goalId: string) =>
         goalIdsByProject.get(projectSlug)?.has(goalId) ?? false,
       canonicalIds: {
-        anchorIdByName: anchorIds,
+        // Deduped: a duplicated anchor_id must NOT canonicalize (it would
+        // collapse distinct anchors onto one v2 node) — mirrors resolveAnchorId
+        // above, which already refuses duplicated ids for typed relations.
+        anchorIdByName: dedupeAnchorIdByName(anchorIds),
         projectSlugForGoalId,
       },
     };

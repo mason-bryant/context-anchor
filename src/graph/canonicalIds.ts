@@ -66,6 +66,32 @@ function anchorIdFor(anchorName: string, resolvers: CanonicalIdResolvers): strin
 }
 
 /**
+ * A copy of `anchorIdByName` with every DUPLICATED `anchor_id` (declared by
+ * more than one anchor — a tree defect) mapped to `undefined`, so canonical
+ * emission, the compatibility map, and node-id normalization all treat a
+ * duplicated id as non-canonical and keep those anchors on their distinct v1
+ * path ids. Keying them v2 would collapse multiple anchors onto one
+ * `anchor:<id>` node and corrupt the graph — the same reason typed-relation
+ * resolution already refuses to resolve a duplicated id. Pure; call it once
+ * per graph generation, not per request.
+ */
+export function dedupeAnchorIdByName(
+  anchorIdByName: ReadonlyMap<string, string | undefined>,
+): Map<string, string | undefined> {
+  const counts = new Map<string, number>();
+  for (const id of anchorIdByName.values()) {
+    if (id) {
+      counts.set(id, (counts.get(id) ?? 0) + 1);
+    }
+  }
+  const deduped = new Map<string, string | undefined>();
+  for (const [name, id] of anchorIdByName) {
+    deduped.set(name, id && (counts.get(id) ?? 0) === 1 ? id : undefined);
+  }
+  return deduped;
+}
+
+/**
  * Canonical anchor node id: `anchor:<anchor-id>` (v2) when `anchorName` owns a
  * valid `anchor_id`, else the path-based `anchor:<anchorName>` (v1). This is
  * the acceptance criterion the whole substrate exists for — an id-bearing

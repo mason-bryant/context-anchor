@@ -425,3 +425,32 @@ describe("graph re-key: an old v1/path deep link still resolves via graphNeighbo
     expect(byV2.resolvedNode.nodeId).toBe("anchor:a-ctx111");
   });
 });
+
+describe("graph re-key: duplicated anchor_id stays v1 (no node collision)", () => {
+  it("does not canonicalize anchors sharing an anchor_id — distinct v1 nodes, no collapsed v2 node", async () => {
+    const repo = new AnchorRepository({ repoPath: tmpDir });
+    await repo.ensureReady();
+    await seedRegistries(repo);
+    // Two anchors illegally declaring the SAME anchor_id (a tree defect).
+    await repo.commitAnchor({ name: "projects/demo/a.md", content: contextAnchor("a-dup999") });
+    await repo.commitAnchor({ name: "projects/demo/b.md", content: contextAnchor("a-dup999") });
+
+    const graph = new GraphIndex(repo, graphDeps(repo));
+
+    // Emission: each anchor keeps its distinct v1 path node; the shared v2 id
+    // is never emitted (which would collapse the two anchors into one node).
+    expect(await graph.edgesFrom("anchor:projects/demo/a.md", "anchor_project")).toHaveLength(1);
+    expect(await graph.edgesFrom("anchor:projects/demo/b.md", "anchor_project")).toHaveLength(1);
+    expect(await graph.edgesFrom("anchor:a-dup999", "anchor_project")).toEqual([]);
+
+    // Compat map: the duplicated id is unmapped in both directions.
+    const compat = await graph.identityCompatibilityMap();
+    expect(compat.toV2.get("anchor:projects/demo/a.md")).toBeUndefined();
+    expect(compat.toV2.get("anchor:projects/demo/b.md")).toBeUndefined();
+    expect(compat.toV1.get("anchor:a-dup999")).toBeUndefined();
+
+    // Normalization: each stays on its distinct v1 path id.
+    expect(await graph.canonicalizeNodeId("anchor:projects/demo/a.md")).toBe("anchor:projects/demo/a.md");
+    expect(await graph.canonicalizeNodeId("anchor:projects/demo/b.md")).toBe("anchor:projects/demo/b.md");
+  });
+});
