@@ -1320,6 +1320,11 @@ function readMigrationOperationsBody(body: Record<string, unknown>): MigrationOp
   if (!Array.isArray(value) || value.some((item) => typeof item !== "string")) {
     throw new UiHttpError(400, "Invalid operations: expected an array of strings.");
   }
+  if (value.length === 0) {
+    // An empty array silently running zero operations is a footgun: the
+    // contract is "omit operations to run every applicable operation".
+    throw new UiHttpError(400, "Invalid operations: must be non-empty; omit the field to run every applicable operation.");
+  }
   const invalid = value.find((item) => !isMigrationOperationCode(item as string));
   if (invalid !== undefined) {
     throw new UiHttpError(

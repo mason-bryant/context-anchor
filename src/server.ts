@@ -601,8 +601,11 @@ the index when your workflow checks in that file.`,
     name: z.string().min(1).describe("Anchor name to migrate."),
     operations: z
       .array(MigrationOperationCodeSchema)
+      .min(1)
       .optional()
-      .describe("Subset of migration operations to run. Omit to run every applicable operation."),
+      .describe(
+        "Non-empty subset of migration operations to run. Omit (do not send an empty array) to run every applicable operation.",
+      ),
   });
 
   server.registerTool(

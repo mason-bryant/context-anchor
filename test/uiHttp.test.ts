@@ -1718,6 +1718,17 @@ describe("UI HTTP routes", () => {
     expect(body.error.message).toContain("not_a_real_operation");
   });
 
+  it("rejects an EMPTY operations array with 400 (omit the field to run every applicable operation)", async () => {
+    const response = await fetch(`${baseUrl}/api/ui/anchor-migration-preview`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${TOKEN}`, "content-type": "application/json" },
+      body: JSON.stringify({ name: "projects/demo/demo.md", operations: [] }),
+    });
+    const body = (await response.json()) as { error: { message: string } };
+    expect(response.status).toBe(400);
+    expect(body.error.message).toContain("non-empty");
+  });
+
   it("requires auth and commits through /api/ui/anchor-migration-apply, matching the preview", async () => {
     const unauthed = await fetch(`${baseUrl}/api/ui/anchor-migration-apply`, {
       method: "POST",
