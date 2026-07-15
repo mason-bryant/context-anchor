@@ -330,6 +330,11 @@ export class GraphIndex {
       return;
     }
     this.generation += 1;
+    // Bumping generation already makes the cached compat/dedupe map stale
+    // (its generation no longer matches), but clear it outright so an
+    // incremental update also frees that derived memory immediately rather
+    // than holding it until the next identityCompatibilityMap call.
+    this.compatMapCache = undefined;
 
     let read: ReadAnchorResult | undefined;
     try {
@@ -419,6 +424,10 @@ export class GraphIndex {
     this.sectionTitlesByAnchor = new Map();
     this.anchorIdByName = new Map();
     this.knownGoalIdsByProject = new Map();
+    // Drop the derived compat/dedupe cache too, so invalidation frees ALL
+    // derived state rather than retaining the (O(#anchors + #goals)) map on
+    // an idle invalidated index until the next identityCompatibilityMap call.
+    this.compatMapCache = undefined;
   }
 
   private async resolveHead(): Promise<string | undefined> {
