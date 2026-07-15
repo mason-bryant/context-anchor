@@ -65,9 +65,22 @@ const PERMISSIVE_COVERAGE_CONTEXT: CoverageAnalysisContext = {
   teamExists: () => true,
 };
 
-/** Stable identity for a structural gap: `code` alone collapses per-relation-key `convert_relation` gaps, so the message (which names the key) is part of the key. Newline-joined — neither field can contain one. */
+/**
+ * Stable identity for a structural gap. `mint_anchor_id` / `add_schema_version`
+ * occur at most once per anchor, so `code` alone identifies them. Coverage
+ * emits one `convert_relation` gap PER relation key, so those need the key to
+ * be distinguished — parsed from the message's structural `relations.<key>`
+ * token rather than keying on the whole message, so enforcement does not
+ * couple to human-facing copy (a future wording change to the message must
+ * not alter which gaps count as "newly introduced"). Falls back to the full
+ * message only if the token is somehow absent.
+ */
 function gapKey(gap: AnchorCoverageRecord["suggestedOperations"][number]): string {
-  return gap.code + "\n" + gap.message;
+  if (gap.code === "convert_relation") {
+    const match = gap.message.match(/relations\.([A-Za-z0-9_]+)/);
+    return "convert_relation:" + (match ? match[1] : gap.message);
+  }
+  return gap.code;
 }
 
 /** The structural-completeness gaps this gate enforces, keyed to a `partial` coverage record's `suggestedOperations`. */
@@ -106,10 +119,10 @@ export const validateAnchorSchemaEnforcement: Validator = (context) => {
 
   // Update-scoping: enforce only gaps this write newly introduces, so an
   // unrelated edit to an already-legacy anchor never starts blocking it.
-  // Compare by code+message, not code alone: coverage emits one
-  // `convert_relation` gap PER relation key (with the key named in its
-  // message), so keying on the code would treat a legacy target newly added
-  // under a DIFFERENT key as pre-existing and silently skip it.
+  // Compare by a per-gap key (see `gapKey`), not code alone: coverage emits
+  // one `convert_relation` gap PER relation key, so keying on the code would
+  // treat a legacy target newly added under a DIFFERENT key as pre-existing
+  // and silently skip it.
   let gapsToEnforce = newGaps;
   if (context.oldContent !== undefined) {
     const oldGapKeys = new Set(structuralGaps(context.oldContent).map(gapKey));

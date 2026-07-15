@@ -39,8 +39,12 @@ Scope, as specified: config + validator only. No `src/ui/*` and no
 
 Gaps are computed from the anchor's own coverage record (permissive context,
 no tree scan). On a **create** (`oldContent === undefined`) every gap is
-enforced. On an **update**, only gaps whose `code` is NOT already present in
-`oldContent`'s gaps are enforced — so:
+enforced. On an **update**, only gaps whose stable identity (`gapKey`) is NOT
+already present in `oldContent`'s gaps are enforced. `gapKey` is `code` for
+`mint_anchor_id`/`add_schema_version` (at most one each), and
+`convert_relation:<relation-key>` for relation gaps (coverage emits one per
+relation key), so a legacy target added under a new key is caught while the
+identity stays decoupled from human-facing message copy. So:
 
 - an unrelated prose edit to a legacy anchor (gap set unchanged) never starts
   blocking it;
