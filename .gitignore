@@ -10,3 +10,6 @@ coverage/
 fixtures/demo-context/
 anchor-mcp.config.json
 *.swp
+
+# Scratch handoff notes from agent-driven work (never commit)
+HANDOFF.md
