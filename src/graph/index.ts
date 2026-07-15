@@ -278,6 +278,10 @@ export class GraphIndex {
    */
   async goalIdOwnersSnapshot(): Promise<ReadonlyMap<string, readonly string[]>> {
     await this.ensureBuilt();
+    // `this.knownGoalIdsByProject` is stored with canonical (alias-resolved)
+    // project slugs (see rebuild), so this owner snapshot — and the compat
+    // map built from it — scope goals to the same canonical slug graph
+    // emission uses.
     const owners = new Map<string, string[]>();
     for (const [projectSlug, goalIds] of this.knownGoalIdsByProject) {
       for (const goalId of goalIds) {
@@ -494,7 +498,28 @@ export class GraphIndex {
       }),
     );
 
-    const ctx = await this.buildExtractContext(metas, sectionTitlesByAnchor, anchorIdByName, knownGoalIdsByProject);
+    // Canonicalize goal-owner project slugs before use/storage. The roadmap
+    // slugs above are the path-derived slug plus declared front-matter slugs,
+    // either of which may be a project ALIAS. Resolving each to its canonical
+    // slug (same rule `resolveProjectSlug` uses) means goal v2 scoping,
+    // `goalExistsInProject`, and the compat map's `goalIdOwnersSnapshot` all
+    // agree on ONE canonical owner per goal — otherwise an alias could emit
+    // `goal:<alias>:<id>`, or an alias+canonical pair could look like two
+    // owners and wrongly keep the goal v1.
+    const goalAliasIndex = buildProjectAliasIndex(metas);
+    const canonicalGoalSlug = (slug: string): string =>
+      goalAliasIndex.byAlias.get(slug.trim().toLowerCase()) ?? slug.trim();
+    const canonicalGoalIdsByProject = new Map<string, Set<string>>();
+    for (const [rawSlug, goalIds] of knownGoalIdsByProject) {
+      const canonical = canonicalGoalSlug(rawSlug);
+      const merged = canonicalGoalIdsByProject.get(canonical) ?? new Set<string>();
+      for (const goalId of goalIds) {
+        merged.add(goalId);
+      }
+      canonicalGoalIdsByProject.set(canonical, merged);
+    }
+
+    const ctx = await this.buildExtractContext(metas, sectionTitlesByAnchor, anchorIdByName, canonicalGoalIdsByProject);
 
     // Pass 2: extract edges per document (pure, no I/O — uses the content and
     // parsed body already read in pass 1).
@@ -530,7 +555,7 @@ export class GraphIndex {
     this.literalRelationsReverse = literalRelationsReverse;
     this.sectionTitlesByAnchor = sectionTitlesByAnchor;
     this.anchorIdByName = anchorIdByName;
-    this.knownGoalIdsByProject = knownGoalIdsByProject;
+    this.knownGoalIdsByProject = canonicalGoalIdsByProject;
   }
 
   private async buildExtractContext(
@@ -608,12 +633,17 @@ export class GraphIndex {
     // lookup for canonical goal v2 keying. A goal id owned by exactly one
     // project scopes to that project (v2 `goal:<slug>:<id>`); zero owners
     // (unknown) or two-plus owners (ambiguous — the exact collision scoped
-    // goals prevent) leave it v1 (`goal:<id>`).
+    // goals prevent) leave it v1 (`goal:<id>`). Slugs are re-resolved through
+    // `resolveProjectSlug` (an alias -> its canonical slug) so an alias never
+    // becomes a distinct owner or a `goal:<alias>:<id>` key — the stored map
+    // is already canonicalized at the rebuild source, so this is idempotent
+    // here and keeps the guarantee local if a caller ever passes raw slugs.
     const projectsByGoalId = new Map<string, Set<string>>();
     for (const [projectSlug, goalIds] of goalIdsByProject) {
+      const canonicalSlug = resolveProjectSlug(projectSlug) ?? projectSlug;
       for (const goalId of goalIds) {
         const owners = projectsByGoalId.get(goalId) ?? new Set<string>();
-        owners.add(projectSlug);
+        owners.add(canonicalSlug);
         projectsByGoalId.set(goalId, owners);
       }
     }

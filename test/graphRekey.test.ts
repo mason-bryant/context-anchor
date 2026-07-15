@@ -454,3 +454,70 @@ describe("graph re-key: duplicated anchor_id stays v1 (no node collision)", () =
     expect(await graph.canonicalizeNodeId("anchor:projects/demo/b.md")).toBe("anchor:projects/demo/b.md");
   });
 });
+
+describe("graph re-key: goal owner slugs are alias-normalized", () => {
+  it("scopes a goal to its CANONICAL project even when the roadmap keys it under an alias", async () => {
+    const repo = new AnchorRepository({ repoPath: tmpDir });
+    await repo.ensureReady();
+    await seedRegistries(repo);
+    // A context anchor declares `old-demo` as an alias of project `demo`.
+    await repo.commitAnchor({
+      name: "projects/demo/ctx.md",
+      content: `---
+project:
+  - demo
+type: context-anchor
+tags: []
+summary: Demo project context.
+read_this_if:
+  - Testing alias resolution.
+last_validated: 2026-07-07
+aliases:
+  - old-demo
+---
+
+# Demo Context
+
+## Current State
+
+None.
+`,
+    });
+    // The roadmap keys goal G-009 under the ALIAS in front matter; its path
+    // slug (demo) also contributes — without alias normalization these look
+    // like two distinct owners and the goal would wrongly stay v1.
+    await repo.commitAnchor({
+      name: "projects/demo/alias-roadmap.md",
+      content: `---
+project:
+  - old-demo
+type: project-roadmap
+tags: []
+summary: Roadmap under an alias.
+read_this_if:
+  - Testing the re-key.
+last_validated: 2026-07-07
+---
+
+# Aliased Roadmap
+
+## Goals
+
+### Goal G-009 -- Aliased goal
+
+Desc.
+`,
+    });
+
+    const graph = new GraphIndex(repo, graphDeps(repo));
+
+    // Emitted goal node scopes to the CANONICAL slug (v2), not the alias.
+    const roadmapGoals = await graph.edgesFrom("anchor:projects/demo/alias-roadmap.md", "roadmap_goal");
+    expect(roadmapGoals.map((edge) => edge.to)).toContain("goal:demo:G-009");
+    expect(roadmapGoals.map((edge) => edge.to)).not.toContain("goal:old-demo:G-009");
+
+    // Compat map scopes the goal to the single canonical owner.
+    const compat = await graph.identityCompatibilityMap();
+    expect(compat.toV2.get("goal:G-009")).toBe("goal:demo:G-009");
+  });
+});
