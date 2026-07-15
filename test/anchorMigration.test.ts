@@ -78,6 +78,20 @@ describe("planAnchorMigration: add_schema_version", () => {
     expect(result.newContent).toMatch(/schema_version:\s*1/);
   });
 
+  it("treats an INVALID schema_version as absent and replaces it with 1 (matching writeAnchor's create-path policy)", () => {
+    const content = doc("schema_version: 0", "## Current State\n\nNone.\n");
+    const result = planAnchorMigration(content, makeCtx(), ["add_schema_version"]);
+    const outcome = result.outcomes.find((o) => o.code === "add_schema_version")!;
+    expect(outcome.status).toBe("applied");
+    expect(result.newContent).toMatch(/schema_version:\s*1\b/);
+    expect(result.newContent).not.toMatch(/schema_version:\s*0/);
+
+    const nonNumeric = doc("schema_version: abc", "## Current State\n\nNone.\n");
+    const nonNumericResult = planAnchorMigration(nonNumeric, makeCtx(), ["add_schema_version"]);
+    expect(nonNumericResult.outcomes.find((o) => o.code === "add_schema_version")!.status).toBe("applied");
+    expect(nonNumericResult.newContent).toMatch(/schema_version:\s*1\b/);
+  });
+
   it("is not_applicable when schema_version already present", () => {
     const content = doc("schema_version: 2", "## Current State\n\nNone.\n");
     const result = planAnchorMigration(content, makeCtx(), ["add_schema_version"]);

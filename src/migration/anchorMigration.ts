@@ -207,8 +207,16 @@ function planAddSchemaVersion(
   updates: Record<string, unknown>,
 ): MigrationOperationOutcome {
   const value = frontmatter.schema_version;
-  const present = value !== undefined && value !== null;
-  if (present) {
+  // Same validity rule as writeAnchor's create-path policy (a positive
+  // integer, or an all-digits string encoding one): an INVALID supplied
+  // value is treated as absent and replaced with 1 — matching
+  // `planMintAnchorId`'s treatment of an invalid anchor_id above —
+  // otherwise migration would leave the anchor malformed while reporting
+  // already_present.
+  const valid =
+    (typeof value === "number" && Number.isInteger(value) && value > 0) ||
+    (typeof value === "string" && /^\d+$/.test(value) && Number(value) > 0);
+  if (valid) {
     return {
       code: "add_schema_version",
       status: "not_applicable",
