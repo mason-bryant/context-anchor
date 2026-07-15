@@ -15,8 +15,12 @@
  * outcome a purely-structural gap can produce is `partial`: this validator is
  * about "is this anchor's own structure complete", not about whether its
  * targets exist in the tree (dangling/ambiguous) or its front matter parses
- * (malformed) — those are owned by other validators and must not be
- * double-penalized here. A `partial` record's `suggestedOperations`
+ * (malformed). `malformed` is deliberately NOT enforced here: a front-matter
+ * schema failure is already a BLOCK from `validateFrontMatter`, and a malformed
+ * typed-relation ref surfaces in coverage/migration rather than in any
+ * validator — either way, re-reporting it here would just double-message a
+ * shape problem, so this gate stays focused on structural completeness and
+ * leaves malformedness to those surfaces. A `partial` record's `suggestedOperations`
  * (`mint_anchor_id` / `add_schema_version` / `convert_relation`) ARE the
  * structural gaps, so enforcing them keeps this gate and coverage in lockstep.
  *
