@@ -6945,10 +6945,17 @@ export const UI_JS = `(function () {
       el("migration-diff-details").hidden = true;
     }
     renderMigrationWarnings(preview.warnings || []);
-    el("migration-apply").disabled = !preview.changed;
-    el("migration-result").textContent = preview.changed
-      ? ""
-      : "Nothing to migrate: this anchor already reflects every applicable operation.";
+    // Apply requires the base commit; without it apply could only ever return
+    // expected_file_commit_required, so keep it disabled and say why.
+    var canApply = !!preview.changed && !!preview.fileCommit;
+    el("migration-apply").disabled = !canApply;
+    if (!preview.changed) {
+      el("migration-result").textContent = "Nothing to migrate: this anchor already reflects every applicable operation.";
+    } else if (!preview.fileCommit) {
+      el("migration-result").textContent = "Cannot apply: this anchor has no base revision to migrate against.";
+    } else {
+      el("migration-result").textContent = "";
+    }
   }
 
   async function openMigrationModal(anchorName) {
@@ -6983,7 +6990,9 @@ export const UI_JS = `(function () {
 
   async function applyMigrationFromModal() {
     var modal = state.migrationModal;
-    if (!modal || !modal.preview || !modal.preview.changed || state.migrationApplying) {
+    // Guard the apply contract: needs a changed preview AND its base commit
+    // (apply requires expectedFileCommit), and no apply already in flight.
+    if (!modal || !modal.preview || !modal.preview.changed || !modal.preview.fileCommit || state.migrationApplying) {
       return;
     }
     state.migrationApplying = true;
