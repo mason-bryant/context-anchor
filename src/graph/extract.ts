@@ -21,20 +21,26 @@ import { extractMarkdownLinks } from "../storage/markdown.js";
 import type { PeopleIndex } from "../peopleRegistry.js";
 import { parseClaimSource, type ParseClaimSourceContext } from "./sourceId.js";
 import {
-  anchorNodeId,
-  claimNodeId,
-  goalNodeId,
-  milestoneNodeId,
   pathNodeId,
   personNodeId,
   projectNodeId,
   repoNodeId,
-  sectionNodeId,
-  taskNodeId,
   teamNodeId,
   type GraphEdge,
   type GraphEdgeType,
 } from "./model.js";
+import {
+  canonicalAnchorNodeId,
+  canonicalClaimNodeId,
+  canonicalGoalNodeId,
+  canonicalMilestoneNodeId,
+  canonicalSectionNodeId,
+  canonicalTaskNodeId,
+  canonicalizeAnchorSourceNodeId,
+  canonicalizeSectionNodeId,
+  type CanonicalIdResolvers,
+} from "./canonicalIds.js";
+import { goalNodeIdV2 } from "./identity.js";
 import type { AnchorFrontmatter, PeopleRegistry, ProjectMappings } from "../types.js";
 import { EDGE_TARGET_PATTERN, extractClaims } from "../claims.js";
 import {
@@ -81,6 +87,23 @@ export type ExtractDocumentEdgesContext = {
    * resolved).
    */
   goalExistsInProject?: (projectSlug: string, goalId: string) => boolean;
+  /**
+   * Canonical node-id resolvers (Goal 0 Phase 2 slice 4). Every node this
+   * document emits keys v2 (`anchor:<anchor-id>`, `goal:<project>:<goal-id>`,
+   * ...) when its owning anchor has a valid `anchor_id` / the goal's scope is
+   * known, else v1 — see `src/graph/canonicalIds.ts`. Sourced from the
+   * tree-wide `anchorIdByName` map `GraphIndex` already builds, never
+   * re-scanned per document. Defaults to an all-v1 resolver (empty maps) when
+   * absent, so a caller that supplies no ids emits exactly the pre-slice-4 v1
+   * shapes.
+   */
+  canonicalIds: CanonicalIdResolvers;
+};
+
+/** All-v1 canonical resolvers: no anchor owns an id, no goal is scoped. Emits exactly the pre-slice-4 v1 node shapes — the safe default when a caller supplies no identity maps. */
+export const ALL_V1_CANONICAL_RESOLVERS: CanonicalIdResolvers = {
+  anchorIdByName: new Map(),
+  projectSlugForGoalId: () => undefined,
 };
 
 // ---------------------------------------------------------------------------
@@ -93,7 +116,7 @@ export function extractProjectEdges(doc: DocumentInput, ctx: ExtractDocumentEdge
   if (projectSlugs.length === 0) {
     return [];
   }
-  const from = anchorNodeId(doc.anchorName);
+  const from = canonicalAnchorNodeId(doc.anchorName, ctx.canonicalIds);
   const edges: GraphEdge[] = [];
   for (const slug of projectSlugs) {
     const resolvedSlug = ctx.resolveProjectSlug(slug);
@@ -157,7 +180,7 @@ export function extractRelationsEdges(doc: DocumentInput, ctx: ExtractDocumentEd
     return [];
   }
   const rel = relRaw as Record<string, unknown>;
-  const from = anchorNodeId(doc.anchorName);
+  const from = canonicalAnchorNodeId(doc.anchorName, ctx.canonicalIds);
   const edges: GraphEdge[] = [];
 
   for (const key of Object.keys(rel)) {
@@ -167,14 +190,14 @@ export function extractRelationsEdges(doc: DocumentInput, ctx: ExtractDocumentEd
     }
 
     if (key === "goal_ids" && isProjectMilestoneType(doc.frontmatter.type)) {
-      const milestoneFrom = milestoneNodeId(doc.anchorName);
+      const milestoneFrom = canonicalMilestoneNodeId(doc.anchorName, ctx.canonicalIds);
       for (const goalId of values) {
         if (typeof goalId !== "string" || goalId.trim().length === 0) {
           continue;
         }
         edges.push({
           from: milestoneFrom,
-          to: goalNodeId(goalId.trim()),
+          to: canonicalGoalNodeId(goalId.trim(), ctx.canonicalIds),
           type: "milestone_goal",
           sourceOfTruth: "front-matter",
         });
@@ -251,7 +274,12 @@ function resolveTypedRelationTarget(
   switch (parsed.kind) {
     case "anchor": {
       const resolvedName = ctx.resolveAnchorId?.(parsed.id);
-      return resolvedName ? anchorNodeId(resolvedName) : undefined;
+      // `parsed.id` IS the anchor's `anchor_id` — a typed `anchor:<anchor-id>`
+      // ref by construction targets an id-bearing anchor, so its canonical
+      // node id is always v2. Routing through canonicalAnchorNodeId (keyed off
+      // the resolved name) keeps a single emission path and stays correct even
+      // if the id map and this ref ever disagree.
+      return resolvedName ? canonicalAnchorNodeId(resolvedName, ctx.canonicalIds) : undefined;
     }
     case "goal": {
       const resolvedSlug = ctx.resolveProjectSlug(parsed.projectSlug);
@@ -261,12 +289,14 @@ function resolveTypedRelationTarget(
       if (!ctx.goalExistsInProject?.(resolvedSlug, parsed.goalId)) {
         return undefined;
       }
-      // Goal nodes stay unscoped (v1) in this phase (plan decision 2): the
-      // typed ref's project scope gates resolution (the goal must be defined
-      // by the NAMED project's own roadmap — never a same-numbered goal in
-      // another project), but the emitted edge still targets the existing
-      // unscoped `goal:<id>` node — no v2 re-key happens here.
-      return goalNodeId(parsed.goalId);
+      // The typed ref names the exact scoping project (already gated to the
+      // NAMED project's own roadmap above), so the canonical goal node is the
+      // scoped v2 id for THAT project — even if the same goal id is also
+      // defined by another project (globally ambiguous). We scope to the ref's
+      // named project directly rather than through `projectSlugForGoalId`
+      // (which returns undefined on global ambiguity): the ref already
+      // disambiguated. This is the exact collision scoped goals exist to fix.
+      return goalNodeIdV2(resolvedSlug, parsed.goalId);
     }
     case "person": {
       const person = ctx.peopleIndex.getPersonById(parsed.id);
@@ -292,7 +322,12 @@ function emitLegacyAnchorAnchor(
   if (!resolved) {
     return;
   }
-  edges.push({ from, to: anchorNodeId(resolved), type: "anchor_anchor", sourceOfTruth: "front-matter" });
+  edges.push({
+    from,
+    to: canonicalAnchorNodeId(resolved, ctx.canonicalIds),
+    type: "anchor_anchor",
+    sourceOfTruth: "front-matter",
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -312,18 +347,18 @@ export function extractMilestoneEdges(doc: DocumentInput, ctx: ExtractDocumentEd
     return [];
   }
   const edges: GraphEdge[] = [];
-  const milestoneId = milestoneNodeId(doc.anchorName);
+  const milestoneId = canonicalMilestoneNodeId(doc.anchorName, ctx.canonicalIds);
 
   edges.push({
     from: milestoneId,
-    to: anchorNodeId(doc.anchorName),
+    to: canonicalAnchorNodeId(doc.anchorName, ctx.canonicalIds),
     type: "milestone_anchor",
     sourceOfTruth: "containment",
   });
 
   const tasks = normalizedTasksFromFm(doc.frontmatter as Record<string, unknown>) ?? [];
   for (const task of tasks) {
-    const taskId = taskNodeId(doc.anchorName, task.id);
+    const taskId = canonicalTaskNodeId(doc.anchorName, task.id, ctx.canonicalIds);
     edges.push({
       from: milestoneId,
       to: taskId,
@@ -367,18 +402,23 @@ export function extractMilestoneEdges(doc: DocumentInput, ctx: ExtractDocumentEd
  * the roadmap anchor that defines them, independent of which milestones
  * reference them.
  */
-export function extractRoadmapGoalEdges(doc: DocumentInput): GraphEdge[] {
+export function extractRoadmapGoalEdges(doc: DocumentInput, ctx: ExtractDocumentEdgesContext): GraphEdge[] {
   if (!frontmatterTypeIncludes(doc.frontmatter.type, "project-roadmap")) {
     return [];
   }
   const rows = listRoadmapGoalsWithStatus(doc.content);
   const edges: GraphEdge[] = [];
-  const from = anchorNodeId(doc.anchorName);
+  const from = canonicalAnchorNodeId(doc.anchorName, ctx.canonicalIds);
   for (const row of rows) {
     if (!row.id) {
       continue;
     }
-    edges.push({ from, to: goalNodeId(row.id), type: "roadmap_goal", sourceOfTruth: "containment" });
+    edges.push({
+      from,
+      to: canonicalGoalNodeId(row.id, ctx.canonicalIds),
+      type: "roadmap_goal",
+      sourceOfTruth: "containment",
+    });
   }
   return edges;
 }
@@ -460,7 +500,7 @@ export function extractRegistryProjectRepoEdges(mappings: ProjectMappings): Grap
  * link regex.
  */
 export function extractBodyLinkEdges(doc: DocumentInput, ctx: ExtractDocumentEdgesContext): GraphEdge[] {
-  const from = anchorNodeId(doc.anchorName);
+  const from = canonicalAnchorNodeId(doc.anchorName, ctx.canonicalIds);
   const edges: GraphEdge[] = [];
   const seen = new Set<string>();
 
@@ -474,7 +514,12 @@ export function extractBodyLinkEdges(doc: DocumentInput, ctx: ExtractDocumentEdg
       continue;
     }
     seen.add(resolved);
-    edges.push({ from, to: anchorNodeId(resolved), type: "anchor_anchor", sourceOfTruth: "body-link" });
+    edges.push({
+      from,
+      to: canonicalAnchorNodeId(resolved, ctx.canonicalIds),
+      type: "anchor_anchor",
+      sourceOfTruth: "body-link",
+    });
   }
 
   return edges;
@@ -559,7 +604,7 @@ export function extractClaimEdges(doc: DocumentInput, ctx: ExtractDocumentEdgesC
     if (!claim.id) {
       continue;
     }
-    const from = claimNodeId(doc.anchorName, claim.id);
+    const from = canonicalClaimNodeId(doc.anchorName, claim.id, ctx.canonicalIds);
 
     if (claim.status !== "annotated") {
       // Id-only claim (WP4): no sources to derive a cited-section edge from,
@@ -568,9 +613,13 @@ export function extractClaimEdges(doc: DocumentInput, ctx: ExtractDocumentEdgesC
       // still run (id-only claims can, in principle, carry them via a
       // reworded document, though the annotation grammar only sets those on
       // real source rows today), harmlessly no-op-ing over an empty array.
-      const ownSection = sectionNodeId(doc.anchorName, normalizeSectionTitle(claim.section));
+      const ownSection = canonicalSectionNodeId(
+        doc.anchorName,
+        normalizeSectionTitle(claim.section),
+        ctx.canonicalIds,
+      );
       edges.push({ from, to: ownSection, type: "claim_section", sourceOfTruth: "containment" });
-      pushSectionAnchorEdge(ownSection, anchorNodeId(doc.anchorName));
+      pushSectionAnchorEdge(ownSection, canonicalAnchorNodeId(doc.anchorName, ctx.canonicalIds));
     }
 
     for (const source of claim.sources) {
@@ -579,11 +628,22 @@ export function extractClaimEdges(doc: DocumentInput, ctx: ExtractDocumentEdgesC
         if (result.node.type === "person") {
           edges.push({ from, to: result.node.nodeId, type: "claim_person", sourceOfTruth: "claim-annotation" });
         } else if (result.node.type === "section") {
-          edges.push({ from, to: result.node.nodeId, type: "claim_section", sourceOfTruth: "claim-annotation" });
+          // `parseClaimSource` (WP2) emits a v1 `section:<anchor-path>#<heading>`
+          // node id; re-key its embedded anchor path to the owning anchor's id
+          // so the claim edge targets the SAME canonical section node the
+          // anchor's own containment edges use (plan: source-derived
+          // anchor/section nodes resolve through the same anchor->id map).
+          const canonicalSection = canonicalizeSectionNodeId(result.node.nodeId, ctx.canonicalIds);
+          edges.push({ from, to: canonicalSection, type: "claim_section", sourceOfTruth: "claim-annotation" });
           const sectionAnchor = sectionNodeAnchorName(result.node.nodeId);
           if (sectionAnchor) {
-            pushSectionAnchorEdge(result.node.nodeId, anchorNodeId(sectionAnchor));
+            pushSectionAnchorEdge(canonicalSection, canonicalAnchorNodeId(sectionAnchor, ctx.canonicalIds));
           }
+        } else if (result.node.type === "anchor") {
+          // Same re-key for a bare-anchor claim source: target the canonical
+          // anchor node the anchor itself uses.
+          const canonicalAnchor = canonicalizeAnchorSourceNodeId(result.node.nodeId, ctx.canonicalIds);
+          edges.push({ from, to: canonicalAnchor, type: "claim_source", sourceOfTruth: "claim-annotation" });
         } else {
           edges.push({ from, to: result.node.nodeId, type: "claim_source", sourceOfTruth: "claim-annotation" });
         }
@@ -646,7 +706,7 @@ function resolveClaimEdgeTarget(
   if (!resolvedAnchor || !ctx.anchorNames.has(resolvedAnchor)) {
     return undefined;
   }
-  return claimNodeId(resolvedAnchor, claimId);
+  return canonicalClaimNodeId(resolvedAnchor, claimId, ctx.canonicalIds);
 }
 
 function sectionNodeAnchorName(sectionNodeId: string): string | undefined {
@@ -673,7 +733,7 @@ export function extractDocumentEdges(doc: DocumentInput, ctx: ExtractDocumentEdg
     ...extractProjectEdges(doc, ctx),
     ...extractRelationsEdges(doc, ctx),
     ...extractMilestoneEdges(doc, ctx),
-    ...extractRoadmapGoalEdges(doc),
+    ...extractRoadmapGoalEdges(doc, ctx),
     ...extractBodyLinkEdges(doc, ctx),
     ...extractClaimEdges(doc, ctx),
   ]);

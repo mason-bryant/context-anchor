@@ -23,7 +23,13 @@ import type { AnchorStore } from "../storage/store.js";
 import { parseAnchor } from "../storage/markdown.js";
 import { buildProjectAliasIndex } from "../projectAliases.js";
 import { normalizeRelative } from "../utils/path.js";
-import { anchorIdFromFrontmatter, isValidAnchorId } from "./identity.js";
+import {
+  anchorIdFromFrontmatter,
+  buildIdentityCompatibilityMap,
+  isValidAnchorId,
+  type IdentityCompatibilityMap,
+} from "./identity.js";
+import { canonicalizeNodeId } from "./canonicalIds.js";
 import { listRoadmapGoalsWithStatus } from "../roadmap/analyzeRoadmap.js";
 import type { CoverageAnalysisContext } from "./coverage.js";
 import type { AnchorMeta, PeopleRegistry, ProjectMappings } from "../types.js";
@@ -106,6 +112,44 @@ export class GraphIndex {
    */
   graphVersion(): { head: string | undefined; generation: number } {
     return { head: this.head, generation: this.generation };
+  }
+
+  /**
+   * The v1<->v2 identity compatibility map for the current tree (Goal 0 Phase
+   * 2 slice 4), built once per query from the same `anchorIdByName` /
+   * goal-owner maps this index already holds — HEAD-keyed like everything
+   * else via `ensureBuilt`. Callers (the graph-neighbors route/service) use it
+   * to normalize an incoming path / v1 id / v2 id to its current canonical id
+   * before traversal, so an old deep link still resolves after re-key. Goal
+   * ids are scoped by their SINGLE owning project (ambiguous / unknown goals
+   * are reported unmapped), matching how goal nodes are keyed v2 during
+   * extraction.
+   */
+  async identityCompatibilityMap(): Promise<IdentityCompatibilityMap> {
+    await this.ensureBuilt();
+    const projectSlugByGoalId = new Map<string, string | undefined>();
+    const owners = await this.goalIdOwnersSnapshot();
+    for (const [goalId, projectSlugs] of owners) {
+      // Exactly one owner -> scoped v2; zero/many -> unmapped (stays v1).
+      projectSlugByGoalId.set(goalId, projectSlugs.length === 1 ? projectSlugs[0] : undefined);
+    }
+    return buildIdentityCompatibilityMap({
+      anchorIdByName: this.anchorIdByName,
+      projectSlugByGoalId,
+    });
+  }
+
+  /**
+   * Normalize an incoming node id (a path already resolved to a v1 node id, a
+   * v1 id, or a v2 id) to its current canonical form via the compatibility map
+   * plus structural re-keying of anchor-path-embedding node kinds
+   * (milestone/task/section/claim). A v2 id, or a v1 id whose owner has no
+   * `anchor_id` yet, passes through unchanged. Used by the graph-neighbors
+   * service so an old v1/path deep link resolves to the (now v2) node.
+   */
+  async canonicalizeNodeId(nodeId: string): Promise<string> {
+    const compat = await this.identityCompatibilityMap();
+    return canonicalizeNodeId(nodeId, compat, this.anchorIdByName);
   }
 
   /** Ensure the graph reflects the current repo HEAD, rebuilding if stale. Never called from the constructor — first graph query triggers the initial build. */
@@ -263,14 +307,33 @@ export class GraphIndex {
     }
     this.generation += 1;
 
-    this.removeDocumentContribution(anchorName);
-
     let read: ReadAnchorResult | undefined;
     try {
       read = await this.repo.readAnchor(anchorName);
     } catch {
       // Deleted or unreadable: leave it removed from the graph.
     }
+
+    // Goal 0 Phase 2 slice 4 — incremental re-key parity: node ids are keyed
+    // v2 off the owning anchor's `anchor_id`, which the incremental path reuses
+    // from the last FULL rebuild (this.anchorIdByName is not recomputed here —
+    // see the field docstring). If this write changed the anchor's id
+    // (gained/lost/replaced it), re-keying only THIS document is not enough:
+    // every OTHER document with an edge targeting this anchor must also re-key
+    // to the new identity, and the reused anchorIdByName map is now stale for
+    // resolving this anchor's own id. Rather than attempt a precise tree-wide
+    // incremental re-key (intricate, and the incremental contract explicitly
+    // permits full invalidation for id-affecting changes), fall back to a
+    // conservative full invalidation: the next query does a clean rebuild,
+    // guaranteeing incremental == clean-rebuild parity by construction.
+    const freshAnchorId = read ? normalizeValidAnchorId(read.frontmatter) : undefined;
+    const cachedAnchorId = this.anchorIdByName.get(anchorName);
+    if (freshAnchorId !== cachedAnchorId) {
+      this.invalidate();
+      return;
+    }
+
+    this.removeDocumentContribution(anchorName);
 
     if (!read || isBuiltInAnchorName(anchorName)) {
       this.anchorMetaByName.delete(anchorName);
@@ -521,6 +584,27 @@ export class GraphIndex {
     const resolveAnchorId = (anchorId: string): string | undefined =>
       duplicatedAnchorIds.has(anchorId) ? undefined : anchorNameByAnchorId.get(anchorId);
 
+    // Goal 0 Phase 2 slice 4: invert knownGoalIdsByProject to a single-owner
+    // lookup for canonical goal v2 keying. A goal id owned by exactly one
+    // project scopes to that project (v2 `goal:<slug>:<id>`); zero owners
+    // (unknown) or two-plus owners (ambiguous — the exact collision scoped
+    // goals prevent) leave it v1 (`goal:<id>`).
+    const projectsByGoalId = new Map<string, Set<string>>();
+    for (const [projectSlug, goalIds] of goalIdsByProject) {
+      for (const goalId of goalIds) {
+        const owners = projectsByGoalId.get(goalId) ?? new Set<string>();
+        owners.add(projectSlug);
+        projectsByGoalId.set(goalId, owners);
+      }
+    }
+    const projectSlugForGoalId = (goalId: string): string | undefined => {
+      const owners = projectsByGoalId.get(goalId);
+      if (!owners || owners.size !== 1) {
+        return undefined;
+      }
+      return [...owners][0];
+    };
+
     return {
       anchorNames,
       resolveAnchorName,
@@ -532,6 +616,10 @@ export class GraphIndex {
       resolveAnchorId,
       goalExistsInProject: (projectSlug: string, goalId: string) =>
         goalIdsByProject.get(projectSlug)?.has(goalId) ?? false,
+      canonicalIds: {
+        anchorIdByName: anchorIds,
+        projectSlugForGoalId,
+      },
     };
   }
 
@@ -544,6 +632,12 @@ export class GraphIndex {
     removeEdgesFromIndex(existing.edges, this.forward, this.reverse);
     removeLiteralRelationsFromIndex(anchorName, this.literalRelationsReverse);
   }
+}
+
+/** Read a front-matter `anchor_id`, format-gated exactly like the pass-1 population site (a malformed id is treated as no id). */
+function normalizeValidAnchorId(frontmatter: Record<string, unknown> | undefined): string | undefined {
+  const anchorId = anchorIdFromFrontmatter(frontmatter);
+  return anchorId && isValidAnchorId(anchorId) ? anchorId : undefined;
 }
 
 /** Front-matter `type` includes `project-roadmap` (string or array form). */

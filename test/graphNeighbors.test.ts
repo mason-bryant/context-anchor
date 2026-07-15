@@ -149,7 +149,10 @@ describe("graphNeighbors: milestone traversal", () => {
     expect(result.resolvedNode.via).toBe("canonical");
 
     const nodeIds = new Set(result.nodes.map((node) => node.id));
-    expect(nodeIds.has("goal:G-001")).toBe(true);
+    // Slice 4 re-key: G-001 is defined solely by the demo roadmap, so the goal
+    // node is scoped v2 (goal:demo:G-001). The milestone/task/anchor nodes stay
+    // v1 because this fixture's anchors carry no anchor_id.
+    expect(nodeIds.has("goal:demo:G-001")).toBe(true);
     expect(nodeIds.has("anchor:projects/demo/milestones/m1.md")).toBe(true);
     expect(nodeIds.has("task:projects/demo/milestones/m1.md#T-1")).toBe(true);
     expect(nodeIds.has("person:alice")).toBe(true);
@@ -195,10 +198,14 @@ describe("graphNeighbors: milestone traversal", () => {
     if ("candidates" in result) {
       throw new Error("expected a resolved node, got candidates");
     }
-    expect(result.resolvedNode.nodeId).toBe("goal:G-001");
+    // Slice 4 re-key: the bare G-### input resolves to the unscoped v1 goal id,
+    // then the service canonicalizes it to the scoped v2 node (goal:demo:G-001,
+    // demo being G-001's sole owning project) before traversal — so an old
+    // G-### / v1 goal deep link still reaches the current node.
+    expect(result.resolvedNode.nodeId).toBe("goal:demo:G-001");
     const nodeIds = new Set(result.nodes.map((node) => node.id));
-    // Reverse from goal:G-001 should reach the milestone (milestone_goal) and
-    // the roadmap anchor (roadmap_goal).
+    // Reverse from the goal node should reach the milestone (milestone_goal)
+    // and the roadmap anchor (roadmap_goal).
     expect(nodeIds.has("milestone:projects/demo/milestones/m1.md")).toBe(true);
     expect(nodeIds.has("anchor:projects/demo/demo-roadmap.md")).toBe(true);
   });

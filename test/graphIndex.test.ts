@@ -402,10 +402,12 @@ None.
 
     const graph = new GraphIndex(repo, graphDeps(repo));
     const edges = await graph.edgesFrom("anchor:projects/demo/referring.md", "depends_on");
+    // Slice 4 re-key: referring.md has no anchor_id (v1 FROM), but with-id.md
+    // owns a-abc123, so the depends_on target endpoint is the v2 anchor node.
     expect(edges).toEqual([
       {
         from: "anchor:projects/demo/referring.md",
-        to: "anchor:projects/demo/with-id.md",
+        to: "anchor:a-abc123",
         type: "depends_on",
         sourceOfTruth: "front-matter",
       },
@@ -536,25 +538,28 @@ None.
     expect(unaffected).toHaveLength(1);
   });
 
-  it("emits related_to symmetrically (both directions) for a canonical anchor:<anchor-id> target", async () => {
+  it("emits related_to symmetrically (both directions) for a canonical anchor:<anchor-id> target keyed v2 on the id-bearing endpoint (slice 4 re-key)", async () => {
     const repo = new AnchorRepository({ repoPath: tmpDir });
     await repo.ensureReady();
     await seedTypedRelationRepo(repo);
 
     const graph = new GraphIndex(repo, graphDeps(repo));
+    // with-id.md owns a-abc123, so its node re-keys to anchor:a-abc123: the
+    // forward edge targets it, and the symmetric reverse edge originates FROM
+    // it (so the reverse lookup is keyed by the v2 id, not the path).
     const forward = await graph.edgesFrom("anchor:projects/demo/referring.md", "related_to");
-    const reverse = await graph.edgesFrom("anchor:projects/demo/with-id.md", "related_to");
+    const reverse = await graph.edgesFrom("anchor:a-abc123", "related_to");
     expect(forward).toEqual([
       {
         from: "anchor:projects/demo/referring.md",
-        to: "anchor:projects/demo/with-id.md",
+        to: "anchor:a-abc123",
         type: "related_to",
         sourceOfTruth: "front-matter",
       },
     ]);
     expect(reverse).toEqual([
       {
-        from: "anchor:projects/demo/with-id.md",
+        from: "anchor:a-abc123",
         to: "anchor:projects/demo/referring.md",
         type: "related_to",
         sourceOfTruth: "front-matter",
@@ -562,17 +567,19 @@ None.
     ]);
   });
 
-  it("resolves a canonical goal:<project-slug>:<goal-id> implements target to the existing unscoped v1 goal node", async () => {
+  it("resolves a canonical goal:<project-slug>:<goal-id> implements target to the SCOPED v2 goal node (slice 4 re-key)", async () => {
     const repo = new AnchorRepository({ repoPath: tmpDir });
     await repo.ensureReady();
     await seedTypedRelationRepo(repo);
 
     const graph = new GraphIndex(repo, graphDeps(repo));
     const edges = await graph.edgesFrom("anchor:projects/demo/referring.md", "implements");
+    // The roadmap defines G-001 for project demo (its sole owner), so the goal
+    // node re-keys to the scoped v2 id goal:demo:G-001.
     expect(edges).toEqual([
       {
         from: "anchor:projects/demo/referring.md",
-        to: "goal:G-001",
+        to: "goal:demo:G-001",
         type: "implements",
         sourceOfTruth: "front-matter",
       },
@@ -668,12 +675,18 @@ describe("AnchorService graph wiring", () => {
     });
     expect(secondResult.version).toBeTruthy();
 
+    // Slice 4 re-key: mint-on-create gave this anchor an anchor_id, so its
+    // claim nodes are keyed v2 (claim:<anchor-id>#c-second1), not by path.
+    // Derive the minted id from the committed front matter so the assertion
+    // targets the actual canonical node id rather than the pre-mint v1 shape.
+    const mintedId = /anchor_id:\s*(a-[0-9a-z]+)/.exec(firstContent)?.[1];
+    expect(mintedId).toBeTruthy();
+    const c2Node = `claim:${mintedId}#c-second1`;
+
     // Force graph construction and a build that observes the second claim.
     const graph = forceGraphIndex(service);
     const beforeRevert = await graph.allEdges();
-    expect(beforeRevert.some((edge) => edge.from === "claim:projects/demo/demo-project-context.md#c-second1")).toBe(
-      true,
-    );
+    expect(beforeRevert.some((edge) => edge.from === c2Node)).toBe(true);
 
     await service.revertAnchor("projects/demo/demo-project-context.md", firstVersion!);
     await graph.invalidateDocument("projects/demo/demo-project-context.md");
@@ -681,9 +694,7 @@ describe("AnchorService graph wiring", () => {
     // The reverted content (original PROJECT_CONTEXT) has no c-second1 claim;
     // if revertAnchor's invalidateGraphDocument hook is missing, this stale
     // edge would still be served indefinitely after revert.
-    expect(afterRevert.some((edge) => edge.from === "claim:projects/demo/demo-project-context.md#c-second1")).toBe(
-      false,
-    );
+    expect(afterRevert.some((edge) => edge.from === c2Node)).toBe(false);
   });
 
   it("wholesale-invalidates the graph after writePeopleRegistry / writeProjectMappings so registry-derived edges are never served stale", async () => {

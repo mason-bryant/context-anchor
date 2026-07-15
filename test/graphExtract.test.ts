@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  ALL_V1_CANONICAL_RESOLVERS,
   extractBodyLinkEdges,
   extractClaimEdges,
   extractDocumentEdges,
@@ -14,11 +15,30 @@ import {
   type DocumentInput,
   type ExtractDocumentEdgesContext,
 } from "../src/graph/extract.js";
+import type { CanonicalIdResolvers } from "../src/graph/canonicalIds.js";
 import { buildPeopleIndex } from "../src/peopleRegistry.js";
 import type { PeopleRegistry, ProjectMappings } from "../src/types.js";
 
 const NO_MAPPINGS: ProjectMappings = { projects: [], claimSourceTypes: [] };
 const NO_PEOPLE: PeopleRegistry = { people: [], teams: [] };
+
+/**
+ * Build canonical resolvers from a simple `anchorName -> anchorId` seed (Goal
+ * 0 Phase 2 slice 4). A test that supplies no ids gets `ALL_V1_CANONICAL_RESOLVERS`
+ * (every node stays v1), so id-less fixtures keep their pre-slice-4 v1 shapes.
+ */
+function canonicalIds(
+  anchorIdByName?: Map<string, string | undefined>,
+  projectSlugByGoalId?: Map<string, string>,
+): CanonicalIdResolvers {
+  if (!anchorIdByName && !projectSlugByGoalId) {
+    return ALL_V1_CANONICAL_RESOLVERS;
+  }
+  return {
+    anchorIdByName: anchorIdByName ?? new Map(),
+    projectSlugForGoalId: (goalId: string) => projectSlugByGoalId?.get(goalId),
+  };
+}
 
 function makeCtx(overrides: Partial<ExtractDocumentEdgesContext> = {}): ExtractDocumentEdgesContext {
   const anchorNames = overrides.anchorNames ?? new Set<string>();
@@ -36,6 +56,7 @@ function makeCtx(overrides: Partial<ExtractDocumentEdgesContext> = {}): ExtractD
     peopleRegistry,
     peopleIndex: buildPeopleIndex(peopleRegistry),
     mappings: overrides.mappings ?? NO_MAPPINGS,
+    canonicalIds: ALL_V1_CANONICAL_RESOLVERS,
     ...overrides,
   };
 }
@@ -143,34 +164,38 @@ describe("extractRelationsEdges", () => {
 });
 
 describe("extractRelationsEdges: typed relation vocabulary (WP3)", () => {
-  it("depends_on with a canonical anchor:<anchor-id> target resolves via resolveAnchorId to a typed depends_on edge", () => {
+  it("depends_on with a canonical anchor:<anchor-id> target resolves via resolveAnchorId to a typed depends_on edge keyed v2 on the id-bearing target (slice 4 re-key)", () => {
+    // Owning anchor a.md has no anchor_id (stays v1); the target b.md owns
+    // a-abc123, so its endpoint re-keys to the v2 anchor node.
     const ctx = makeCtx({
       anchorNames: new Set(["projects/demo/a.md", "projects/demo/b.md"]),
       resolveAnchorId: (id) => (id === "a-abc123" ? "projects/demo/b.md" : undefined),
+      canonicalIds: canonicalIds(new Map([["projects/demo/b.md", "a-abc123"]])),
     });
     const d = doc({
       anchorName: "projects/demo/a.md",
       frontmatter: { relations: { depends_on: ["anchor:a-abc123"] } },
     });
     expect(extractRelationsEdges(d, ctx)).toEqual([
-      { from: "anchor:projects/demo/a.md", to: "anchor:projects/demo/b.md", type: "depends_on", sourceOfTruth: "front-matter" },
+      { from: "anchor:projects/demo/a.md", to: "anchor:a-abc123", type: "depends_on", sourceOfTruth: "front-matter" },
     ]);
   });
 
-  it("supersedes with a canonical anchor:<anchor-id> target resolves to a typed supersedes edge", () => {
+  it("supersedes with a canonical anchor:<anchor-id> target resolves to a typed supersedes edge keyed v2 on the id-bearing target (slice 4 re-key)", () => {
     const ctx = makeCtx({
       resolveAnchorId: (id) => (id === "a-old111" ? "projects/demo/old.md" : undefined),
+      canonicalIds: canonicalIds(new Map([["projects/demo/old.md", "a-old111"]])),
     });
     const d = doc({
       anchorName: "projects/demo/new.md",
       frontmatter: { relations: { supersedes: ["anchor:a-old111"] } },
     });
     expect(extractRelationsEdges(d, ctx)).toEqual([
-      { from: "anchor:projects/demo/new.md", to: "anchor:projects/demo/old.md", type: "supersedes", sourceOfTruth: "front-matter" },
+      { from: "anchor:projects/demo/new.md", to: "anchor:a-old111", type: "supersedes", sourceOfTruth: "front-matter" },
     ]);
   });
 
-  it("implements with a canonical goal:<project-slug>:<goal-id> target resolves to the unscoped v1 goal node via a typed implements edge", () => {
+  it("implements with a canonical goal:<project-slug>:<goal-id> target resolves to the SCOPED v2 goal node via a typed implements edge (slice 4 re-key)", () => {
     const ctx = makeCtx({
       resolveProjectSlug: (slug) => (slug === "demo" ? "demo" : undefined),
       goalExistsInProject: (slug, id) => slug === "demo" && id === "G-001",
@@ -179,8 +204,10 @@ describe("extractRelationsEdges: typed relation vocabulary (WP3)", () => {
       anchorName: "projects/demo/context.md",
       frontmatter: { relations: { implements: ["goal:demo:G-001"] } },
     });
+    // The typed ref names the exact scoping project, so the goal node is the
+    // scoped v2 id (goal:demo:G-001), not the unscoped v1 goal:G-001.
     expect(extractRelationsEdges(d, ctx)).toEqual([
-      { from: "anchor:projects/demo/context.md", to: "goal:G-001", type: "implements", sourceOfTruth: "front-matter" },
+      { from: "anchor:projects/demo/context.md", to: "goal:demo:G-001", type: "implements", sourceOfTruth: "front-matter" },
     ]);
   });
 
@@ -256,17 +283,18 @@ describe("extractRelationsEdges: typed relation vocabulary (WP3)", () => {
     expect(extractRelationsEdges(d, ctx)).toEqual([]);
   });
 
-  it("related_to is symmetric: emits both directions for a canonical anchor:<anchor-id> target", () => {
+  it("related_to is symmetric: emits both directions for a canonical anchor:<anchor-id> target keyed v2 on the id-bearing endpoint (slice 4 re-key)", () => {
     const ctx = makeCtx({
       resolveAnchorId: (id) => (id === "a-abc123" ? "projects/demo/b.md" : undefined),
+      canonicalIds: canonicalIds(new Map([["projects/demo/b.md", "a-abc123"]])),
     });
     const d = doc({
       anchorName: "projects/demo/a.md",
       frontmatter: { relations: { related_to: ["anchor:a-abc123"] } },
     });
     expect(extractRelationsEdges(d, ctx)).toEqual([
-      { from: "anchor:projects/demo/a.md", to: "anchor:projects/demo/b.md", type: "related_to", sourceOfTruth: "front-matter" },
-      { from: "anchor:projects/demo/b.md", to: "anchor:projects/demo/a.md", type: "related_to", sourceOfTruth: "front-matter" },
+      { from: "anchor:projects/demo/a.md", to: "anchor:a-abc123", type: "related_to", sourceOfTruth: "front-matter" },
+      { from: "anchor:a-abc123", to: "anchor:projects/demo/a.md", type: "related_to", sourceOfTruth: "front-matter" },
     ]);
   });
 
@@ -418,7 +446,7 @@ type: project-roadmap
 Some text.
 `;
     const d = doc({ anchorName: "projects/demo/demo-roadmap.md", frontmatter: { type: "project-roadmap" }, content });
-    const edges = extractRoadmapGoalEdges(d);
+    const edges = extractRoadmapGoalEdges(d, makeCtx());
     expect(edges).toEqual([
       { from: "anchor:projects/demo/demo-roadmap.md", to: "goal:G-001", type: "roadmap_goal", sourceOfTruth: "containment" },
     ]);
@@ -426,7 +454,7 @@ Some text.
 
   it("returns no edges for a non-roadmap anchor", () => {
     const d = doc({ anchorName: "shared/foo.md", frontmatter: {}, content: "" });
-    expect(extractRoadmapGoalEdges(d)).toEqual([]);
+    expect(extractRoadmapGoalEdges(d, makeCtx())).toEqual([]);
   });
 });
 

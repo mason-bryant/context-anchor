@@ -2288,12 +2288,26 @@ None.
       if ("candidates" in result) {
         throw new Error("expected a resolved node, got candidates");
       }
+      // Slice 4 re-key: mint-on-create gave both anchors an anchor_id, so
+      // their claim nodes are keyed v2 (claim:<anchor-id>#<claim-id>). Derive
+      // the minted ids from the committed content to build the expected
+      // canonical node ids (the graphNeighbors path input canonicalizes to
+      // these before traversal — proving an old path deep link still resolves).
+      const downstreamContent = (await service.readAnchor("projects/demo/claims-demo.md")).content;
+      const parentContent = (await service.readAnchor(parentAnchor)).content;
+      const downstreamAnchorId = /anchor_id:\s*(a-[0-9a-z]+)/.exec(downstreamContent)?.[1];
+      const parentAnchorId = /anchor_id:\s*(a-[0-9a-z]+)/.exec(parentContent)?.[1];
+      expect(downstreamAnchorId).toBeTruthy();
+      expect(parentAnchorId).toBeTruthy();
+      const downstreamNode = `claim:${downstreamAnchorId}#${downstream!.id}`;
+      const parentNode = `claim:${parentAnchorId}#${parentId}`;
+
       const edge = result.edges.find((entry) => entry.type === "derived_from");
       expect(edge).toBeTruthy();
-      expect(edge?.from).toBe(`claim:projects/demo/claims-demo.md#${downstream!.id}`);
-      expect(edge?.to).toBe(`claim:${parentAnchor}#${parentId}`);
+      expect(edge?.from).toBe(downstreamNode);
+      expect(edge?.to).toBe(parentNode);
       // The parent claim node is reachable in one hop.
-      expect(result.nodes.some((node) => node.id === `claim:${parentAnchor}#${parentId}`)).toBe(true);
+      expect(result.nodes.some((node) => node.id === parentNode)).toBe(true);
     });
   });
 });
