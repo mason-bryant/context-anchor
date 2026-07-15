@@ -77,7 +77,12 @@ const PERMISSIVE_COVERAGE_CONTEXT: CoverageAnalysisContext = {
  */
 function gapKey(gap: AnchorCoverageRecord["suggestedOperations"][number]): string {
   if (gap.code === "convert_relation") {
-    const match = gap.message.match(/relations\.([A-Za-z0-9_]+)/);
+    // The key is the non-whitespace run after `relations.` (the message has a
+    // space after it). \S+ rather than a restricted class so hyphenated,
+    // dotted, or otherwise unusual-but-valid YAML relation keys are captured
+    // whole — `[A-Za-z0-9_]+` would truncate `foo-bar` to `foo` and collide
+    // distinct keys.
+    const match = gap.message.match(/relations\.(\S+)/);
     return "convert_relation:" + (match ? match[1] : gap.message);
   }
   return gap.code;

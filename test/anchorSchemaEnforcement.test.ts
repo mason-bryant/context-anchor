@@ -129,6 +129,25 @@ describe("validateAnchorSchemaEnforcement: update-scoping (never retroactively b
     expect(v).toEqual([]);
   });
 
+  it("distinguishes HYPHENATED relation keys sharing a prefix (gap key captures the whole key, not a truncated prefix)", async () => {
+    // Old has a legacy target under `alpha-one`; new adds one under
+    // `alpha-two`. Both are unregistered keys → convert_relation gaps. A regex
+    // that stopped at the hyphen would key both as "alpha" and skip the new
+    // one; the whole-key capture must enforce alpha-two.
+    const oldAlphaOne = anchorDoc(
+      "anchor_id: a-abc123\nschema_version: 1\nrelations:\n  alpha-one:\n    - projects/demo/other.md\n",
+    );
+    const newAddsAlphaTwo = anchorDoc(
+      "anchor_id: a-abc123\nschema_version: 1\nrelations:\n  alpha-one:\n    - projects/demo/other.md\n  alpha-two:\n    - projects/demo/another.md\n",
+    );
+    const v = await validateAnchorSchemaEnforcement(
+      makeContext({ oldContent: oldAlphaOne, newContent: newAddsAlphaTwo }),
+    );
+    expect(v).toHaveLength(1);
+    expect(v[0].code).toBe("anchor_schema_convert_relation");
+    expect(v[0].message).toContain("alpha-two");
+  });
+
   it("blocks a legacy target newly added under a DIFFERENT relation key (per-key gap identity, not just code)", async () => {
     // Old: one legacy target under depends_on. New: adds a second legacy
     // target under supersedes. Both are convert_relation gaps, but the
