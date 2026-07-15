@@ -93,9 +93,10 @@ export type ExtractDocumentEdgesContext = {
    * ...) when its owning anchor has a valid `anchor_id` / the goal's scope is
    * known, else v1 — see `src/graph/canonicalIds.ts`. Sourced from the
    * tree-wide `anchorIdByName` map `GraphIndex` already builds, never
-   * re-scanned per document. Defaults to an all-v1 resolver (empty maps) when
-   * absent, so a caller that supplies no ids emits exactly the pre-slice-4 v1
-   * shapes.
+   * re-scanned per document. Required: a caller that has no identity maps
+   * (or wants the exact pre-slice-4 v1 shapes) passes
+   * `ALL_V1_CANONICAL_RESOLVERS` (empty maps -> every resolver falls back to
+   * its v1 constructor).
    */
   canonicalIds: CanonicalIdResolvers;
 };

@@ -1586,7 +1586,7 @@ describe("UI HTTP routes", () => {
     // deep link resolves to the v2 anchor node (anchor:<anchor-id>) rather than
     // the v1 path node — proving old path links still resolve after re-key.
     const demoContent = (await service.readAnchor("projects/demo/demo.md")).content;
-    const demoAnchorId = /anchor_id:\s*(a-[0-9a-z]+)/.exec(demoContent)?.[1];
+    const demoAnchorId = /anchor_id:\s*(a-[0-9a-z]{6,8})\b/.exec(demoContent)?.[1];
     expect(demoAnchorId).toBeTruthy();
     expect(result.resolvedNode).toMatchObject({ nodeId: `anchor:${demoAnchorId}`, type: "anchor" });
     expect(result.nodes?.some((node) => node.id === "project:demo")).toBe(true);

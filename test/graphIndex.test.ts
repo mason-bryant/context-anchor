@@ -679,7 +679,7 @@ describe("AnchorService graph wiring", () => {
     // claim nodes are keyed v2 (claim:<anchor-id>#c-second1), not by path.
     // Derive the minted id from the committed front matter so the assertion
     // targets the actual canonical node id rather than the pre-mint v1 shape.
-    const mintedId = /anchor_id:\s*(a-[0-9a-z]+)/.exec(firstContent)?.[1];
+    const mintedId = /anchor_id:\s*(a-[0-9a-z]{6,8})\b/.exec(firstContent)?.[1];
     expect(mintedId).toBeTruthy();
     const c2Node = `claim:${mintedId}#c-second1`;
 

@@ -2295,8 +2295,8 @@ None.
       // these before traversal — proving an old path deep link still resolves).
       const downstreamContent = (await service.readAnchor("projects/demo/claims-demo.md")).content;
       const parentContent = (await service.readAnchor(parentAnchor)).content;
-      const downstreamAnchorId = /anchor_id:\s*(a-[0-9a-z]+)/.exec(downstreamContent)?.[1];
-      const parentAnchorId = /anchor_id:\s*(a-[0-9a-z]+)/.exec(parentContent)?.[1];
+      const downstreamAnchorId = /anchor_id:\s*(a-[0-9a-z]{6,8})\b/.exec(downstreamContent)?.[1];
+      const parentAnchorId = /anchor_id:\s*(a-[0-9a-z]{6,8})\b/.exec(parentContent)?.[1];
       expect(downstreamAnchorId).toBeTruthy();
       expect(parentAnchorId).toBeTruthy();
       const downstreamNode = `claim:${downstreamAnchorId}#${downstream!.id}`;
