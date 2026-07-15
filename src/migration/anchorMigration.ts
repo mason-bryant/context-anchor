@@ -310,11 +310,18 @@ function planConvertRelations(
       }
       const parseResult = parseRelationTarget(target);
       if (!parseResult.legacy) {
+        // legacy: false covers BOTH a well-formed canonical typed ref and a
+        // MALFORMED typed-ref attempt (parseRelationTarget sets
+        // malformedReason and no parsed value for the latter) — migration
+        // converts only legacy bare strings, so both are not_applicable, but
+        // the detail must not call a malformed attempt "canonical".
         outcomes.push({
           code: "convert_relation",
           status: "not_applicable",
           reason: "target_not_legacy",
-          detail: `relations.${key} target "${target}" is already a canonical typed reference.`,
+          detail: parseResult.parsed
+            ? `relations.${key} target "${target}" is already a canonical typed reference.`
+            : `relations.${key} target "${target}" is a malformed typed reference (${parseResult.malformedReason ?? "unparseable"}) — not a legacy bare string this operation converts; repair it by hand (coverage reports it as malformed).`,
         });
         continue;
       }
@@ -411,11 +418,15 @@ function planScopeGoalReferences(
       }
       const parseResult = parseRelationTarget(target);
       if (!parseResult.legacy) {
+        // Same distinction as convert_relation above: legacy false is either
+        // canonical or a malformed typed-ref attempt.
         outcomes.push({
           code: "scope_goal_reference",
           status: "not_applicable",
           reason: "target_not_legacy",
-          detail: `relations.${key} target "${target}" is already a canonical typed reference.`,
+          detail: parseResult.parsed
+            ? `relations.${key} target "${target}" is already a canonical typed reference.`
+            : `relations.${key} target "${target}" is a malformed typed reference (${parseResult.malformedReason ?? "unparseable"}) — not a legacy bare goal id this operation scopes; repair it by hand (coverage reports it as malformed).`,
         });
         continue;
       }

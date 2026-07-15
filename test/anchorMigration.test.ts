@@ -120,6 +120,20 @@ describe("planAnchorMigration: convert_relation", () => {
     expect(result.newContent).not.toContain("projects/demo/other.md");
   });
 
+  it("a MALFORMED typed-ref attempt is not_applicable with a detail that does not call it canonical", () => {
+    const content = doc(
+      "relations:\n  implements:\n    - \"goal:onlyoneslug\"",
+      "## Current State\n\nNone.\n",
+    );
+    const result = planAnchorMigration(content, makeCtx(), ["scope_goal_reference"]);
+    const outcome = result.outcomes.find((o) => o.code === "scope_goal_reference")!;
+    expect(outcome.status).toBe("not_applicable");
+    expect(outcome.reason).toBe("target_not_legacy");
+    expect(outcome.detail).toContain("malformed typed reference");
+    expect(outcome.detail).not.toContain("already a canonical");
+    expect(result.newContent).toBe(content);
+  });
+
   it("skips with target_duplicate_anchor_id when the target's id is declared by more than one anchor (a typed ref to it would not resolve)", () => {
     const content = doc(
       "relations:\n  depends_on:\n    - projects/demo/other.md",
