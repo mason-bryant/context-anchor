@@ -27,7 +27,8 @@ and their tests. No `src/anchorService.ts`, `src/migration/*`, `src/server.ts`,
   claim-source modal shell): clicking Migrate calls
   `POST /api/ui/anchor-migration-preview` and renders the per-operation
   outcomes (grouped/labelled), the unified diff in a `<details>`, and any
-  validation warnings. Apply is disabled unless the preview `changed`.
+  validation warnings. Apply is disabled unless the preview `changed`, has a
+  base `fileCommit` to migrate against, and no other apply is in flight.
 - **Explicit approved apply**: "Apply migration" calls
   `POST /api/ui/anchor-migration-apply` with `approved: true` and the preview
   response's `fileCommit` value sent under the request's `expectedFileCommit`

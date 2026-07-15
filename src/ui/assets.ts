@@ -6945,14 +6945,18 @@ export const UI_JS = `(function () {
       el("migration-diff-details").hidden = true;
     }
     renderMigrationWarnings(preview.warnings || []);
-    // Apply requires the base commit; without it apply could only ever return
-    // expected_file_commit_required, so keep it disabled and say why.
-    var canApply = !!preview.changed && !!preview.fileCommit;
+    // Apply requires the base commit (without it apply could only ever return
+    // expected_file_commit_required), and must not appear clickable while a
+    // previous apply still holds the global lock (its click would silently
+    // no-op against applyMigrationFromModal's guard).
+    var canApply = !!preview.changed && !!preview.fileCommit && !state.migrationApplying;
     el("migration-apply").disabled = !canApply;
     if (!preview.changed) {
       el("migration-result").textContent = "Nothing to migrate: this anchor already reflects every applicable operation.";
     } else if (!preview.fileCommit) {
       el("migration-result").textContent = "Cannot apply: this anchor has no base revision to migrate against.";
+    } else if (state.migrationApplying) {
+      el("migration-result").textContent = "An apply is already in progress; please wait.";
     } else {
       el("migration-result").textContent = "";
     }
@@ -7045,6 +7049,10 @@ export const UI_JS = `(function () {
 
   function closeMigrationModal() {
     state.migrationModal = null;
+    // Release the apply lock: any in-flight apply's result handling is already
+    // guarded by an anchorName check, so it won't touch a future modal, and a
+    // freshly opened modal must never inherit a stale "applying" lock.
+    state.migrationApplying = false;
     el("migration-modal").hidden = true;
   }
 
