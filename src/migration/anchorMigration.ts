@@ -459,13 +459,22 @@ function planMintClaimIds(
   }
 
   const minted: { text: string; id: string }[] = [];
-  const lines = content.split(/\r?\n/);
+  // Split on "\n" ONLY, leaving any "\r" attached to its line, so
+  // join("\n") reproduces the original bytes exactly for LF, CRLF, and even
+  // mixed-ending files — splitting on /\r?\n/ and re-joining with "\n"
+  // would silently convert a CRLF file to LF, breaking the byte-preservation
+  // guarantee. Line indices are identical either way (same delimiter
+  // count), so extractClaims' line numbers still address the right rows.
+  const usesCrlf = content.includes("\r\n");
+  const lines = content.split("\n");
   // Insert bottom-up (highest line first) so earlier insertions never shift
   // the line number a later insertion targets.
   for (const claim of [...candidates].sort((left, right) => right.line - left.line)) {
     const id = mintClaimId(usedIds);
     usedIds.add(id);
-    lines.splice(claim.line, 0, `  {id: ${id}}`);
+    // Inserted lines adopt the file's dominant ending so a CRLF file stays
+    // uniformly CRLF.
+    lines.splice(claim.line, 0, `  {id: ${id}}${usesCrlf ? "\r" : ""}`);
     minted.push({ text: claim.text, id });
   }
   minted.reverse();

@@ -629,6 +629,7 @@ the index when your workflow checks in that file.`,
         coAuthor: z.string().optional(),
         expectedFileCommit: z
           .string()
+          .min(1)
           .describe("Required. Must match readAnchor(...).fileCommit or a prior preview's fileCommit, or the write is rejected with stale_base."),
       }),
       // destructiveHint true: convert_relation/scope_goal_reference REWRITE

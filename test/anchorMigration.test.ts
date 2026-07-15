@@ -285,6 +285,22 @@ describe("planAnchorMigration: mint_claim_ids", () => {
     expect(claims[1].status).toBe("unannotated");
   });
 
+  it("preserves CRLF line endings byte-for-byte (inserted annotation lines adopt CRLF too)", () => {
+    const lfContent = doc("", "## Current State\n\n- A claim needing an id.\n");
+    const crlfContent = lfContent.replace(/\n/g, "\r\n");
+    const result = planAnchorMigration(crlfContent, makeCtx(), ["mint_claim_ids"]);
+    const outcome = result.outcomes.find((o) => o.code === "mint_claim_ids")!;
+    expect(outcome.status).toBe("applied");
+
+    // No LF-only line endings anywhere: every "\n" is preceded by "\r".
+    expect(result.newContent.replace(/\r\n/g, "")).not.toContain("\n");
+    // The inserted annotation line is CRLF-terminated like the rest.
+    expect(result.newContent).toMatch(/\r\n {2}\{id: c-[0-9a-z]{6,8}\}\r\n/);
+    // Removing the inserted line restores the original bytes exactly.
+    const withoutInserted = result.newContent.replace(/ {2}\{id: c-[0-9a-z]{6,8}\}\r\n/, "");
+    expect(withoutInserted).toBe(crlfContent);
+  });
+
   it("never adds an id-only row to an ANNOTATED claim lacking an id (that is mintMissingClaimIds' job on write)", () => {
     const content = doc(
       "",
