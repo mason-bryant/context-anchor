@@ -287,6 +287,25 @@ describe("graph re-key: identity compatibility map round-trip", () => {
     expect(compat.toV2.get("goal:G-001")).toBe("goal:demo:G-001");
     expect(compat.toV1.get("goal:demo:G-001")).toBe("goal:G-001");
   });
+
+  it("memoizes the compatibility map within a graph generation and rebuilds after a mutation", async () => {
+    const repo = new AnchorRepository({ repoPath: tmpDir });
+    await repo.ensureReady();
+    await seedRegistries(repo);
+    await repo.commitAnchor({ name: "projects/demo/ctx.md", content: contextAnchor("a-ctx111") });
+
+    const graph = new GraphIndex(repo, graphDeps(repo));
+    const first = await graph.identityCompatibilityMap();
+    const second = await graph.identityCompatibilityMap();
+    // Same object reused across per-request calls within a stable generation.
+    expect(second).toBe(first);
+
+    // A mutation invalidates the graph; the next call rebuilds a fresh map.
+    graph.invalidate();
+    const third = await graph.identityCompatibilityMap();
+    expect(third).not.toBe(first);
+    expect(third.toV2.get("anchor:projects/demo/ctx.md")).toBe("anchor:a-ctx111");
+  });
 });
 
 describe("graph re-key: determinism", () => {

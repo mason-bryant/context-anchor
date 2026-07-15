@@ -93,6 +93,8 @@ export class GraphIndex {
   // unresolved typed target simply falls back to the pre-WP3 anchor_anchor
   // legacy edge (see `extractRelationsEdges` in extract.ts), never drops.
   private anchorIdByName = new Map<string, string | undefined>();
+  /** Memoized v1<->v2 compatibility map, keyed on the graph `generation` so repeated per-request `canonicalizeNodeId` calls within a stable graph reuse it instead of rebuilding the (O(#anchors + #goals)) map every call. Rebuilt on the first call after any mutation bumps `generation`. */
+  private compatMapCache: { generation: number; map: IdentityCompatibilityMap } | undefined;
   /** Goal ids keyed by the canonical project slug whose roadmap defines them — PROJECT-SCOPED so `goal:<project>:<goal-id>` refs never cross-resolve against a same-numbered goal in another project. */
   private knownGoalIdsByProject = new Map<string, Set<string>>();
 
@@ -127,16 +129,24 @@ export class GraphIndex {
    */
   async identityCompatibilityMap(): Promise<IdentityCompatibilityMap> {
     await this.ensureBuilt();
+    // Memoized on `generation`: its inputs (anchorIdByName, goal owners) only
+    // change when the graph is rebuilt/invalidated, which bumps generation, so
+    // this rebuilds at most once per mutation rather than once per request.
+    if (this.compatMapCache && this.compatMapCache.generation === this.generation) {
+      return this.compatMapCache.map;
+    }
     const projectSlugByGoalId = new Map<string, string | undefined>();
     const owners = await this.goalIdOwnersSnapshot();
     for (const [goalId, projectSlugs] of owners) {
       // Exactly one owner -> scoped v2; zero/many -> unmapped (stays v1).
       projectSlugByGoalId.set(goalId, projectSlugs.length === 1 ? projectSlugs[0] : undefined);
     }
-    return buildIdentityCompatibilityMap({
+    const map = buildIdentityCompatibilityMap({
       anchorIdByName: this.anchorIdByName,
       projectSlugByGoalId,
     });
+    this.compatMapCache = { generation: this.generation, map };
+    return map;
   }
 
   /**
