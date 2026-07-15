@@ -1,188 +1,240 @@
-# Goal 0 Phase 2, WP-B — Schema Coverage UI (cards + synchronized table): handoff
+# Goal 0 Phase 2, slice 2 — Previewable migration write operations (server-side): handoff
 
-Branch: `feat/goal0-coverage-ui` (off `main`, i.e. off the merged Phase 1 PR
-#88 / `afa16f2`). Authoritative plan: WP-B section of
-`ai-output/markdowns/context-conductor/goal0_phase2_mint_on_create_and_coverage_ui_plan.md`
-("the plan" below); background design in
-`goal0_semantic_substrate_implementation_plan.md` and the Goal 0 section of
-`knowledge_graph_visualization_design_and_roadmap.md` (that doc's original
-canvas-based "Visualization deliverable" text is explicitly superseded by
-the plan's WP-B section, which is the no-canvas cards+table revision).
+Branch: `feat/goal0-migration-ops` (off `origin/main` at `57abd51`, the merged
+PR #90 / `feat/goal0-coverage-ui`). Authoritative plan:
+`goal0_phase2_migration_write_ops_plan.md`; background context: the Goal 0
+section and "Migration strategy" of
+`knowledge_graph_visualization_design_and_roadmap.md`, and
+`goal0_semantic_substrate_implementation_plan.md`.
 
-This is one of two independent Phase 2 work packages running in parallel
-(WP-A owns mint-on-create, in `feat/goal0-mint-on-create`, a separate
-branch/worktree). Per the plan's file-ownership split, this work touched
-only `src/ui/assets.ts`, `src/ui/viewModel.ts`, and tests.
-`src/anchorService.ts` write paths, `src/validators/*`, and `src/graph/*`
-were not touched (only type-only imports of `CoverageRecordKind`/
-`CoverageState` from `src/graph/coverage.ts` into `src/ui/viewModel.ts`,
-matching the existing precedent in `src/ui/routes.ts`). `src/ui/routes.ts`
-itself needed no changes — every field the UI needed (`records`,
-`nextCursor`, `totalMatching`, `limit`, `summary`, `duplicateAnchorIds`)
-was already present on `GET /api/ui/graph-coverage`.
+Scope, as specified: server-side only — pure planner module, `AnchorService`
+preview/apply methods, MCP tools, thin HTTP routes, tests. `src/ui/assets.ts`
+and `src/ui/viewModel.ts` were **not touched**. No feature flags, no
+warn→block enforcement changes, no graph re-key.
 
 ## Final status
 
 - `npm run typecheck`: clean.
-- `npm test`: **953 tests passing, 44 files, 0 failures.**
-- Commits (2, each typecheck+test green):
-  1. Pure Schema Coverage view-model helpers in `src/ui/viewModel.ts`
-     (state/kind labeling, project derivation, filtering, URL round-trip,
-     cursor-append de-duplication) with 23 new unit tests in
-     `test/uiViewModel.test.ts`.
-  2. The browser Coverage tab itself in `src/ui/assets.ts` (plain ES5,
-     matching every other tab), plus 2 new HTTP smoke tests in
-     `test/uiHttp.test.ts` asserting the tab shell and JS bundle contents.
+- `npm test`: **1022 tests passing, 48 files, 0 failures.**
+- Commits (5, each typecheck+test green):
+  1. Pure planner (`src/migration/anchorMigration.ts`) + `GraphIndex.projectsForGoalId`/`goalIdOwnersSnapshot`, with 24 unit tests.
+  2. `AnchorService.previewAnchorMigration`/`applyAnchorMigration`, with integration tests (byte parity, stale_base, approval gate, idempotence, coverage-loop-closing).
+  3. MCP tools + HTTP routes, with route auth/behavior tests.
+  4. A test hardening pass locking in the `owned_by` gap and a multi-relation-key merge case.
+  5. A test hardening pass covering `mint_claim_ids`' trickiest byte-preservation edge cases (claim immediately before the next heading; claim as the last line of the file).
 
-## What was delivered
+## What shipped
 
-### Pure view-model helpers (`src/ui/viewModel.ts`)
+### `src/migration/anchorMigration.ts` — pure planner
 
-Exported, unit-tested pure functions over the `graphCoverage` response
-shape: `coverageStateLabel`/`coverageKindLabel` (badge/label text — never a
-bare code), `deriveCoverageProjects` (anchor-scoped project derivation,
-since claim records have no `projectSlug` of their own), `filterCoverageRecords`
-(state/project/anchor-text AND filtering), `coverageQueryParams` (server
-query-string shape), `coverageFiltersFromUrlParams`/`coverageUrlParamsFromFilters`
-(URL round-trip, dropping unknown state tokens instead of throwing), and
-`coverageRecordKey`/`appendCoverageRecords` (stable per-record identity and
-de-duplicated cursor-page append). `COVERAGE_STATE_ORDER` fixes card/badge
-display order to the plan's precedence (`malformed > dangling > ambiguous >
-partial`, then the two mutually-exclusive ends `structured`/`prose_only`).
+`planAnchorMigration(content, ctx, operations?)` → `{ newContent, outcomes[] }`,
+no I/O, mirroring `src/graph/extract.ts`/`src/graph/coverage.ts`'s purity
+pattern. Implements the five operations exactly per the plan:
 
-These functions are **not called from the browser bundle** — `UI_JS` is a
-raw template-string const served as-is with no bundler/transpile step, so
-it cannot `import` from a TS module (same reason Tasks' `validTasksGroupBy`/
-`taskGroupsForDisplay` have no server-side counterpart anywhere in the
-codebase today). They exist as the pure, tested specification of the
-filtering/URL/cursor semantics; the browser code below is an independent
-plain-ES5 mirror of the same behavior.
+- `mint_anchor_id` — only when absent; mints via `mintAnchorId` against the
+  tree-wide `anchor_id` set. Never replaces an existing valid id.
+- `add_schema_version` — only when absent; sets `1`.
+- `convert_relation` — legacy bare-string targets on **anchor-targeted**
+  registered keys (`depends_on`, `supersedes`, `related_to`) → `anchor:<id>`,
+  only when the target resolves to exactly one anchor that already has a
+  valid `anchor_id`. Unregistered keys are never touched.
+- `scope_goal_reference` — legacy bare goal ids on the **goal-targeted**
+  registered key (`implements`) → `goal:<project-slug>:<goal-id>`, only when
+  exactly one project's roadmap defines that goal id.
+- `mint_claim_ids` — appends an id-only annotation line (`  {id: c-xxxxxx}`,
+  two-space indent, standalone line directly under the bullet — the exact
+  grammar `src/claims.ts` already establishes) to every top-level claim in a
+  claim-bearing section that has no id yet, minted via `mintClaimId` against
+  the tree-wide claim-id set.
 
-### Coverage tab (`src/ui/assets.ts`)
+Front-matter changes go through `mergeAnchorFrontmatter` (one merge call per
+plan, since `mint_anchor_id`/`add_schema_version`/`convert_relation`/
+`scope_goal_reference` all write into the same `frontmatterUpdates` object —
+`convert_relation` and `scope_goal_reference` write disjoint `relations.<key>`
+subkeys, since a key is never both anchor- and goal-targeted, so they merge
+without clobbering each other regardless of order). Body changes are pure
+line-insertions. Every operation is independently order-safe and idempotent:
+planning the planner's own output again reports every operation
+`not_applicable`/`skipped`-for-the-same-reason and zero `applied`.
 
-- New `data-tab="coverage"` nav button (reuses the existing `icon-object-graph`
-  SVG symbol) and `#coverage-view` section, following the exact structure of
-  the Tasks/Traces tabs: `view-header` → filter/summary controls → empty
-  state → content → footer count.
-- **Summary/state cards** (`#coverage-cards`): a total-anchors+claims card,
-  one card per coverage state with its count (in precedence order), and a
-  duplicate-`anchor_id` card only when `duplicateAnchorIds.length > 0`. Per-
-  state cards are real `<button type="button">` elements with
-  `aria-pressed` reflecting whether that state is in the active filter;
-  clicking toggles it in/out of `state.coverageStates` and reloads from the
-  server. The total/duplicate cards are non-interactive `<div>`s (nothing in
-  the plan asks them to filter anything, and there's no "duplicate" coverage
-  state to filter by).
-- **Filter rail**: project `<select>` (server-side scoped — see below),
-  free-text anchor-name `<input type="search">` (client-side only, debounced
-  150ms), and a "Clear filters" button. All three persist through
-  `coverageProject`/`coverageStates`/`coverageSearch` URL query params,
-  added to `KNOWN_URL_PARAMS` and round-tripped through
-  `applyUrlStateToControls`/`paramsForState`, mirroring exactly how the Tasks
-  tab's filters persist (studied that tab's pattern per the plan's
-  instruction).
-- **Records table** (`#coverage-table`): a real `<table>` with
-  `<th scope="col">` headers (Kind, Anchor, State, Reasons, Suggested
-  operations), a visually-hidden (`.sr-only`) `<caption>` for screen
-  readers, one row per record. Anchor name is a deep link
-  (`anchorHref(anchorName)` + `data-anchor-name`, reusing the existing
-  global `#content-area` click-delegation that already handles anchor
-  navigation everywhere else in the UI — no new link-handling code needed).
-  State is a `<span class="badge">` with the human label as text (never
-  color-only). Reasons render as `code: message (line N)`. Suggested
-  operations render as plain inert `<span>` labels — never buttons, since
-  there is no write/migration tooling yet.
-- **Pagination**: `loadCoverage()` always sends `limit=100`; `Load more`
-  calls `loadMoreCoverage()` with the last response's `nextCursor`,
-  appending (de-duplicated by kind+anchorName+line) rather than replacing,
-  and is hidden/disabled appropriately. The endpoint's unbounded record set
-  is never fetched.
-- **Accessibility**: real focusable `<button>`s for every interactive
-  control (state cards, refresh, clear filters, load more); `role="group"`
-  + `aria-label` on the cards container; `aria-live="polite"` on the
-  screen-reader-visible count paragraph; state badges are text, not color
-  alone.
+**Skip-reason inventory** (`MigrationSkipReason`, stable codes):
 
-### Design decision: project filter is server-side, text filter is client-side
+| Code | Meaning |
+|---|---|
+| `already_present` | `mint_anchor_id`/`add_schema_version`: the field already has a valid value — not_applicable, never overwritten. |
+| `target_missing_anchor_id` | `convert_relation`: the legacy target resolves to a known anchor, but that anchor has no `anchor_id` yet — migrate the target first. |
+| `target_not_legacy` | `convert_relation`/`scope_goal_reference`: the target is already a canonical typed ref — not_applicable. |
+| `key_not_registered` | `convert_relation`: the relation key is not in the typed vocabulary — never auto-converted (human decision). |
+| `key_wrong_target_kind` | Reserved (not currently emitted — kind-mismatch is a coverage-time `malformed` finding, not a migration-time skip; see "Deviations" below). |
+| `target_unparseable` | `convert_relation`: the legacy target string does not resolve to any known anchor. |
+| `goal_unknown` | `scope_goal_reference`: no project's roadmap defines this goal id. |
+| `goal_ambiguous` | `scope_goal_reference`: more than one project's roadmap defines this goal id — skipped, not guessed. |
+| `no_unannotated_claims` | `mint_claim_ids`: every claim already has an id — not_applicable. |
+| `not_an_anchor` | Reserved for a future non-anchor-path guard; the service currently never calls the planner on a non-anchor path (see "Deviations"), so this code is defined but not yet emitted. |
 
-The plan calls out three filter-rail dimensions (project, state, text) but
-doesn't specify which round-trip to the server. I chose:
+### `AnchorService.previewAnchorMigration` / `applyAnchorMigration`
 
-- **State and project both query the server** (`states=`/`project=` on
-  `GET /api/ui/graph-coverage`), because `ClaimCoverageRecord` has **no
-  `projectSlug` field** — only anchor records carry one. A client-side-only
-  project filter would have to silently drop every claim row (or invent an
-  anchor-name-based heuristic the endpoint doesn't guarantee), whereas
-  server-side `project` scoping filters claims correctly by scoping the
-  whole tree read to that project's anchors before analysis even runs. This
-  also keeps `Load more` correctly scoped to the active project instead of
-  paging through irrelevant records.
-- **Free-text anchor-name search stays client-only**, since the endpoint has
-  no text-search parameter (confirmed via `graphCoverage`'s input type in
-  `src/anchorService.ts` and `test/uiHttp.test.ts` — not modified).
-- Because project scoping shrinks `state.coverageRecords` server-side, the
-  project `<select>`'s own option list is **not** re-derived from the
-  current (possibly project-scoped) record set on every render — that would
-  make it impossible to switch back to a different project once one filter
-  was applied. Instead `state.coverageKnownProjects` is a running union
-  across every load (mirrors how the Tasks tab's own project dropdown is
-  populated from `state.anchors`, the global anchor list, never from
-  `state.tasks`, the currently-filtered task set).
+- `previewAnchorMigration({ name, operations? })`: reads the anchor, builds
+  the planner's resolver context (`buildAnchorMigrationContext`, reusing
+  `collectTreeAnchorIds`/`collectTreeClaimIds` and the graph index's
+  `buildCoverageContext()` + new `goalIdOwnersSnapshot()`), plans, and returns
+  `{ name, fileCommit?, outcomes, changed, newContent, diff, warnings }`.
+  `diff` is a unified-diff-style summary via the existing
+  `renderProposalDiff` (reused from `src/proposedChanges.ts`). `warnings` is
+  the result of running the normal write pipeline's validators
+  (`runValidators`) against `newContent`, read-only — never blocks or
+  mutates. Never touches disk.
+- `applyAnchorMigration({ name, operations?, approved, expectedFileCommit?, message?, coAuthor? })`:
+  funnels through `writeAnchor` (write lock, validators, `stale_base`,
+  revision/recovery guarantees inherited for free, per plan decision 6).
+  Apply with nothing applicable is a no-op success (`noChangesNeeded: true`,
+  no write, no validator run), never an error.
+- **Byte-identity mechanism** (plan decision 2 — "apply must produce
+  byte-identical content to the most recent preview for the same
+  `fileCommit`"): `mint_anchor_id`/`mint_claim_ids` draw fresh
+  cryptographically random ids on every independent `planAnchorMigration`
+  call, so two separate plans over the same input are never guaranteed to
+  agree byte-for-byte. `AnchorService` keeps a small in-memory
+  `lastMigrationPreview` cache (per anchor name, keyed by base `fileCommit` +
+  requested operation set) populated by `previewAnchorMigration` and consumed
+  by `applyAnchorMigration`: a matching apply reuses the cached preview's
+  exact `newContent`/`outcomes` instead of re-planning, so it commits
+  byte-identical content to that preview. A cache miss (different base,
+  different operations, server restart, or no prior preview) falls back to
+  planning fresh — apply is always correct, just not guaranteed to match some
+  *other* preview it was never shown.
+
+### `GraphIndex.projectsForGoalId` / `goalIdOwnersSnapshot`
+
+Two small additions to `src/graph/index.ts`, both reusing the already-built
+`knownGoalIdsByProject` map (no extra tree scan): `projectsForGoalId(goalId)`
+for a single lookup, and `goalIdOwnersSnapshot()` for a bulk inversion
+(`goal id -> project slug[]`) so the migration context's `projectsForGoalId`
+resolver can be a plain synchronous function (the pure planner has no async
+surface).
+
+### MCP tools (`src/server.ts`)
+
+`previewAnchorMigration` (read-only) and `applyAnchorMigration` (destructive,
+idempotent), registered following the exact `previewProposedChange`/
+`applyProposedChange` read+write pair pattern already in the file.
+
+### HTTP routes (`src/ui/routes.ts`)
+
+`POST /api/ui/anchor-migration-preview` and `POST /api/ui/anchor-migration-apply`
+(hyphenated, same auth middleware as every other `/api/ui/*` route), taking
+`{ name, operations? }` and, for apply, `{ approved, message, coAuthor, expectedFileCommit }`.
+A new `readMigrationOperationsBody`/`isMigrationOperationCode` pair validates
+the optional `operations` array and 400s on an unknown code.
 
 ### Tests
 
-- `test/uiViewModel.test.ts`: 23 new tests under a new "Schema Coverage view
-  model" describe block — state/kind labeling, project derivation
-  (anchor-scoped, claims excluded), single and combined AND-filtering,
-  server query-param construction (project/states only, text omitted),
-  URL round-trip (including dropping unknown state tokens instead of
-  throwing), stable record keys, and cursor-append de-duplication
-  (including an empty-page no-op).
-- `test/uiHttp.test.ts`: 2 new tests — one asserting the served `/ui` HTML
-  contains the Coverage tab button, view shell, cards container, filter
-  controls, an accessible `<table>` with `scope="col"` headers, and the
-  Load more button; one asserting the served `/ui/app.js` bundle contains
-  the Coverage tab's load/filter/show functions and the
-  `/api/ui/graph-coverage` fetch path. No existing test was changed.
-- Manually verified the embedded `UI_JS` template string is syntactically
-  valid JavaScript by compiling the branch with `tsc`, importing the
-  compiled `UI_JS` export, and running `node --check` against it (the
-  string can't be executed against a real DOM without a browser/jsdom
-  harness, which the existing test suite doesn't use for this file either —
-  it only smoke-tests HTML/JS *content* via `fetch`, which this handoff's
-  new tests follow).
+- `test/anchorMigration.test.ts` (new): 35 tests — pure planner (every
+  operation, every skip reason including the `owned_by` gap and a
+  multi-relation-key merge case), byte-preservation (including the two
+  trickiest `mint_claim_ids` edge cases: a claim immediately before the next
+  H2 heading, and a claim as the file's last line), idempotence, plus a
+  service-level integration `describe` block: preview non-mutation,
+  preview/apply byte parity, `stale_base`, the approval gate, idempotent
+  no-op apply, second-preview-reports-nothing, the coverage-state-improves
+  loop-closing test (`partial` → `structured` through the real
+  `graphCoverage` path), and a subset-of-operations request.
+- `test/uiHttp.test.ts`: 3 new tests — auth on both new routes, a 400 on an
+  invalid `operations` value, preview non-mutation, and apply committing
+  content matching the preview.
 
 ## Deviations from the plan
 
-None. Every WP-B bullet (tab, summary/state cards with click-to-filter,
-filter rail with URL persistence, table with deep links/badges/reasons/
-inert suggested-operation labels, cursor-based Load more, accessibility)
-was implementable exactly as specified against the existing
-`GET /api/ui/graph-coverage` endpoint — no response field was missing, so
-`src/ui/routes.ts` did not need to change.
+1. **Operation scoping for `convert_relation` vs. `scope_goal_reference`**:
+   the plan describes `convert_relation` as converting "a legacy bare-string
+   target on a REGISTERED relation key... to exactly one anchor" and
+   `scope_goal_reference` as scoping "a goal target". The registry
+   (`src/relations/vocabulary.ts`) has exactly one goal-targeted key
+   (`implements`) and three anchor-targeted keys (`depends_on`, `supersedes`,
+   `related_to`); `owned_by` targets people/teams. I split the two
+   operations strictly by `targetKinds` (`convert_relation` only touches keys
+   whose `targetKinds` includes `"anchor"`; `scope_goal_reference` only
+   touches keys whose `targetKinds` includes `"goal"`), and left `owned_by`
+   (person/team legacy targets) untouched by either operation — the plan
+   never describes a person/team conversion rule, and inventing one
+   (`person:<id>` vs. `team:<id>` is not inferable from a bare legacy string)
+   would have been a guess. This is covered by an explicit test
+   documenting the gap rather than leaving it implicit; a future slice can
+   add a `convert_relation` variant for `owned_by` once there's a rule for
+   disambiguating person vs. team.
+2. **`key_wrong_target_kind`/`not_an_anchor` skip reasons are defined but not
+   emitted.** `key_wrong_target_kind` would apply to a registered key whose
+   target parses as a *typed* ref of the wrong kind (e.g.
+   `depends_on: [person:alice]`) — that is already a `malformed` coverage
+   finding (`src/graph/coverage.ts`'s `relation_target_wrong_kind`), not a
+   legacy string a migration operation would ever see (migration only acts
+   on `legacy: true` parse results), so the code exists for completeness in
+   `MigrationSkipReason`'s type but the planner has no code path that emits
+   it. `not_an_anchor` is reserved for a future guard if the service ever
+   calls the planner on a generated/non-anchor path; today
+   `previewAnchorMigration`/`applyAnchorMigration` are only ever invoked
+   against a resolved anchor name (the same precondition `writeAnchor`
+   itself assumes), so this never fires. Both are harmless unused union
+   members, kept rather than removed so the type signature won't need a
+   breaking change if a later slice adds the corresponding check.
+3. **Byte-identity via a preview cache, not pure re-planning determinism**
+   (see "Byte-identity mechanism" above) — the plan states the requirement
+   but doesn't prescribe the mechanism. Given `mintAnchorId`/`mintClaimId`
+   are contractually "opaque, random, never content-derived"
+   (`goal0_semantic_substrate_implementation_plan.md`, WP1 decision 1) and
+   that contract is explicitly out of scope to change here, true
+   determinism across two independent plans is impossible; an in-memory
+   preview cache is the minimal mechanism that satisfies the stated
+   guarantee without touching the mint contract. The cache is per-process
+   and unbounded-lifetime-per-anchor-key (cleared only on a successful
+   commit for that anchor); this is acceptable for a single-process MCP
+   server matching every other in-memory cache already in
+   `AnchorService` (`_peopleRegistry`, `_projectMappings`, `_graphIndex`),
+   but the next slice should be aware it does not survive a server restart
+   and is not shared across replicas if the server is ever run
+   multi-process.
+4. **`goalExistsInProject`/`anchorNamesForAnchorId` from `CoverageAnalysisContext`
+   are consumed but a new bulk `goalIdOwnersSnapshot()` was added** to
+   `GraphIndex` rather than reusing `graphCoverage`'s per-goal
+   `goalExistsInProject` (which only answers "does this slug define this
+   goal", not "which slugs define it") — needed because `scope_goal_reference`
+   must enumerate ownership, not just test one candidate slug. This is an
+   additive method on `GraphIndex`, not a change to any existing method's
+   behavior.
 
-## Notes for whoever reconciles WP-A and WP-B at merge time
+Everything else was implementable exactly as specified. The plan's
+flagged likely-impossible case — "inserting id-only annotation lines that
+round-trip byte-identically" — turned out to be fully solvable by reusing
+the exact standalone-annotation grammar `src/claims.ts` already established
+for provenance rows (two-space indent, line spliced directly after the
+bullet); no blocker was hit.
 
-- The two branches touch disjoint files by design
-  (`src/anchorService.ts`/`src/validators/*` vs. `src/ui/assets.ts`/
-  `src/ui/viewModel.ts`) and should merge cleanly aside from this
-  `HANDOFF.md` itself, which both branches independently overwrite — whoever
-  merges second should fold both summaries together (or keep them as
-  sequential sections) rather than silently dropping one.
-- Once WP-A's mint-on-create ships, newly-created anchors will start
-  carrying `anchor_id`/`schema_version` immediately, which should visibly
-  shift the Coverage tab's state distribution over time (more `structured`,
-  fewer `partial`/`prose_only`) with no UI changes required — the UI only
-  ever reads `graphCoverage`'s output, it doesn't assume anything about how
-  ids got minted.
-- The Coverage tab has no write/migration actions yet (by design — "inert
-  labels... no buttons that pretend to migrate"). The design doc's original
-  canvas vision describes "a previewable guided migration action" and
-  before/after previews as a later step; this slice intentionally stops at
-  read-only cards + table per the Phase 2 plan's explicit WP-B scope.
-- `src/ui/viewModel.ts`'s new Coverage functions are unused by
-  `src/ui/routes.ts` today (unlike `toAnchorUiMeta`/`toAnchorUiDetail`,
-  which shape JSON responses). If a future change wants the server to do
-  any Coverage-specific response shaping, these functions already exist and
-  are tested; if that need never materializes, they still stand alone as
-  the tested spec the browser mirror is built against.
+## Notes for the UI-wiring slice
+
+- The two new endpoints return everything a preview/apply UI panel needs in
+  one shape: `outcomes[]` (per-operation `code`/`status`/`reason?`/`detail`
+  for a checklist-style preview), `diff` (ready to render as-is, same format
+  the existing Proposed Changes UI already renders via `renderProposalDiff`),
+  `warnings` (the same `ValidationViolation[]` shape every other write
+  surface uses), and `changed`/`noChangesNeeded` booleans for empty-state
+  handling.
+- The natural entry point is the Coverage tab's `suggestedOperations` labels
+  (currently rendered as inert `<span>`s per WP-B's handoff — see the prior
+  `HANDOFF.md` content, now superseded, in this branch's git history at
+  `0e3d8cf`): those labels can become buttons that call
+  `POST /api/ui/anchor-migration-preview` for the anchor under the cursor,
+  show the returned diff/outcomes in a confirmation panel, then call
+  `POST /api/ui/anchor-migration-apply` with `approved: true` on confirm.
+- `expectedFileCommit`: the UI should always pass the preview response's own
+  `fileCommit` back into apply (not a separately re-read one), so the cache
+  hit path in `AnchorService.lastMigrationPreview` actually engages and the
+  user sees exactly what they previewed.
+- `operations`: the UI can offer "apply all" (omit `operations`) or
+  "apply just this one" (pass a single-element array) — both are already
+  supported by the service/route/tool layer; no further server changes
+  needed for a granular per-operation apply button.
+- Tree-wide batching (applying migration across every eligible anchor in one
+  call) is explicitly out of scope for this slice (plan decision 1) — the
+  UI-wiring slice should drive per-anchor apply calls itself, e.g. iterating
+  the Coverage tab's already-paginated record list, rather than expecting a
+  new bulk endpoint.

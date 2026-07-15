@@ -653,34 +653,41 @@ describe("AnchorService.previewAnchorMigration / applyAnchorMigration (Goal 0 Ph
     expect(applied.version).toBeUndefined();
   });
 
-  it("requires approved: true — an unapproved apply that would drop provenance or otherwise require approval is gated", async () => {
+  it("requires approved: true — an unapproved apply is BLOCKed at the migration boundary itself", async () => {
     await seedMigrationRepo();
-    // Add an annotated claim whose text will be regenerated identically by
-    // migration's own line-insertion (mint_claim_ids never touches annotated
-    // claims), so this specifically exercises writeAnchor's ordinary
-    // approval gate machinery rather than claim-carry loss. Use approved:
-    // false and confirm the write pipeline's normal semantics apply (no
-    // special-casing in applyAnchorMigration).
     const preview = await service.previewAnchorMigration({ name: "projects/demo/legacy.md" });
     const applied = await service.applyAnchorMigration({
       name: "projects/demo/legacy.md",
       approved: false,
       expectedFileCommit: preview.fileCommit,
     });
-    // Either it commits cleanly (no approval-requiring warnings for this
-    // fixture) or it is gated — either way, an unapproved call must never
-    // silently escalate to approved:true under the hood.
-    if (applied.requiresApproval) {
-      expect(applied.version).toBeUndefined();
-      expect(applied.warnings.some((w) => w.severity === "BLOCK")).toBe(true);
-    }
+    expect(applied.requiresApproval).toBe(true);
+    expect(applied.version).toBeUndefined();
+    expect(applied.warnings.some((w) => w.severity === "BLOCK" && w.code === "requires_approval")).toBe(true);
+
+    const after = await service.readAnchor("projects/demo/legacy.md");
+    expect(after.fileCommit).toBe(preview.fileCommit);
+  });
+
+  it("requires expectedFileCommit — apply without a named base revision is BLOCKed", async () => {
+    await seedMigrationRepo();
+    const applied = await service.applyAnchorMigration({
+      name: "projects/demo/legacy.md",
+      approved: true,
+    });
+    expect(applied.version).toBeUndefined();
+    expect(applied.warnings.some((w) => w.severity === "BLOCK" && w.code === "expected_file_commit_required")).toBe(
+      true,
+    );
   });
 
   it("apply with no applicable operations is a no-op success, not an error (idempotence)", async () => {
     await seedMigrationRepo();
+    const base = await service.readAnchor("projects/demo/legacy.md");
     const first = await service.applyAnchorMigration({
       name: "projects/demo/legacy.md",
       approved: true,
+      expectedFileCommit: base.fileCommit,
     });
     expect(first.noChangesNeeded).toBe(false);
     expect(first.version).toBeTruthy();
@@ -704,7 +711,12 @@ describe("AnchorService.previewAnchorMigration / applyAnchorMigration (Goal 0 Ph
 
   it("second preview after apply reports nothing applicable", async () => {
     await seedMigrationRepo();
-    await service.applyAnchorMigration({ name: "projects/demo/legacy.md", approved: true });
+    const base = await service.readAnchor("projects/demo/legacy.md");
+    await service.applyAnchorMigration({
+      name: "projects/demo/legacy.md",
+      approved: true,
+      expectedFileCommit: base.fileCommit,
+    });
 
     const secondPreview = await service.previewAnchorMigration({ name: "projects/demo/legacy.md" });
     expect(secondPreview.changed).toBe(false);
@@ -722,7 +734,12 @@ describe("AnchorService.previewAnchorMigration / applyAnchorMigration (Goal 0 Ph
     );
     expect(beforeRecord?.state).toBe("partial");
 
-    await service.applyAnchorMigration({ name: "projects/demo/partial.md", approved: true });
+    const base = await service.readAnchor("projects/demo/partial.md");
+    await service.applyAnchorMigration({
+      name: "projects/demo/partial.md",
+      approved: true,
+      expectedFileCommit: base.fileCommit,
+    });
 
     const afterCoverage = await service.graphCoverage({ project: "demo" });
     const afterRecord = afterCoverage.records.find(

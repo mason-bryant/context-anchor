@@ -4977,6 +4977,41 @@ None.
    * success: no write, no validator run, `noChangesNeeded: true`.
    */
   async applyAnchorMigration(input: ApplyAnchorMigrationInput): Promise<ApplyAnchorMigrationResult> {
+    // Plan decision 6: apply is approval-gated and concurrency-guarded at
+    // ITS OWN boundary, not just via whatever validators the resulting
+    // content happens to trip — a migration rewrites identity/relations
+    // metadata, so the caller must explicitly approve and must name the
+    // base revision they previewed against.
+    if (!input.approved) {
+      return {
+        outcomes: [],
+        noChangesNeeded: false,
+        warnings: [
+          {
+            severity: "BLOCK",
+            code: "requires_approval",
+            message:
+              "applyAnchorMigration mutates the anchor; retry with approved: true after explicit user confirmation (preview first with previewAnchorMigration).",
+          },
+        ],
+        requiresApproval: true,
+      };
+    }
+    if (!input.expectedFileCommit) {
+      return {
+        outcomes: [],
+        noChangesNeeded: false,
+        warnings: [
+          {
+            severity: "BLOCK",
+            code: "expected_file_commit_required",
+            message:
+              "applyAnchorMigration requires expectedFileCommit (use previewAnchorMigration's fileCommit) so a base that moved since the preview is rejected with stale_base instead of silently re-planned.",
+          },
+        ],
+        requiresApproval: false,
+      };
+    }
     const resolved = this.repo.resolveAnchor(input.name);
     const read = await this.readAnchor(resolved.name);
     if (input.expectedFileCommit && read.fileCommit && input.expectedFileCommit !== read.fileCommit) {
