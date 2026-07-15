@@ -10,10 +10,17 @@ import {
   coverageUrlParamsFromFilters,
   deriveCoverageProjects,
   filterCoverageRecords,
+  groupMigrationOutcomes,
+  hasApplicableMigrationOutcome,
+  isMigratableCoverageRecord,
+  migrationApplyResultSummary,
+  migrationOperationCodeLabel,
+  migrationOutcomeStatusLabel,
   requiredSectionStatus,
   toAnchorUiDetail,
   toAnchorUiMeta,
 } from "../src/ui/viewModel.js";
+import type { MigrationOperationOutcome } from "../src/migration/anchorMigration.js";
 import type { AnchorMeta, AnchorRead } from "../src/types.js";
 import type { CoverageRecordKind } from "../src/graph/coverage.js";
 
@@ -508,3 +515,63 @@ None.
     ...overrides,
   };
 }
+
+describe("Coverage → migration UI helpers (Goal 0 Phase 2 slice 3a)", () => {
+  const op = (
+    overrides: Partial<MigrationOperationOutcome> = {},
+  ): MigrationOperationOutcome => ({
+    code: "mint_anchor_id",
+    status: "applied",
+    detail: "Minted anchor_id.",
+    ...overrides,
+  });
+
+  it("offers Migrate only for anchor records that have suggested operations", () => {
+    expect(isMigratableCoverageRecord(anchorRecord({ suggestedOperations: [{ code: "mint_anchor_id", message: "x" }] }))).toBe(true);
+    expect(isMigratableCoverageRecord(anchorRecord({ suggestedOperations: [] }))).toBe(false);
+    // A claim row never gets its own Migrate action even with suggestions.
+    expect(isMigratableCoverageRecord(claimRecord({ suggestedOperations: [{ code: "mint_claim_id", message: "x" }] }))).toBe(false);
+  });
+
+  it("labels operation codes and outcome statuses, falling back to the raw value", () => {
+    expect(migrationOperationCodeLabel("convert_relation")).toBe("Convert relation");
+    expect(migrationOperationCodeLabel("unknown_code")).toBe("unknown_code");
+    expect(migrationOutcomeStatusLabel("not_applicable")).toBe("Not applicable");
+    expect(migrationOutcomeStatusLabel("weird" as never)).toBe("weird");
+  });
+
+  it("groups outcomes by status preserving order, and detects applicable ones", () => {
+    const outcomes = [
+      op({ code: "mint_anchor_id", status: "applied" }),
+      op({ code: "convert_relation", status: "skipped" }),
+      op({ code: "scope_goal_reference", status: "not_applicable" }),
+      op({ code: "mint_claim_ids", status: "applied" }),
+    ];
+    const grouped = groupMigrationOutcomes(outcomes);
+    expect(grouped.applied.map((o) => o.code)).toEqual(["mint_anchor_id", "mint_claim_ids"]);
+    expect(grouped.skipped.map((o) => o.code)).toEqual(["convert_relation"]);
+    expect(grouped.notApplicable.map((o) => o.code)).toEqual(["scope_goal_reference"]);
+    expect(hasApplicableMigrationOutcome(outcomes)).toBe(true);
+    expect(hasApplicableMigrationOutcome([op({ status: "skipped" })])).toBe(false);
+  });
+
+  it("summarizes an apply result: committed, no-op, blocked, and warn cases", () => {
+    expect(migrationApplyResultSummary({ version: "v1", noChangesNeeded: false, warnings: [] })).toEqual({
+      tone: "info",
+      message: "Migration applied (v1).",
+    });
+    expect(migrationApplyResultSummary({ noChangesNeeded: true, warnings: [] }).tone).toBe("info");
+    expect(
+      migrationApplyResultSummary({
+        noChangesNeeded: false,
+        warnings: [{ severity: "BLOCK", code: "stale_base", message: "stale" }],
+      }),
+    ).toEqual({ tone: "error", message: "stale" });
+    expect(
+      migrationApplyResultSummary({
+        noChangesNeeded: false,
+        warnings: [{ severity: "WARN", code: "x", message: "heads up" }],
+      }),
+    ).toEqual({ tone: "warn", message: "heads up" });
+  });
+});

@@ -23,6 +23,7 @@ import {
   type CurrentStateOrganizationStatus,
 } from "../anchorStructure.js";
 import type { CoverageRecordKind, CoverageState } from "../graph/coverage.js";
+import type { MigrationOperationOutcome, MigrationOperationStatus } from "../migration/anchorMigration.js";
 export type AnchorHealthStatus = "ok" | "warn" | "block";
 
 export type AnchorHealthIssue = {
@@ -550,4 +551,111 @@ export function appendCoverageRecords(
     return true;
   });
   return [...existing, ...appended];
+}
+
+// ---------------------------------------------------------------------------
+// Coverage-to-migration UI wiring (Goal 0 Phase 2 slice 3a:
+// `goal0_phase2_coverage_ui_wiring_plan.md`). Pure helpers for the per-anchor
+// "Migrate..." action added to the Coverage tab: deciding which rows get the
+// affordance, and formatting a `previewAnchorMigration`/`applyAnchorMigration`
+// response (`src/anchorService.ts`, NOT modified here) for the review panel.
+// `src/ui/assets.ts` is plain ES5 embedded in template strings and cannot
+// import TypeScript modules, so it MIRRORS this logic inline; each mirror is
+// annotated at its definition site in assets.ts. The pair drifting apart is a
+// bug.
+// ---------------------------------------------------------------------------
+
+/**
+ * Whether a coverage record should get the "Migrate..." action (plan decision
+ * 1): only `kind: "anchor"` records with at least one `suggestedOperations`
+ * entry. Claim rows never get their own migrate action — a claim's fix
+ * (`mint_claim_ids`) travels with its owning anchor's migration.
+ */
+export function isMigratableCoverageRecord(record: CoverageRecordKind): boolean {
+  return record.kind === "anchor" && record.suggestedOperations.length > 0;
+}
+
+/** Human label for a migration operation outcome's status badge. */
+const MIGRATION_OUTCOME_STATUS_LABELS: Record<MigrationOperationStatus, string> = {
+  applied: "Applied",
+  skipped: "Skipped",
+  not_applicable: "Not applicable",
+};
+
+export function migrationOutcomeStatusLabel(status: MigrationOperationStatus): string {
+  return MIGRATION_OUTCOME_STATUS_LABELS[status] ?? status;
+}
+
+/** Human label for a migration operation code, for the review panel's outcome list. */
+const MIGRATION_OPERATION_CODE_LABELS: Record<string, string> = {
+  mint_anchor_id: "Mint anchor ID",
+  add_schema_version: "Add schema version",
+  convert_relation: "Convert relation",
+  scope_goal_reference: "Scope goal reference",
+  mint_claim_ids: "Mint claim IDs",
+};
+
+export function migrationOperationCodeLabel(code: string): string {
+  return MIGRATION_OPERATION_CODE_LABELS[code] ?? code;
+}
+
+export type GroupedMigrationOutcomes = {
+  applied: MigrationOperationOutcome[];
+  skipped: MigrationOperationOutcome[];
+  notApplicable: MigrationOperationOutcome[];
+};
+
+/**
+ * Group a preview/apply response's `outcomes` by status for the review
+ * panel's three-column display (applied vs skipped vs not-applicable),
+ * preserving each group's original relative order.
+ */
+export function groupMigrationOutcomes(outcomes: readonly MigrationOperationOutcome[]): GroupedMigrationOutcomes {
+  const applied: MigrationOperationOutcome[] = [];
+  const skipped: MigrationOperationOutcome[] = [];
+  const notApplicable: MigrationOperationOutcome[] = [];
+  for (const outcome of outcomes) {
+    if (outcome.status === "applied") {
+      applied.push(outcome);
+    } else if (outcome.status === "skipped") {
+      skipped.push(outcome);
+    } else {
+      notApplicable.push(outcome);
+    }
+  }
+  return { applied, skipped, notApplicable };
+}
+
+/** True when at least one outcome actually applied — used to decide whether "Apply migration" is worth offering, distinct from the preview's own `changed` flag (kept for callers that only have the outcome list). */
+export function hasApplicableMigrationOutcome(outcomes: readonly MigrationOperationOutcome[]): boolean {
+  return outcomes.some((outcome) => outcome.status === "applied");
+}
+
+/**
+ * Summarize an `applyAnchorMigration` result for the review panel's result
+ * banner. A `noChangesNeeded` apply is a benign success message (plan
+ * decision 3), never an error; a BLOCK-severity warning (stale_base,
+ * requires_approval, expected_file_commit_required) is surfaced as the
+ * reason apply did NOT commit, without discarding the panel.
+ */
+export function migrationApplyResultSummary(result: {
+  version?: string;
+  noChangesNeeded: boolean;
+  warnings: ReadonlyArray<{ severity: string; code: string; message: string }>;
+}): { tone: "info" | "warn" | "error"; message: string } {
+  if (result.version) {
+    return { tone: "info", message: `Migration applied (${result.version}).` };
+  }
+  if (result.noChangesNeeded) {
+    return { tone: "info", message: "No changes needed: the anchor already reflects every requested operation." };
+  }
+  const blocking = result.warnings.find((warning) => warning.severity === "BLOCK");
+  if (blocking) {
+    return { tone: "error", message: blocking.message };
+  }
+  const first = result.warnings[0];
+  return {
+    tone: "warn",
+    message: first ? first.message : "Migration did not commit a new version.",
+  };
 }
