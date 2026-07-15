@@ -1,4 +1,4 @@
-import { parseDocument, isMap, type Document, type YAMLMap } from "yaml";
+import { parseDocument, isMap, YAMLMap, type Document } from "yaml";
 
 import {
   parseBodyH2Segments,
@@ -23,11 +23,11 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 /**
  * Raw split of a full anchor document into its front-matter block and body,
  * WITHOUT going through gray-matter's YAML parse/re-dump. Mirrors
- * gray-matter's own delimiter detection exactly (opening `---` at the very
- * start of the string, closing `\n---` on its own line) so this stays in
- * lockstep with `parseAnchor`/`matter()` reads elsewhere — only the parsing
- * of the YAML *inside* the fences differs (or is skipped entirely for
- * section-only edits), never the fence-finding itself.
+ * gray-matter's own delimiter detection exactly (see `splitFrontmatterRaw`
+ * below for the precise algorithm) so this stays in lockstep with
+ * `parseAnchor`/`matter()` reads elsewhere — only the parsing of the YAML
+ * *inside* the fences differs (or is skipped entirely for section-only
+ * edits), never the fence-finding itself.
  *
  * `rawFrontmatter` is the exact source text between the fences (comments,
  * blank lines, original line endings, everything) — never touched by
@@ -36,13 +36,16 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 type RawFrontmatterSplit =
   | {
       hasFrontmatter: true;
-      /** Exact bytes of the opening fence line (`---`, no trailing newline). */
+      /** Exact bytes of the opening fence (`---`, no trailing newline). */
       openFence: string;
-      /** Newline bytes right after the opening fence (`\n` or `\r\n`). */
-      openNewline: string;
-      /** Raw YAML source between the fences, exactly as written (no trim). */
+      /**
+       * Raw text between the opening and closing fences, exactly as
+       * written (no trim) — INCLUDES the newline right after the opening
+       * `---` and the newline right before the closing `---` (which are
+       * the same single newline when front matter is empty).
+       */
       rawFrontmatter: string;
-      /** Exact bytes of the closing fence line (`---`, no trailing newline). */
+      /** Exact bytes of the closing fence (`---`, no trailing newline). */
       closeFence: string;
       /** Newline bytes right after the closing fence, if any (may be ""). */
       closeNewline: string;
@@ -50,26 +53,31 @@ type RawFrontmatterSplit =
     }
   | { hasFrontmatter: false; body: string };
 
-const OPEN_DELIM_RE = /^---(\r\n|\n)/;
-
 /**
- * Matches gray-matter's own delimiter search byte-for-byte: the opening
- * fence must be `---` at the very start of the string followed by a
- * newline; the closing fence is found by a PLAIN SUBSTRING search for
- * `\n---` (gray-matter literally does `str.indexOf('\n' + '---')`) — not a
- * "whole line is exactly `---`" match. So `\n----\n` closes at the first
- * three dashes (leaving a lone `-` at the start of body/content), and a
- * closing fence with no trailing newline (end of file) still closes. This
- * function reproduces both quirks so raw-split boundaries always agree with
- * `parseAnchor`'s gray-matter-based read.
+ * Matches gray-matter's own delimiter search byte-for-byte (see
+ * `gray-matter/index.js` `parseMatter`, `defaults.js` for `open`/`close`):
+ * the opening delimiter is the literal 3 bytes `---` at the very start of
+ * the string (guarded so `----` does NOT count as an opening fence — the
+ * 4th char being another `-` disqualifies it), and — critically — gray-matter
+ * slices off ONLY those 3 bytes, leaving the newline that follows them in
+ * the string it then searches. The closing delimiter is found by a PLAIN
+ * SUBSTRING search for `\n---` over what remains (`str.indexOf('\n---')`),
+ * not a "whole line is exactly `---`" match. Consequences this function
+ * reproduces on purpose: empty front matter (`---\n---\n...`) closes
+ * immediately, because the open fence's own trailing newline IS the `\n` the
+ * close search matches; `\n----\n` closes at the first three dashes (a lone
+ * `-` starts the body); a closing fence with no trailing newline (end of
+ * file) still closes. Keeping this in lockstep with gray-matter means raw
+ * split boundaries always agree with `parseAnchor`'s gray-matter-based read.
  */
 function splitFrontmatterRaw(fullContent: string): RawFrontmatterSplit {
-  const openMatch = OPEN_DELIM_RE.exec(fullContent);
-  if (!openMatch) {
+  if (!fullContent.startsWith("---") || fullContent.charAt(3) === "-") {
     return { hasFrontmatter: false, body: fullContent };
   }
-  const openNewline = openMatch[1] ?? "\n";
-  const afterOpen = fullContent.slice(openMatch[0].length);
+  // Everything after the literal opening `---` (3 bytes) — still includes
+  // the newline that follows it, exactly like gray-matter's `str` at this
+  // point in `parseMatter`.
+  const afterOpen = fullContent.slice(3);
 
   const closeMarker = "\n---";
   const closeIdx = afterOpen.indexOf(closeMarker);
@@ -80,11 +88,12 @@ function splitFrontmatterRaw(fullContent: string): RawFrontmatterSplit {
     return { hasFrontmatter: false, body: fullContent };
   }
 
-  // Everything between the opening fence's newline and the closing fence,
-  // exactly as written (no trim, no re-parse) — INCLUDING the newline that
-  // immediately precedes the closing `---` (closeMarker's own leading `\n`),
-  // so `rawFrontmatter` always ends in exactly one newline and reassembly
-  // is a plain concatenation with no separator bytes to get right twice.
+  // Raw text between the fences, exactly as written (no trim, no
+  // re-parse) — INCLUDING the newline that immediately precedes the
+  // closing `---` (closeMarker's own leading `\n`, which doubles as the
+  // opening fence's trailing newline when front matter is empty), so
+  // `rawFrontmatter` always ends in exactly one newline and reassembly is
+  // a plain concatenation with no separator bytes to track separately.
   const rawFrontmatter = afterOpen.slice(0, closeIdx + 1);
   let afterClose = afterOpen.slice(closeIdx + closeMarker.length);
   // gray-matter strips exactly one `\r` then exactly one `\n` immediately
@@ -103,7 +112,6 @@ function splitFrontmatterRaw(fullContent: string): RawFrontmatterSplit {
   return {
     hasFrontmatter: true,
     openFence: "---",
-    openNewline,
     rawFrontmatter,
     closeFence: "---",
     closeNewline,
@@ -112,7 +120,7 @@ function splitFrontmatterRaw(fullContent: string): RawFrontmatterSplit {
 }
 
 function reassembleFrontmatterRaw(split: RawFrontmatterSplit & { hasFrontmatter: true }, rawFrontmatter: string): string {
-  return split.openFence + split.openNewline + rawFrontmatter + split.closeFence + split.closeNewline + split.body;
+  return split.openFence + rawFrontmatter + split.closeFence + split.closeNewline + split.body;
 }
 
 /**
@@ -157,6 +165,15 @@ const YAML_PARSE_OPTIONS = { schema: "yaml-1.1", keepSourceTokens: true } as con
  * - anything else sets/replaces the key wholesale.
  */
 function applyUpdatesToYamlDoc(doc: Document.Parsed | Document, updates: Record<string, unknown>): void {
+  if (doc.contents == null) {
+    // An empty/no-front-matter document has `contents: null`. `doc.set()`
+    // would auto-vivify a map for us, but under the `yaml-1.1` schema that
+    // auto-vivified default resolves to `!!omap` (an ordered-map SEQUENCE
+    // of single-key mappings) instead of a plain block mapping — a real
+    // bug in the "no front matter yet" edge case, not a formatting quirk.
+    // Explicitly creating a plain YAMLMap first sidesteps it.
+    doc.contents = new YAMLMap(doc.schema);
+  }
   for (const [key, value] of Object.entries(updates)) {
     if (value === null) {
       doc.delete(key);
@@ -224,20 +241,31 @@ export function mergeAnchorFrontmatter(fullContent: string, updates: Record<stri
   const newlineStyle = detectNewlineStyle(split.rawFrontmatter);
   // yaml only understands LF; normalize in, restore the source style out.
   const normalizedSource = split.rawFrontmatter.replace(/\r\n/g, "\n");
-  const doc = parseDocument(normalizedSource, YAML_PARSE_OPTIONS);
+
+  // A leading run of blank lines has no node to attach to, so `yaml`'s
+  // CST-preserving toString() silently drops it on round-trip (there is
+  // nothing for the blank-line comment/whitespace token to precede). Carve
+  // it off and reattach it verbatim rather than losing it — this is
+  // exactly the same "empty front matter" shape as `---\n---\n`, just with
+  // extra blank lines before the close fence instead of zero.
+  const leadingBlankMatch = /^(?:[ \t]*\n)*/.exec(normalizedSource);
+  const leadingBlank = leadingBlankMatch?.[0] ?? "";
+  const yamlSource = normalizedSource.slice(leadingBlank.length);
+
+  const doc = parseDocument(yamlSource, YAML_PARSE_OPTIONS);
   applyUpdatesToYamlDoc(doc, updates);
   let yamlText = doc.toString();
   if (yamlText === "") {
     // Every key was removed (or the block was already empty and stayed
     // that way): matches gray-matter's own stringify, which drops the
     // front-matter block entirely when data is `{}` rather than emitting
-    // an empty `---\n---\n` shell.
+    // an empty `---\n---\n` (or blank-padded) shell.
     return split.body;
   }
   if (!yamlText.endsWith("\n")) {
     yamlText += "\n";
   }
-  const rawFrontmatterOut = toNewlineStyle(yamlText, newlineStyle);
+  const rawFrontmatterOut = toNewlineStyle(leadingBlank + yamlText, newlineStyle);
 
   return reassembleFrontmatterRaw(split, rawFrontmatterOut);
 }
@@ -267,7 +295,7 @@ function assembleFull(split: RawFrontmatterSplit, newBody: string): string {
   if (!split.hasFrontmatter) {
     return newBody;
   }
-  return split.openFence + split.openNewline + split.rawFrontmatter + split.closeFence + split.closeNewline + newBody;
+  return split.openFence + split.rawFrontmatter + split.closeFence + split.closeNewline + newBody;
 }
 
 /** Replace an H2 section body (lines below the heading until the next H2). `content` must not include the `##` line. */
