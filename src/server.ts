@@ -6,6 +6,7 @@ import type { AnchorService } from "./anchorService.js";
 import { anchorSectionGuidance } from "./anchorStructure.js";
 import { PeopleRegistryConflictError, ProjectMappingsConflictError } from "./git/repo.js";
 import { errorMetadata, noopRequestLogger, type RequestLogger } from "./logger.js";
+import { MIGRATION_OPERATION_CODES, type MigrationOperationCode } from "./migration/anchorMigration.js";
 import { newTraceId } from "./trace/events.js";
 import type { TraceLogger } from "./trace/logger.js";
 import { TraceRecorder, type TraceConnection } from "./trace/recorder.js";
@@ -588,6 +589,60 @@ the index when your workflow checks in that file.`,
       annotations: { readOnlyHint: true },
     },
     async (input) => jsonResult(await service.graphCoverage(input)),
+  );
+
+  // Derived from the planner's canonical list so the MCP schema can never
+  // drift from the operations planAnchorMigration actually implements.
+  const MigrationOperationCodeSchema = z.enum(
+    MIGRATION_OPERATION_CODES as [MigrationOperationCode, ...MigrationOperationCode[]],
+  );
+  const AnchorMigrationInputSchema = z.object({
+    name: z.string().min(1).describe("Anchor name to migrate."),
+    operations: z
+      .array(MigrationOperationCodeSchema)
+      .min(1)
+      .optional()
+      .describe(
+        "Non-empty subset of migration operations to run. Omit (do not send an empty array) to run every applicable operation.",
+      ),
+  });
+
+  server.registerTool(
+    "previewAnchorMigration",
+    {
+      title: "Preview Anchor Migration",
+      description:
+        "Read-only preview of the Goal 0 Phase 2 previewable migration write operations for one anchor: mint_anchor_id, add_schema_version, convert_relation (legacy bare-string relation targets on registered keys -> anchor:<anchor-id>, only when the target already has a valid anchor_id), scope_goal_reference (legacy bare goal ids under `implements` -> goal:<project-slug>:<goal-id>, only when exactly one project's roadmap defines that goal id), and mint_claim_ids (id-only annotation lines for unannotated claims lacking an id). Returns the exact byte-level content applyAnchorMigration would commit for the same fileCommit, a unified-diff-style summary, one OR MORE outcomes per requested operation, never zero (applied/skipped/not_applicable with a stable reason code; per-target operations like convert_relation and scope_goal_reference report one outcome per inspected relation target, or a single not_applicable no_relation_targets outcome when the anchor has no matching relation arrays), and the validation result the normal write pipeline's validators would produce against that content. Never mutates the anchor. Everything outside the targeted front-matter fields and inserted annotation lines is byte-identical to the source.",
+      inputSchema: AnchorMigrationInputSchema,
+      annotations: { readOnlyHint: true },
+    },
+    async (input) => jsonResult(await service.previewAnchorMigration(input)),
+  );
+
+  server.registerTool(
+    "applyAnchorMigration",
+    {
+      title: "Apply Anchor Migration",
+      description:
+        "Apply the Goal 0 Phase 2 previewable migration write operations to one anchor, funneling through the normal writeAnchor pipeline (write lock, validators, stale_base, revision/recovery guarantees). Requires approved: true. When a prior previewAnchorMigration call for the same anchor, base fileCommit, and operation set is still the most recent preview, apply commits content byte-identical to it (mint_anchor_id/mint_claim_ids draw fresh randomness on every independent plan, so this cache is what makes preview and apply agree) — otherwise it plans fresh. Apply with nothing applicable (the anchor already reflects every requested operation) is a no-op success (noChangesNeeded: true), never an error.",
+      inputSchema: AnchorMigrationInputSchema.extend({
+        approved: z.boolean().default(false),
+        message: z.string().optional(),
+        coAuthor: z.string().optional(),
+        expectedFileCommit: z
+          .string()
+          .min(1)
+          .describe("Required. Must match readAnchor(...).fileCommit or a prior preview's fileCommit, or the write is rejected with stale_base."),
+      }),
+      // destructiveHint true: convert_relation/scope_goal_reference REWRITE
+      // existing relation-target strings, so this is not a purely additive
+      // update even though nothing is deleted.
+      annotations: { destructiveHint: true, idempotentHint: true },
+    },
+    async (input) => {
+      const result = await service.applyAnchorMigration(input);
+      return jsonResult(result, result.version || result.noChangesNeeded ? false : hasBlockingWarnings(result.warnings));
+    },
   );
 
   server.registerTool(

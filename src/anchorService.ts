@@ -262,10 +262,20 @@ import {
   type QuestionTarget,
 } from "./questions.js";
 import { deleteEditableBullet, locateEditableBullet, replaceEditableBulletText } from "./editableBullets.js";
+import {
+  planAnchorMigration,
+  normalizeMigrationOperations,
+  type AnchorMigrationContext,
+  type MigrationOperationCode,
+  type MigrationOperationOutcome,
+} from "./migration/anchorMigration.js";
 
 const BM25_INDEX_READ_CONCURRENCY = 8;
 /** Bounded whole-tree read concurrency for graphCoverage (WP6), matching BM25_INDEX_READ_CONCURRENCY's pattern for the same kind of I/O-bound whole-tree read. */
 const GRAPH_COVERAGE_READ_CONCURRENCY = 8;
+
+/** Max anchors with a retained migration preview (FIFO eviction): bounds memory when many anchors are previewed without ever being applied — the cache is a mint-reproducibility optimization, so eviction only costs a fresh re-plan. */
+const MIGRATION_PREVIEW_CACHE_MAX = 32;
 
 /** Input for `AnchorService.graphCoverage` (Goal 0 Phase 1 WP6). */
 export type GraphCoverageInput = {
@@ -290,6 +300,42 @@ export type GraphCoverageResult = {
   identityContractVersion: number;
   graphGeneration: number;
   graphHead?: string;
+};
+
+/** Input shared by `previewAnchorMigration` and `applyAnchorMigration` (Goal 0 Phase 2 slice 2: `goal0_phase2_migration_write_ops_plan.md`). */
+export type AnchorMigrationInput = {
+  name: string;
+  /** Subset of migration operations to run. Omit to run every applicable operation. */
+  operations?: MigrationOperationCode[];
+};
+
+/** Read-only preview result: the exact byte-level content `applyAnchorMigration` would commit for the same `fileCommit`, plus a diff and the validation result for that content. Never mutates the anchor. */
+export type AnchorMigrationPreviewResult = {
+  name: string;
+  fileCommit?: string;
+  outcomes: MigrationOperationOutcome[];
+  /** True when at least one operation actually changed the content. */
+  changed: boolean;
+  newContent: string;
+  /** Unified-diff-style summary between the current content and `newContent`; empty string when `changed` is false. */
+  diff: string;
+  /** Validation result running the normal write pipeline's validators against `newContent` would produce (read-only — never blocks or commits here). */
+  warnings: ValidationViolation[];
+};
+
+export type ApplyAnchorMigrationInput = AnchorMigrationInput & {
+  approved?: boolean;
+  message?: string;
+  coAuthor?: string;
+  /** Must match `readAnchor(...).fileCommit` (or a prior preview's `fileCommit`) or the write is rejected with `stale_base`, exactly like `writeAnchor`. */
+  expectedFileCommit?: string;
+};
+
+/** `applyAnchorMigration`'s result: `WriteAnchorResult` plus the outcomes describing what the commit (or no-op) did. */
+export type ApplyAnchorMigrationResult = WriteAnchorResult & {
+  outcomes: MigrationOperationOutcome[];
+  /** True when nothing was applicable — the anchor already reflects every requested operation (idempotent no-op, not an error). */
+  noChangesNeeded: boolean;
 };
 
 type MilestoneListRow = {
@@ -346,6 +392,28 @@ export class AnchorService {
    * and self-refreshing, so this field just needs to exist once.
    */
   private _graphIndex: GraphIndex | undefined;
+
+  /**
+   * Last `previewAnchorMigration` result per anchor (Goal 0 Phase 2 slice 2),
+   * keyed by anchor name — reused by `applyAnchorMigration` so apply commits
+   * content BYTE-IDENTICAL to the most recent preview for the same
+   * `fileCommit` and requested operation set, rather than re-planning
+   * (mint_anchor_id/mint_claim_ids draw fresh randomness on every call, so
+   * two independent plans over the same input are never guaranteed to
+   * agree). A cache hit requires the base commit and operation set to match
+   * exactly; any mismatch (stale base, different operations, or no prior
+   * preview at all) falls back to planning fresh — apply is always correct,
+   * just not guaranteed to match an unrelated earlier preview.
+   */
+  private readonly lastMigrationPreview = new Map<
+    string,
+    {
+      fileCommit: string | undefined;
+      operations: readonly MigrationOperationCode[];
+      newContent: string;
+      outcomes: MigrationOperationOutcome[];
+    }
+  >();
 
   constructor(
     private readonly repo: AnchorStore,
@@ -1119,7 +1187,7 @@ export class AnchorService {
       // lives HERE (not in `validateAnchorIdIntegrity`, which only scans on
       // update) so creating an anchor costs exactly one tree walk — see the
       // validator's docstring for the split.
-      const treeAnchorIds = await this.collectTreeAnchorIds(resolved.name);
+      const { idToName: treeAnchorIds } = await this.collectTreeAnchorIds(resolved.name);
       // An invalid-format supplied id is treated as ABSENT for minting: the
       // server owns identity allocation, and letting a malformed value
       // through (possible when migrationWarnOnly downgrades the schema BLOCK
@@ -2109,12 +2177,21 @@ None.
    * anchor's on-disk content (the anchor currently being written, whose id
    * the caller supplies separately from its in-flight content).
    */
-  private async collectTreeAnchorIds(excludeAnchor?: string): Promise<Map<string, string>> {
+  private async collectTreeAnchorIds(excludeAnchor?: string): Promise<{
+    /** anchor_id -> FIRST anchor name declaring it (first-wins, for naming the collision in duplicate BLOCKs and for the mint-collision set). */
+    idToName: Map<string, string>;
+    /** anchor name -> its declared anchor_id, EVERY declarer included — duplicates are NOT dropped here, so a per-anchor lookup (migration's anchorIdForAnchorName) never falsely reports an id-bearing anchor as id-less. */
+    nameToId: Map<string, string>;
+    /** anchor_ids declared by more than one anchor. */
+    duplicatedIds: Set<string>;
+  }> {
     // includeArchive: identity uniqueness is TREE-wide — an archived anchor
     // keeps its anchor_id, and unarchiving one must never collide with an id
     // minted or accepted while it sat in archive/.
     const metas = await this.repo.listAnchors({ includeArchive: true });
-    const ids = new Map<string, string>();
+    const idToName = new Map<string, string>();
+    const nameToId = new Map<string, string>();
+    const duplicatedIds = new Set<string>();
     for (const meta of metas) {
       if (isBuiltInAnchorName(meta.name) || meta.name === excludeAnchor) {
         continue;
@@ -2124,11 +2201,17 @@ None.
         continue;
       }
       const id = anchorIdFromFrontmatter(parseAnchor(content).frontmatter);
-      if (id && !ids.has(id)) {
-        ids.set(id, meta.name);
+      if (!id) {
+        continue;
+      }
+      nameToId.set(meta.name, id);
+      if (idToName.has(id)) {
+        duplicatedIds.add(id);
+      } else {
+        idToName.set(id, meta.name);
       }
     }
-    return ids;
+    return { idToName, nameToId, duplicatedIds };
   }
 
   async listClaims(input: {
@@ -4819,6 +4902,219 @@ None.
       graphGeneration: generation,
       ...(head !== undefined ? { graphHead: head } : {}),
     };
+  }
+
+  /**
+   * Assemble the resolver context `planAnchorMigration` needs (Goal 0 Phase 2
+   * slice 2: `goal0_phase2_migration_write_ops_plan.md`), reusing
+   * `collectTreeAnchorIds`/`collectTreeClaimIds` (the same tree-wide identity
+   * snapshots `writeAnchorExclusive`'s mint-on-create and claim-id-minting
+   * paths already take) and the derived `GraphIndex`'s already-built
+   * anchor-name/goal resolvers via `buildCoverageContext` — no extra
+   * full-tree scan beyond what those two existing helpers already do.
+   * `excludeAnchor` is the anchor being migrated: its own on-disk ids must
+   * not appear in the "existing" sets a fresh mint collision-checks against.
+   */
+  private async buildAnchorMigrationContext(excludeAnchor: string): Promise<AnchorMigrationContext> {
+    const graph = this.getGraphIndex();
+    const [treeAnchorIdState, treeClaimIds, coverageCtx, goalOwners] = await Promise.all([
+      this.collectTreeAnchorIds(excludeAnchor),
+      this.collectTreeClaimIds(excludeAnchor),
+      graph.buildCoverageContext(),
+      graph.goalIdOwnersSnapshot(),
+    ]);
+    // nameToId includes EVERY id-bearing anchor (duplicates too), so an
+    // anchor whose id happens to collide is never falsely reported as
+    // id-less; the planner refuses to CONVERT to a duplicated id via
+    // isDuplicateAnchorId instead (a typed ref to it would not resolve).
+    return {
+      treeAnchorIds: new Set(treeAnchorIdState.idToName.keys()),
+      treeClaimIds,
+      resolveAnchorName: coverageCtx.resolveAnchorName,
+      anchorIdForAnchorName: (anchorName: string) => treeAnchorIdState.nameToId.get(anchorName),
+      isDuplicateAnchorId: (anchorId: string) => treeAnchorIdState.duplicatedIds.has(anchorId),
+      projectsForGoalId: (goalId: string) => goalOwners.get(goalId) ?? [],
+    };
+  }
+
+  /**
+   * Read-only preview of `applyAnchorMigration` for one anchor (Goal 0 Phase
+   * 2 slice 2). Returns the exact byte-level content apply would commit for
+   * the same `fileCommit`, a unified-diff-style summary, per-operation
+   * outcomes, and the validation result running the normal write pipeline's
+   * validators against that content would produce — all without mutating
+   * the anchor. `operations` defaults to every applicable operation
+   * (`MIGRATION_OPERATION_CODES`).
+   */
+  async previewAnchorMigration(input: AnchorMigrationInput): Promise<AnchorMigrationPreviewResult> {
+    const resolved = this.repo.resolveAnchor(input.name);
+    const read = await this.readAnchor(resolved.name);
+    // Normalized (deduped, canonical order) so the preview cache matches a
+    // later apply regardless of the order/duplication the caller used.
+    const operations = normalizeMigrationOperations(input.operations);
+    const ctx = await this.buildAnchorMigrationContext(resolved.name);
+    const { newContent, outcomes } = planAnchorMigration(read.content, ctx, operations);
+    const changed = newContent !== read.content;
+    const diff = changed ? renderProposalDiff(resolved.name, read.content, newContent) : "";
+    const warnings = changed
+      ? await runValidators({
+          name: resolved.name,
+          path: resolved.path,
+          oldContent: read.content,
+          newContent,
+          repo: this.repo,
+          migrationWarnOnly: this.options.migrationWarnOnly,
+          approved: true,
+        })
+      : [];
+
+    // Cache this exact plan so a subsequent applyAnchorMigration against the
+    // SAME base commit and operation set can commit byte-identical content
+    // instead of re-rolling fresh random mints (see field docstring). The
+    // cache exists ONLY for that non-determinism: when no minting operation
+    // actually applied (deterministic-only or no-op previews), apply
+    // re-planning fresh already reproduces the same bytes, so caching the
+    // full newContent string would just retain memory for nothing. An
+    // existing entry (from an earlier minting preview with a different
+    // operation set) is deliberately left alone — apply's fileCommit
+    // eviction handles its staleness.
+    const mintApplied = outcomes.some(
+      (o) => o.status === "applied" && (o.code === "mint_anchor_id" || o.code === "mint_claim_ids"),
+    );
+    if (changed && mintApplied) {
+      // Bounded FIFO (Map insertion order): the cache is a reproducibility
+      // optimization only, so evicting the oldest entry never breaks
+      // correctness — a later apply just re-plans with fresh mints.
+      if (!this.lastMigrationPreview.has(resolved.name) && this.lastMigrationPreview.size >= MIGRATION_PREVIEW_CACHE_MAX) {
+        const oldest = this.lastMigrationPreview.keys().next().value;
+        if (oldest !== undefined) {
+          this.lastMigrationPreview.delete(oldest);
+        }
+      }
+      this.lastMigrationPreview.set(resolved.name, { fileCommit: read.fileCommit, operations, newContent, outcomes });
+    }
+
+    return {
+      name: resolved.name,
+      ...(read.fileCommit ? { fileCommit: read.fileCommit } : {}),
+      outcomes,
+      changed,
+      newContent,
+      diff,
+      warnings,
+    };
+  }
+
+  /**
+   * Apply a previously previewed migration for one anchor (Goal 0 Phase 2
+   * slice 2). Funnels through `writeAnchor` with `approved: true` required
+   * and `expectedFileCommit` mandatory-in-practice (a `stale_base` 409-style
+   * BLOCK surfaces exactly as `writeAnchor` already produces it), so this
+   * inherits the write lock, validators, and revision/recovery guarantees
+   * for free — no separate commit path. When nothing is applicable (the
+   * anchor already reflects every requested operation), this is a no-op
+   * success: no write, no validator run, `noChangesNeeded: true`.
+   */
+  async applyAnchorMigration(input: ApplyAnchorMigrationInput): Promise<ApplyAnchorMigrationResult> {
+    // Plan decision 6: apply is approval-gated and concurrency-guarded at
+    // ITS OWN boundary, not just via whatever validators the resulting
+    // content happens to trip — a migration rewrites identity/relations
+    // metadata, so the caller must explicitly approve and must name the
+    // base revision they previewed against.
+    if (!input.approved) {
+      return {
+        outcomes: [],
+        noChangesNeeded: false,
+        warnings: [
+          {
+            severity: "BLOCK",
+            code: "requires_approval",
+            message:
+              "applyAnchorMigration mutates the anchor; retry with approved: true after explicit user confirmation (preview first with previewAnchorMigration).",
+          },
+        ],
+        requiresApproval: true,
+      };
+    }
+    if (!input.expectedFileCommit) {
+      return {
+        outcomes: [],
+        noChangesNeeded: false,
+        warnings: [
+          {
+            severity: "BLOCK",
+            code: "expected_file_commit_required",
+            message:
+              "applyAnchorMigration requires expectedFileCommit (use previewAnchorMigration's fileCommit) so a base that moved since the preview is rejected with stale_base instead of silently re-planned.",
+          },
+        ],
+        requiresApproval: false,
+      };
+    }
+    const resolved = this.repo.resolveAnchor(input.name);
+    const read = await this.readAnchor(resolved.name);
+    if (input.expectedFileCommit && read.fileCommit && input.expectedFileCommit !== read.fileCommit) {
+      return {
+        outcomes: [],
+        noChangesNeeded: false,
+        warnings: [
+          {
+            severity: "BLOCK",
+            code: "stale_base",
+            message: `Anchor file commit mismatch: expected ${input.expectedFileCommit}, found ${read.fileCommit ?? "none"}. Re-read the anchor and retry.`,
+          },
+        ],
+        requiresApproval: false,
+      };
+    }
+    // Normalized exactly like previewAnchorMigration normalizes before
+    // caching, so a reordered/duplicated-but-identical operation set still
+    // hits the cache below.
+    const operations = normalizeMigrationOperations(input.operations);
+
+    // Reuse the most recent preview's exact output when it was computed
+    // against the same base commit and operation set (see
+    // `lastMigrationPreview`'s docstring) — this is what makes apply commit
+    // content BYTE-IDENTICAL to that preview despite mint_anchor_id/
+    // mint_claim_ids drawing fresh randomness on every independent plan. Any
+    // mismatch (different base, different operations, or no prior preview)
+    // falls back to planning fresh: still correct, just a new random mint.
+    const cached = this.lastMigrationPreview.get(resolved.name);
+    if (cached !== undefined && cached.fileCommit !== read.fileCommit) {
+      // The anchor moved since that preview (some other write landed): the
+      // entry can never match again, so evict it rather than letting stale
+      // plans accumulate for anchors that keep changing through ordinary
+      // writes.
+      this.lastMigrationPreview.delete(resolved.name);
+    }
+    const cacheHit =
+      cached !== undefined &&
+      cached.fileCommit === read.fileCommit &&
+      cached.operations.length === operations.length &&
+      cached.operations.every((code, index) => code === operations[index]);
+
+    const { newContent, outcomes } = cacheHit
+      ? cached
+      : planAnchorMigration(read.content, await this.buildAnchorMigrationContext(resolved.name), operations);
+
+    if (newContent === read.content) {
+      return { outcomes, noChangesNeeded: true, warnings: [] };
+    }
+
+    const writeResult = await this.writeAnchor({
+      name: resolved.name,
+      content: newContent,
+      message: input.message ?? "chore: migrate anchor toward the Goal 0 identity contract",
+      approved: input.approved ?? false,
+      coAuthor: input.coAuthor,
+      expectedFileCommit: input.expectedFileCommit,
+    });
+
+    if (writeResult.version) {
+      this.lastMigrationPreview.delete(resolved.name);
+    }
+
+    return { ...writeResult, outcomes, noChangesNeeded: false };
   }
 
   /** Best-effort anchor-name resolution used by graph node resolution: normalizes and checks existence against the known anchor set, mirroring `GraphIndex`'s own `resolveAnchorName` context builder. */

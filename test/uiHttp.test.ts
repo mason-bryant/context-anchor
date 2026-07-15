@@ -1668,6 +1668,90 @@ describe("UI HTTP routes", () => {
     expect(mcpResult.duplicateAnchorIds).toEqual(httpResult.duplicateAnchorIds);
     expect(mcpResult.identityContractVersion).toBe(httpResult.identityContractVersion);
   });
+
+  type AnchorMigrationHttpResult = {
+    name: string;
+    fileCommit?: string;
+    outcomes: Array<{ code: string; status: string; reason?: string; detail: string }>;
+    changed: boolean;
+    newContent: string;
+    diff: string;
+    warnings: Array<{ severity: string; code: string; message: string }>;
+  };
+
+  it("requires auth and previews an anchor migration without mutating it through /api/ui/anchor-migration-preview", async () => {
+    const unauthed = await fetch(`${baseUrl}/api/ui/anchor-migration-preview`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: "projects/demo/demo.md" }),
+    });
+    expect(unauthed.status).toBe(401);
+
+    const before = await service.readAnchor("projects/demo/demo.md");
+    const preview = await postJson<AnchorMigrationHttpResult>("/api/ui/anchor-migration-preview", {
+      name: "projects/demo/demo.md",
+    });
+
+    // The demo anchor was created via writeAnchor in beforeEach, so
+    // mint-on-create (Goal 0 Phase 2 WP-A) already gave it an anchor_id and
+    // schema_version — mint_anchor_id/add_schema_version are both
+    // not_applicable here. Its unannotated claims still lack ids, so
+    // mint_claim_ids is what proves the preview actually did something.
+    expect(preview.changed).toBe(true);
+    expect(preview.newContent).toContain("anchor_id: a-");
+    expect(preview.outcomes.some((o) => o.code === "mint_anchor_id" && o.status === "not_applicable")).toBe(true);
+    expect(preview.outcomes.some((o) => o.code === "mint_claim_ids" && o.status === "applied")).toBe(true);
+
+    const after = await service.readAnchor("projects/demo/demo.md");
+    expect(after.content).toBe(before.content);
+    expect(after.fileCommit).toBe(before.fileCommit);
+  });
+
+  it("rejects an invalid operations value for /api/ui/anchor-migration-preview with 400", async () => {
+    const response = await fetch(`${baseUrl}/api/ui/anchor-migration-preview`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${TOKEN}`, "content-type": "application/json" },
+      body: JSON.stringify({ name: "projects/demo/demo.md", operations: ["not_a_real_operation"] }),
+    });
+    const body = (await response.json()) as { error: { message: string } };
+    expect(response.status).toBe(400);
+    expect(body.error.message).toContain("not_a_real_operation");
+  });
+
+  it("rejects an EMPTY operations array with 400 (omit the field to run every applicable operation)", async () => {
+    const response = await fetch(`${baseUrl}/api/ui/anchor-migration-preview`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${TOKEN}`, "content-type": "application/json" },
+      body: JSON.stringify({ name: "projects/demo/demo.md", operations: [] }),
+    });
+    const body = (await response.json()) as { error: { message: string } };
+    expect(response.status).toBe(400);
+    expect(body.error.message).toContain("non-empty");
+  });
+
+  it("requires auth and commits through /api/ui/anchor-migration-apply, matching the preview", async () => {
+    const unauthed = await fetch(`${baseUrl}/api/ui/anchor-migration-apply`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: "projects/demo/demo.md", approved: true }),
+    });
+    expect(unauthed.status).toBe(401);
+
+    const preview = await postJson<AnchorMigrationHttpResult>("/api/ui/anchor-migration-preview", {
+      name: "projects/demo/demo.md",
+    });
+
+    const applied = await postJson<{ version?: string; warnings: unknown[]; noChangesNeeded: boolean }>(
+      "/api/ui/anchor-migration-apply",
+      { name: "projects/demo/demo.md", approved: true, expectedFileCommit: preview.fileCommit },
+    );
+
+    expect(applied.version).toBeTruthy();
+    expect(applied.noChangesNeeded).toBe(false);
+
+    const committed = await service.readAnchor("projects/demo/demo.md");
+    expect(committed.content).toBe(preview.newContent);
+  });
 });
 
 describe("UI HTTP trace routes", () => {
