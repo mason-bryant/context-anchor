@@ -17,17 +17,21 @@ and their tests. No `src/anchorService.ts`, `src/migration/*`, `src/server.ts`,
 ## What shipped
 
 - **Per-anchor Migrate action**: the Coverage table gains a "Migrate" column;
-  `coverageRowHtml` renders a real `<button data-migrate-anchor>` for anchor
-  records with suggested operations (mirrors `isMigratableCoverageRecord`).
-  Claim rows never get their own button.
+  `coverageRowHtml` renders a real `<button data-migrate-anchor>` for ANY row
+  with suggested operations (mirrors `isMigratableCoverageRecord`). Migration
+  is always anchor-scoped — the button targets `record.anchorName`, which for
+  a claim row is its owning anchor — so claim rows are migratable too (coverage
+  emits `mint_claim_id` on the claim record, not the anchor, so restricting to
+  anchor rows would leave a claim-id-only gap with no reachable button).
 - **Preview-first review modal** (`#migration-modal`, mirroring the existing
   claim-source modal shell): clicking Migrate calls
   `POST /api/ui/anchor-migration-preview` and renders the per-operation
   outcomes (grouped/labelled), the unified diff in a `<details>`, and any
   validation warnings. Apply is disabled unless the preview `changed`.
 - **Explicit approved apply**: "Apply migration" calls
-  `POST /api/ui/anchor-migration-apply` with `approved: true` and the
-  preview's `expectedFileCommit`. It is never reachable without a preceding
+  `POST /api/ui/anchor-migration-apply` with `approved: true` and the preview
+  response's `fileCommit` value sent under the request's `expectedFileCommit`
+  key. It is never reachable without a preceding
   preview in the same panel session, and is guarded by `state.migrationApplying`
   against double-clicks. On a committed result it refreshes coverage
   (`loadCoverage`) so the row reflects its new state; a `noChangesNeeded`

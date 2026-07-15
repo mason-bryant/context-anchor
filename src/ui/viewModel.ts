@@ -611,9 +611,11 @@ export type GroupedMigrationOutcomes = {
 };
 
 /**
- * Group a preview/apply response's `outcomes` by status for the review
- * panel's three-column display (applied vs skipped vs not-applicable),
- * preserving each group's original relative order.
+ * Group a preview/apply response's `outcomes` by status (applied / skipped /
+ * not-applicable), preserving each group's original relative order. Provided
+ * for callers that want a grouped shape; the shipped review panel renders a
+ * single flat, status-annotated list (see HANDOFF.md), so this is currently
+ * exercised only by unit tests — kept for a future grouped rendering.
  */
 export function groupMigrationOutcomes(outcomes: readonly MigrationOperationOutcome[]): GroupedMigrationOutcomes {
   const applied: MigrationOperationOutcome[] = [];
