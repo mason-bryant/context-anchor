@@ -566,13 +566,18 @@ export function appendCoverageRecords(
 // ---------------------------------------------------------------------------
 
 /**
- * Whether a coverage record should get the "Migrate..." action (plan decision
- * 1): only `kind: "anchor"` records with at least one `suggestedOperations`
- * entry. Claim rows never get their own migrate action — a claim's fix
- * (`mint_claim_ids`) travels with its owning anchor's migration.
+ * Whether a coverage record should get the "Migrate..." action: any record —
+ * anchor OR claim — with at least one `suggestedOperations` entry. Migration
+ * is always anchor-scoped (the button targets `record.anchorName`, which for a
+ * claim record is its owning anchor), so a single anchor's `mint_claim_ids`
+ * migrates all of its claims at once. Claim rows MUST qualify: coverage emits
+ * the `mint_claim_id` suggestion on the CLAIM record, not on the owning anchor
+ * record (`src/graph/coverage.ts`), so restricting the action to anchor rows
+ * would leave an anchor whose only gap is missing claim ids with no reachable
+ * Migrate button anywhere.
  */
 export function isMigratableCoverageRecord(record: CoverageRecordKind): boolean {
-  return record.kind === "anchor" && record.suggestedOperations.length > 0;
+  return record.suggestedOperations.length > 0;
 }
 
 /** Human label for a migration operation outcome's status badge. */

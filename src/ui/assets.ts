@@ -6742,11 +6742,13 @@ export const UI_JS = `(function () {
     }).join("");
   }
 
-  // Mirrors isMigratableCoverageRecord in src/ui/viewModel.ts: only anchor
-  // records with at least one suggested operation get the Migrate action (a
-  // claim's fix travels with its owning anchor's migration).
+  // Mirrors isMigratableCoverageRecord in src/ui/viewModel.ts: any record
+  // (anchor OR claim) with a suggested operation gets the Migrate action.
+  // Migration is anchor-scoped and the button targets record.anchorName (the
+  // owning anchor for a claim row), so a claim-id gap is reachable even
+  // though coverage emits mint_claim_id on the claim record, not the anchor.
   function isMigratableCoverageRecord(record) {
-    return record.kind === "anchor" && record.suggestedOperations && record.suggestedOperations.length > 0;
+    return record.suggestedOperations && record.suggestedOperations.length > 0;
   }
 
   function coverageMigrateCellHtml(record) {
@@ -7003,12 +7005,18 @@ export const UI_JS = `(function () {
         // state. Apply stays disabled (the preview is now spent).
         await loadCoverage();
       }
-      // On any non-commit (a validation BLOCK or a stale base) apply stays
-      // disabled: re-applying the spent preview cannot succeed. The reason is
-      // shown; the user closes and re-opens for a fresh preview.
+      // On a non-commit RESULT (a validation BLOCK or a stale base) apply
+      // stays disabled: re-applying the spent preview cannot succeed. The
+      // reason is shown; the user closes and re-opens for a fresh preview.
     } catch (error) {
+      // A THROWN failure is transport-level (network / 5xx), not a business
+      // rejection — the preview is still valid, so re-enable Apply for a
+      // retry rather than forcing a close/reopen.
       if (state.migrationModal && state.migrationModal.anchorName === anchorName) {
         el("migration-result").textContent = "Apply failed: " + error.message;
+        if (state.migrationModal.preview && state.migrationModal.preview.changed) {
+          el("migration-apply").disabled = false;
+        }
       }
     } finally {
       state.migrationApplying = false;

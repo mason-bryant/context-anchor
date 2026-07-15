@@ -526,11 +526,14 @@ describe("Coverage → migration UI helpers (Goal 0 Phase 2 slice 3a)", () => {
     ...overrides,
   });
 
-  it("offers Migrate only for anchor records that have suggested operations", () => {
+  it("offers Migrate for any record (anchor or claim) with suggested operations", () => {
     expect(isMigratableCoverageRecord(anchorRecord({ suggestedOperations: [{ code: "mint_anchor_id", message: "x" }] }))).toBe(true);
     expect(isMigratableCoverageRecord(anchorRecord({ suggestedOperations: [] }))).toBe(false);
-    // A claim row never gets its own Migrate action even with suggestions.
-    expect(isMigratableCoverageRecord(claimRecord({ suggestedOperations: [{ code: "mint_claim_id", message: "x" }] }))).toBe(false);
+    // A claim row with a suggestion IS migratable (its button targets the
+    // owning anchor) — coverage emits mint_claim_id on the claim record, so
+    // restricting to anchor rows would make that gap unreachable.
+    expect(isMigratableCoverageRecord(claimRecord({ suggestedOperations: [{ code: "mint_claim_id", message: "x" }] }))).toBe(true);
+    expect(isMigratableCoverageRecord(claimRecord({ suggestedOperations: [] }))).toBe(false);
   });
 
   it("labels operation codes and outcome statuses, falling back to the raw value", () => {
