@@ -1322,7 +1322,10 @@ function readMigrationOperationsBody(body: Record<string, unknown>): MigrationOp
   }
   const invalid = value.find((item) => !isMigrationOperationCode(item as string));
   if (invalid !== undefined) {
-    throw new UiHttpError(400, `Invalid operations: unknown migration operation ${invalid}`);
+    throw new UiHttpError(
+      400,
+      `Invalid operations: unknown migration operation ${invalid === "" ? "(empty)" : String(invalid)}`,
+    );
   }
   return value as MigrationOperationCode[];
 }

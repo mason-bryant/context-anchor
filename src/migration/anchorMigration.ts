@@ -66,7 +66,16 @@ export function normalizeMigrationOperations(
 
 export type MigrationOperationStatus = "applied" | "skipped" | "not_applicable";
 
-/** Stable skip-reason codes (HANDOFF.md's "skip-reason inventory" enumerates every value this module can emit). */
+/**
+ * Stable skip-reason codes (HANDOFF.md's "skip-reason inventory" documents
+ * each). Two members are RESERVED and not emitted by any current code path:
+ * `key_wrong_target_kind` (a wrong-kind TYPED ref is a coverage-time
+ * `malformed` finding, never a legacy string migration inspects) and
+ * `not_an_anchor` (the service only invokes the planner on resolved anchor
+ * names today). They are kept so adding the corresponding guard later is
+ * not a breaking type change — do not generate exhaustive UI text from this
+ * union without handling that.
+ */
 export type MigrationSkipReason =
   | "already_present"
   | "target_missing_anchor_id"
@@ -108,8 +117,12 @@ export type AnchorMigrationContext = {
 /**
  * Plan a migration over one anchor's raw content: apply every requested
  * operation (default: all of `MIGRATION_OPERATION_CODES`) in a fixed,
- * deterministic order, and return the resulting content plus one outcome per
- * requested operation. Pure — no I/O, no git, no filesystem, mirroring
+ * deterministic order, and return the resulting content plus ONE OR MORE
+ * outcomes per requested operation — single-shot operations
+ * (`mint_anchor_id`, `add_schema_version`, `mint_claim_ids`) report exactly
+ * one, while per-target operations (`convert_relation`,
+ * `scope_goal_reference`) report one outcome per inspected relation target.
+ * Pure — no I/O, no git, no filesystem, mirroring
  * `src/graph/extract.ts` / `src/graph/coverage.ts`'s purity pattern.
  *
  * Order matters for two reasons: (1) `add_schema_version` and
