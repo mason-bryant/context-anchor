@@ -7044,15 +7044,28 @@ export const UI_JS = `(function () {
       }
     } finally {
       state.migrationApplying = false;
+      // If a DIFFERENT migration modal was opened while this apply was in
+      // flight, its Apply button rendered disabled ("apply in progress");
+      // now that the lock is free, re-render it so Apply reflects reality.
+      // (The same-anchor modal, if still open, keeps its result message.)
+      if (
+        state.migrationModal &&
+        state.migrationModal.anchorName !== anchorName &&
+        state.migrationModal.preview
+      ) {
+        renderMigrationPreview(state.migrationModal.preview);
+      }
     }
   }
 
   function closeMigrationModal() {
+    // Only hide/clear the modal — do NOT release the apply single-flight lock
+    // here. An in-flight apply owns migrationApplying until its own finally
+    // clears it; clearing it on close would let the user close mid-apply,
+    // reopen, and fire a second concurrent apply. A modal reopened while the
+    // lock is still held renders Apply disabled ("apply in progress"), and
+    // applyMigrationFromModal's finally re-renders it once the lock frees.
     state.migrationModal = null;
-    // Release the apply lock: any in-flight apply's result handling is already
-    // guarded by an anchorName check, so it won't touch a future modal, and a
-    // freshly opened modal must never inherit a stale "applying" lock.
-    state.migrationApplying = false;
     el("migration-modal").hidden = true;
   }
 
