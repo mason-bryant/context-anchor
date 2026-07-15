@@ -264,7 +264,7 @@ import {
 import { deleteEditableBullet, locateEditableBullet, replaceEditableBulletText } from "./editableBullets.js";
 import {
   planAnchorMigration,
-  MIGRATION_OPERATION_CODES,
+  normalizeMigrationOperations,
   type AnchorMigrationContext,
   type MigrationOperationCode,
   type MigrationOperationOutcome,
@@ -4933,7 +4933,9 @@ None.
   async previewAnchorMigration(input: AnchorMigrationInput): Promise<AnchorMigrationPreviewResult> {
     const resolved = this.repo.resolveAnchor(input.name);
     const read = await this.readAnchor(resolved.name);
-    const operations = input.operations ?? MIGRATION_OPERATION_CODES;
+    // Normalized (deduped, canonical order) so the preview cache matches a
+    // later apply regardless of the order/duplication the caller used.
+    const operations = normalizeMigrationOperations(input.operations);
     const ctx = await this.buildAnchorMigrationContext(resolved.name);
     const { newContent, outcomes } = planAnchorMigration(read.content, ctx, operations);
     const changed = newContent !== read.content;
@@ -5028,7 +5030,10 @@ None.
         requiresApproval: false,
       };
     }
-    const operations = input.operations ?? MIGRATION_OPERATION_CODES;
+    // Normalized exactly like previewAnchorMigration normalizes before
+    // caching, so a reordered/duplicated-but-identical operation set still
+    // hits the cache below.
+    const operations = normalizeMigrationOperations(input.operations);
 
     // Reuse the most recent preview's exact output when it was computed
     // against the same base commit and operation set (see

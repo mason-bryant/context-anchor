@@ -46,6 +46,24 @@ export const MIGRATION_OPERATION_CODES: readonly MigrationOperationCode[] = [
   "mint_claim_ids",
 ] as const;
 
+/**
+ * Canonical, deduplicated operation list in `MIGRATION_OPERATION_CODES`
+ * order. Callers treat `operations` as an unordered SET (and may repeat
+ * codes), so both the planner and the preview/apply cache comparison
+ * normalize through this — otherwise a reordered-but-identical request
+ * would miss the preview cache and re-plan with fresh random mints,
+ * committing different ids than the preview showed.
+ */
+export function normalizeMigrationOperations(
+  operations?: readonly MigrationOperationCode[],
+): MigrationOperationCode[] {
+  if (!operations) {
+    return [...MIGRATION_OPERATION_CODES];
+  }
+  const requested = new Set(operations);
+  return MIGRATION_OPERATION_CODES.filter((code) => requested.has(code));
+}
+
 export type MigrationOperationStatus = "applied" | "skipped" | "not_applicable";
 
 /** Stable skip-reason codes (HANDOFF.md's "skip-reason inventory" enumerates every value this module can emit). */
@@ -395,7 +413,11 @@ function planMintClaimIds(
   ctx: AnchorMigrationContext,
 ): { content: string; outcome: MigrationOperationOutcome } {
   const claims = extractClaims(content);
-  const candidates = claims.filter((claim) => !claim.id);
+  // Only UNANNOTATED claims get id-only rows: an annotated claim lacking an
+  // id is already handled by the ordinary write path (`mintMissingClaimIds`
+  // in writeAnchor mints onto its source row), and a malformed claim should
+  // be repaired, not decorated.
+  const candidates = claims.filter((claim) => claim.status === "unannotated" && !claim.id);
   if (candidates.length === 0) {
     return {
       content,
@@ -403,7 +425,7 @@ function planMintClaimIds(
         code: "mint_claim_ids",
         status: "not_applicable",
         reason: "no_unannotated_claims",
-        detail: "Every claim already has an id.",
+        detail: "No unannotated claims lack an id.",
       },
     };
   }

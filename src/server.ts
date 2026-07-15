@@ -631,7 +631,10 @@ the index when your workflow checks in that file.`,
           .string()
           .describe("Required. Must match readAnchor(...).fileCommit or a prior preview's fileCommit, or the write is rejected with stale_base."),
       }),
-      annotations: { destructiveHint: false, idempotentHint: true },
+      // destructiveHint true: convert_relation/scope_goal_reference REWRITE
+      // existing relation-target strings, so this is not a purely additive
+      // update even though nothing is deleted.
+      annotations: { destructiveHint: true, idempotentHint: true },
     },
     async (input) => {
       const result = await service.applyAnchorMigration(input);

@@ -271,6 +271,25 @@ describe("planAnchorMigration: mint_claim_ids", () => {
     expect(claims[1].status).toBe("unannotated");
   });
 
+  it("never adds an id-only row to an ANNOTATED claim lacking an id (that is mintMissingClaimIds' job on write)", () => {
+    const content = doc(
+      "",
+      `## Current State
+
+- Annotated claim WITHOUT an id.
+  {src: PR #2; observed: 2026-07-14; conf: high}
+`,
+    );
+    const result = planAnchorMigration(content, makeCtx(), ["mint_claim_ids"]);
+    const outcome = result.outcomes.find((o) => o.code === "mint_claim_ids")!;
+    expect(outcome.status).toBe("not_applicable");
+    expect(outcome.reason).toBe("no_unannotated_claims");
+    // Byte-identical: the annotated claim's id comes from the ordinary
+    // write path minting onto its source row, never from an id-only row
+    // that would mark a provenance-bearing claim as provenanceless.
+    expect(result.newContent).toBe(content);
+  });
+
   it("is not_applicable (no_unannotated_claims) when every claim already has an id", () => {
     const content = doc(
       "",
@@ -610,6 +629,27 @@ describe("AnchorService.previewAnchorMigration / applyAnchorMigration (Goal 0 Ph
     const after = await service.readAnchor("projects/demo/legacy.md");
     expect(after.content).toBe(before.content);
     expect(after.fileCommit).toBe(before.fileCommit);
+  });
+
+  it("apply hits the preview cache even when operations are reordered and duplicated (operation SET semantics)", async () => {
+    await seedMigrationRepo();
+    const preview = await service.previewAnchorMigration({
+      name: "projects/demo/legacy.md",
+      operations: ["mint_anchor_id", "mint_claim_ids"],
+    });
+
+    const applied = await service.applyAnchorMigration({
+      name: "projects/demo/legacy.md",
+      approved: true,
+      expectedFileCommit: preview.fileCommit,
+      // Same SET, different order, with a duplicate — must still commit the
+      // preview's exact bytes rather than re-planning with fresh mints.
+      operations: ["mint_claim_ids", "mint_anchor_id", "mint_claim_ids"],
+    });
+    expect(applied.warnings.filter((w) => w.severity === "BLOCK")).toEqual([]);
+
+    const committed = await service.readAnchor("projects/demo/legacy.md");
+    expect(committed.content).toBe(preview.newContent);
   });
 
   it("apply commits content byte-identical to the most recent preview for the same fileCommit", async () => {
