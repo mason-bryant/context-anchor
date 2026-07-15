@@ -547,7 +547,7 @@ export const UI_HTML = `<!doctype html>
               <table id="coverage-table" hidden>
                 <caption class="sr-only">Structural coverage records for anchors and claims</caption>
                 <thead>
-                  <tr><th scope="col">Kind</th><th scope="col">Anchor</th><th scope="col">State</th><th scope="col">Reasons</th><th scope="col">Suggested operations</th></tr>
+                  <tr><th scope="col">Kind</th><th scope="col">Anchor</th><th scope="col">State</th><th scope="col">Reasons</th><th scope="col">Suggested operations</th><th scope="col">Migrate</th></tr>
                 </thead>
                 <tbody id="coverage-rows"></tbody>
               </table>
@@ -664,6 +664,29 @@ export const UI_HTML = `<!doctype html>
           <button id="claim-source-cancel" type="button">Cancel</button>
         </div>
         <p id="claim-source-result" class="claim-editor-result"></p>
+      </div>
+    </div>
+    <div id="migration-modal" class="modal-backdrop" hidden>
+      <div class="modal-dialog migration-dialog" role="dialog" aria-modal="true" aria-labelledby="migration-title">
+        <div class="modal-header">
+          <div>
+            <h2 id="migration-title">Migrate anchor</h2>
+            <p id="migration-anchor-name"></p>
+          </div>
+          <button id="migration-close" type="button" class="icon-button" aria-label="Close migration preview">×</button>
+        </div>
+        <p id="migration-preview-status" aria-live="polite">Loading preview…</p>
+        <div id="migration-outcomes" class="migration-outcomes"></div>
+        <details id="migration-diff-details" class="migration-diff" hidden>
+          <summary>Diff preview</summary>
+          <pre id="migration-diff"></pre>
+        </details>
+        <div id="migration-warnings" class="migration-warnings" hidden></div>
+        <p id="migration-result" class="claim-editor-result" aria-live="polite"></p>
+        <div class="action-row">
+          <button id="migration-apply" type="button" disabled>Apply migration</button>
+          <button id="migration-cancel" type="button">Close</button>
+        </div>
       </div>
     </div>
     <script src="/ui/app.js"></script>
@@ -2290,6 +2313,49 @@ textarea {
 .claim-source-dialog {
   width: min(1120px, calc(100vw - 48px));
 }
+.migration-dialog {
+  width: min(760px, calc(100vw - 48px));
+}
+.migration-outcome-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+}
+.migration-outcome {
+  display: grid;
+  grid-template-columns: minmax(140px, auto) auto 1fr;
+  gap: 8px;
+  align-items: baseline;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: var(--panel-strong);
+}
+.migration-outcome-skipped,
+.migration-outcome-not_applicable {
+  opacity: 0.75;
+}
+.migration-outcome-op {
+  font-weight: 600;
+}
+.migration-outcome-detail {
+  color: var(--muted);
+  font-size: 0.9em;
+}
+.migration-diff pre {
+  max-height: 320px;
+  overflow: auto;
+  white-space: pre;
+  font-size: 0.85em;
+}
+.migration-warnings {
+  border-left: 3px solid #d98324;
+  padding-left: 10px;
+}
+.coverage-migrate-button {
+  white-space: nowrap;
+}
 .modal-header {
   display: flex;
   justify-content: space-between;
@@ -3175,6 +3241,11 @@ export const UI_JS = `(function () {
     // Monotonic id guarding coverage loads against out-of-order responses;
     // see loadCoverage/loadMoreCoverage (mirrors anchorLoadId above).
     coverageLoadId: 0,
+    // Migration review panel (Goal 0 Phase 2 slice 3a): the anchor + preview
+    // (incl. fileCommit) currently open in the migration modal, and an
+    // in-flight guard so a double-click cannot double-apply.
+    migrationModal: null,
+    migrationApplying: false,
     coverageProject: "",
     coverageStates: [],
     coverageText: "",
@@ -6671,6 +6742,22 @@ export const UI_JS = `(function () {
     }).join("");
   }
 
+  // Mirrors isMigratableCoverageRecord in src/ui/viewModel.ts: any record
+  // (anchor OR claim) with a suggested operation gets the Migrate action.
+  // Migration is anchor-scoped and the button targets record.anchorName (the
+  // owning anchor for a claim row), so a claim-id gap is reachable even
+  // though coverage emits mint_claim_id on the claim record, not the anchor.
+  function isMigratableCoverageRecord(record) {
+    return record.suggestedOperations && record.suggestedOperations.length > 0;
+  }
+
+  function coverageMigrateCellHtml(record) {
+    if (!isMigratableCoverageRecord(record)) {
+      return "<td></td>";
+    }
+    return "<td><button type=\\"button\\" class=\\"coverage-migrate-button\\" data-migrate-anchor=\\"" + escapeHtml(record.anchorName) + "\\">Migrate\\u2026</button></td>";
+  }
+
   function coverageRowHtml(record) {
     var anchorLink = "<a href=\\"" + escapeHtml(anchorHref(record.anchorName)) + "\\" data-anchor-name=\\"" + escapeHtml(record.anchorName) + "\\">" + escapeHtml(record.anchorName) + "</a>";
     var lineSuffix = record.kind === "claim" ? " (line " + escapeHtml(String(record.line)) + ")" : "";
@@ -6680,6 +6767,7 @@ export const UI_JS = `(function () {
       + "<td><span class=\\"badge\\">" + escapeHtml(coverageStateLabel(record.state)) + "</span></td>"
       + "<td>" + coverageReasonsHtml(record.reasons) + "</td>"
       + "<td>" + coverageOperationsHtml(record.suggestedOperations) + "</td>"
+      + coverageMigrateCellHtml(record)
       + "</tr>";
   }
 
@@ -6782,6 +6870,203 @@ export const UI_JS = `(function () {
     loadMoreEl.hidden = !state.coverageNextCursor;
     loadMoreEl.disabled = !!state.coverageLoadMoreLoading;
     loadMoreEl.textContent = state.coverageLoadMoreLoading ? "Loading..." : "Load more";
+  }
+
+  // Migration review panel (Goal 0 Phase 2 slice 3a): preview -> review ->
+  // apply against the #92 API. Preview always precedes apply in one panel
+  // session; apply always sends approved:true + the preview's fileCommit.
+  var MIGRATION_OPERATION_CODE_LABELS = {
+    mint_anchor_id: "Mint anchor ID",
+    add_schema_version: "Add schema version",
+    convert_relation: "Convert relation",
+    scope_goal_reference: "Scope goal reference",
+    mint_claim_ids: "Mint claim IDs"
+  };
+  var MIGRATION_OUTCOME_STATUS_LABELS = { applied: "Applied", skipped: "Skipped", not_applicable: "Not applicable" };
+
+  // Mirrors migrationOperationCodeLabel / migrationOutcomeStatusLabel in src/ui/viewModel.ts.
+  function migrationOperationCodeLabel(code) {
+    return MIGRATION_OPERATION_CODE_LABELS[code] || code;
+  }
+  function migrationOutcomeStatusLabel(status) {
+    return MIGRATION_OUTCOME_STATUS_LABELS[status] || status;
+  }
+
+  function migrationOutcomesHtml(outcomes) {
+    if (!outcomes || outcomes.length === 0) {
+      return "<p>No operations were evaluated.</p>";
+    }
+    var items = outcomes.map(function (outcome) {
+      return "<li class=\\"migration-outcome migration-outcome-" + escapeHtml(outcome.status) + "\\">"
+        + "<span class=\\"migration-outcome-op\\">" + escapeHtml(migrationOperationCodeLabel(outcome.code)) + "</span>"
+        + "<span class=\\"badge\\">" + escapeHtml(migrationOutcomeStatusLabel(outcome.status)) + "</span>"
+        + "<span class=\\"migration-outcome-detail\\">" + escapeHtml(outcome.detail || "") + "</span>"
+        + "</li>";
+    }).join("");
+    return "<ul class=\\"migration-outcome-list\\">" + items + "</ul>";
+  }
+
+  function renderMigrationWarnings(warnings) {
+    var wrap = el("migration-warnings");
+    if (!warnings || warnings.length === 0) {
+      wrap.hidden = true;
+      wrap.innerHTML = "";
+      return;
+    }
+    wrap.hidden = false;
+    wrap.innerHTML = "<h3>Validation warnings</h3><ul>" + warnings.map(function (warning) {
+      return "<li class=\\"migration-warning-" + escapeHtml(String(warning.severity).toLowerCase()) + "\\"><strong>" + escapeHtml(warning.severity) + "</strong> " + escapeHtml(warning.code) + ": " + escapeHtml(warning.message) + "</li>";
+    }).join("") + "</ul>";
+  }
+
+  // Mirrors migrationApplyResultSummary in src/ui/viewModel.ts.
+  function migrationApplyResultSummary(result) {
+    if (result.version) {
+      return { tone: "info", message: "Migration applied (" + result.version + ")." };
+    }
+    if (result.noChangesNeeded) {
+      return { tone: "info", message: "No changes needed: the anchor already reflects every requested operation." };
+    }
+    var blocking = (result.warnings || []).filter(function (warning) { return warning.severity === "BLOCK"; })[0];
+    if (blocking) {
+      return { tone: "error", message: blocking.message };
+    }
+    var first = (result.warnings || [])[0];
+    return { tone: "warn", message: first ? first.message : "Migration did not commit a new version." };
+  }
+
+  function renderMigrationPreview(preview) {
+    el("migration-preview-status").hidden = true;
+    el("migration-outcomes").innerHTML = migrationOutcomesHtml(preview.outcomes || []);
+    if (preview.diff) {
+      el("migration-diff").textContent = preview.diff;
+      el("migration-diff-details").hidden = false;
+    } else {
+      el("migration-diff-details").hidden = true;
+    }
+    renderMigrationWarnings(preview.warnings || []);
+    // Apply requires the base commit (without it apply could only ever return
+    // expected_file_commit_required), and must not appear clickable while a
+    // previous apply still holds the global lock (its click would silently
+    // no-op against applyMigrationFromModal's guard).
+    var canApply = !!preview.changed && !!preview.fileCommit && !state.migrationApplying;
+    el("migration-apply").disabled = !canApply;
+    if (!preview.changed) {
+      el("migration-result").textContent = "Nothing to migrate: this anchor already reflects every applicable operation.";
+    } else if (!preview.fileCommit) {
+      el("migration-result").textContent = "Cannot apply: this anchor has no base revision to migrate against.";
+    } else if (state.migrationApplying) {
+      el("migration-result").textContent = "An apply is already in progress; please wait.";
+    } else {
+      el("migration-result").textContent = "";
+    }
+  }
+
+  async function openMigrationModal(anchorName) {
+    state.migrationModal = { anchorName: anchorName, preview: null };
+    el("migration-anchor-name").textContent = anchorName;
+    el("migration-preview-status").hidden = false;
+    el("migration-preview-status").textContent = "Loading preview\\u2026";
+    el("migration-outcomes").innerHTML = "";
+    el("migration-diff-details").hidden = true;
+    el("migration-diff").textContent = "";
+    el("migration-warnings").hidden = true;
+    el("migration-warnings").innerHTML = "";
+    el("migration-result").textContent = "";
+    el("migration-apply").disabled = true;
+    el("migration-modal").hidden = false;
+    el("migration-close").focus();
+    try {
+      var preview = await apiPost("/api/ui/anchor-migration-preview", { name: anchorName });
+      // The user may have closed the panel or opened another anchor while the
+      // preview was in flight — only render if this anchor is still current.
+      if (!state.migrationModal || state.migrationModal.anchorName !== anchorName) {
+        return;
+      }
+      state.migrationModal.preview = preview;
+      renderMigrationPreview(preview);
+    } catch (error) {
+      if (state.migrationModal && state.migrationModal.anchorName === anchorName) {
+        el("migration-preview-status").textContent = "Preview failed: " + error.message;
+      }
+    }
+  }
+
+  async function applyMigrationFromModal() {
+    var modal = state.migrationModal;
+    // Guard the apply contract: needs a changed preview AND its base commit
+    // (apply requires expectedFileCommit), and no apply already in flight.
+    if (!modal || !modal.preview || !modal.preview.changed || !modal.preview.fileCommit || state.migrationApplying) {
+      return;
+    }
+    state.migrationApplying = true;
+    el("migration-apply").disabled = true;
+    el("migration-result").textContent = "Applying\\u2026";
+    var anchorName = modal.anchorName;
+    try {
+      var result = await apiPost("/api/ui/anchor-migration-apply", {
+        name: anchorName,
+        approved: true,
+        expectedFileCommit: modal.preview.fileCommit
+      });
+      var summary = migrationApplyResultSummary(result);
+      var stillCurrent = state.migrationModal && state.migrationModal.anchorName === anchorName;
+      if (stillCurrent) {
+        el("migration-result").textContent = summary.message;
+      }
+      if (result.version) {
+        // Committed: refresh coverage so the migrated row reflects its new
+        // state. The refresh is isolated in its own try so a refresh failure
+        // is NOT mistaken for an apply failure — the commit already landed,
+        // the preview is spent, so Apply stays disabled either way.
+        try {
+          await loadCoverage();
+        } catch (refreshError) {
+          if (stillCurrent) {
+            el("migration-result").textContent = summary.message + " Coverage refresh failed (" + refreshError.message + ") — reload to update the table.";
+          }
+        }
+      }
+      // On a non-commit RESULT (a validation BLOCK or a stale base) apply
+      // stays disabled: re-applying the spent preview cannot succeed. The
+      // reason is shown; the user closes and re-opens for a fresh preview.
+    } catch (error) {
+      // A THROWN failure here is a transport-level failure of the APPLY POST
+      // itself (network / 5xx) — the preview is still valid, so re-enable
+      // Apply for a retry rather than forcing a close/reopen. (A refresh
+      // failure after a successful commit is handled above and never reaches
+      // here.)
+      if (state.migrationModal && state.migrationModal.anchorName === anchorName) {
+        el("migration-result").textContent = "Apply failed: " + error.message;
+        if (state.migrationModal.preview && state.migrationModal.preview.changed && state.migrationModal.preview.fileCommit) {
+          el("migration-apply").disabled = false;
+        }
+      }
+    } finally {
+      state.migrationApplying = false;
+      // If a DIFFERENT migration modal was opened while this apply was in
+      // flight, its Apply button rendered disabled ("apply in progress");
+      // now that the lock is free, re-render it so Apply reflects reality.
+      // (The same-anchor modal, if still open, keeps its result message.)
+      if (
+        state.migrationModal &&
+        state.migrationModal.anchorName !== anchorName &&
+        state.migrationModal.preview
+      ) {
+        renderMigrationPreview(state.migrationModal.preview);
+      }
+    }
+  }
+
+  function closeMigrationModal() {
+    // Only hide/clear the modal — do NOT release the apply single-flight lock
+    // here. An in-flight apply owns migrationApplying until its own finally
+    // clears it; clearing it on close would let the user close mid-apply,
+    // reopen, and fire a second concurrent apply. A modal reopened while the
+    // lock is still held renders Apply disabled ("apply in progress"), and
+    // applyMigrationFromModal's finally re-renders it once the lock frees.
+    state.migrationModal = null;
+    el("migration-modal").hidden = true;
   }
 
   async function openDrySessionTimeline(sessionId) {
@@ -10322,6 +10607,7 @@ export const UI_JS = `(function () {
     });
     window.addEventListener("keydown", function (event) {
       if (event.key === "Escape") {
+        if (state.migrationModal) closeMigrationModal();
         if (state.claimSourceModal) closeClaimSourceModal();
         if (state.claimTextEditor) closeClaimTextEditor();
         if (state.bulletTextEditor) closeBulletTextEditor();
@@ -10572,6 +10858,28 @@ export const UI_JS = `(function () {
     });
     el("coverage-load-more").addEventListener("click", function () {
       loadMoreCoverage().catch(function (error) { setBanner(error.message, "error"); });
+    });
+    el("coverage-rows").addEventListener("click", function (event) {
+      var target = event.target;
+      if (target && target.classList && target.classList.contains("coverage-migrate-button")) {
+        event.preventDefault();
+        var migrateAnchor = target.getAttribute("data-migrate-anchor");
+        if (migrateAnchor) {
+          openMigrationModal(migrateAnchor).catch(function (error) {
+            setBanner(error.message, "error");
+          });
+        }
+      }
+    });
+    el("migration-close").addEventListener("click", closeMigrationModal);
+    el("migration-cancel").addEventListener("click", closeMigrationModal);
+    el("migration-apply").addEventListener("click", function () {
+      applyMigrationFromModal().catch(function (error) { setBanner(error.message, "error"); });
+    });
+    el("migration-modal").addEventListener("click", function (event) {
+      if (event.target === el("migration-modal")) {
+        closeMigrationModal();
+      }
     });
     el("mappings-save").addEventListener("click", function () { saveProjectMappings(); });
     el("mappings-refresh").addEventListener("click", function () {
