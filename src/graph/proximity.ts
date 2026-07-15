@@ -174,11 +174,29 @@ export async function computeGraphProximityBoosts(
     return boosts;
   }
 
+  // Goal 0 Phase 2 slice 4: node ids may be keyed v2 (anchor:<anchor-id>,
+  // goal:<project>:<goal-id>). `resolveTaskSignalNodes` builds v1 signal ids
+  // (unscoped goal id, project node) from the task text, so canonicalize each
+  // signal to reach the current node — and, since the boost map is keyed by
+  // ANCHOR NAME (contextPlanner looks it up by `anchor.name`), resolve each
+  // discovered v2 anchor node back to its name via the compatibility map.
+  const compat = await graph.identityCompatibilityMap();
+  const anchorNameForNodeId = (nodeId: string): string => {
+    // v2 anchor node -> v1 anchor node (anchor:<path>) via toV1, then strip the
+    // prefix to the anchor name. A v1 node (no toV1 entry) is already the path.
+    const v1 = compat.toV1.get(nodeId) ?? nodeId;
+    return v1.slice("anchor:".length);
+  };
+
   // Enforce the hard ceiling for every caller (CLI, programmatic, tests), not
   // only the CLI arg parser.
   const boundedMaxBoost = clampGraphScoringMaxBoost(maxBoost);
   for (const signal of signals) {
-    await walkFromSignal(graph, signal, boundedMaxBoost, boosts);
+    const canonicalSignal: TaskSignalNode = {
+      ...signal,
+      nodeId: compat.toV2.get(signal.nodeId) ?? signal.nodeId,
+    };
+    await walkFromSignal(graph, canonicalSignal, boundedMaxBoost, boosts, anchorNameForNodeId);
   }
 
   return boosts;
@@ -189,6 +207,7 @@ async function walkFromSignal(
   signal: TaskSignalNode,
   maxBoost: number,
   boosts: Map<string, GraphProximityBoost>,
+  anchorNameForNodeId: (nodeId: string) => string,
 ): Promise<void> {
   type Frontier = { nodeId: string; hopPath: HopStep[] };
   let frontier: Frontier[] = [{ nodeId: signal.nodeId, hopPath: [] }];
@@ -209,7 +228,9 @@ async function walkFromSignal(
         nextFrontier.push({ nodeId: targetId, hopPath });
 
         if (targetId.startsWith("anchor:")) {
-          const anchorName = targetId.slice("anchor:".length);
+          // Key the boost by anchor NAME (contextPlanner looks it up by
+          // `anchor.name`), resolving a v2 anchor node id back to its name.
+          const anchorName = anchorNameForNodeId(targetId);
           const points = pointsForHop(hop, maxBoost);
           const existing = boosts.get(anchorName);
           // Keep the strongest (closest-hop) boost across all signals: a later

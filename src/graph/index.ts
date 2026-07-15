@@ -23,7 +23,13 @@ import type { AnchorStore } from "../storage/store.js";
 import { parseAnchor } from "../storage/markdown.js";
 import { buildProjectAliasIndex } from "../projectAliases.js";
 import { normalizeRelative } from "../utils/path.js";
-import { anchorIdFromFrontmatter, isValidAnchorId } from "./identity.js";
+import {
+  anchorIdFromFrontmatter,
+  buildIdentityCompatibilityMap,
+  isValidAnchorId,
+  type IdentityCompatibilityMap,
+} from "./identity.js";
+import { canonicalizeNodeId, dedupeAnchorIdByName } from "./canonicalIds.js";
 import { listRoadmapGoalsWithStatus } from "../roadmap/analyzeRoadmap.js";
 import type { CoverageAnalysisContext } from "./coverage.js";
 import type { AnchorMeta, PeopleRegistry, ProjectMappings } from "../types.js";
@@ -87,6 +93,10 @@ export class GraphIndex {
   // unresolved typed target simply falls back to the pre-WP3 anchor_anchor
   // legacy edge (see `extractRelationsEdges` in extract.ts), never drops.
   private anchorIdByName = new Map<string, string | undefined>();
+  /** Memoized v1<->v2 compatibility map + the deduped anchor-id map both derive from, keyed on the graph `generation` so repeated per-request `canonicalizeNodeId`/compat calls within a stable graph reuse them instead of rebuilding the (O(#anchors + #goals)) map every call. Rebuilt on the first call after any mutation bumps `generation`. */
+  private compatMapCache:
+    | { generation: number; map: IdentityCompatibilityMap; dedupedAnchorIdByName: ReadonlyMap<string, string | undefined> }
+    | undefined;
   /** Goal ids keyed by the canonical project slug whose roadmap defines them — PROJECT-SCOPED so `goal:<project>:<goal-id>` refs never cross-resolve against a same-numbered goal in another project. */
   private knownGoalIdsByProject = new Map<string, Set<string>>();
 
@@ -106,6 +116,60 @@ export class GraphIndex {
    */
   graphVersion(): { head: string | undefined; generation: number } {
     return { head: this.head, generation: this.generation };
+  }
+
+  /**
+   * The v1<->v2 identity compatibility map for the current tree (Goal 0 Phase
+   * 2 slice 4), built once per query from the same `anchorIdByName` /
+   * goal-owner maps this index already holds — HEAD-keyed like everything
+   * else via `ensureBuilt`. Callers (the graph-neighbors route/service) use it
+   * to normalize an incoming path / v1 id / v2 id to its current canonical id
+   * before traversal, so an old deep link still resolves after re-key. Goal
+   * ids are scoped by their SINGLE owning project (ambiguous / unknown goals
+   * are reported unmapped), matching how goal nodes are keyed v2 during
+   * extraction.
+   */
+  async identityCompatibilityMap(): Promise<IdentityCompatibilityMap> {
+    await this.ensureBuilt();
+    // Memoized on `generation`: its inputs (anchorIdByName, goal owners) only
+    // change when the graph is rebuilt/invalidated, which bumps generation, so
+    // this rebuilds at most once per mutation rather than once per request.
+    if (this.compatMapCache && this.compatMapCache.generation === this.generation) {
+      return this.compatMapCache.map;
+    }
+    const projectSlugByGoalId = new Map<string, string | undefined>();
+    const owners = await this.goalIdOwnersSnapshot();
+    for (const [goalId, projectSlugs] of owners) {
+      // Exactly one owner -> scoped v2; zero/many -> unmapped (stays v1).
+      projectSlugByGoalId.set(goalId, projectSlugs.length === 1 ? projectSlugs[0] : undefined);
+    }
+    // Deduped so a duplicated anchor_id is unmapped (stays v1) rather than
+    // producing multiple v1->same-v2 entries and a last-write-wins v2->v1
+    // reverse mapping. Cached alongside the map for `canonicalizeNodeId`.
+    const dedupedAnchorIdByName = dedupeAnchorIdByName(this.anchorIdByName);
+    const map = buildIdentityCompatibilityMap({
+      anchorIdByName: dedupedAnchorIdByName,
+      projectSlugByGoalId,
+    });
+    this.compatMapCache = { generation: this.generation, map, dedupedAnchorIdByName };
+    return map;
+  }
+
+  /**
+   * Normalize an incoming node id (a path already resolved to a v1 node id, a
+   * v1 id, or a v2 id) to its current canonical form via the compatibility map
+   * plus structural re-keying of anchor-path-embedding node kinds
+   * (milestone/task/section/claim). A v2 id, or a v1 id whose owner has no
+   * `anchor_id` yet, passes through unchanged. Used by the graph-neighbors
+   * service so an old v1/path deep link resolves to the (now v2) node.
+   */
+  async canonicalizeNodeId(nodeId: string): Promise<string> {
+    const compat = await this.identityCompatibilityMap();
+    // Use the deduped map cached alongside the compat map (built in the same
+    // call above), so a duplicated anchor_id never structurally re-keys a
+    // milestone/task/section/claim id onto a v2 node the graph never emits.
+    const dedupedAnchorIdByName = this.compatMapCache?.dedupedAnchorIdByName ?? this.anchorIdByName;
+    return canonicalizeNodeId(nodeId, compat, dedupedAnchorIdByName);
   }
 
   /** Ensure the graph reflects the current repo HEAD, rebuilding if stale. Never called from the constructor — first graph query triggers the initial build. */
@@ -214,6 +278,10 @@ export class GraphIndex {
    */
   async goalIdOwnersSnapshot(): Promise<ReadonlyMap<string, readonly string[]>> {
     await this.ensureBuilt();
+    // `this.knownGoalIdsByProject` is stored with canonical (alias-resolved)
+    // project slugs (see rebuild), so this owner snapshot — and the compat
+    // map built from it — scope goals to the same canonical slug graph
+    // emission uses.
     const owners = new Map<string, string[]>();
     for (const [projectSlug, goalIds] of this.knownGoalIdsByProject) {
       for (const goalId of goalIds) {
@@ -262,8 +330,11 @@ export class GraphIndex {
       return;
     }
     this.generation += 1;
-
-    this.removeDocumentContribution(anchorName);
+    // Bumping generation already makes the cached compat/dedupe map stale
+    // (its generation no longer matches), but clear it outright so an
+    // incremental update also frees that derived memory immediately rather
+    // than holding it until the next identityCompatibilityMap call.
+    this.compatMapCache = undefined;
 
     let read: ReadAnchorResult | undefined;
     try {
@@ -271,6 +342,27 @@ export class GraphIndex {
     } catch {
       // Deleted or unreadable: leave it removed from the graph.
     }
+
+    // Goal 0 Phase 2 slice 4 — incremental re-key parity: node ids are keyed
+    // v2 off the owning anchor's `anchor_id`, which the incremental path reuses
+    // from the last FULL rebuild (this.anchorIdByName is not recomputed here —
+    // see the field docstring). If this write changed the anchor's id
+    // (gained/lost/replaced it), re-keying only THIS document is not enough:
+    // every OTHER document with an edge targeting this anchor must also re-key
+    // to the new identity, and the reused anchorIdByName map is now stale for
+    // resolving this anchor's own id. Rather than attempt a precise tree-wide
+    // incremental re-key (intricate, and the incremental contract explicitly
+    // permits full invalidation for id-affecting changes), fall back to a
+    // conservative full invalidation: the next query does a clean rebuild,
+    // guaranteeing incremental == clean-rebuild parity by construction.
+    const freshAnchorId = read ? normalizeValidAnchorId(read.frontmatter) : undefined;
+    const cachedAnchorId = this.anchorIdByName.get(anchorName);
+    if (freshAnchorId !== cachedAnchorId) {
+      this.invalidate();
+      return;
+    }
+
+    this.removeDocumentContribution(anchorName);
 
     if (!read || isBuiltInAnchorName(anchorName)) {
       this.anchorMetaByName.delete(anchorName);
@@ -332,6 +424,10 @@ export class GraphIndex {
     this.sectionTitlesByAnchor = new Map();
     this.anchorIdByName = new Map();
     this.knownGoalIdsByProject = new Map();
+    // Drop the derived compat/dedupe cache too, so invalidation frees ALL
+    // derived state rather than retaining the (O(#anchors + #goals)) map on
+    // an idle invalidated index until the next identityCompatibilityMap call.
+    this.compatMapCache = undefined;
   }
 
   private async resolveHead(): Promise<string | undefined> {
@@ -411,7 +507,28 @@ export class GraphIndex {
       }),
     );
 
-    const ctx = await this.buildExtractContext(metas, sectionTitlesByAnchor, anchorIdByName, knownGoalIdsByProject);
+    // Canonicalize goal-owner project slugs before use/storage. The roadmap
+    // slugs above are the path-derived slug plus declared front-matter slugs,
+    // either of which may be a project ALIAS. Resolving each to its canonical
+    // slug (same rule `resolveProjectSlug` uses) means goal v2 scoping,
+    // `goalExistsInProject`, and the compat map's `goalIdOwnersSnapshot` all
+    // agree on ONE canonical owner per goal — otherwise an alias could emit
+    // `goal:<alias>:<id>`, or an alias+canonical pair could look like two
+    // owners and wrongly keep the goal v1.
+    const goalAliasIndex = buildProjectAliasIndex(metas);
+    const canonicalGoalSlug = (slug: string): string =>
+      goalAliasIndex.byAlias.get(slug.trim().toLowerCase()) ?? slug.trim();
+    const canonicalGoalIdsByProject = new Map<string, Set<string>>();
+    for (const [rawSlug, goalIds] of knownGoalIdsByProject) {
+      const canonical = canonicalGoalSlug(rawSlug);
+      const merged = canonicalGoalIdsByProject.get(canonical) ?? new Set<string>();
+      for (const goalId of goalIds) {
+        merged.add(goalId);
+      }
+      canonicalGoalIdsByProject.set(canonical, merged);
+    }
+
+    const ctx = await this.buildExtractContext(metas, sectionTitlesByAnchor, anchorIdByName, canonicalGoalIdsByProject);
 
     // Pass 2: extract edges per document (pure, no I/O — uses the content and
     // parsed body already read in pass 1).
@@ -447,7 +564,7 @@ export class GraphIndex {
     this.literalRelationsReverse = literalRelationsReverse;
     this.sectionTitlesByAnchor = sectionTitlesByAnchor;
     this.anchorIdByName = anchorIdByName;
-    this.knownGoalIdsByProject = knownGoalIdsByProject;
+    this.knownGoalIdsByProject = canonicalGoalIdsByProject;
   }
 
   private async buildExtractContext(
@@ -521,6 +638,32 @@ export class GraphIndex {
     const resolveAnchorId = (anchorId: string): string | undefined =>
       duplicatedAnchorIds.has(anchorId) ? undefined : anchorNameByAnchorId.get(anchorId);
 
+    // Goal 0 Phase 2 slice 4: invert knownGoalIdsByProject to a single-owner
+    // lookup for canonical goal v2 keying. A goal id owned by exactly one
+    // project scopes to that project (v2 `goal:<slug>:<id>`); zero owners
+    // (unknown) or two-plus owners (ambiguous — the exact collision scoped
+    // goals prevent) leave it v1 (`goal:<id>`). Slugs are re-resolved through
+    // `resolveProjectSlug` (an alias -> its canonical slug) so an alias never
+    // becomes a distinct owner or a `goal:<alias>:<id>` key — the stored map
+    // is already canonicalized at the rebuild source, so this is idempotent
+    // here and keeps the guarantee local if a caller ever passes raw slugs.
+    const projectsByGoalId = new Map<string, Set<string>>();
+    for (const [projectSlug, goalIds] of goalIdsByProject) {
+      const canonicalSlug = resolveProjectSlug(projectSlug) ?? projectSlug;
+      for (const goalId of goalIds) {
+        const owners = projectsByGoalId.get(goalId) ?? new Set<string>();
+        owners.add(canonicalSlug);
+        projectsByGoalId.set(goalId, owners);
+      }
+    }
+    const projectSlugForGoalId = (goalId: string): string | undefined => {
+      const owners = projectsByGoalId.get(goalId);
+      if (!owners || owners.size !== 1) {
+        return undefined;
+      }
+      return [...owners][0];
+    };
+
     return {
       anchorNames,
       resolveAnchorName,
@@ -532,6 +675,13 @@ export class GraphIndex {
       resolveAnchorId,
       goalExistsInProject: (projectSlug: string, goalId: string) =>
         goalIdsByProject.get(projectSlug)?.has(goalId) ?? false,
+      canonicalIds: {
+        // Deduped: a duplicated anchor_id must NOT canonicalize (it would
+        // collapse distinct anchors onto one v2 node) — mirrors resolveAnchorId
+        // above, which already refuses duplicated ids for typed relations.
+        anchorIdByName: dedupeAnchorIdByName(anchorIds),
+        projectSlugForGoalId,
+      },
     };
   }
 
@@ -544,6 +694,12 @@ export class GraphIndex {
     removeEdgesFromIndex(existing.edges, this.forward, this.reverse);
     removeLiteralRelationsFromIndex(anchorName, this.literalRelationsReverse);
   }
+}
+
+/** Read a front-matter `anchor_id`, format-gated exactly like the pass-1 population site (a malformed id is treated as no id). */
+function normalizeValidAnchorId(frontmatter: Record<string, unknown> | undefined): string | undefined {
+  const anchorId = anchorIdFromFrontmatter(frontmatter);
+  return anchorId && isValidAnchorId(anchorId) ? anchorId : undefined;
 }
 
 /** Front-matter `type` includes `project-roadmap` (string or array form). */

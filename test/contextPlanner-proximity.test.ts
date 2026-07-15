@@ -347,9 +347,14 @@ describe("computeGraphProximityBoosts (against a minimal stub graph)", () => {
     { from: "anchor:milestone.md", to: "project:demo", type: "anchor_project" as const, sourceOfTruth: "front-matter" as const },
     { from: "milestone:milestone.md", to: "anchor:milestone.md", type: "milestone_anchor" as const, sourceOfTruth: "containment" as const },
   ];
+  // Empty compatibility map = all-v1 tree (no anchor has an id): the walk
+  // canonicalizes signal/result ids through it, and with no entries every id
+  // is already canonical, so these stub-graph node ids stay as-authored.
+  const emptyCompat = { toV2: new Map(), toV1: new Map(), entries: [], unmapped: [] };
   const stubGraph = {
     edgesFrom: async (nodeId: string) => edges.filter((edge) => edge.from === nodeId),
     edgesTo: async (nodeId: string) => edges.filter((edge) => edge.to === nodeId),
+    identityCompatibilityMap: async () => emptyCompat,
   };
 
   it("returns an empty map when there are no signals", async () => {
@@ -407,6 +412,7 @@ describe("computeGraphProximityBoosts (against a minimal stub graph)", () => {
     const keepMaxGraph = {
       edgesFrom: async (nodeId: string) => keepMaxEdges.filter((edge) => edge.from === nodeId),
       edgesTo: async (nodeId: string) => keepMaxEdges.filter((edge) => edge.to === nodeId),
+      identityCompatibilityMap: async () => emptyCompat,
     };
     const boosts = await computeGraphProximityBoosts(
       // eslint-disable-next-line @typescript-eslint/no-explicit-any

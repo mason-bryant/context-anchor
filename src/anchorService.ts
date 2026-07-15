@@ -194,6 +194,7 @@ import {
   type GraphNeighborsInput,
   type GraphNeighborsResult,
   type GraphNeighborsResultNode,
+  type ResolvedGraphNode,
 } from "./graph/neighbors.js";
 import {
   analyzeCoverage,
@@ -4806,11 +4807,24 @@ None.
       return { candidates: resolution.candidates };
     }
 
+    // Goal 0 Phase 2 slice 4: normalize the resolved node id to its current
+    // canonical form before traversal. `resolveGraphNode` produces v1 ids
+    // (anchor path, unscoped goal id) from anchor-name / G-### / path inputs;
+    // an id-bearing anchor's nodes and a scoped goal's node are keyed v2 in the
+    // graph, so an old v1/path deep link (or a plain anchor-name/G-### input)
+    // must be re-keyed to reach the current node. A v2 input, or a v1 id whose
+    // owner has no anchor_id yet, canonicalizes to itself.
+    const canonicalNodeId = await graph.canonicalizeNodeId(resolution.resolved.nodeId);
+    const resolvedNode: ResolvedGraphNode =
+      canonicalNodeId === resolution.resolved.nodeId
+        ? resolution.resolved
+        : { ...resolution.resolved, nodeId: canonicalNodeId };
+
     const depth = clampDepth(input.depth);
     const limit = clampLimit(input.limit);
     const direction = normalizeGraphDirection(input.direction);
 
-    const { nodes, edges } = await traverseGraphNeighbors(graph, resolution.resolved, {
+    const { nodes, edges } = await traverseGraphNeighbors(graph, resolvedNode, {
       depth,
       edgeTypes: input.edgeTypes,
       direction,
@@ -4833,7 +4847,7 @@ None.
       nodes.map((node) => this.enrichGraphNeighborNode(node, metaByName, claimInputs, resolvedClaimsByAnchor)),
     );
 
-    return { resolvedNode: resolution.resolved, nodes: enrichedNodes, edges };
+    return { resolvedNode, nodes: enrichedNodes, edges };
   }
 
   /**
