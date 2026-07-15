@@ -4954,8 +4954,20 @@ None.
 
     // Cache this exact plan so a subsequent applyAnchorMigration against the
     // SAME base commit and operation set can commit byte-identical content
-    // instead of re-rolling fresh random mints (see field docstring).
-    this.lastMigrationPreview.set(resolved.name, { fileCommit: read.fileCommit, operations, newContent, outcomes });
+    // instead of re-rolling fresh random mints (see field docstring). The
+    // cache exists ONLY for that non-determinism: when no minting operation
+    // actually applied (deterministic-only or no-op previews), apply
+    // re-planning fresh already reproduces the same bytes, so caching the
+    // full newContent string would just retain memory for nothing. An
+    // existing entry (from an earlier minting preview with a different
+    // operation set) is deliberately left alone — apply's fileCommit
+    // eviction handles its staleness.
+    const mintApplied = outcomes.some(
+      (o) => o.status === "applied" && (o.code === "mint_anchor_id" || o.code === "mint_claim_ids"),
+    );
+    if (changed && mintApplied) {
+      this.lastMigrationPreview.set(resolved.name, { fileCommit: read.fileCommit, operations, newContent, outcomes });
+    }
 
     return {
       name: resolved.name,

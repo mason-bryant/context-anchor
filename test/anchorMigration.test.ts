@@ -661,6 +661,29 @@ describe("AnchorService.previewAnchorMigration / applyAnchorMigration (Goal 0 Ph
     expect(after.fileCommit).toBe(before.fileCommit);
   });
 
+  it("deterministic-only operations match preview bytes WITHOUT the cache (add_schema_version re-plans identically)", async () => {
+    await seedMigrationRepo();
+    const preview = await service.previewAnchorMigration({
+      name: "projects/demo/legacy.md",
+      operations: ["add_schema_version"],
+    });
+    expect(preview.changed).toBe(true);
+
+    const applied = await service.applyAnchorMigration({
+      name: "projects/demo/legacy.md",
+      approved: true,
+      expectedFileCommit: preview.fileCommit,
+      operations: ["add_schema_version"],
+    });
+    expect(applied.warnings.filter((w) => w.severity === "BLOCK")).toEqual([]);
+
+    // Deterministic operations reproduce the preview's bytes by re-planning
+    // alone — the preview cache deliberately skips them (it exists only for
+    // random-mint reproducibility).
+    const committed = await service.readAnchor("projects/demo/legacy.md");
+    expect(committed.content).toBe(preview.newContent);
+  });
+
   it("apply hits the preview cache even when operations are reordered and duplicated (operation SET semantics)", async () => {
     await seedMigrationRepo();
     const preview = await service.previewAnchorMigration({
