@@ -45,8 +45,9 @@ and inserted annotation lines change.
   re-planned.
 - **Idempotent.** Re-running a migration is a no-op — a second apply reports
   `noChangesNeeded` and makes no commit.
-- **Recoverable.** Every apply is one git commit touching one anchor. Undo is
-  `git revert <commit>`; audit is `git log`.
+- **Recoverable.** Every apply that changes something is one git commit
+  touching one anchor (an already-migrated anchor is a `noChangesNeeded` no-op
+  and makes no commit). Undo is `git revert <commit>`; audit is `git log`.
 
 ---
 
