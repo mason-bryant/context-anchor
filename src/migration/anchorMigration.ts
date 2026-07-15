@@ -85,6 +85,7 @@ export type MigrationSkipReason =
   | "target_unparseable"
   | "goal_unknown"
   | "goal_ambiguous"
+  | "no_relation_targets"
   | "no_unannotated_claims"
   | "not_an_anchor";
 
@@ -121,7 +122,9 @@ export type AnchorMigrationContext = {
  * outcomes per requested operation — single-shot operations
  * (`mint_anchor_id`, `add_schema_version`, `mint_claim_ids`) report exactly
  * one, while per-target operations (`convert_relation`,
- * `scope_goal_reference`) report one outcome per inspected relation target.
+ * `scope_goal_reference`) report one outcome per inspected relation target,
+ * or a single not_applicable/`no_relation_targets` outcome when the anchor
+ * has no matching relation arrays to inspect (never zero).
  * Pure — no I/O, no git, no filesystem, mirroring
  * `src/graph/extract.ts` / `src/graph/coverage.ts`'s purity pattern.
  *
@@ -150,11 +153,18 @@ export function planAnchorMigration(
   if (requested.has("add_schema_version")) {
     outcomes.push(planAddSchemaVersion(parsed.frontmatter, frontmatterUpdates));
   }
+  // Per-target operations still emit AT LEAST one outcome when requested:
+  // an anchor with no matching relation arrays reports a single
+  // not_applicable/no_relation_targets outcome instead of silence, so the
+  // "one or more outcomes per requested operation" contract holds and UI
+  // checklists never see a requested operation vanish from the response.
   if (requested.has("convert_relation")) {
-    outcomes.push(...planConvertRelations(parsed.frontmatter, ctx, frontmatterUpdates));
+    const converted = planConvertRelations(parsed.frontmatter, ctx, frontmatterUpdates);
+    outcomes.push(...(converted.length > 0 ? converted : [noRelationTargetsOutcome("convert_relation", "anchor")]));
   }
   if (requested.has("scope_goal_reference")) {
-    outcomes.push(...planScopeGoalReferences(parsed.frontmatter, ctx, frontmatterUpdates));
+    const scoped = planScopeGoalReferences(parsed.frontmatter, ctx, frontmatterUpdates);
+    outcomes.push(...(scoped.length > 0 ? scoped : [noRelationTargetsOutcome("scope_goal_reference", "goal")]));
   }
 
   let newContent = content;
@@ -237,6 +247,19 @@ function planAddSchemaVersion(
 // related_to — legacy bare-string target -> anchor:<anchor-id>, only when the
 // target resolves to exactly one anchor that already has a valid anchor_id).
 // ---------------------------------------------------------------------------
+
+/** The at-least-one-outcome filler for a requested per-target operation that found no matching relation arrays to inspect. */
+function noRelationTargetsOutcome(
+  code: "convert_relation" | "scope_goal_reference",
+  kindLabel: "anchor" | "goal",
+): MigrationOperationOutcome {
+  return {
+    code,
+    status: "not_applicable",
+    reason: "no_relation_targets",
+    detail: `No ${kindLabel}-targeted relation arrays to inspect.`,
+  };
+}
 
 function planConvertRelations(
   frontmatter: Record<string, unknown>,

@@ -179,7 +179,13 @@ describe("planAnchorMigration: convert_relation", () => {
       "## Current State\n\nNone.\n",
     );
     const result = planAnchorMigration(content, makeCtx(), ["convert_relation"]);
-    expect(result.outcomes.filter((o) => o.code === "convert_relation")).toHaveLength(0);
+    // At-least-one contract: a requested per-target operation with no
+    // matching relation arrays reports a single no_relation_targets
+    // not_applicable outcome, never silence.
+    const outcomes = result.outcomes.filter((o) => o.code === "convert_relation");
+    expect(outcomes).toHaveLength(1);
+    expect(outcomes[0].status).toBe("not_applicable");
+    expect(outcomes[0].reason).toBe("no_relation_targets");
     expect(result.newContent).toContain("G-030");
   });
 
@@ -190,7 +196,13 @@ describe("planAnchorMigration: convert_relation", () => {
     );
     const ctx = makeCtx({ resolveAnchorName: () => undefined, anchorIdForAnchorName: () => undefined });
     const result = planAnchorMigration(content, ctx, ["convert_relation", "scope_goal_reference"]);
-    expect(result.outcomes.filter((o) => o.code === "convert_relation" || o.code === "scope_goal_reference")).toHaveLength(0);
+    const perTarget = result.outcomes.filter(
+      (o) => o.code === "convert_relation" || o.code === "scope_goal_reference",
+    );
+    // owned_by is neither anchor- nor goal-targeted, so both requested
+    // operations report the at-least-one no_relation_targets filler.
+    expect(perTarget).toHaveLength(2);
+    expect(perTarget.every((o) => o.status === "not_applicable" && o.reason === "no_relation_targets")).toBe(true);
     expect(result.newContent).toContain("owned_by:\n    - alice");
   });
 });

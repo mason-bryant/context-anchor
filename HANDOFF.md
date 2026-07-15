@@ -69,7 +69,8 @@ planning the planner's own output again reports every operation
 | `target_unparseable` | `convert_relation`: the legacy target string does not resolve to any known anchor. |
 | `goal_unknown` | `scope_goal_reference`: no project's roadmap defines this goal id. |
 | `goal_ambiguous` | `scope_goal_reference`: more than one project's roadmap defines this goal id — skipped, not guessed. |
-| `no_unannotated_claims` | `mint_claim_ids`: every claim already has an id — not_applicable. |
+| `no_relation_targets` | `convert_relation`/`scope_goal_reference`: requested, but the anchor has no matching (anchor- or goal-targeted) relation arrays to inspect — the at-least-one-outcome filler, so a requested operation never vanishes from the response. |
+| `no_unannotated_claims` | `mint_claim_ids`: no unannotated claims lack an id — not_applicable. |
 | `not_an_anchor` | Reserved for a future non-anchor-path guard; the service currently never calls the planner on a non-anchor path (see "Deviations"), so this code is defined but not yet emitted. |
 
 ### `AnchorService.previewAnchorMigration` / `applyAnchorMigration`
