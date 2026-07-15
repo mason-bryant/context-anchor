@@ -109,6 +109,26 @@ describe("UI HTTP routes", () => {
     expect(js).toContain("/api/ui/graph-coverage");
   });
 
+  it("wires the Coverage tab to the migration preview/apply flow (slice 3a)", async () => {
+    const htmlResponse = await fetch(`${baseUrl}/ui`);
+    const html = await htmlResponse.text();
+    // Migrate column header and the review modal shell.
+    expect(html).toContain(">Migrate<");
+    expect(html).toContain('id="migration-modal"');
+    expect(html).toContain('id="migration-apply"');
+    expect(html).toContain('id="migration-diff"');
+
+    const jsResponse = await fetch(`${baseUrl}/ui/app.js`);
+    const js = await jsResponse.text();
+    // Preview-first, then an approved apply carrying the preview's fileCommit.
+    expect(js).toContain("/api/ui/anchor-migration-preview");
+    expect(js).toContain("/api/ui/anchor-migration-apply");
+    expect(js).toContain("function openMigrationModal");
+    expect(js).toContain("function applyMigrationFromModal");
+    // Apply always sends approved + the preview's expectedFileCommit.
+    expect(js).toContain("expectedFileCommit: modal.preview.fileCommit");
+  });
+
   it("serves the local Mermaid browser bundle without API auth", async () => {
     const response = await fetch(`${baseUrl}/ui/vendor/mermaid/mermaid.esm.min.mjs`);
     const js = await response.text();
