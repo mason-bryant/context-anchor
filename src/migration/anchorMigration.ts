@@ -472,8 +472,10 @@ function planMintClaimIds(
   for (const claim of [...candidates].sort((left, right) => right.line - left.line)) {
     const id = mintClaimId(usedIds);
     usedIds.add(id);
-    // Inserted lines adopt the file's dominant ending so a CRLF file stays
-    // uniformly CRLF.
+    // Inserted lines are CRLF-terminated when the file contains ANY CRLF
+    // sequence (a deliberate all-or-nothing heuristic, not a per-line or
+    // majority test): existing lines keep whatever ending they carried, and
+    // a uniformly-CRLF file stays uniformly CRLF.
     lines.splice(claim.line, 0, `  {id: ${id}}${usesCrlf ? "\r" : ""}`);
     minted.push({ text: claim.text, id });
   }

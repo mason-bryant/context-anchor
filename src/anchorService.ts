@@ -5043,6 +5043,13 @@ None.
     // mismatch (different base, different operations, or no prior preview)
     // falls back to planning fresh: still correct, just a new random mint.
     const cached = this.lastMigrationPreview.get(resolved.name);
+    if (cached !== undefined && cached.fileCommit !== read.fileCommit) {
+      // The anchor moved since that preview (some other write landed): the
+      // entry can never match again, so evict it rather than letting stale
+      // plans accumulate for anchors that keep changing through ordinary
+      // writes.
+      this.lastMigrationPreview.delete(resolved.name);
+    }
     const cacheHit =
       cached !== undefined &&
       cached.fileCommit === read.fileCommit &&
