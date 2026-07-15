@@ -7006,24 +7006,35 @@ export const UI_JS = `(function () {
         expectedFileCommit: modal.preview.fileCommit
       });
       var summary = migrationApplyResultSummary(result);
-      if (state.migrationModal && state.migrationModal.anchorName === anchorName) {
+      var stillCurrent = state.migrationModal && state.migrationModal.anchorName === anchorName;
+      if (stillCurrent) {
         el("migration-result").textContent = summary.message;
       }
       if (result.version) {
         // Committed: refresh coverage so the migrated row reflects its new
-        // state. Apply stays disabled (the preview is now spent).
-        await loadCoverage();
+        // state. The refresh is isolated in its own try so a refresh failure
+        // is NOT mistaken for an apply failure — the commit already landed,
+        // the preview is spent, so Apply stays disabled either way.
+        try {
+          await loadCoverage();
+        } catch (refreshError) {
+          if (stillCurrent) {
+            el("migration-result").textContent = summary.message + " Coverage refresh failed (" + refreshError.message + ") — reload to update the table.";
+          }
+        }
       }
       // On a non-commit RESULT (a validation BLOCK or a stale base) apply
       // stays disabled: re-applying the spent preview cannot succeed. The
       // reason is shown; the user closes and re-opens for a fresh preview.
     } catch (error) {
-      // A THROWN failure is transport-level (network / 5xx), not a business
-      // rejection — the preview is still valid, so re-enable Apply for a
-      // retry rather than forcing a close/reopen.
+      // A THROWN failure here is a transport-level failure of the APPLY POST
+      // itself (network / 5xx) — the preview is still valid, so re-enable
+      // Apply for a retry rather than forcing a close/reopen. (A refresh
+      // failure after a successful commit is handled above and never reaches
+      // here.)
       if (state.migrationModal && state.migrationModal.anchorName === anchorName) {
         el("migration-result").textContent = "Apply failed: " + error.message;
-        if (state.migrationModal.preview && state.migrationModal.preview.changed) {
+        if (state.migrationModal.preview && state.migrationModal.preview.changed && state.migrationModal.preview.fileCommit) {
           el("migration-apply").disabled = false;
         }
       }
@@ -10831,9 +10842,12 @@ export const UI_JS = `(function () {
       var target = event.target;
       if (target && target.classList && target.classList.contains("coverage-migrate-button")) {
         event.preventDefault();
-        openMigrationModal(target.getAttribute("data-migrate-anchor")).catch(function (error) {
-          setBanner(error.message, "error");
-        });
+        var migrateAnchor = target.getAttribute("data-migrate-anchor");
+        if (migrateAnchor) {
+          openMigrationModal(migrateAnchor).catch(function (error) {
+            setBanner(error.message, "error");
+          });
+        }
       }
     });
     el("migration-close").addEventListener("click", closeMigrationModal);
