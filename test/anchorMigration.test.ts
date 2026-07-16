@@ -899,4 +899,88 @@ describe("AnchorService.previewAnchorMigration / applyAnchorMigration (Goal 0 Ph
     expect(preview.newContent).not.toContain("schema_version: 1");
     expect(preview.newContent).toContain("depends_on:\n    - projects/demo/target.md");
   });
+
+  it("minting anchor_id + schema_version on a double-quoted/block-scalar milestone anchor does not reformat sibling fields (real bug this plan fixes)", async () => {
+    // Deliberately the NON-canonical style (double-quoted strings, task
+    // titles quoted) that exposed the original bug: matter.stringify
+    // (js-yaml dump) re-serializes EVERY key in its own canonical style, so
+    // minting anchor_id + schema_version on this anchor used to also
+    // silently reformat summary, read_this_if, theme, steel_thread, and
+    // every task title from double-quoted to unquoted/folded scalars.
+    const NON_CANONICAL_MILESTONE = `---
+project:
+  - demo
+type: milestone
+tags: []
+summary: "A summary that must not reformat."
+read_this_if:
+  - "Some condition worded exactly this way."
+theme: "steel-thread-a"
+steel_thread: "thread-1"
+last_validated: "2026-07-07"
+tasks:
+  - id: T-1
+    title: "Do the first thing"
+    status: open
+  - id: T-2
+    title: "Do the second thing"
+    status: open
+---
+
+# Milestone
+
+## Current State
+
+None.
+
+## Decisions
+
+None.
+
+## Constraints
+
+None.
+
+## PRs
+
+None.
+`;
+    await repo.commitAnchor({ name: "projects/demo/milestone.md", content: NON_CANONICAL_MILESTONE });
+
+    const preview = await service.previewAnchorMigration({
+      name: "projects/demo/milestone.md",
+      operations: ["mint_anchor_id", "add_schema_version"],
+    });
+
+    expect(preview.changed).toBe(true);
+    expect(preview.newContent).toMatch(/anchor_id: a-[0-9a-z]{6,8}/);
+    expect(preview.newContent).toContain("schema_version: 1");
+
+    // Every sibling field survives byte-identical in its original
+    // non-canonical style — only the two new lines were added.
+    const untouchedLines = [
+      'summary: "A summary that must not reformat."',
+      "read_this_if:",
+      '  - "Some condition worded exactly this way."',
+      'theme: "steel-thread-a"',
+      'steel_thread: "thread-1"',
+      'last_validated: "2026-07-07"',
+      "tasks:",
+      "  - id: T-1",
+      '    title: "Do the first thing"',
+      "    status: open",
+      "  - id: T-2",
+      '    title: "Do the second thing"',
+      "    status: open",
+    ];
+    for (const line of untouchedLines) {
+      expect(preview.newContent).toContain(line);
+    }
+    const originalLineCount = NON_CANONICAL_MILESTONE.split("\n").length;
+    const newLineCount = preview.newContent.split("\n").length;
+    expect(newLineCount).toBe(originalLineCount + 2);
+
+    // Body is untouched.
+    expect(preview.newContent.endsWith("## PRs\n\nNone.\n")).toBe(true);
+  });
 });
