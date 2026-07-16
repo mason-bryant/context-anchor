@@ -131,7 +131,15 @@ function reassembleFrontmatterRaw(split: RawFrontmatterSplit & { hasFrontmatter:
  * "reformatted sibling" bugs itself.
  */
 function detectNewlineStyle(raw: string): "\r\n" | "\n" {
-  return raw.includes("\r\n") ? "\r\n" : "\n";
+  // Genuinely dominant, not "any CRLF wins": a mostly-LF document that happens
+  // to contain one stray CRLF (e.g. a pasted line) must NOT be rewritten
+  // wholesale to CRLF — that would create a large unrelated diff and defeat
+  // the byte-preservation goal. Count CRLF pairs against bare LFs and pick the
+  // majority; ties (and CRLF-free input) resolve to LF.
+  const crlf = (raw.match(/\r\n/g) ?? []).length;
+  const totalLf = (raw.match(/\n/g) ?? []).length;
+  const bareLf = totalLf - crlf;
+  return crlf > bareLf ? "\r\n" : "\n";
 }
 
 function toNewlineStyle(text: string, style: "\r\n" | "\n"): string {

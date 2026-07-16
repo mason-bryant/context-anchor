@@ -198,6 +198,24 @@ Body.
     expect(out).toContain("anchor_id: a-abc123\r\n");
   });
 
+  it("a mostly-LF document with a single stray CRLF is NOT rewritten wholesale to CRLF", () => {
+    // One CRLF line among LF lines: the dominant style is LF, so minting a key
+    // must not flip the whole block to CRLF (which the old "any CRLF wins"
+    // detection would have done, producing a large unrelated diff).
+    const content =
+      "---\n" +
+      "type: context-anchor\n" +
+      'summary: "S"\r\n' + // lone stray CRLF
+      'theme: "t"\n' +
+      "---\n\nBody.\n";
+    const out = mergeAnchorFrontmatter(content, { anchor_id: "a-abc123" });
+    expect(out).not.toContain("\r\n");
+    expect(out).toContain("anchor_id: a-abc123");
+    const parsed = parseAnchor(out);
+    expect(parsed.frontmatter.summary).toBe("S");
+    expect(parsed.frontmatter.theme).toBe("t");
+  });
+
   it("synthesizing front matter on a CRLF doc with no front matter uses CRLF (no mixed endings)", () => {
     const body = "# Just a doc\r\n\r\nNo front matter here.\r\n";
     const out = mergeAnchorFrontmatter(body, { anchor_id: "a-abc123" });
