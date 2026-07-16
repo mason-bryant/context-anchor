@@ -227,15 +227,22 @@ export function mergeAnchorFrontmatter(fullContent: string, updates: Record<stri
 
   if (!split.hasFrontmatter) {
     // No front matter at all: synthesize one from scratch. There is nothing
-    // to preserve, so falling back to gray-matter's stringify here (via a
-    // fresh document) keeps behavior identical to before for this edge case.
+    // to preserve, so a fresh document keeps behavior identical to before for
+    // this edge case — except we match the body's newline style so a CRLF
+    // document doesn't gain an LF-only front-matter block (mixed endings), and
+    // we force a trailing newline before the close fence so we never emit
+    // `key: value---` if `doc.toString()` somehow lacks one.
     const doc = parseDocument("", YAML_PARSE_OPTIONS);
     applyUpdatesToYamlDoc(doc, updates);
-    const yamlText = doc.toString();
+    let yamlText = doc.toString();
     if (yamlText.trim() === "") {
       return fullContent;
     }
-    return `---\n${yamlText}---\n\n${fullContent}`;
+    if (!yamlText.endsWith("\n")) {
+      yamlText += "\n";
+    }
+    const block = toNewlineStyle(`---\n${yamlText}---\n\n`, detectNewlineStyle(fullContent));
+    return block + fullContent;
   }
 
   const newlineStyle = detectNewlineStyle(split.rawFrontmatter);
@@ -292,10 +299,22 @@ function bodyFromFull(fullContent: string): { body: string; split: RawFrontmatte
 }
 
 function assembleFull(split: RawFrontmatterSplit, newBody: string): string {
+  // The body is rebuilt by `stringifyBodyH2Segments`, which always emits LF.
+  // Match it to the document's own newline style before concatenating so a
+  // CRLF document (whose front matter is carried through verbatim, and so
+  // stays CRLF) doesn't end up with a CRLF front-matter block and an LF body —
+  // mixed line endings within one file and needless diff noise.
   if (!split.hasFrontmatter) {
-    return newBody;
+    return toNewlineStyle(newBody, detectNewlineStyle(split.body));
   }
-  return split.openFence + split.rawFrontmatter + split.closeFence + split.closeNewline + newBody;
+  const newlineStyle = detectNewlineStyle(split.rawFrontmatter + split.closeNewline);
+  return (
+    split.openFence +
+    split.rawFrontmatter +
+    split.closeFence +
+    split.closeNewline +
+    toNewlineStyle(newBody, newlineStyle)
+  );
 }
 
 /** Replace an H2 section body (lines below the heading until the next H2). `content` must not include the `##` line. */

@@ -198,6 +198,17 @@ Body.
     expect(out).toContain("anchor_id: a-abc123\r\n");
   });
 
+  it("synthesizing front matter on a CRLF doc with no front matter uses CRLF (no mixed endings)", () => {
+    const body = "# Just a doc\r\n\r\nNo front matter here.\r\n";
+    const out = mergeAnchorFrontmatter(body, { anchor_id: "a-abc123" });
+    // The whole file is CRLF: stripping CRLF leaves no stray LF anywhere.
+    expect(out.replace(/\r\n/g, "")).not.toContain("\n");
+    expect(out).toContain("anchor_id: a-abc123\r\n");
+    expect(out.endsWith(body)).toBe(true);
+    const parsed = parseAnchor(out);
+    expect(parsed.frontmatter.anchor_id).toBe("a-abc123");
+  });
+
   it("a bare date-like value round-trips as a string, not a Date, after being written unquoted-source then updated", () => {
     const content = `---
 type: context-anchor
@@ -254,5 +265,16 @@ None.
     const out = deleteAnchorSection(nonCanonicalFull, "Decisions");
     const originalFrontmatter = nonCanonicalFull.slice(0, nonCanonicalFull.indexOf("\n---\n") + 5);
     expect(out.startsWith(originalFrontmatter)).toBe(true);
+  });
+
+  it("a section edit on a CRLF document stays uniformly CRLF (front matter verbatim, body converted to match)", () => {
+    const crlf = nonCanonicalFull.replace(/\n/g, "\r\n");
+    const out = replaceAnchorSection(crlf, "## PRs", "- [PR Fix - #99](https://example.com/99)");
+    // No mixed endings: the verbatim CRLF front matter and the rebuilt body
+    // (which the segment stringifier emits as LF) agree on CRLF.
+    expect(out.replace(/\r\n/g, "")).not.toContain("\n");
+    const originalFrontmatter = crlf.slice(0, crlf.indexOf("\r\n---\r\n") + 7);
+    expect(out.startsWith(originalFrontmatter)).toBe(true);
+    expect(out).toContain("- [PR Fix - #99](https://example.com/99)");
   });
 });
