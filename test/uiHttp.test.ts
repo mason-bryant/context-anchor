@@ -8,7 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AnchorService } from "../src/anchorService.js";
 import { AnchorRepository } from "../src/git/repo.js";
 import { startHttpServer } from "../src/http/server.js";
-import { resolveMermaidDistDir } from "../src/ui/routes.js";
+import { resolveCytoscapeDistDir, resolveMermaidDistDir } from "../src/ui/routes.js";
 
 let tmpDir: string;
 let server: Server | undefined;
@@ -147,6 +147,57 @@ describe("UI HTTP routes", () => {
         throw missingMermaid;
       }),
     ).toBeUndefined();
+  });
+
+  it("serves the local Cytoscape browser bundle without API auth (Graph tab canvas renderer)", async () => {
+    const response = await fetch(`${baseUrl}/ui/vendor/cytoscape/cytoscape.esm.min.mjs`);
+    const js = await response.text();
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toContain("javascript");
+    expect(js).toContain("export{");
+    expect(js).toContain("default");
+  });
+
+  it("does not fail service startup when the optional Cytoscape browser bundle is missing", () => {
+    const missingCytoscape = Object.assign(new Error("Cannot find module"), { code: "MODULE_NOT_FOUND" });
+
+    expect(
+      resolveCytoscapeDistDir(() => {
+        throw missingCytoscape;
+      }),
+    ).toBeUndefined();
+  });
+
+  it("includes the Graph tab shell (nav button, canvas view, filter rail, legend, and an accessible records table) in the UI HTML", async () => {
+    const response = await fetch(`${baseUrl}/ui`);
+    const html = await response.text();
+
+    expect(response.status).toBe(200);
+    expect(html).toContain('data-tab="graph"');
+    expect(html).toContain('id="graph-view"');
+    expect(html).toContain('id="graph-canvas"');
+    expect(html).toContain('id="graph-legend"');
+    expect(html).toContain('id="graph-project-filter"');
+    expect(html).toContain('id="graph-text-filter"');
+    expect(html).toContain('id="graph-table"');
+    expect(html).toContain('id="graph-inspector"');
+    expect(html).toContain('id="graph-fit"');
+    expect(html).toContain('id="graph-reset"');
+    expect(html).toContain('scope="col"');
+  });
+
+  it("serves Graph tab fetch/render/lifecycle logic in the UI JS bundle", async () => {
+    const response = await fetch(`${baseUrl}/ui/app.js`);
+    const js = await response.text();
+
+    expect(response.status).toBe(200);
+    expect(js).toContain("/api/ui/graph/schema");
+    expect(js).toContain("/api/ui/graph/snapshot");
+    expect(js).toContain("/ui/vendor/cytoscape/cytoscape.esm.min.mjs");
+    expect(js).toContain("function loadCytoscapeRuntime");
+    expect(js).toContain("function showGraphView");
+    expect(js).toContain("function destroyGraphCy");
   });
 
   it("redirects anchor markdown paths back into the UI", async () => {
