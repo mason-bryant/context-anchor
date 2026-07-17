@@ -197,7 +197,8 @@ describe("GitMetadataCache", () => {
       reachedGate = resolve;
     });
     let gated = false;
-    const rawSpy = vi.spyOn(repo.git, "raw").mockImplementation(async (...args: unknown[]) => {
+    const rawSpy = vi.spyOn(repo.git, "raw");
+    const gatedRaw = async (...args: unknown[]): Promise<string> => {
       const first = args[0];
       if (!gated && Array.isArray(first) && first.includes("--name-status")) {
         gated = true;
@@ -205,7 +206,10 @@ describe("GitMetadataCache", () => {
         await gate;
       }
       return realRaw(...(args as Parameters<typeof realRaw>));
-    });
+    };
+    rawSpy.mockImplementation(
+      gatedRaw as unknown as Parameters<typeof rawSpy.mockImplementation>[0],
+    );
 
     try {
       // First access starts a rebuild that blocks inside the history walk.

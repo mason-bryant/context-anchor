@@ -1316,22 +1316,26 @@ function readMigrationOperationsBody(body: Record<string, unknown>): MigrationOp
   if (value === undefined) {
     return undefined;
   }
-  if (!Array.isArray(value) || value.some((item) => typeof item !== "string")) {
+  if (!Array.isArray(value)) {
     throw new UiHttpError(400, "Invalid operations: expected an array of strings.");
   }
-  if (value.length === 0) {
+  const operations: unknown[] = value;
+  if (!operations.every((item): item is string => typeof item === "string")) {
+    throw new UiHttpError(400, "Invalid operations: expected an array of strings.");
+  }
+  if (operations.length === 0) {
     // An empty array silently running zero operations is a footgun: the
     // contract is "omit operations to run every applicable operation".
     throw new UiHttpError(400, "Invalid operations: must be non-empty; omit the field to run every applicable operation.");
   }
-  const invalid = value.find((item) => !isMigrationOperationCode(item as string));
+  const invalid = operations.find((item) => !isMigrationOperationCode(item));
   if (invalid !== undefined) {
     throw new UiHttpError(
       400,
       `Invalid operations: unknown migration operation ${invalid === "" ? "(empty)" : String(invalid)}`,
     );
   }
-  return value as MigrationOperationCode[];
+  return operations as MigrationOperationCode[];
 }
 
 function isReviewStatus(

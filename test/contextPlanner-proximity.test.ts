@@ -14,7 +14,7 @@ import {
   computeGraphProximityBoosts,
   resolveTaskSignalNodes,
 } from "../src/graph/proximity.js";
-import type { PlanContextBundleResult } from "../src/types.js";
+import type { PlanContextBundleInput, PlanContextBundleResult } from "../src/types.js";
 
 let tmpDir: string;
 
@@ -182,11 +182,11 @@ function stablePlanJson(plan: PlanContextBundleResult): string {
 
 // A task that mentions a repo/file path (-> project demo), a goal id, and a
 // person, so all three task-signal kinds fire at once.
-const TASK_INPUT = {
+const TASK_INPUT: PlanContextBundleInput = {
   task: "Work on G-001 widgets with alice",
   repo: "repo-a",
   filePaths: ["src/widgets.ts"],
-} as const;
+};
 
 describe("planner graph proximity — flag OFF is byte-identical", () => {
   it("produces a plan byte-identical to a no-graphScoring service (default off)", async () => {

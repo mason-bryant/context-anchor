@@ -1110,7 +1110,7 @@ last_validated: 2026-05-10
 
     expect(started.plan.included.map((anchor) => anchor.name)).toContain("projects/demo/demo-project-context.md");
     const loaded = started.anchors.find((anchor) => anchor.name === "projects/demo/demo-project-context.md");
-    expect(loaded?.frontmatter.summary).toBe("Authoritative demo project orientation.");
+    expect(loaded?.frontmatter?.summary).toBe("Authoritative demo project orientation.");
     expect(loaded?.excerpt).toContain("## Introduction");
     expect(loaded?.excerpt).toContain("## Invariants");
     expect(loaded?.excerpt).not.toContain("historical detail");

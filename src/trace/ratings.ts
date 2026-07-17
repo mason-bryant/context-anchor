@@ -48,7 +48,8 @@ export class TraceRatingsStore {
     const write = this.writeQueue.then(async () => {
       // Null prototype so a sessionId like "__proto__" is a plain data key
       // and cannot mutate the prototype chain.
-      const ratings: RatingsFile = Object.assign(Object.create(null), await this.ensureLoaded());
+      const ratings = Object.create(null) as RatingsFile;
+      Object.assign(ratings, await this.ensureLoaded());
       if (rating === null) {
         delete ratings[sessionId];
       } else {

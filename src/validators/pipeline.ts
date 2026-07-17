@@ -59,6 +59,8 @@ export async function runValidators(context: ValidationContext): Promise<Validat
     return taxonomyResults;
   }
 
-  const results = await Promise.all(VALIDATORS.map((validator) => validator(context)));
+  const results = await Promise.all(
+    VALIDATORS.map((validator) => Promise.resolve(validator(context))),
+  );
   return [...taxonomyResults, ...results.flat()];
 }
