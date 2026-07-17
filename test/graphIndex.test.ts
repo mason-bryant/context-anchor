@@ -942,6 +942,20 @@ None.
     expect(edgeTotal).toBe(snapshot.totals.matchingEdges);
   });
 
+  it("graphSnapshot echoes the trimmed q the filter actually applies", async () => {
+    const repo = new AnchorRepository({ repoPath: tmpDir });
+    await repo.ensureReady();
+    await seedRepo(repo);
+    const service = new AnchorService(repo, { pushOnWrite: false, migrationWarnOnly: false, staleAfterDays: 45 });
+
+    const snapshot = await service.graphSnapshot({ q: "  demo  " });
+    expect(snapshot.appliedFilters.q).toBe("demo");
+
+    // An all-whitespace q is omitted entirely rather than echoed as "".
+    const blank = await service.graphSnapshot({ q: "   " });
+    expect(blank.appliedFilters.q).toBeUndefined();
+  });
+
   it("graphSnapshot honors maxNodes: 0 as a metadata-only request", async () => {
     const repo = new AnchorRepository({ repoPath: tmpDir });
     await repo.ensureReady();

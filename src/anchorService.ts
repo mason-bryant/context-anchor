@@ -5141,12 +5141,18 @@ None.
       input.project,
     );
 
+    // Trim `q` once here so the value echoed in `appliedFilters` is exactly the
+    // one the filter applies: `applyProjectionFilters` trims before matching,
+    // so echoing the raw `input.q` (e.g. "  demo  ") would misleadingly report
+    // a different term than was actually used. An all-whitespace `q` trims to
+    // empty and is omitted entirely.
+    const trimmedQ = input.q?.trim();
     const appliedFilters: GraphSnapshotAppliedFilters = {
       ...(effectiveProject ? { project: effectiveProject } : {}),
       ...(input.nodeTypes && input.nodeTypes.length > 0 ? { nodeTypes: input.nodeTypes } : {}),
       ...(input.edgeTypes && input.edgeTypes.length > 0 ? { edgeTypes: input.edgeTypes } : {}),
       ...(input.coverageStates && input.coverageStates.length > 0 ? { coverageStates: input.coverageStates } : {}),
-      ...(input.q ? { q: input.q } : {}),
+      ...(trimmedQ ? { q: trimmedQ } : {}),
     };
     const filters: ProjectionFilters = appliedFilters;
 
