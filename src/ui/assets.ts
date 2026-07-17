@@ -3624,6 +3624,9 @@ export const UI_JS = `(function () {
     graphSnapshot: null,
     graphLoading: false,
     graphUnavailable: false,
+    // Bumped on every renderGraph() so a stale async runtime-load handler can
+    // tell it is no longer the latest and must not instantiate Cytoscape.
+    graphRenderToken: 0,
     graphProject: "",
     graphNodeTypes: [],
     graphEdgeTypes: [],
@@ -7475,6 +7478,14 @@ export const UI_JS = `(function () {
         renderGraphUnavailable();
       } else {
         setBanner(error.message, "error");
+        // On a first load there is no graph content to fall back to, so a
+        // transient (non-404) failure would otherwise leave the tab blank
+        // (both #graph-unavailable and #graph-content hidden). Show the
+        // empty/unavailable state -- its copy covers a failed schema request.
+        // NOT sticky like the 404 case: a later open retries the fetch.
+        if (!state.graphSnapshot) {
+          renderGraphUnavailable();
+        }
       }
     } finally {
       state.graphLoading = false;
@@ -7609,11 +7620,20 @@ export const UI_JS = `(function () {
       return;
     }
     var elements = graphSnapshotToCyElements(snapshot);
+    // Per-render token: several renderGraph() calls can have a pending
+    // loadCytoscapeRuntime().then() at once (open Graph, switch tab, return
+    // quickly), all sharing one runtime promise. Without this guard more than
+    // one handler could pass the checks below and instantiate Cytoscape,
+    // leaking every instance but the last (only the last is tracked in
+    // state.graphCy). Only the newest invocation's token is allowed to build.
+    var token = (state.graphRenderToken || 0) + 1;
+    state.graphRenderToken = token;
     loadCytoscapeRuntime().then(function (cytoscape) {
       // The tab may have been closed (or re-rendered again) while the
       // runtime was loading; only build the instance if the Graph view is
-      // still the active tab and no newer instance already exists.
-      if (state.activeTab !== "graph" || state.graphSnapshot !== snapshot) {
+      // still the active tab, the snapshot is unchanged, and this is still
+      // the latest render request.
+      if (state.activeTab !== "graph" || state.graphSnapshot !== snapshot || state.graphRenderToken !== token) {
         return;
       }
       var cy = cytoscape({
@@ -7640,6 +7660,14 @@ export const UI_JS = `(function () {
       });
       cy.on("select", "edge", function (event) {
         selectGraphElement(event.target.id(), { fromCanvas: true });
+      });
+      cy.on("unselect", "edge", function () {
+        // Mirror the node unselect: clear the selection/inspector when nothing
+        // (node or edge) remains selected, so deselecting an edge doesn't leave
+        // state.graphSelectedId and the inspector pointing at a gone selection.
+        if (!cy.$(":selected").length) {
+          selectGraphElement(null, { fromCanvas: true });
+        }
       });
     }).catch(function () {
       setBanner("Graph rendering is unavailable (the Cytoscape browser bundle failed to load).", "warn");
