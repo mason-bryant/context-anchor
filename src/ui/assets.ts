@@ -7531,14 +7531,10 @@ export const UI_JS = `(function () {
   function renderGraphFilterOptions(schema) {
     var nodeTypes = Object.keys(schema.nodeTypeCounts || {}).sort();
     var edgeTypes = Object.keys(schema.edgeTypeCounts || {}).sort();
-    var coverageStates = ["structured", "partial", "prose_only", "ambiguous", "dangling", "malformed"].filter(function (s) {
-      // Only offer a coverage-state checkbox that is at least conceivable
-      // for this graph's node types (anchor/claim carry coverage) -- the
-      // server tells us node type counts, not coverage-state counts, so we
-      // simply always offer the full fixed vocabulary; it is a small,
-      // stable list either way.
-      return true;
-    });
+    // The full fixed coverage vocabulary: the schema reports node-type counts,
+    // not coverage-state counts, so the rail always offers every state (a
+    // small, stable list) rather than trying to narrow it per graph.
+    var coverageStates = ["structured", "partial", "prose_only", "ambiguous", "dangling", "malformed"];
 
     var nodeTypesEl = el("graph-node-type-filters");
     var selectedNodeTypes = {};

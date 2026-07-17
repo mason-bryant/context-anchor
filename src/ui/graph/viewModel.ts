@@ -59,9 +59,6 @@ export function nodeTypeShape(type: GraphNodeType): GraphNodeShape {
 /** The three coverage-treatment buckets the Graph tab renders (fill weight, independent of color) — `structured` reads as solid/filled, `partial`/`ambiguous` as outlined/lighter, `prose_only`/`dangling`/`malformed` as translucent/"ghost". Only anchor and claim nodes carry a `coverageState`; every other node type gets `undefined` (no coverage treatment applies). */
 export type CoverageTreatment = "solid" | "outline" | "ghost";
 
-/** Coverage states whose treatment additionally carries a "needs attention" flag (an accent, not the only signal — the fill-weight bucket above is the shape-independent primary signal). */
-const COVERAGE_WARN_STATES: ReadonlySet<CoverageState> = new Set(["ambiguous", "dangling", "malformed"]);
-
 export type CoverageStyle = {
   treatment: CoverageTreatment;
   warn: boolean;

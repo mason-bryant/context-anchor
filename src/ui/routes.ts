@@ -655,7 +655,10 @@ export function registerUiRoutes(
       const nodeTypes = readNodeTypesQuery(req, "nodeTypes");
       const edgeTypes = readEdgeTypesQuery(req, "edgeTypes");
       const coverageRaw = optionalQueryString(req, "coverage");
-      const coverage = coverageRaw?.split(",").map((value) => value.trim());
+      // filter(Boolean) drops empty entries (e.g. a trailing comma) so
+      // `coverage=structured,` is forgiven rather than a 400, matching how
+      // nodeTypes/edgeTypes are parsed.
+      const coverage = coverageRaw?.split(",").map((value) => value.trim()).filter(Boolean);
       const invalidCoverage = coverage?.find((value) => !isCoverageState(value));
       if (invalidCoverage !== undefined) {
         throw new UiHttpError(400, `Invalid coverage: unknown coverage state ${invalidCoverage || "(empty)"}`);

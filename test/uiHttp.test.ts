@@ -1911,6 +1911,13 @@ describe("UI HTTP routes", () => {
     expect(body.error.message).toContain("not_a_state");
   });
 
+  it("tolerates a trailing comma in /api/ui/graph/snapshot coverage (empty entries dropped)", async () => {
+    const response = await fetch(`${baseUrl}/api/ui/graph/snapshot?coverage=structured,`, {
+      headers: { Authorization: `Bearer ${TOKEN}` },
+    });
+    expect(response.status).toBe(200);
+  });
+
   it("rejects unknown /api/ui/graph/snapshot edgeTypes with 400", async () => {
     const response = await fetch(`${baseUrl}/api/ui/graph/snapshot?edgeTypes=not_an_edge`, {
       headers: { Authorization: `Bearer ${TOKEN}` },
