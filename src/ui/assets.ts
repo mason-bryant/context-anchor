@@ -7383,8 +7383,7 @@ export const UI_JS = `(function () {
           sourceOfTruth: node.sourceOfTruth,
           project: node.project,
           anchorName: node.anchorName,
-          openDetailAnchorName: graphOpenDetailAnchorName(node),
-          raw: node
+          openDetailAnchorName: graphOpenDetailAnchorName(node)
         },
         position: { x: node.seed.x, y: node.seed.y },
         classes: classes.join(" ")
@@ -7401,8 +7400,7 @@ export const UI_JS = `(function () {
           source: edge.from,
           target: edge.to,
           type: edge.type,
-          sourceOfTruth: edge.sourceOfTruth,
-          raw: edge
+          sourceOfTruth: edge.sourceOfTruth
         },
         classes: ["edge-type-" + edge.type, "edge-" + style.lineStyle, "edge-" + style.weight].join(" ")
       };
