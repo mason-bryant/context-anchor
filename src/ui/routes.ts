@@ -625,8 +625,10 @@ export function registerUiRoutes(
         throw new UiHttpError(400, `Invalid coverage: unknown coverage state ${invalidCoverage || "(empty)"}`);
       }
       const q = optionalQueryString(req, "q");
-      const maxNodes = positiveIntQuery(req, "maxNodes", GRAPH_UI_QUERY_MAX_CEILING);
-      const maxEdges = positiveIntQuery(req, "maxEdges", GRAPH_UI_QUERY_MAX_CEILING);
+      // allowZero: 0 is a valid clamp the service honors (a metadata-only
+      // snapshot), so accept it at the HTTP layer rather than rejecting it.
+      const maxNodes = positiveIntQuery(req, "maxNodes", GRAPH_UI_QUERY_MAX_CEILING, { allowZero: true });
+      const maxEdges = positiveIntQuery(req, "maxEdges", GRAPH_UI_QUERY_MAX_CEILING, { allowZero: true });
 
       return service.graphSnapshot({
         ...(project ? { project } : {}),

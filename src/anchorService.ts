@@ -533,11 +533,11 @@ export class AnchorService {
   }
 
   private get graphUiMaxNodesCeiling(): number {
-    return this.options.graphUi?.maxNodes ?? GRAPH_UI_DEFAULT_MAX_NODES;
+    return normalizeGraphUiCeiling(this.options.graphUi?.maxNodes, GRAPH_UI_DEFAULT_MAX_NODES);
   }
 
   private get graphUiMaxEdgesCeiling(): number {
-    return this.options.graphUi?.maxEdges ?? GRAPH_UI_DEFAULT_MAX_EDGES;
+    return normalizeGraphUiCeiling(this.options.graphUi?.maxEdges, GRAPH_UI_DEFAULT_MAX_EDGES);
   }
 
   private async loadPeopleRegistry(): Promise<PeopleRegistry> {
@@ -6359,6 +6359,20 @@ function clampGraphUiCount(requested: number | undefined, ceiling: number): numb
     return ceiling;
   }
   return Math.min(ceiling, Math.max(0, Math.floor(requested)));
+}
+
+/**
+ * Normalize a configured `graphUi` ceiling to the exact non-negative integer
+ * the clamp math enforces, so the value echoed in `clamps` metadata always
+ * matches what actually bounds the response. A missing, non-finite, or
+ * negative config value falls back to the default rather than silently
+ * flooring the graph to an unexpected size; a non-integer is floored.
+ */
+function normalizeGraphUiCeiling(value: number | undefined, fallback: number): number {
+  if (value === undefined || !Number.isFinite(value) || value < 0) {
+    return fallback;
+  }
+  return Math.floor(value);
 }
 
 /** Split a `claim:<anchor>#<id>` node id back into its parts. Undefined for any other node kind's id shape. */

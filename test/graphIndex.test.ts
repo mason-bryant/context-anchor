@@ -924,6 +924,42 @@ None.
     expect(schema.appliedFilters.project).toBe("demo");
   });
 
+  it("graphSnapshot honors maxNodes: 0 as a metadata-only request", async () => {
+    const repo = new AnchorRepository({ repoPath: tmpDir });
+    await repo.ensureReady();
+    await seedRepo(repo);
+    const service = new AnchorService(repo, { pushOnWrite: false, migrationWarnOnly: false, staleAfterDays: 45 });
+
+    const snapshot = await service.graphSnapshot({ maxNodes: 0, maxEdges: 0 });
+    expect(snapshot.nodes).toEqual([]);
+    expect(snapshot.edges).toEqual([]);
+    // Counts still report the full graph, and truncation flags the drop.
+    expect(snapshot.totals.matchingNodes).toBeGreaterThan(0);
+    expect(snapshot.totals.returnedNodes).toBe(0);
+    expect(snapshot.truncated).toBe(true);
+  });
+
+  it("normalizes a misconfigured graphUi ceiling so echoed clamps match what is enforced", async () => {
+    const repo = new AnchorRepository({ repoPath: tmpDir });
+    await repo.ensureReady();
+    await seedRepo(repo);
+    // A negative ceiling is a misconfiguration: it must fall back to the
+    // default rather than silently zeroing the graph, and the echoed clamp
+    // must equal the enforced one (an integer), never the raw config value.
+    const service = new AnchorService(repo, {
+      pushOnWrite: false,
+      migrationWarnOnly: false,
+      staleAfterDays: 45,
+      graphUi: { maxNodes: -5, maxEdges: 3.7 },
+    });
+
+    const snapshot = await service.graphSnapshot({});
+    expect(snapshot.clamps.maxNodes).toBe(500); // negative -> default
+    expect(snapshot.clamps.maxEdges).toBe(3); // 3.7 floored
+    expect(Number.isInteger(snapshot.clamps.maxNodes)).toBe(true);
+    expect(Number.isInteger(snapshot.clamps.maxEdges)).toBe(true);
+  });
+
   it("keeps an id-bearing anchor's node seed unchanged across a rename (seed is keyed off the anchor_id, not the path)", async () => {
     const repo = new AnchorRepository({ repoPath: tmpDir });
     await repo.ensureReady();
