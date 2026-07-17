@@ -15,7 +15,8 @@ import type {
   ProposedChangeStatus,
   ProposeChangeInput,
 } from "../types.js";
-import type { GraphEdgeType } from "../graph/model.js";
+import type { GraphEdgeType, GraphNodeType } from "../graph/model.js";
+import { CANONICAL_NODE_PREFIXES } from "../graph/neighbors.js";
 import type { CoverageState } from "../graph/coverage.js";
 import { MIGRATION_OPERATION_CODES, type MigrationOperationCode } from "../migration/anchorMigration.js";
 import { aggregateBudget, aggregateFollowUps, aggregateFrequency, filterEvents, filterSessions } from "../trace/aggregate.js";
@@ -32,6 +33,35 @@ const require = createRequire(import.meta.url);
 export function resolveMermaidDistDir(resolveModule: (id: string) => string = require.resolve): string | undefined {
   try {
     return path.dirname(resolveModule("mermaid/dist/mermaid.esm.min.mjs"));
+  } catch (error) {
+    if (error && typeof error === "object" && "code" in error && error.code === "MODULE_NOT_FOUND") {
+      return undefined;
+    }
+    throw error;
+  }
+}
+
+/**
+ * Same optional-vendor-dir pattern as `resolveMermaidDistDir` — Cytoscape
+ * (the Graph tab's canvas renderer) is vendored locally rather than loaded
+ * from a CDN, so its dist dir is resolved once at startup and served
+ * statically; a missing install (e.g. a slim production install that pruned
+ * it) degrades to the Graph tab's own "unavailable" state rather than
+ * failing server startup.
+ *
+ * Resolves the bare `"cytoscape"` specifier rather than the
+ * `cytoscape/dist/cytoscape.esm.min.mjs` subpath directly: cytoscape's
+ * `package.json` `exports` map only advertises an `"import"` condition for
+ * that subpath, which `require.resolve`'s CJS resolution algorithm rejects
+ * ("not defined by exports") even though the file exists — the package
+ * root's `"."` export does advertise a `"require"` condition, and its
+ * resolved file (`dist/cytoscape.cjs.js`) sits in the exact same `dist/`
+ * directory as the ESM build we actually want to serve, so taking its
+ * dirname gets us there without fighting the exports map.
+ */
+export function resolveCytoscapeDistDir(resolveModule: (id: string) => string = require.resolve): string | undefined {
+  try {
+    return path.dirname(resolveModule("cytoscape"));
   } catch (error) {
     if (error && typeof error === "object" && "code" in error && error.code === "MODULE_NOT_FOUND") {
       return undefined;
@@ -68,6 +98,16 @@ export function registerUiRoutes(
     app.use(
       "/ui/vendor/mermaid",
       express.static(mermaidDistDir, {
+        fallthrough: false,
+        index: false,
+      }),
+    );
+  }
+  const cytoscapeDistDir = resolveCytoscapeDistDir();
+  if (cytoscapeDistDir) {
+    app.use(
+      "/ui/vendor/cytoscape",
+      express.static(cytoscapeDistDir, {
         fallthrough: false,
         index: false,
       }),
@@ -592,6 +632,51 @@ export function registerUiRoutes(
         ...(states && states.length > 0 ? { states: states as CoverageState[] } : {}),
         ...(limit !== undefined ? { limit } : {}),
         ...(cursor ? { cursor } : {}),
+      });
+    }),
+  );
+
+  app.get(
+    "/api/ui/graph/schema",
+    ...protect,
+    jsonRoute(async (req) => {
+      requireGraphUiEnabled(service);
+      const project = optionalQueryString(req, "project");
+      return service.graphSchema({ ...(project ? { project } : {}) });
+    }),
+  );
+
+  app.get(
+    "/api/ui/graph/snapshot",
+    ...protect,
+    jsonRoute(async (req) => {
+      requireGraphUiEnabled(service);
+      const project = optionalQueryString(req, "project");
+      const nodeTypes = readNodeTypesQuery(req, "nodeTypes");
+      const edgeTypes = readEdgeTypesQuery(req, "edgeTypes");
+      const coverageRaw = optionalQueryString(req, "coverage");
+      // filter(Boolean) drops empty entries (e.g. a trailing comma) so
+      // `coverage=structured,` is forgiven rather than a 400, matching how
+      // nodeTypes/edgeTypes are parsed.
+      const coverage = coverageRaw?.split(",").map((value) => value.trim()).filter(Boolean);
+      const invalidCoverage = coverage?.find((value) => !isCoverageState(value));
+      if (invalidCoverage !== undefined) {
+        throw new UiHttpError(400, `Invalid coverage: unknown coverage state ${invalidCoverage || "(empty)"}`);
+      }
+      const q = optionalQueryString(req, "q");
+      // allowZero: 0 is a valid clamp the service honors (a metadata-only
+      // snapshot), so accept it at the HTTP layer rather than rejecting it.
+      const maxNodes = positiveIntQuery(req, "maxNodes", GRAPH_UI_QUERY_MAX_CEILING, { allowZero: true });
+      const maxEdges = positiveIntQuery(req, "maxEdges", GRAPH_UI_QUERY_MAX_CEILING, { allowZero: true });
+
+      return service.graphSnapshot({
+        ...(project ? { project } : {}),
+        ...(nodeTypes && nodeTypes.length > 0 ? { nodeTypes } : {}),
+        ...(edgeTypes && edgeTypes.length > 0 ? { edgeTypes } : {}),
+        ...(coverage && coverage.length > 0 ? { coverageStates: coverage as CoverageState[] } : {}),
+        ...(q ? { q } : {}),
+        ...(maxNodes !== undefined ? { maxNodes } : {}),
+        ...(maxEdges !== undefined ? { maxEdges } : {}),
       });
     }),
   );
@@ -1299,6 +1384,92 @@ function isCoverageState(value: string): value is CoverageState {
     value === "dangling" ||
     value === "malformed"
   );
+}
+
+// Derived from the same prefix table `resolveGraphNode`'s canonical-passthrough
+// branch uses (src/graph/neighbors.ts), so route validation can never name a
+// node type the graph itself does not recognize.
+const GRAPH_NODE_TYPE_SET: ReadonlySet<string> = new Set(Object.values(CANONICAL_NODE_PREFIXES));
+
+function isGraphNodeType(value: string): value is GraphNodeType {
+  return GRAPH_NODE_TYPE_SET.has(value);
+}
+
+/** Comma-separated `nodeTypes` query param, validated against `isGraphNodeType`. Rejects the whole param with a 400 on the first unrecognized value. */
+function readNodeTypesQuery(req: Request, key: string): GraphNodeType[] | undefined {
+  const raw = optionalQueryString(req, key);
+  if (!raw) {
+    return undefined;
+  }
+  const values = raw.split(",").map((value) => value.trim()).filter(Boolean);
+  const invalid = values.find((value) => !isGraphNodeType(value));
+  if (invalid !== undefined) {
+    throw new UiHttpError(400, `Invalid ${key}: unknown node type ${invalid}`);
+  }
+  return values as GraphNodeType[];
+}
+
+// A flag per `GraphEdgeType` so adding a new edge type to the union without
+// listing it here is a compile error — keeps route validation from silently
+// drifting behind the graph's actual edge vocabulary.
+const GRAPH_EDGE_TYPE_FLAGS: Record<GraphEdgeType, true> = {
+  anchor_project: true,
+  milestone_anchor: true,
+  milestone_goal: true,
+  roadmap_goal: true,
+  milestone_task: true,
+  task_owner: true,
+  person_project: true,
+  team_project: true,
+  project_repo: true,
+  repo_path: true,
+  anchor_anchor: true,
+  claim_source: true,
+  claim_person: true,
+  claim_section: true,
+  section_anchor: true,
+  derived_from: true,
+  contradicts: true,
+  depends_on: true,
+  implements: true,
+  supersedes: true,
+  related_to: true,
+  owned_by: true,
+};
+const GRAPH_EDGE_TYPE_SET: ReadonlySet<string> = new Set(Object.keys(GRAPH_EDGE_TYPE_FLAGS));
+
+function isGraphEdgeType(value: string): value is GraphEdgeType {
+  return GRAPH_EDGE_TYPE_SET.has(value);
+}
+
+/** Comma-separated `edgeTypes` query param, validated against `isGraphEdgeType`. Rejects the whole param with a 400 on the first unrecognized value (symmetric with `readNodeTypesQuery`, so an unknown edge type is a clear error rather than a silent filter-everything). */
+function readEdgeTypesQuery(req: Request, key: string): GraphEdgeType[] | undefined {
+  const raw = optionalQueryString(req, key);
+  if (!raw) {
+    return undefined;
+  }
+  const values = raw.split(",").map((value) => value.trim()).filter(Boolean);
+  const invalid = values.find((value) => !isGraphEdgeType(value));
+  if (invalid !== undefined) {
+    throw new UiHttpError(400, `Invalid ${key}: unknown edge type ${invalid}`);
+  }
+  return values as GraphEdgeType[];
+}
+
+/**
+ * Generous input-level sanity ceiling for `maxNodes`/`maxEdges` query params —
+ * distinct from (and much larger than) the `graphUi` CONFIG ceiling
+ * `AnchorService.graphSnapshot` actually clamps to. This just rejects
+ * obviously malformed input (negative, non-integer, absurd); the service is
+ * the one true source of the enforced clamp.
+ */
+const GRAPH_UI_QUERY_MAX_CEILING = 1_000_000;
+
+/** 404s a graph-inspection route when `graphUi.enabled` is false — these routes have no other precedent for conditional registration, so the guard lives inside each handler (per-request) rather than at registration time. */
+function requireGraphUiEnabled(service: AnchorService): void {
+  if (!service.isGraphUiEnabled()) {
+    throw new UiHttpError(404, "Not found");
+  }
 }
 
 // Derived from the planner's canonical list so route validation can never

@@ -101,9 +101,11 @@ export function clampLimit(limit: number | undefined): number {
 /**
  * Node-id constructor prefixes this module recognizes for canonical
  * passthrough, kept in one place so every prefix check and node-type
- * inference in this module agree.
+ * inference in this module agree. Exported so other id-prefix consumers
+ * (e.g. `src/graph/projection.ts`'s node-type inference) share this single
+ * table rather than maintaining a second copy that could drift.
  */
-const CANONICAL_NODE_PREFIXES: Record<string, GraphNodeType> = {
+export const CANONICAL_NODE_PREFIXES: Record<string, GraphNodeType> = {
   "anchor:": "anchor",
   "project:": "project",
   "goal:": "goal",
@@ -120,7 +122,7 @@ const CANONICAL_NODE_PREFIXES: Record<string, GraphNodeType> = {
   "claim:": "claim",
 };
 
-function inferNodeType(nodeId: string): GraphNodeType | undefined {
+export function inferNodeType(nodeId: string): GraphNodeType | undefined {
   for (const [prefix, type] of Object.entries(CANONICAL_NODE_PREFIXES)) {
     if (nodeId.startsWith(prefix)) {
       return type;

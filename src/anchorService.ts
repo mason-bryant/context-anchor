@@ -154,6 +154,7 @@ import type {
   WritePeopleRegistryInput,
   WriteProjectMappingsInput,
   AnchorSchemaMode,
+  GraphUiConfig,
 } from "./types.js";
 import {
   buildProjectAliasIndex,
@@ -169,7 +170,19 @@ import {
 } from "./graph/sourceParsing.js";
 import { parseClaimSource, type ParseClaimSourceContext } from "./graph/sourceId.js";
 import { GraphIndex } from "./graph/index.js";
-import { claimNodeId } from "./graph/model.js";
+import { anchorNodeId, claimNodeId } from "./graph/model.js";
+import {
+  applyProjectionFilters,
+  buildGraphProjection,
+  materializeGraphProjection,
+  type ProjectionAnchorInput,
+  type ProjectionClaimInput,
+  type ProjectionClamps,
+  type ProjectionFilters,
+  type ProjectionEdge,
+  type ProjectionNode,
+} from "./graph/projection.js";
+import type { GraphEdge, GraphEdgeType, GraphNodeType } from "./graph/model.js";
 import {
   DEFAULT_CERTAINTY_CONFIG,
   effectiveCertainty,
@@ -274,6 +287,11 @@ import {
 const BM25_INDEX_READ_CONCURRENCY = 8;
 /** Bounded whole-tree read concurrency for graphCoverage (WP6), matching BM25_INDEX_READ_CONCURRENCY's pattern for the same kind of I/O-bound whole-tree read. */
 const GRAPH_COVERAGE_READ_CONCURRENCY = 8;
+/** Bounded whole-tree read concurrency for graphSnapshot/graphSchema (Goal 1 slice 1), same I/O-bound whole-tree read pattern as graphCoverage. */
+const GRAPH_UI_READ_CONCURRENCY = 8;
+/** Default `graphUi` clamp ceilings — see `GraphUiConfig`'s docstring; a deployment can lower (never raise past hard sanity bounds a client cannot request past) via config. */
+const GRAPH_UI_DEFAULT_MAX_NODES = 500;
+const GRAPH_UI_DEFAULT_MAX_EDGES = 2000;
 
 /** Max anchors with a retained migration preview (FIFO eviction): bounds memory when many anchors are previewed without ever being applied — the cache is a mint-reproducibility optimization, so eviction only costs a fresh re-plan. */
 const MIGRATION_PREVIEW_CACHE_MAX = 32;
@@ -301,6 +319,73 @@ export type GraphCoverageResult = {
   identityContractVersion: number;
   graphGeneration: number;
   graphHead?: string;
+};
+
+/** Filters + clamps `AnchorService.graphSnapshot` applies, echoed back in the response so a client can tell exactly what shaped the result it got. */
+export type GraphSnapshotAppliedFilters = {
+  project?: string;
+  nodeTypes?: GraphNodeType[];
+  edgeTypes?: GraphEdgeType[];
+  coverageStates?: CoverageState[];
+  q?: string;
+};
+
+/** Input for `AnchorService.graphSnapshot` (Goal 1 slice 1: inspectable graph foundation). */
+export type GraphSnapshotInput = {
+  /** Restrict the tree read + projection to this project slug. */
+  project?: string;
+  nodeTypes?: GraphNodeType[];
+  edgeTypes?: GraphEdgeType[];
+  /** Restrict to anchor/claim nodes carrying one of these coverage states. */
+  coverageStates?: CoverageState[];
+  /** Case-insensitive substring match against a node's display label. */
+  q?: string;
+  /** Client-requested node cap; clamped to the configured `graphUi.maxNodes` ceiling (client may request fewer, never more). */
+  maxNodes?: number;
+  /** Client-requested edge cap; clamped to the configured `graphUi.maxEdges` ceiling (client may request fewer, never more). */
+  maxEdges?: number;
+};
+
+/** Output of `AnchorService.graphSnapshot` — the single shape both the HTTP route and any future MCP tool return. */
+export type GraphSnapshotResult = {
+  nodes: ProjectionNode[];
+  edges: ProjectionEdge[];
+  graphGeneration: number;
+  graphHead?: string;
+  identityContractVersion: number;
+  appliedFilters: GraphSnapshotAppliedFilters;
+  clamps: ProjectionClamps;
+  totals: {
+    matchingNodes: number;
+    returnedNodes: number;
+    matchingEdges: number;
+    returnedEdges: number;
+  };
+  truncated: boolean;
+  warnings: string[];
+};
+
+/** Input for `AnchorService.graphSchema` (Goal 1 slice 1). Deliberately narrower than `graphSnapshot`'s input — this surface describes the shape of the (optionally project-scoped) graph, not a bounded slice of it. */
+export type GraphSchemaInput = {
+  project?: string;
+};
+
+/** Output of `AnchorService.graphSchema`: the full (unclamped) node/edge type breakdown for the current (optionally project-scoped) graph, plus the same generation/version/clamp metadata `graphSnapshot` reports so the two surfaces are always comparable for one tree. */
+export type GraphSchemaResult = {
+  nodeTypeCounts: Partial<Record<GraphNodeType, number>>;
+  edgeTypeCounts: Partial<Record<GraphEdgeType, number>>;
+  /** Union of every key observed across nodes'/edges' free-form `properties` bags (empty this slice — nothing populates `properties` yet; reserved for a future slice's extension data). */
+  propertyKeys: string[];
+  graphGeneration: number;
+  graphHead?: string;
+  identityContractVersion: number;
+  features: {
+    graphUiEnabled: boolean;
+    anchorSchemaMode: AnchorSchemaMode;
+  };
+  clamps: ProjectionClamps;
+  /** The filter scope these counts reflect, after alias resolution — echoed (like `graphSnapshot`'s `appliedFilters`) so a client using a project alias can confirm which canonical project the counts represent. Absent `project` means the whole (unscoped) graph. */
+  appliedFilters: { project?: string };
 };
 
 /** Input shared by `previewAnchorMigration` and `applyAnchorMigration` (Goal 0 Phase 2 slice 2: `goal0_phase2_migration_write_ops_plan.md`). */
@@ -433,11 +518,26 @@ export class AnchorService {
       graphScoring?: GraphScoringConfig;
       /** Goal 0 Phase 2 slice 3b write-time enforcement dial. Optional; absent = `legacy` (no enforcement), so callers/tests that predate it are unaffected. */
       anchorSchemaMode?: AnchorSchemaMode;
+      /** Goal 1 slice 1 read-only graph inspection surface config. Optional; absent = enabled with default clamps, so callers/tests that predate it are unaffected. */
+      graphUi?: GraphUiConfig;
     },
   ) {}
 
   private get certaintyConfig(): CertaintyConfig {
     return this.options.certainty ?? DEFAULT_CERTAINTY_CONFIG;
+  }
+
+  /** Whether `graphSnapshot`/`graphSchema` (and their HTTP routes) are enabled. Defaults to true — see `GraphUiConfig`'s docstring for why this surface defaults on unlike `graphScoring`. */
+  isGraphUiEnabled(): boolean {
+    return this.options.graphUi?.enabled ?? true;
+  }
+
+  private get graphUiMaxNodesCeiling(): number {
+    return normalizeGraphUiCeiling(this.options.graphUi?.maxNodes, GRAPH_UI_DEFAULT_MAX_NODES);
+  }
+
+  private get graphUiMaxEdgesCeiling(): number {
+    return normalizeGraphUiCeiling(this.options.graphUi?.maxEdges, GRAPH_UI_DEFAULT_MAX_EDGES);
   }
 
   private async loadPeopleRegistry(): Promise<PeopleRegistry> {
@@ -4924,6 +5024,227 @@ None.
   }
 
   /**
+   * Shared tree read + analysis for `graphSnapshot`/`graphSchema` (Goal 1
+   * slice 1), mirroring `graphCoverage`'s bounded whole-tree read exactly
+   * (bounded worker pool, skip built-ins, resolve the project filter through
+   * the same alias-aware `resolveProjectFilter` every project-scoped surface
+   * uses) plus the derived `GraphIndex`'s edges — the raw materials
+   * `buildGraphProjection` composes into a client-facing node/edge
+   * projection. Anchor/claim records are only built for the project-scoped
+   * subset (matching `graphCoverage`'s own read scope); `edges` is the WHOLE
+   * tree's edge set (`GraphIndex` has no project-scoped edge query), so a
+   * project-filtered snapshot can still surface a same-project-unattributed
+   * node reachable via a cross-project edge — `buildGraphProjection`'s
+   * project filter is permissive for node kinds it cannot attribute a
+   * project to (see its docstring) rather than silently dropping them.
+   */
+  private async buildGraphUiInputs(project: string | undefined): Promise<{
+    anchors: ProjectionAnchorInput[];
+    claims: ProjectionClaimInput[];
+    edges: GraphEdge[];
+    effectiveProject?: string;
+    graphGeneration: number;
+    graphHead?: string;
+  }> {
+    const graph = this.getGraphIndex();
+    await graph.ensureBuilt();
+
+    const metas = await this.repo.listAnchors();
+    const readable = metas.filter((meta) => !isBuiltInAnchorName(meta.name));
+    const { effectiveProject } = await this.resolveProjectFilter(project);
+    const filteredByProject = effectiveProject
+      ? readable.filter((meta) => meta.projectSlug === effectiveProject)
+      : readable;
+
+    const docs: CoverageDocumentInput[] = [];
+    let nextIndex = 0;
+    const workerCount = Math.min(GRAPH_UI_READ_CONCURRENCY, filteredByProject.length);
+    await Promise.all(
+      Array.from({ length: workerCount }, async () => {
+        for (;;) {
+          const meta = filteredByProject[nextIndex];
+          nextIndex += 1;
+          if (!meta) {
+            return;
+          }
+          try {
+            const read = await this.repo.readAnchor(meta.name);
+            docs.push({ anchorName: meta.name, frontmatter: read.frontmatter, content: read.content });
+          } catch {
+            // Skip unreadable anchors, same as graphCoverage/GraphIndex's own tree read.
+          }
+        }
+      }),
+    );
+
+    const coverageCtx = await graph.buildCoverageContext();
+    const analysis = analyzeCoverage(docs, coverageCtx);
+    const metaByName = new Map(metas.map((meta) => [meta.name, meta]));
+    const anchorCoverageByName = new Map(analysis.anchors.map((anchor) => [anchor.anchorName, anchor]));
+
+    const anchors: ProjectionAnchorInput[] = [];
+    for (const anchorRecord of analysis.anchors) {
+      const meta = metaByName.get(anchorRecord.anchorName);
+      const canonicalNodeId = await graph.canonicalizeNodeId(anchorNodeId(anchorRecord.anchorName));
+      const lastValidated = typeof meta?.last_validated === "string" ? meta.last_validated : undefined;
+      const display = meta?.title?.trim() ? meta.title.trim() : anchorRecord.anchorName;
+      anchors.push({
+        anchorName: anchorRecord.anchorName,
+        canonicalNodeId,
+        display,
+        ...(anchorRecord.projectSlug ? { project: anchorRecord.projectSlug } : {}),
+        coverageState: anchorRecord.state,
+        ...(lastValidated ? { lastValidated } : {}),
+      });
+    }
+
+    const claims: ProjectionClaimInput[] = [];
+    for (const claimRecord of analysis.claims) {
+      if (!claimRecord.claimId) {
+        continue; // no addressable node without a minted claim id
+      }
+      const canonicalNodeId = await graph.canonicalizeNodeId(claimNodeId(claimRecord.anchorName, claimRecord.claimId));
+      const owningProject = anchorCoverageByName.get(claimRecord.anchorName)?.projectSlug;
+      claims.push({
+        anchorName: claimRecord.anchorName,
+        claimId: claimRecord.claimId,
+        canonicalNodeId,
+        coverageState: claimRecord.state,
+        ...(owningProject ? { project: owningProject } : {}),
+      });
+    }
+
+    const edges = await graph.allEdges();
+    const { head, generation } = graph.graphVersion();
+
+    return {
+      anchors,
+      claims,
+      edges,
+      ...(effectiveProject ? { effectiveProject } : {}),
+      graphGeneration: generation,
+      ...(head !== undefined ? { graphHead: head } : {}),
+    };
+  }
+
+  /**
+   * Read-only, bounded node/edge projection of the derived graph (Goal 1
+   * slice 1: "Inspectable graph foundation" — server-side only, no UI this
+   * slice). Every response echoes the graph generation/HEAD it reflects, the
+   * filters actually applied, the clamps in effect, and total-vs-returned
+   * counts so a client can always tell whether it is seeing the whole
+   * (filtered) picture or a truncated one — see `src/graph/projection.ts`
+   * for the materialize/filter/clamp pipeline this composes.
+   */
+  async graphSnapshot(input: GraphSnapshotInput = {}): Promise<GraphSnapshotResult> {
+    const { anchors, claims, edges, effectiveProject, graphGeneration, graphHead } = await this.buildGraphUiInputs(
+      input.project,
+    );
+
+    // Trim `q` once here so the value echoed in `appliedFilters` is exactly the
+    // one the filter applies: `applyProjectionFilters` trims before matching,
+    // so echoing the raw `input.q` (e.g. "  demo  ") would misleadingly report
+    // a different term than was actually used. An all-whitespace `q` trims to
+    // empty and is omitted entirely.
+    const trimmedQ = input.q?.trim();
+    const appliedFilters: GraphSnapshotAppliedFilters = {
+      ...(effectiveProject ? { project: effectiveProject } : {}),
+      ...(input.nodeTypes && input.nodeTypes.length > 0 ? { nodeTypes: input.nodeTypes } : {}),
+      ...(input.edgeTypes && input.edgeTypes.length > 0 ? { edgeTypes: input.edgeTypes } : {}),
+      ...(input.coverageStates && input.coverageStates.length > 0 ? { coverageStates: input.coverageStates } : {}),
+      ...(trimmedQ ? { q: trimmedQ } : {}),
+    };
+    const filters: ProjectionFilters = appliedFilters;
+
+    const clamps: ProjectionClamps = {
+      maxNodes: clampGraphUiCount(input.maxNodes, this.graphUiMaxNodesCeiling),
+      maxEdges: clampGraphUiCount(input.maxEdges, this.graphUiMaxEdgesCeiling),
+    };
+
+    const projection = buildGraphProjection({ edges, anchors, claims, filters, clamps });
+
+    return {
+      nodes: projection.nodes,
+      edges: projection.edges,
+      graphGeneration,
+      ...(graphHead !== undefined ? { graphHead } : {}),
+      identityContractVersion: GRAPH_IDENTITY_VERSION,
+      appliedFilters,
+      clamps,
+      totals: projection.totals,
+      truncated: projection.truncated,
+      warnings: projection.warnings,
+    };
+  }
+
+  /**
+   * Full (unclamped) node/edge type breakdown for the current (optionally
+   * project-scoped) graph (Goal 1 slice 1). Reuses `buildGraphUiInputs`'s
+   * same read + `materializeGraphProjection`'s same node/edge materialization
+   * `graphSnapshot` uses (no filter/clamp pass — schema describes the whole
+   * shape), so the two surfaces' counts always agree for one graph
+   * generation.
+   */
+  async graphSchema(input: GraphSchemaInput = {}): Promise<GraphSchemaResult> {
+    const { anchors, claims, edges, effectiveProject, graphGeneration, graphHead } = await this.buildGraphUiInputs(
+      input.project,
+    );
+    // Apply the SAME project scoping `graphSnapshot` uses before counting, so
+    // a project-scoped schema's node/edge type counts agree with
+    // `graphSnapshot({ project })`'s totals for the same generation. Without
+    // this, `allEdges()` pulls in cross-project `project:`/`goal:` endpoints
+    // that snapshot's project filter would drop, and the two disagree. No
+    // node-type/coverage/q filter and no clamp here — schema reports the whole
+    // (optionally project-scoped) graph, not a bounded response.
+    const materialized = materializeGraphProjection({ edges, anchors, claims });
+    const { nodes, edges: projectionEdges } = applyProjectionFilters(
+      materialized.nodes,
+      materialized.edges,
+      effectiveProject ? { project: effectiveProject } : undefined,
+    );
+
+    const nodeTypeCounts: Partial<Record<GraphNodeType, number>> = {};
+    for (const node of nodes) {
+      nodeTypeCounts[node.type] = (nodeTypeCounts[node.type] ?? 0) + 1;
+    }
+    const edgeTypeCounts: Partial<Record<GraphEdgeType, number>> = {};
+    for (const edge of projectionEdges) {
+      edgeTypeCounts[edge.type] = (edgeTypeCounts[edge.type] ?? 0) + 1;
+    }
+    const propertyKeySet = new Set<string>();
+    for (const node of nodes) {
+      for (const key of Object.keys(node.properties)) {
+        propertyKeySet.add(key);
+      }
+    }
+    for (const edge of projectionEdges) {
+      for (const key of Object.keys(edge.properties)) {
+        propertyKeySet.add(key);
+      }
+    }
+
+    return {
+      nodeTypeCounts,
+      edgeTypeCounts,
+      propertyKeys: [...propertyKeySet].sort(),
+      graphGeneration,
+      ...(graphHead !== undefined ? { graphHead } : {}),
+      identityContractVersion: GRAPH_IDENTITY_VERSION,
+      features: {
+        graphUiEnabled: this.isGraphUiEnabled(),
+        anchorSchemaMode: this.options.anchorSchemaMode ?? "legacy",
+      },
+      clamps: {
+        maxNodes: this.graphUiMaxNodesCeiling,
+        maxEdges: this.graphUiMaxEdgesCeiling,
+      },
+      appliedFilters: {
+        ...(effectiveProject ? { project: effectiveProject } : {}),
+      },
+    };
+  }
+
+  /**
    * Assemble the resolver context `planAnchorMigration` needs (Goal 0 Phase 2
    * slice 2: `goal0_phase2_migration_write_ops_plan.md`), reusing
    * `collectTreeAnchorIds`/`collectTreeClaimIds` (the same tree-wide identity
@@ -6049,6 +6370,28 @@ function duplicateClaimIdViolations(content: string, treeIdsExcludingThisAnchor:
 /** `graphNeighbors` input's `direction` defaults to `"both"`; the traversal core (`src/graph/neighbors.ts`) uses `"forward"`/`"reverse"`/`"both"` naming to avoid the `to`/`from`-vs-`in`/`out` ambiguity edge objects already use. */
 function normalizeGraphDirection(direction: GraphNeighborsInput["direction"]): GraphNeighborsDirection {
   return direction === "forward" || direction === "reverse" ? direction : "both";
+}
+
+/** Clamp a client-requested `graphSnapshot` node/edge cap to the configured ceiling — the client may request fewer, never more; an omitted/non-finite/negative request falls back to the ceiling itself. */
+function clampGraphUiCount(requested: number | undefined, ceiling: number): number {
+  if (requested === undefined || !Number.isFinite(requested)) {
+    return ceiling;
+  }
+  return Math.min(ceiling, Math.max(0, Math.floor(requested)));
+}
+
+/**
+ * Normalize a configured `graphUi` ceiling to the exact non-negative integer
+ * the clamp math enforces, so the value echoed in `clamps` metadata always
+ * matches what actually bounds the response. A missing, non-finite, or
+ * negative config value falls back to the default rather than silently
+ * flooring the graph to an unexpected size; a non-integer is floored.
+ */
+function normalizeGraphUiCeiling(value: number | undefined, fallback: number): number {
+  if (value === undefined || !Number.isFinite(value) || value < 0) {
+    return fallback;
+  }
+  return Math.floor(value);
 }
 
 /** Split a `claim:<anchor>#<id>` node id back into its parts. Undefined for any other node kind's id shape. */

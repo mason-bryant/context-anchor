@@ -140,6 +140,7 @@ export const UI_HTML = `<!doctype html>
             <button class="tab" data-tab="review" type="button"><span class="icon-label"><svg class="icon" aria-hidden="true"><use href="#icon-save"></use></svg><span>Review</span></span></button>
             <button class="tab" data-tab="traces" type="button"><span class="icon-label"><svg class="icon" aria-hidden="true"><use href="#icon-plan"></use></svg><span>Traces</span></span></button>
             <button class="tab" data-tab="coverage" type="button"><span class="icon-label"><svg class="icon" aria-hidden="true"><use href="#icon-object-graph"></use></svg><span>Coverage</span></span></button>
+            <button class="tab" data-tab="graph" type="button"><span class="icon-label"><svg class="icon" aria-hidden="true"><use href="#icon-object-graph"></use></svg><span>Graph</span></span></button>
             <button class="tab" data-tab="detail" type="button" disabled><span class="icon-label"><svg class="icon" aria-hidden="true"><use href="#icon-anchor"></use></svg><span>Selected Anchor</span></span></button>
           </nav>
 
@@ -554,6 +555,114 @@ export const UI_HTML = `<!doctype html>
             </div>
             <p id="coverage-count" class="coverage-count" aria-live="polite"></p>
             <button id="coverage-load-more" type="button" hidden>Load more</button>
+          </section>
+
+          <section id="graph-view" class="view">
+            <div class="view-header">
+              <div>
+                <h2>Graph</h2>
+                <p id="graph-summary">Explore the derived knowledge graph: anchors, milestones, tasks, claims, people, and their relations.</p>
+              </div>
+              <div class="tasks-filters">
+                <button id="graph-refresh" type="button">Refresh</button>
+                <button id="graph-fit" type="button">Fit</button>
+                <button id="graph-reset" type="button">Reset view</button>
+              </div>
+            </div>
+
+            <div id="graph-unavailable" class="empty-state" hidden>Graph visualization is unavailable on this server (the graph UI feature is disabled, or the schema request failed).</div>
+
+            <div id="graph-content" hidden>
+              <div class="graph-filters">
+                <label>
+                  Project
+                  <select id="graph-project-filter" aria-label="Filter graph by project">
+                    <option value="">All projects</option>
+                  </select>
+                </label>
+                <fieldset class="graph-filter-group">
+                  <legend>Node types</legend>
+                  <div id="graph-node-type-filters"></div>
+                </fieldset>
+                <fieldset class="graph-filter-group">
+                  <legend>Edge types</legend>
+                  <div id="graph-edge-type-filters"></div>
+                </fieldset>
+                <fieldset class="graph-filter-group">
+                  <legend>Coverage state</legend>
+                  <div id="graph-coverage-filters"></div>
+                </fieldset>
+                <label>
+                  Search
+                  <input id="graph-text-filter" type="search" placeholder="e.g. roadmap" aria-label="Filter graph by display text">
+                </label>
+                <button id="graph-clear-filters" type="button">Clear filters</button>
+              </div>
+
+              <p id="graph-counts" class="coverage-count" aria-live="polite"></p>
+              <p id="graph-truncated-notice" class="graph-truncated-notice" hidden>Results truncated by the server's node/edge cap — narrow your filters to see everything that matches.</p>
+
+              <div class="graph-main">
+                <div class="graph-canvas-wrap">
+                  <div id="graph-canvas" class="graph-canvas" role="img" aria-label="Graph canvas. See the table below for a keyboard-accessible list of every node and its Open-detail link."></div>
+                  <div id="graph-legend" class="graph-legend" aria-label="Graph legend">
+                    <div class="graph-legend-group">
+                      <h3>Shape</h3>
+                      <ul>
+                        <li><span class="legend-shape legend-shape-round-rectangle" aria-hidden="true"></span>Project / Task</li>
+                        <li><span class="legend-shape legend-shape-rectangle" aria-hidden="true"></span>Anchor</li>
+                        <li><span class="legend-shape legend-shape-diamond" aria-hidden="true"></span>Milestone</li>
+                        <li><span class="legend-shape legend-shape-ellipse" aria-hidden="true"></span>Claim / Person / Team</li>
+                        <li><span class="legend-shape legend-shape-star" aria-hidden="true"></span>Goal</li>
+                        <li><span class="legend-shape legend-shape-hexagon" aria-hidden="true"></span>Repo / Path / PR / File / URL / Section</li>
+                      </ul>
+                    </div>
+                    <div class="graph-legend-group">
+                      <h3>Coverage</h3>
+                      <ul>
+                        <li><span class="legend-swatch legend-swatch-solid" aria-hidden="true"></span>Structured</li>
+                        <li><span class="legend-swatch legend-swatch-outline" aria-hidden="true"></span>Partial / Ambiguous</li>
+                        <li><span class="legend-swatch legend-swatch-ghost" aria-hidden="true"></span>Prose only / Dangling / Malformed</li>
+                      </ul>
+                    </div>
+                    <div class="graph-legend-group">
+                      <h3>Edge</h3>
+                      <ul>
+                        <li><span class="legend-line legend-line-solid" aria-hidden="true"></span>Authored (front matter / registry / claim)</li>
+                        <li><span class="legend-line legend-line-thin" aria-hidden="true"></span>Containment</li>
+                        <li><span class="legend-line legend-line-dashed" aria-hidden="true"></span>Body link</li>
+                      </ul>
+                    </div>
+                  </div>
+                </div>
+                <div id="graph-inspector" class="graph-inspector">
+                  <div id="graph-inspector-empty" class="empty-state">Select a node (in the canvas or the table below) to inspect it.</div>
+                  <div id="graph-inspector-content" hidden>
+                    <h3 id="graph-inspector-title"></h3>
+                    <dl class="graph-inspector-fields" id="graph-inspector-fields"></dl>
+                    <p id="graph-inspector-open-detail-wrap" hidden><a id="graph-inspector-open-detail" href="#" data-anchor-name="">Open detail</a></p>
+                    <pre id="graph-inspector-raw" class="compact-raw"></pre>
+                  </div>
+                </div>
+              </div>
+
+              <div class="markdown-table-scroll">
+                <table id="graph-table">
+                  <caption class="sr-only">Every node in the current graph view, one row each — the accessible, keyboard-reachable representation of the canvas above</caption>
+                  <thead>
+                    <tr>
+                      <th scope="col"><button type="button" class="graph-sort-button" data-graph-sort="type">Type</button></th>
+                      <th scope="col"><button type="button" class="graph-sort-button" data-graph-sort="display">Display</button></th>
+                      <th scope="col"><button type="button" class="graph-sort-button" data-graph-sort="coverageState">Coverage</button></th>
+                      <th scope="col"><button type="button" class="graph-sort-button" data-graph-sort="project">Project</button></th>
+                      <th scope="col">Open</th>
+                    </tr>
+                  </thead>
+                  <tbody id="graph-table-rows"></tbody>
+                </table>
+              </div>
+              <div id="graph-table-empty" class="empty-state" hidden>No nodes match the current filters.</div>
+            </div>
           </section>
 
           <section id="detail-view" class="view">
@@ -3108,6 +3217,252 @@ textarea {
   color: var(--muted);
   margin: 10px 0;
 }
+
+.graph-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  align-items: flex-start;
+  margin-bottom: 10px;
+}
+
+.graph-filters label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.graph-filters select,
+.graph-filters input[type="search"] {
+  font: inherit;
+  font-size: 13px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 4px 8px;
+  color: var(--text);
+  min-width: 180px;
+}
+
+.graph-filter-group {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 4px 10px 6px;
+  margin: 0;
+}
+
+.graph-filter-group legend {
+  font-size: 11px;
+  color: var(--muted);
+  padding: 0 4px;
+}
+
+.graph-filter-group label {
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text);
+  white-space: nowrap;
+}
+
+.graph-truncated-notice {
+  color: var(--warn);
+  font-size: 12px;
+  margin: 4px 0 10px;
+}
+
+.graph-main {
+  display: flex;
+  gap: 14px;
+  margin-bottom: 14px;
+  align-items: stretch;
+}
+
+.graph-canvas-wrap {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+}
+
+.graph-canvas {
+  width: 100%;
+  height: 520px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+}
+
+.graph-legend {
+  position: absolute;
+  right: 10px;
+  top: 10px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 11px;
+  box-shadow: var(--shadow);
+  max-width: 220px;
+  pointer-events: none;
+}
+
+.graph-legend-group h3 {
+  margin: 4px 0 2px;
+  font-size: 11px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.graph-legend-group ul {
+  list-style: none;
+  margin: 0 0 6px;
+  padding: 0;
+}
+
+.graph-legend-group li {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 2px 0;
+  color: var(--text);
+}
+
+.legend-shape {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  background: var(--accent);
+  flex: none;
+}
+
+.legend-shape-round-rectangle {
+  border-radius: 4px;
+}
+
+.legend-shape-rectangle {
+  border-radius: 0;
+}
+
+.legend-shape-diamond {
+  width: 10px;
+  height: 10px;
+  transform: rotate(45deg);
+}
+
+.legend-shape-ellipse {
+  border-radius: 50%;
+}
+
+.legend-shape-star {
+  background: var(--accent);
+  clip-path: polygon(50% 0%, 61% 35%, 98% 35%, 68% 57%, 79% 91%, 50% 70%, 21% 91%, 32% 57%, 2% 35%, 39% 35%);
+}
+
+.legend-shape-hexagon {
+  clip-path: polygon(25% 0%, 75% 0%, 100% 50%, 75% 100%, 25% 100%, 0% 50%);
+}
+
+.legend-swatch {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+  flex: none;
+}
+
+.legend-swatch-solid {
+  background: var(--accent);
+}
+
+.legend-swatch-outline {
+  background: var(--accent-soft);
+  border: 2px solid var(--accent);
+}
+
+.legend-swatch-ghost {
+  background: var(--accent-soft);
+  opacity: 0.45;
+}
+
+.legend-line {
+  display: inline-block;
+  width: 20px;
+  height: 0;
+  border-top: 2px solid var(--text);
+  flex: none;
+}
+
+.legend-line-thin {
+  border-top-width: 1px;
+  border-top-color: var(--muted);
+}
+
+.legend-line-dashed {
+  border-top-style: dashed;
+}
+
+.graph-inspector {
+  width: 280px;
+  flex: none;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+  padding: 12px;
+  box-shadow: var(--shadow);
+  overflow: auto;
+  max-height: 520px;
+}
+
+.graph-inspector-fields {
+  margin: 8px 0;
+  font-size: 12px;
+}
+
+.graph-inspector-fields dt {
+  color: var(--muted);
+  margin-top: 6px;
+}
+
+.graph-inspector-fields dd {
+  margin: 0;
+}
+
+#graph-inspector-raw {
+  font-size: 11px;
+  max-height: 220px;
+  overflow: auto;
+}
+
+#graph-table th,
+#graph-table td {
+  text-align: left;
+  vertical-align: top;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+  font-size: 13px;
+}
+
+.graph-sort-button {
+  background: none;
+  border: 0;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 0;
+  color: inherit;
+}
+
+.graph-table-row {
+  cursor: pointer;
+}
+
+.graph-table-row.selected {
+  background: var(--accent-soft);
+}
 `;
 
 export const UI_JS = `(function () {
@@ -3117,6 +3472,7 @@ export const UI_JS = `(function () {
   var ANCHOR_BATCH_SIZE = 50;
   var mermaidRuntimePromise = null;
   var mermaidInitialized = false;
+  var cytoscapeRuntimePromise = null;
   var KNOWN_URL_PARAMS = [
     "anchor",
     "view",
@@ -3253,7 +3609,32 @@ export const UI_JS = `(function () {
     // project filter's own option list never shrinks just because a project
     // filter is currently narrowing state.coverageRecords server-side (the
     // dropdown must still offer every other project to switch back to).
-    coverageKnownProjects: []
+    coverageKnownProjects: [],
+
+    // Graph tab (Goal 1 slice 2: 2D graph visualization). graphCy is the
+    // live Cytoscape instance (or null when the tab is closed/never opened);
+    // it is always destroyed before a new one is created (see
+    // destroyGraphCy/renderGraph) so repeated open/close or project switches
+    // never leak instances or listeners. graphSchema/graphSnapshot are
+    // the last-fetched server responses; graphUnavailable is set once and
+    // sticks for the session once the schema route reports the feature is
+    // disabled (or errors) so the tab does not keep retrying.
+    graphCy: null,
+    graphSchema: null,
+    graphSnapshot: null,
+    graphLoading: false,
+    graphUnavailable: false,
+    // Bumped on every renderGraph() so a stale async runtime-load handler can
+    // tell it is no longer the latest and must not instantiate Cytoscape.
+    graphRenderToken: 0,
+    graphProject: "",
+    graphNodeTypes: [],
+    graphEdgeTypes: [],
+    graphCoverageStates: [],
+    graphText: "",
+    graphSelectedId: null,
+    graphSortKey: "type",
+    graphSortDir: "asc"
   };
 
   var categories = ["", "server-rules", "agent-rules", "projects", "invariants", "conflicts", "shared", "archive"];
@@ -3349,7 +3730,7 @@ export const UI_JS = `(function () {
   }
 
   function validTab(value) {
-    return value === "root" || value === "planner" || value === "tasks" || value === "traces" || value === "coverage" || value === "people" || value === "teams" || value === "mappings" || value === "review" || value === "detail" ? value : null;
+    return value === "root" || value === "planner" || value === "tasks" || value === "traces" || value === "coverage" || value === "graph" || value === "people" || value === "teams" || value === "mappings" || value === "review" || value === "detail" ? value : null;
   }
 
   function validRootMode(value) {
@@ -4360,7 +4741,9 @@ export const UI_JS = `(function () {
     var currentPlannerCategory = plannerCategorySelect.value;
     var tasksProjectSelect = el("tasks-project-filter");
     var currentTasksProject = tasksProjectSelect.value;
-    projects = uniqueSorted(projects.concat([currentProject, currentPlannerProject, currentTasksProject]));
+    var graphProjectSelect = el("graph-project-filter");
+    var currentGraphProject = graphProjectSelect.value;
+    projects = uniqueSorted(projects.concat([currentProject, currentPlannerProject, currentTasksProject, currentGraphProject]));
     tags = uniqueSorted(tags.concat([currentTag, currentPlannerTag]));
     projectSelect.innerHTML = optionList(projects, "All projects");
     tagSelect.innerHTML = optionList(tags, "All tags");
@@ -4369,6 +4752,7 @@ export const UI_JS = `(function () {
     plannerTagSelect.innerHTML = optionList(tags, "All tags");
     plannerCategorySelect.innerHTML = optionList(categories.slice(1), "All categories");
     tasksProjectSelect.innerHTML = optionList(projects, "All projects");
+    graphProjectSelect.innerHTML = optionList(projects, "All projects");
     projectSelect.value = currentProject && projects.includes(currentProject) ? currentProject : "";
     tagSelect.value = currentTag && tags.includes(currentTag) ? currentTag : "";
     categorySelect.value = categories.includes(currentCategory) ? currentCategory : "";
@@ -4376,6 +4760,7 @@ export const UI_JS = `(function () {
     plannerTagSelect.value = currentPlannerTag && tags.includes(currentPlannerTag) ? currentPlannerTag : "";
     plannerCategorySelect.value = categories.includes(currentPlannerCategory) ? currentPlannerCategory : "";
     tasksProjectSelect.value = currentTasksProject && projects.includes(currentTasksProject) ? currentTasksProject : "";
+    graphProjectSelect.value = currentGraphProject && projects.includes(currentGraphProject) ? currentGraphProject : "";
     refreshTypeaheadOptions();
   }
 
@@ -5342,6 +5727,7 @@ export const UI_JS = `(function () {
   }
 
   function showTab(tab) {
+    var previousTab = state.activeTab;
     state.activeTab = tab;
     document.querySelectorAll(".tab").forEach(function (button) {
       if (button.dataset.tab === "detail") {
@@ -5352,6 +5738,12 @@ export const UI_JS = `(function () {
     document.querySelectorAll(".view").forEach(function (view) {
       view.classList.toggle("active", view.id === tab + "-view");
     });
+    // Lifecycle: leaving the Graph tab must destroy its live Cytoscape
+    // instance (cy.destroy()) so repeated open/close never leaks instances
+    // or listeners. Re-opening rebuilds it from the cached snapshot.
+    if (previousTab === "graph" && tab !== "graph") {
+      destroyGraphCy();
+    }
   }
 
   function showSelectedAnchor() {
@@ -5415,6 +5807,28 @@ export const UI_JS = `(function () {
       loadCoverage();
     } else {
       renderCoverage();
+    }
+  }
+
+  function showGraphView(options) {
+    var opts = options || {};
+    if (!opts.skipLocationUpdate) {
+      updateLocationFromState({ anchor: null, view: "graph", history: "push" });
+    }
+    state.pendingAnchor = null;
+    showTab("graph");
+    if (state.graphUnavailable) {
+      renderGraphUnavailable();
+      return;
+    }
+    if (!state.graphSchema && !state.graphLoading) {
+      loadGraphData();
+    } else if (state.graphSnapshot) {
+      // Returning to an already-loaded Graph tab: rebuild the canvas from
+      // the cached snapshot (showTab already destroyed the previous
+      // Cytoscape instance on the way out) rather than re-fetching.
+      renderGraph();
+      renderGraphTable();
     }
   }
 
@@ -6870,6 +7284,565 @@ export const UI_JS = `(function () {
     loadMoreEl.hidden = !state.coverageNextCursor;
     loadMoreEl.disabled = !!state.coverageLoadMoreLoading;
     loadMoreEl.textContent = state.coverageLoadMoreLoading ? "Loading..." : "Load more";
+  }
+
+  // ---------------------------------------------------------------------
+  // Graph tab (Goal 1 slice 2: 2D graph visualization, Explore mode).
+  //
+  // Cytoscape is vendored locally (no CDN, no bundler — see
+  // loadMermaidRuntime above for the identical pattern) and lazily
+  // import()'d the first time the tab is opened, so it never adds weight to
+  // the initial page load. The mapping rules below (node type -> shape,
+  // coverage -> fill treatment, edge sourceOfTruth -> stroke) mirror
+  // src/ui/graph/viewModel.ts (nodeTypeShape / coverageStyle /
+  // edgeStrokeStyle / snapshotToCyElements), which is the tested, browser-
+  // free spec for these same rules.
+  // ---------------------------------------------------------------------
+
+  function loadCytoscapeRuntime() {
+    var runtime = window.cytoscape;
+    if (runtime) {
+      return Promise.resolve(runtime);
+    }
+    if (!cytoscapeRuntimePromise) {
+      cytoscapeRuntimePromise = import("/ui/vendor/cytoscape/cytoscape.esm.min.mjs").then(function (module) {
+        var loaded = module.default || module;
+        window.cytoscape = loaded;
+        return loaded;
+      }).catch(function (error) {
+        cytoscapeRuntimePromise = null;
+        throw error;
+      });
+    }
+    return cytoscapeRuntimePromise;
+  }
+
+  function prefersReducedMotion() {
+    return !!(window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches);
+  }
+
+  // Mirrors nodeTypeShape in src/ui/graph/viewModel.ts.
+  function graphNodeTypeShape(type) {
+    if (type === "project" || type === "task") return "round-rectangle";
+    if (type === "anchor") return "rectangle";
+    if (type === "milestone") return "diamond";
+    if (type === "claim" || type === "person" || type === "team") return "ellipse";
+    if (type === "goal") return "star";
+    return "hexagon";
+  }
+
+  // Mirrors coverageStyle in src/ui/graph/viewModel.ts.
+  function graphCoverageStyle(coverageState) {
+    if (!coverageState) return null;
+    if (coverageState === "structured") return { treatment: "solid", warn: false };
+    if (coverageState === "partial") return { treatment: "outline", warn: false };
+    if (coverageState === "ambiguous") return { treatment: "outline", warn: true };
+    if (coverageState === "prose_only") return { treatment: "ghost", warn: false };
+    if (coverageState === "dangling" || coverageState === "malformed") return { treatment: "ghost", warn: true };
+    return null;
+  }
+
+  // Mirrors edgeStrokeStyle in src/ui/graph/viewModel.ts.
+  function graphEdgeStrokeStyle(sourceOfTruth) {
+    if (sourceOfTruth === "containment") return { lineStyle: "solid", weight: "thin" };
+    if (sourceOfTruth === "body-link") return { lineStyle: "dashed", weight: "normal" };
+    return { lineStyle: "solid", weight: "normal" };
+  }
+
+  var GRAPH_OPEN_DETAIL_NODE_TYPES = { anchor: true, claim: true, milestone: true, task: true };
+
+  function graphOpenDetailAnchorName(node) {
+    if (!node.anchorName || !GRAPH_OPEN_DETAIL_NODE_TYPES[node.type]) {
+      return undefined;
+    }
+    return node.anchorName;
+  }
+
+  // Mirrors snapshotToCyElements in src/ui/graph/viewModel.ts: builds
+  // Cytoscape's own elements array from a snapshot, using each node's
+  // server-assigned seed as its initial (preset-layout) position, and
+  // defensively dropping any edge whose endpoint is not in this node set.
+  function graphSnapshotToCyElements(snapshot) {
+    var nodeIds = {};
+    (snapshot.nodes || []).forEach(function (node) { nodeIds[node.id] = true; });
+    var nodes = (snapshot.nodes || []).map(function (node) {
+      var style = graphCoverageStyle(node.coverageState);
+      var classes = ["type-" + node.type];
+      if (style) {
+        classes.push("coverage-" + style.treatment);
+        if (style.warn) classes.push("coverage-warn");
+      }
+      return {
+        group: "nodes",
+        data: {
+          id: node.id,
+          label: node.display,
+          type: node.type,
+          shape: graphNodeTypeShape(node.type),
+          coverageState: node.coverageState,
+          sourceOfTruth: node.sourceOfTruth,
+          project: node.project,
+          anchorName: node.anchorName,
+          openDetailAnchorName: graphOpenDetailAnchorName(node)
+        },
+        position: { x: node.seed.x, y: node.seed.y },
+        classes: classes.join(" ")
+      };
+    });
+    var edges = (snapshot.edges || []).filter(function (edge) {
+      return nodeIds[edge.from] && nodeIds[edge.to];
+    }).map(function (edge) {
+      var style = graphEdgeStrokeStyle(edge.sourceOfTruth);
+      return {
+        group: "edges",
+        data: {
+          id: edge.id,
+          source: edge.from,
+          target: edge.to,
+          type: edge.type,
+          sourceOfTruth: edge.sourceOfTruth
+        },
+        classes: ["edge-type-" + edge.type, "edge-" + style.lineStyle, "edge-" + style.weight].join(" ")
+      };
+    });
+    return { nodes: nodes, edges: edges };
+  }
+
+  function graphCyStylesheet() {
+    return [
+      { selector: "node", style: {
+        "shape": "data(shape)",
+        "label": "data(label)",
+        "font-size": 9,
+        "text-wrap": "ellipsis",
+        "text-max-width": 90,
+        "text-valign": "bottom",
+        "text-margin-y": 4,
+        "background-color": "#1f6feb",
+        "background-opacity": 1,
+        "border-width": 1,
+        "border-color": "#1f6feb",
+        "width": 26,
+        "height": 26
+      } },
+      { selector: "node.coverage-solid", style: { "background-opacity": 1, "border-width": 1 } },
+      { selector: "node.coverage-outline", style: { "background-opacity": 0.35, "border-width": 2 } },
+      { selector: "node.coverage-ghost", style: { "background-opacity": 0.12, "border-width": 1, "border-style": "dashed" } },
+      { selector: "node.coverage-warn", style: { "border-color": "#b16a03" } },
+      { selector: "node:selected", style: { "border-color": "#c7352d", "border-width": 3 } },
+      { selector: "edge", style: {
+        "width": 1.5,
+        "line-color": "#8a97a6",
+        "target-arrow-color": "#8a97a6",
+        "target-arrow-shape": "triangle",
+        "curve-style": "bezier",
+        "arrow-scale": 0.7
+      } },
+      { selector: "edge.edge-thin", style: { "width": 0.75, "line-color": "#c3ccd4", "target-arrow-shape": "none" } },
+      { selector: "edge.edge-dashed", style: { "line-style": "dashed" } },
+      { selector: "edge:selected", style: { "line-color": "#c7352d", "target-arrow-color": "#c7352d", "width": 2.5 } }
+    ];
+  }
+
+  function destroyGraphCy() {
+    if (state.graphCy) {
+      state.graphCy.destroy();
+      state.graphCy = null;
+    }
+  }
+
+  function renderGraphUnavailable() {
+    el("graph-unavailable").hidden = false;
+    el("graph-content").hidden = true;
+  }
+
+  async function loadGraphData() {
+    if (state.graphUnavailable) {
+      renderGraphUnavailable();
+      return;
+    }
+    state.graphLoading = true;
+    var project = controlValue("graph-project-filter", state.graphProject).trim();
+    try {
+      var schema = await api("/api/ui/graph/schema" + (project ? "?project=" + encodeURIComponent(project) : ""));
+      state.graphSchema = schema;
+      renderGraphFilterOptions(schema);
+      await loadGraphSnapshot();
+      el("graph-unavailable").hidden = true;
+      el("graph-content").hidden = false;
+    } catch (error) {
+      if (error && error.status === 404) {
+        state.graphUnavailable = true;
+        renderGraphUnavailable();
+      } else {
+        setBanner(error.message, "error");
+        // On a first load there is no graph content to fall back to, so a
+        // transient (non-404) failure would otherwise leave the tab blank
+        // (both #graph-unavailable and #graph-content hidden). Show the
+        // empty/unavailable state -- its copy covers a failed schema request.
+        // NOT sticky like the 404 case: a later open retries the fetch.
+        if (!state.graphSnapshot) {
+          renderGraphUnavailable();
+        }
+      }
+    } finally {
+      state.graphLoading = false;
+    }
+  }
+
+  function graphQueryString() {
+    var qs = [];
+    var project = controlValue("graph-project-filter", state.graphProject).trim();
+    if (project) qs.push("project=" + encodeURIComponent(project));
+    if (state.graphNodeTypes && state.graphNodeTypes.length > 0) qs.push("nodeTypes=" + encodeURIComponent(state.graphNodeTypes.join(",")));
+    if (state.graphEdgeTypes && state.graphEdgeTypes.length > 0) qs.push("edgeTypes=" + encodeURIComponent(state.graphEdgeTypes.join(",")));
+    if (state.graphCoverageStates && state.graphCoverageStates.length > 0) qs.push("coverage=" + encodeURIComponent(state.graphCoverageStates.join(",")));
+    var q = controlValue("graph-text-filter", state.graphText).trim();
+    if (q) qs.push("q=" + encodeURIComponent(q));
+    return qs.join("&");
+  }
+
+  async function loadGraphSnapshot() {
+    var snapshot = await api("/api/ui/graph/snapshot" + (graphQueryString() ? "?" + graphQueryString() : ""));
+    state.graphSnapshot = snapshot;
+    state.graphSelectedId = null;
+    renderGraphHeader();
+    renderGraph();
+    renderGraphTable();
+    renderGraphInspector(null);
+  }
+
+  async function reloadGraphSnapshotOnly() {
+    if (state.graphUnavailable || !state.graphSchema) {
+      return;
+    }
+    try {
+      await loadGraphSnapshot();
+    } catch (error) {
+      setBanner(error.message, "error");
+    }
+  }
+
+  function renderGraphHeader() {
+    var snapshot = state.graphSnapshot;
+    var countEl = el("graph-counts");
+    var noticeEl = el("graph-truncated-notice");
+    if (!snapshot) {
+      countEl.textContent = "";
+      noticeEl.hidden = true;
+      return;
+    }
+    var totals = snapshot.totals || {};
+    countEl.textContent = "Showing " + totals.returnedNodes + " of " + totals.matchingNodes + " matching node(s), " + totals.returnedEdges + " of " + totals.matchingEdges + " matching edge(s).";
+    noticeEl.hidden = !snapshot.truncated;
+  }
+
+  function pruneToAvailable(selected, available) {
+    var present = {};
+    (available || []).forEach(function (t) { present[t] = true; });
+    return (selected || []).filter(function (t) { return present[t]; });
+  }
+
+  function renderGraphFilterOptions(schema) {
+    var nodeTypes = Object.keys(schema.nodeTypeCounts || {}).sort();
+    var edgeTypes = Object.keys(schema.edgeTypeCounts || {}).sort();
+    // The full fixed coverage vocabulary: the schema reports node-type counts,
+    // not coverage-state counts, so the rail always offers every state (a
+    // small, stable list) rather than trying to narrow it per graph.
+    var coverageStates = ["structured", "partial", "prose_only", "ambiguous", "dangling", "malformed"];
+
+    // Drop any previously-selected node/edge type the (possibly newly
+    // project-scoped) schema no longer offers, so a stale selection can't stay
+    // applied to the query with no checkbox left to clear it. This function is
+    // always followed by a snapshot load, so the pruned state flows straight
+    // into that fetch. (Coverage states are a fixed vocabulary, so no pruning.)
+    state.graphNodeTypes = pruneToAvailable(state.graphNodeTypes, nodeTypes);
+    state.graphEdgeTypes = pruneToAvailable(state.graphEdgeTypes, edgeTypes);
+
+    var nodeTypesEl = el("graph-node-type-filters");
+    var selectedNodeTypes = {};
+    (state.graphNodeTypes || []).forEach(function (t) { selectedNodeTypes[t] = true; });
+    nodeTypesEl.innerHTML = nodeTypes.map(function (type) {
+      var checked = selectedNodeTypes[type] ? " checked" : "";
+      return "<label><input type=\\"checkbox\\" data-graph-node-type=\\"" + escapeHtml(type) + "\\"" + checked + "> " + escapeHtml(type) + "</label>";
+    }).join("");
+    nodeTypesEl.querySelectorAll("[data-graph-node-type]").forEach(function (input) {
+      input.addEventListener("change", function () {
+        toggleGraphArrayFilter("graphNodeTypes", input.dataset.graphNodeType);
+      });
+    });
+
+    var edgeTypesEl = el("graph-edge-type-filters");
+    var selectedEdgeTypes = {};
+    (state.graphEdgeTypes || []).forEach(function (t) { selectedEdgeTypes[t] = true; });
+    edgeTypesEl.innerHTML = edgeTypes.map(function (type) {
+      var checked = selectedEdgeTypes[type] ? " checked" : "";
+      return "<label><input type=\\"checkbox\\" data-graph-edge-type=\\"" + escapeHtml(type) + "\\"" + checked + "> " + escapeHtml(type) + "</label>";
+    }).join("");
+    edgeTypesEl.querySelectorAll("[data-graph-edge-type]").forEach(function (input) {
+      input.addEventListener("change", function () {
+        toggleGraphArrayFilter("graphEdgeTypes", input.dataset.graphEdgeType);
+      });
+    });
+
+    var coverageEl = el("graph-coverage-filters");
+    var selectedCoverage = {};
+    (state.graphCoverageStates || []).forEach(function (s) { selectedCoverage[s] = true; });
+    coverageEl.innerHTML = coverageStates.map(function (stateKey) {
+      var checked = selectedCoverage[stateKey] ? " checked" : "";
+      return "<label><input type=\\"checkbox\\" data-graph-coverage=\\"" + escapeHtml(stateKey) + "\\"" + checked + "> " + escapeHtml(stateKey) + "</label>";
+    }).join("");
+    coverageEl.querySelectorAll("[data-graph-coverage]").forEach(function (input) {
+      input.addEventListener("change", function () {
+        toggleGraphArrayFilter("graphCoverageStates", input.dataset.graphCoverage);
+      });
+    });
+  }
+
+  function toggleGraphArrayFilter(stateKey, value) {
+    var current = state[stateKey] || [];
+    var idx = current.indexOf(value);
+    if (idx === -1) {
+      state[stateKey] = current.concat([value]);
+    } else {
+      state[stateKey] = current.slice(0, idx).concat(current.slice(idx + 1));
+    }
+    reloadGraphSnapshotOnly();
+  }
+
+  function renderGraph() {
+    var container = el("graph-canvas");
+    var snapshot = state.graphSnapshot;
+    destroyGraphCy();
+    if (!snapshot || !container) {
+      return;
+    }
+    var elements = graphSnapshotToCyElements(snapshot);
+    // Per-render token: several renderGraph() calls can have a pending
+    // loadCytoscapeRuntime().then() at once (open Graph, switch tab, return
+    // quickly), all sharing one runtime promise. Without this guard more than
+    // one handler could pass the checks below and instantiate Cytoscape,
+    // leaking every instance but the last (only the last is tracked in
+    // state.graphCy). Only the newest invocation's token is allowed to build.
+    var token = (state.graphRenderToken || 0) + 1;
+    state.graphRenderToken = token;
+    loadCytoscapeRuntime().then(function (cytoscape) {
+      // The tab may have been closed (or re-rendered again) while the
+      // runtime was loading; only build the instance if the Graph view is
+      // still the active tab, the snapshot is unchanged, and this is still
+      // the latest render request.
+      if (state.activeTab !== "graph" || state.graphSnapshot !== snapshot || state.graphRenderToken !== token) {
+        return;
+      }
+      var cy = cytoscape({
+        container: container,
+        elements: elements.nodes.concat(elements.edges),
+        style: graphCyStylesheet(),
+        layout: { name: "preset" },
+        wheelSensitivity: 0.3
+      });
+      state.graphCy = cy;
+      // A short, bounded layout refinement -- not unbounded physics that
+      // reshuffles the graph on every open. Skipped entirely under
+      // prefers-reduced-motion (no animated repositioning).
+      if (!prefersReducedMotion() && elements.nodes.length > 0) {
+        cy.layout({ name: "cose", animate: false, randomize: false, fit: false, numIter: 200 }).run();
+      }
+      cy.on("select", "node", function (event) {
+        selectGraphElement(event.target.id(), { fromCanvas: true });
+      });
+      cy.on("unselect", "node", function () {
+        if (!cy.$(":selected").length) {
+          selectGraphElement(null, { fromCanvas: true });
+        }
+      });
+      cy.on("select", "edge", function (event) {
+        selectGraphElement(event.target.id(), { fromCanvas: true });
+      });
+      cy.on("unselect", "edge", function () {
+        // Mirror the node unselect: clear the selection/inspector when nothing
+        // (node or edge) remains selected, so deselecting an edge doesn't leave
+        // state.graphSelectedId and the inspector pointing at a gone selection.
+        if (!cy.$(":selected").length) {
+          selectGraphElement(null, { fromCanvas: true });
+        }
+      });
+    }).catch(function () {
+      setBanner("Graph rendering is unavailable (the Cytoscape browser bundle failed to load).", "warn");
+    });
+  }
+
+  function graphTableRows() {
+    var snapshot = state.graphSnapshot;
+    if (!snapshot) return [];
+    return (snapshot.nodes || []).map(function (node) {
+      return {
+        id: node.id,
+        type: node.type,
+        display: node.display,
+        project: node.project,
+        coverageState: node.coverageState,
+        openDetailAnchorName: graphOpenDetailAnchorName(node)
+      };
+    });
+  }
+
+  function sortedGraphTableRows() {
+    var rows = graphTableRows();
+    var key = state.graphSortKey || "type";
+    var dir = state.graphSortDir === "desc" ? -1 : 1;
+    var sorted = rows.slice().sort(function (a, b) {
+      var va = a[key];
+      var vb = b[key];
+      if (va === undefined && vb === undefined) return a.display.localeCompare(b.display);
+      if (va === undefined) return 1;
+      if (vb === undefined) return -1;
+      var cmp = String(va).localeCompare(String(vb));
+      return cmp !== 0 ? cmp * dir : a.display.localeCompare(b.display);
+    });
+    return sorted;
+  }
+
+  function graphTableRowHtml(row) {
+    var openCell = row.openDetailAnchorName
+      ? "<a href=\\"" + escapeHtml(anchorHref(row.openDetailAnchorName)) + "\\" data-anchor-name=\\"" + escapeHtml(row.openDetailAnchorName) + "\\">Open detail</a>"
+      : "";
+    var selected = state.graphSelectedId === row.id ? " selected" : "";
+    return "<tr class=\\"graph-table-row" + selected + "\\" data-graph-node-id=\\"" + escapeHtml(row.id) + "\\" tabindex=\\"0\\">"
+      + "<td>" + escapeHtml(row.type) + "</td>"
+      + "<td>" + escapeHtml(row.display) + "</td>"
+      + "<td>" + escapeHtml(row.coverageState || "") + "</td>"
+      + "<td>" + escapeHtml(row.project || "") + "</td>"
+      + "<td>" + openCell + "</td>"
+      + "</tr>";
+  }
+
+  function renderGraphTable() {
+    var rows = sortedGraphTableRows();
+    var tableEl = el("graph-table");
+    var emptyEl = el("graph-table-empty");
+    var bodyEl = el("graph-table-rows");
+    if (rows.length === 0) {
+      tableEl.hidden = true;
+      emptyEl.hidden = false;
+      bodyEl.innerHTML = "";
+      return;
+    }
+    emptyEl.hidden = true;
+    tableEl.hidden = false;
+    bodyEl.innerHTML = rows.map(graphTableRowHtml).join("");
+    bodyEl.querySelectorAll("[data-graph-node-id]").forEach(function (row) {
+      row.addEventListener("click", function (event) {
+        if (event.target.closest("a[data-anchor-name]")) {
+          return;
+        }
+        selectGraphElement(row.dataset.graphNodeId, { fromCanvas: false });
+      });
+      row.addEventListener("keydown", function (event) {
+        // Same guard as the click handler: when focus is on the inner
+        // "Open detail" link, let Enter/Space activate the link instead of
+        // preventDefault()-ing it into a row selection (keyboard nav must work).
+        if (event.target.closest("a[data-anchor-name]")) {
+          return;
+        }
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          selectGraphElement(row.dataset.graphNodeId, { fromCanvas: false });
+        }
+      });
+    });
+  }
+
+  function findGraphElementById(id) {
+    var snapshot = state.graphSnapshot;
+    if (!snapshot || !id) return null;
+    var node = (snapshot.nodes || []).find(function (n) { return n.id === id; });
+    if (node) return { kind: "node", record: node };
+    var edge = (snapshot.edges || []).find(function (e) { return e.id === id; });
+    if (edge) return { kind: "edge", record: edge };
+    return null;
+  }
+
+  function selectGraphElement(id, options) {
+    var opts = options || {};
+    state.graphSelectedId = id;
+    if (!opts.fromCanvas && state.graphCy && id) {
+      state.graphCy.elements().unselect();
+      var ele = state.graphCy.getElementById(id);
+      if (ele && ele.length) {
+        ele.select();
+        if (!prefersReducedMotion()) {
+          state.graphCy.animate({ center: { eles: ele } }, { duration: 200 });
+        } else {
+          state.graphCy.center(ele);
+        }
+      }
+    }
+    renderGraphTableSelection();
+    renderGraphInspector(id ? findGraphElementById(id) : null);
+  }
+
+  function renderGraphTableSelection() {
+    var bodyEl = el("graph-table-rows");
+    if (!bodyEl) return;
+    bodyEl.querySelectorAll(".graph-table-row").forEach(function (row) {
+      row.classList.toggle("selected", row.dataset.graphNodeId === state.graphSelectedId);
+    });
+  }
+
+  function renderGraphInspector(found) {
+    var emptyEl = el("graph-inspector-empty");
+    var contentEl = el("graph-inspector-content");
+    if (!found) {
+      emptyEl.hidden = false;
+      contentEl.hidden = true;
+      return;
+    }
+    emptyEl.hidden = true;
+    contentEl.hidden = false;
+    var record = found.record;
+    el("graph-inspector-title").textContent = found.kind === "node" ? record.display : (record.type + " edge");
+    var fields = [];
+    if (found.kind === "node") {
+      fields.push(["Id", record.id]);
+      fields.push(["Type", record.type]);
+      fields.push(["Source of truth", record.sourceOfTruth]);
+      if (record.coverageState) fields.push(["Coverage state", record.coverageState]);
+      if (record.project) fields.push(["Project", record.project]);
+    } else {
+      fields.push(["Id", record.id]);
+      fields.push(["Type", record.type]);
+      fields.push(["From", record.from]);
+      fields.push(["To", record.to]);
+      fields.push(["Source of truth", record.sourceOfTruth]);
+    }
+    el("graph-inspector-fields").innerHTML = fields.map(function (pair) {
+      return "<dt>" + escapeHtml(pair[0]) + "</dt><dd>" + escapeHtml(String(pair[1])) + "</dd>";
+    }).join("");
+
+    var openDetailName = found.kind === "node" ? graphOpenDetailAnchorName(record) : undefined;
+    var wrapEl = el("graph-inspector-open-detail-wrap");
+    if (openDetailName) {
+      var link = el("graph-inspector-open-detail");
+      link.href = anchorHref(openDetailName);
+      link.dataset.anchorName = openDetailName;
+      wrapEl.hidden = false;
+    } else {
+      wrapEl.hidden = true;
+    }
+
+    el("graph-inspector-raw").textContent = JSON.stringify(record, null, 2);
+  }
+
+  function clearGraphFilters() {
+    state.graphNodeTypes = [];
+    state.graphEdgeTypes = [];
+    state.graphCoverageStates = [];
+    state.graphText = "";
+    setControlValue("graph-text-filter", "");
+    setSelectValueAllowingNew("graph-project-filter", "");
+    state.graphProject = "";
+    loadGraphData();
   }
 
   // Migration review panel (Goal 0 Phase 2 slice 3a): preview -> review ->
@@ -10503,6 +11476,8 @@ export const UI_JS = `(function () {
       showTasksView({ skipLocationUpdate: true });
     } else if (state.activeTab === "coverage") {
       showCoverageView({ skipLocationUpdate: true });
+    } else if (state.activeTab === "graph") {
+      showGraphView({ skipLocationUpdate: true });
     } else if (state.activeTab === "people") {
       showPeopleView({ skipLocationUpdate: true });
     } else if (state.activeTab === "teams") {
@@ -10760,6 +11735,10 @@ export const UI_JS = `(function () {
           showCoverageView();
           return;
         }
+        if (button.dataset.tab === "graph") {
+          showGraphView();
+          return;
+        }
         if (button.dataset.tab === "people") {
           showPeopleView();
           return;
@@ -10870,6 +11849,53 @@ export const UI_JS = `(function () {
           });
         }
       }
+    });
+    el("graph-refresh").addEventListener("click", function () {
+      state.graphSchema = null;
+      state.graphSnapshot = null;
+      loadGraphData();
+    });
+    el("graph-fit").addEventListener("click", function () {
+      if (state.graphCy) {
+        state.graphCy.fit(undefined, 24);
+      }
+    });
+    el("graph-reset").addEventListener("click", function () {
+      if (state.graphCy && state.graphSnapshot) {
+        var elements = graphSnapshotToCyElements(state.graphSnapshot);
+        elements.nodes.forEach(function (nodeEl) {
+          var ele = state.graphCy.getElementById(nodeEl.data.id);
+          if (ele && ele.length) {
+            ele.position(nodeEl.position);
+          }
+        });
+        state.graphCy.elements().unselect();
+        selectGraphElement(null, { fromCanvas: true });
+        state.graphCy.fit(undefined, 24);
+      }
+    });
+    el("graph-project-filter").addEventListener("change", function () {
+      state.graphProject = controlValue("graph-project-filter", state.graphProject);
+      state.graphSchema = null;
+      state.graphSnapshot = null;
+      loadGraphData();
+    });
+    el("graph-text-filter").addEventListener("input", debounce(function () {
+      state.graphText = controlValue("graph-text-filter", state.graphText);
+      reloadGraphSnapshotOnly();
+    }, 200));
+    el("graph-clear-filters").addEventListener("click", clearGraphFilters);
+    el("graph-table").querySelectorAll("[data-graph-sort]").forEach(function (button) {
+      button.addEventListener("click", function () {
+        var key = button.dataset.graphSort;
+        if (state.graphSortKey === key) {
+          state.graphSortDir = state.graphSortDir === "desc" ? "asc" : "desc";
+        } else {
+          state.graphSortKey = key;
+          state.graphSortDir = "asc";
+        }
+        renderGraphTable();
+      });
     });
     el("migration-close").addEventListener("click", closeMigrationModal);
     el("migration-cancel").addEventListener("click", closeMigrationModal);
@@ -11077,6 +12103,8 @@ export const UI_JS = `(function () {
     showTeamsView({ skipLocationUpdate: true });
   } else if (state.activeTab === "mappings") {
     showMappingsView({ skipLocationUpdate: true });
+  } else if (state.activeTab === "graph") {
+    showGraphView({ skipLocationUpdate: true });
   } else {
     showTab(state.activeTab);
   }

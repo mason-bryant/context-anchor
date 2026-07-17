@@ -93,6 +93,18 @@ tasks:
 ## Current State
 
 Not started.
+
+## Decisions
+
+None.
+
+## Constraints
+
+None.
+
+## PRs
+
+None.
 `;
 
 const ROADMAP = `---
@@ -107,6 +119,22 @@ last_validated: 2026-07-07
 ---
 
 # Demo Roadmap
+
+## Current State
+
+None.
+
+## Decisions
+
+None.
+
+## Constraints
+
+None.
+
+## PRs
+
+None.
 
 ## Goals
 
@@ -797,5 +825,244 @@ describe("AnchorService.graphCoverage (Goal 0 Phase 1 WP6)", () => {
     const claimCount = result.records.filter((record) => record.kind === "claim").length;
     expect(result.summary.totalAnchors).toBe(anchorCount);
     expect(result.summary.totalClaims).toBe(claimCount);
+  });
+});
+
+describe("AnchorService.graphSnapshot / graphSchema (Goal 1 slice 1)", () => {
+  it("materializes an isolated anchor (zero edges) as a first-class node, with coverage state attached", async () => {
+    const repo = new AnchorRepository({ repoPath: tmpDir });
+    await repo.ensureReady();
+    const service = new AnchorService(repo, { pushOnWrite: false, migrationWarnOnly: false, staleAfterDays: 45 });
+    // No project/relations at all -> genuinely zero edges from extraction.
+    await repo.commitAnchor({
+      name: "invariants/isolated.md",
+      content: `---
+type: context-anchor
+tags: []
+summary: An anchor with no edges.
+read_this_if:
+  - Testing isolated-node materialization.
+last_validated: 2026-07-07
+---
+
+## Current State
+
+None.
+`,
+    });
+
+    const result = await service.graphSnapshot({});
+    const node = result.nodes.find((candidate) => candidate.anchorName === "invariants/isolated.md");
+    expect(node).toBeDefined();
+    expect(node?.type).toBe("anchor");
+    expect(node?.coverageState).toBeTruthy();
+    expect(node?.seed).toBeDefined();
+  });
+
+  it("reports graph generation/HEAD, identity contract version, applied filters, clamps, totals, and no truncation for a small tree", async () => {
+    const repo = new AnchorRepository({ repoPath: tmpDir });
+    await repo.ensureReady();
+    await seedRepo(repo);
+    const service = new AnchorService(repo, { pushOnWrite: false, migrationWarnOnly: false, staleAfterDays: 45 });
+
+    const result = await service.graphSnapshot({ project: "demo" });
+    expect(typeof result.graphGeneration).toBe("number");
+    expect(result.identityContractVersion).toBe(2);
+    expect(result.appliedFilters.project).toBe("demo");
+    expect(result.clamps).toEqual({ maxNodes: 500, maxEdges: 2000 });
+    expect(result.totals.matchingNodes).toBe(result.totals.returnedNodes);
+    expect(result.totals.matchingEdges).toBe(result.totals.returnedEdges);
+    expect(result.truncated).toBe(false);
+    expect(result.warnings).toEqual([]);
+    // The milestone -> goal edge (and others) should be present with ids/type/sourceOfTruth.
+    expect(result.edges.length).toBeGreaterThan(0);
+    for (const edge of result.edges) {
+      expect(edge.id).toBeTruthy();
+      expect(edge.type).toBeTruthy();
+      expect(edge.sourceOfTruth).toBeTruthy();
+    }
+  });
+
+  it("clamps a client-requested maxNodes/maxEdges DOWN to the configured ceiling, never up", async () => {
+    const repo = new AnchorRepository({ repoPath: tmpDir });
+    await repo.ensureReady();
+    await seedRepo(repo);
+    const service = new AnchorService(repo, {
+      pushOnWrite: false,
+      migrationWarnOnly: false,
+      staleAfterDays: 45,
+      graphUi: { maxNodes: 2, maxEdges: 2 },
+    });
+
+    const result = await service.graphSnapshot({ maxNodes: 999, maxEdges: 999 });
+    expect(result.clamps).toEqual({ maxNodes: 2, maxEdges: 2 });
+    expect(result.nodes.length).toBeLessThanOrEqual(2);
+    expect(result.edges.length).toBeLessThanOrEqual(2);
+    expect(result.truncated).toBe(true);
+
+    // A client requesting FEWER than the ceiling is honored as requested.
+    const smaller = await service.graphSnapshot({ maxNodes: 1, maxEdges: 1 });
+    expect(smaller.clamps).toEqual({ maxNodes: 1, maxEdges: 1 });
+    expect(smaller.nodes.length).toBeLessThanOrEqual(1);
+  });
+
+  it("isGraphUiEnabled defaults to true and honors graphUi.enabled = false", async () => {
+    const repo = new AnchorRepository({ repoPath: tmpDir });
+    await repo.ensureReady();
+    const defaultService = new AnchorService(repo, { pushOnWrite: false, migrationWarnOnly: false, staleAfterDays: 45 });
+    expect(defaultService.isGraphUiEnabled()).toBe(true);
+
+    const disabledService = new AnchorService(repo, {
+      pushOnWrite: false,
+      migrationWarnOnly: false,
+      staleAfterDays: 45,
+      graphUi: { enabled: false },
+    });
+    expect(disabledService.isGraphUiEnabled()).toBe(false);
+  });
+
+  it("graphSchema's node/edge type counts agree with graphSnapshot's totals for the same generation", async () => {
+    const repo = new AnchorRepository({ repoPath: tmpDir });
+    await repo.ensureReady();
+    await seedRepo(repo);
+    const service = new AnchorService(repo, { pushOnWrite: false, migrationWarnOnly: false, staleAfterDays: 45 });
+
+    const schema = await service.graphSchema({});
+    const snapshot = await service.graphSnapshot({ maxNodes: 500, maxEdges: 2000 });
+
+    expect(schema.graphGeneration).toBe(snapshot.graphGeneration);
+    const nodeTotal = Object.values(schema.nodeTypeCounts).reduce((sum, count) => sum + count, 0);
+    const edgeTotal = Object.values(schema.edgeTypeCounts).reduce((sum, count) => sum + count, 0);
+    expect(nodeTotal).toBe(snapshot.totals.matchingNodes);
+    expect(edgeTotal).toBe(snapshot.totals.matchingEdges);
+    expect(schema.identityContractVersion).toBe(2);
+    expect(schema.features.graphUiEnabled).toBe(true);
+    expect(schema.features.anchorSchemaMode).toBe("legacy");
+    // Unscoped request reflects the whole graph: no project echoed.
+    expect(schema.appliedFilters.project).toBeUndefined();
+  });
+
+  it("graphSchema echoes the resolved project filter in appliedFilters", async () => {
+    const repo = new AnchorRepository({ repoPath: tmpDir });
+    await repo.ensureReady();
+    await seedRepo(repo);
+    const service = new AnchorService(repo, { pushOnWrite: false, migrationWarnOnly: false, staleAfterDays: 45 });
+
+    const schema = await service.graphSchema({ project: "demo" });
+    expect(schema.appliedFilters.project).toBe("demo");
+  });
+
+  it("graphSchema's project-scoped counts agree with graphSnapshot's totals for the same project", async () => {
+    const repo = new AnchorRepository({ repoPath: tmpDir });
+    await repo.ensureReady();
+    await seedRepo(repo);
+    const service = new AnchorService(repo, { pushOnWrite: false, migrationWarnOnly: false, staleAfterDays: 45 });
+
+    const schema = await service.graphSchema({ project: "demo" });
+    // Large clamps so the snapshot isn't truncated: totals reflect the full
+    // project-scoped (but unclamped) match, directly comparable to schema.
+    const snapshot = await service.graphSnapshot({ project: "demo", maxNodes: 100000, maxEdges: 100000 });
+
+    expect(schema.graphGeneration).toBe(snapshot.graphGeneration);
+    const nodeTotal = Object.values(schema.nodeTypeCounts).reduce((sum, count) => sum + count, 0);
+    const edgeTotal = Object.values(schema.edgeTypeCounts).reduce((sum, count) => sum + count, 0);
+    expect(nodeTotal).toBe(snapshot.totals.matchingNodes);
+    expect(edgeTotal).toBe(snapshot.totals.matchingEdges);
+  });
+
+  it("graphSnapshot echoes the trimmed q the filter actually applies", async () => {
+    const repo = new AnchorRepository({ repoPath: tmpDir });
+    await repo.ensureReady();
+    await seedRepo(repo);
+    const service = new AnchorService(repo, { pushOnWrite: false, migrationWarnOnly: false, staleAfterDays: 45 });
+
+    const snapshot = await service.graphSnapshot({ q: "  demo  " });
+    expect(snapshot.appliedFilters.q).toBe("demo");
+
+    // An all-whitespace q is omitted entirely rather than echoed as "".
+    const blank = await service.graphSnapshot({ q: "   " });
+    expect(blank.appliedFilters.q).toBeUndefined();
+  });
+
+  it("graphSnapshot honors maxNodes: 0 as a metadata-only request", async () => {
+    const repo = new AnchorRepository({ repoPath: tmpDir });
+    await repo.ensureReady();
+    await seedRepo(repo);
+    const service = new AnchorService(repo, { pushOnWrite: false, migrationWarnOnly: false, staleAfterDays: 45 });
+
+    const snapshot = await service.graphSnapshot({ maxNodes: 0, maxEdges: 0 });
+    expect(snapshot.nodes).toEqual([]);
+    expect(snapshot.edges).toEqual([]);
+    // Counts still report the full graph, and truncation flags the drop.
+    expect(snapshot.totals.matchingNodes).toBeGreaterThan(0);
+    expect(snapshot.totals.returnedNodes).toBe(0);
+    expect(snapshot.truncated).toBe(true);
+  });
+
+  it("normalizes a misconfigured graphUi ceiling so echoed clamps match what is enforced", async () => {
+    const repo = new AnchorRepository({ repoPath: tmpDir });
+    await repo.ensureReady();
+    await seedRepo(repo);
+    // A negative ceiling is a misconfiguration: it must fall back to the
+    // default rather than silently zeroing the graph, and the echoed clamp
+    // must equal the enforced one (an integer), never the raw config value.
+    const service = new AnchorService(repo, {
+      pushOnWrite: false,
+      migrationWarnOnly: false,
+      staleAfterDays: 45,
+      graphUi: { maxNodes: -5, maxEdges: 3.7 },
+    });
+
+    const snapshot = await service.graphSnapshot({});
+    expect(snapshot.clamps.maxNodes).toBe(500); // negative -> default
+    expect(snapshot.clamps.maxEdges).toBe(3); // 3.7 floored
+    expect(Number.isInteger(snapshot.clamps.maxNodes)).toBe(true);
+    expect(Number.isInteger(snapshot.clamps.maxEdges)).toBe(true);
+  });
+
+  it("keeps an id-bearing anchor's node seed unchanged across a rename (seed is keyed off the anchor_id, not the path)", async () => {
+    const repo = new AnchorRepository({ repoPath: tmpDir });
+    await repo.ensureReady();
+    const service = new AnchorService(repo, { pushOnWrite: false, migrationWarnOnly: false, staleAfterDays: 45 });
+
+    // writeAnchor mint-on-create gives this a real anchor_id, so its canonical
+    // node id is v2 (anchor:<anchor-id>) and rename-invariant.
+    await service.writeAnchor({
+      name: "projects/demo/old-name.md",
+      content: PROJECT_CONTEXT,
+      message: "test: add anchor before rename",
+      approved: true,
+    });
+    const before = await service.graphSnapshot({});
+    const beforeNode = before.nodes.find((node) => node.anchorName === "projects/demo/old-name.md");
+    expect(beforeNode).toBeDefined();
+    expect(beforeNode!.id.startsWith("anchor:a-")).toBe(true);
+
+    const rename = await service.renameAnchor({
+      from: "projects/demo/old-name.md",
+      to: "projects/demo/new-name.md",
+      approved: true,
+    });
+    expect(rename.version).toBeTruthy();
+
+    const after = await service.graphSnapshot({});
+    const afterNode = after.nodes.find((node) => node.anchorName === "projects/demo/new-name.md");
+    expect(afterNode).toBeDefined();
+    expect(afterNode!.id).toBe(beforeNode!.id);
+    expect(afterNode!.seed).toEqual(beforeNode!.seed);
+  });
+
+  it("filters graphSnapshot nodes by project", async () => {
+    const repo = new AnchorRepository({ repoPath: tmpDir });
+    await repo.ensureReady();
+    await seedRepo(repo);
+    const service = new AnchorService(repo, { pushOnWrite: false, migrationWarnOnly: false, staleAfterDays: 45 });
+
+    const result = await service.graphSnapshot({ project: "demo" });
+    const anchorNodes = result.nodes.filter((node) => node.anchorName);
+    expect(anchorNodes.length).toBeGreaterThan(0);
+    for (const node of anchorNodes) {
+      expect(node.anchorName!.startsWith("projects/demo/")).toBe(true);
+    }
   });
 });
