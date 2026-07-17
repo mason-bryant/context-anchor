@@ -38,7 +38,6 @@ export default tseslint.config(
           varsIgnorePattern: "^_",
         },
       ],
-      "preserve-caught-error": "off",
     },
   },
   {
