@@ -176,46 +176,6 @@ function milestoneDisplayIdFor(milestone: AnchorMeta["milestone"]): string | und
   return undefined;
 }
 
-function milestoneLabel(entry: ContextRootEntry): string {
-  const base = entry.title || entry.name;
-  const displayId = entry.milestoneDisplayId;
-  if (!displayId) {
-    return base;
-  }
-
-  if (base.toLowerCase() === displayId.toLowerCase() || base.startsWith(`${displayId} `)) {
-    return base;
-  }
-
-  const titleWithoutGenericPrefix = base.replace(/^Milestone\s+--\s+/i, "");
-  if (displayId.toLowerCase() === "backlog" && titleWithoutGenericPrefix.toLowerCase() === "backlog") {
-    return titleWithoutGenericPrefix;
-  }
-  return `${displayId} -- ${titleWithoutGenericPrefix}`;
-}
-
-function compareMilestoneEntries(left: ContextRootEntry, right: ContextRootEntry): number {
-  const leftGroup = milestoneSortGroup(left);
-  const rightGroup = milestoneSortGroup(right);
-  if (leftGroup !== rightGroup) {
-    return leftGroup - rightGroup;
-  }
-  if (leftGroup === 0) {
-    return (left.milestoneSequence ?? 0) - (right.milestoneSequence ?? 0);
-  }
-  return left.name.localeCompare(right.name);
-}
-
-function milestoneSortGroup(entry: ContextRootEntry): number {
-  if (entry.milestoneId === "backlog") {
-    return 2;
-  }
-  if (entry.milestoneSequence !== undefined) {
-    return 0;
-  }
-  return 1;
-}
-
 function compareContextEntries(left: ContextRootEntry, right: ContextRootEntry): number {
   const categoryDelta = discoveryCategoryIndex(left.category) - discoveryCategoryIndex(right.category);
   if (categoryDelta !== 0) {

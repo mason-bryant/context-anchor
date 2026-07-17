@@ -2108,8 +2108,11 @@ function uiAnchorMeta(name: string, updatedAt: string) {
   };
 }
 
-function stubAnchorServiceMethod(name: string, implementation: (...args: any[]) => unknown): () => void {
-  const prototype = AnchorService.prototype as Record<string, unknown>;
+function stubAnchorServiceMethod<TArgs extends unknown[]>(
+  name: string,
+  implementation: (...args: TArgs) => unknown,
+): () => void {
+  const prototype = AnchorService.prototype as unknown as Record<string, unknown>;
   const original = Object.getOwnPropertyDescriptor(prototype, name);
   Object.defineProperty(prototype, name, {
     value: implementation,

@@ -120,7 +120,7 @@ export function shrinkLoadContextAnchorToFit(
   maxBytes: number,
   task?: string,
 ): LoadContextAnchor {
-  let mode: AnchorContentMode = includeContent === "full" ? "excerpt" : includeContent;
+  const mode: AnchorContentMode = includeContent === "full" ? "excerpt" : includeContent;
   let chars = excerptChars;
 
   while (true) {

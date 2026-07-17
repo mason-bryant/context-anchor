@@ -118,7 +118,6 @@ import type {
   ProposedChangeRead,
   ProposedChangeRecord,
   ProposedChangeScope,
-  ProposedChangeStatus,
   ReviewProposedChangeInput,
   MilestoneScheduleMeta,
   MilestoneTaskMeta,
@@ -1738,10 +1737,11 @@ export class AnchorService {
     }
 
     const parsed = parseAnchor(rawContent);
-    const rawTasks = parsed.frontmatter.tasks;
-    if (!Array.isArray(rawTasks)) {
+    const rawTasksValue: unknown = parsed.frontmatter.tasks;
+    if (!Array.isArray(rawTasksValue)) {
       return AnchorService.blockResult("no_tasks", `Anchor has no tasks array: ${input.name}`);
     }
+    const rawTasks: unknown[] = rawTasksValue;
 
     const taskIdx = rawTasks.findIndex(
       (t): t is Record<string, unknown> =>

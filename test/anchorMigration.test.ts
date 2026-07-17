@@ -311,7 +311,7 @@ describe("planAnchorMigration: mint_claim_ids", () => {
     const lines = result.newContent.split("\n");
     const bulletIndex = lines.findIndex((line) => line === "- A claim.");
     expect(bulletIndex).toBeGreaterThan(-1);
-    expect(lines[bulletIndex + 1]).toMatch(/^  \{id: c-[0-9a-z]{6,8}\}$/);
+    expect(lines[bulletIndex + 1]).toMatch(/^ {2}\{id: c-[0-9a-z]{6,8}\}$/);
   });
 
   it("does not touch an already-annotated claim's id, and leaves fully id-less-but-annotated claims to the existing mintMissingClaimIds path (unaffected here)", () => {

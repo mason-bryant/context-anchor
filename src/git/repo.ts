@@ -11,8 +11,6 @@ import type {
   AnchorListSort,
   AnchorStore,
   CommitAnchorInput,
-  DeleteAnchorFileInput,
-  RenameAnchorFileInput,
   ResolvedAnchorPath,
   SyncableAnchorStore,
   WritePeopleRegistryOptions,
