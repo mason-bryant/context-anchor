@@ -614,10 +614,7 @@ export function registerUiRoutes(
       requireGraphUiEnabled(service);
       const project = optionalQueryString(req, "project");
       const nodeTypes = readNodeTypesQuery(req, "nodeTypes");
-      const edgeTypesRaw = optionalQueryString(req, "edgeTypes");
-      const edgeTypes = edgeTypesRaw
-        ? (edgeTypesRaw.split(",").map((value) => value.trim()).filter(Boolean) as GraphEdgeType[])
-        : undefined;
+      const edgeTypes = readEdgeTypesQuery(req, "edgeTypes");
       const coverageRaw = optionalQueryString(req, "coverage");
       const coverage = coverageRaw?.split(",").map((value) => value.trim());
       const invalidCoverage = coverage?.find((value) => !isCoverageState(value));
@@ -1356,7 +1353,7 @@ function isGraphNodeType(value: string): value is GraphNodeType {
   return GRAPH_NODE_TYPE_SET.has(value);
 }
 
-/** Comma-separated `nodeTypes`/`edgeTypes`-shaped query param, validated against `isGraphNodeType`. Rejects the whole param with a 400 on the first unrecognized value. */
+/** Comma-separated `nodeTypes` query param, validated against `isGraphNodeType`. Rejects the whole param with a 400 on the first unrecognized value. */
 function readNodeTypesQuery(req: Request, key: string): GraphNodeType[] | undefined {
   const raw = optionalQueryString(req, key);
   if (!raw) {
@@ -1368,6 +1365,53 @@ function readNodeTypesQuery(req: Request, key: string): GraphNodeType[] | undefi
     throw new UiHttpError(400, `Invalid ${key}: unknown node type ${invalid}`);
   }
   return values as GraphNodeType[];
+}
+
+// A flag per `GraphEdgeType` so adding a new edge type to the union without
+// listing it here is a compile error — keeps route validation from silently
+// drifting behind the graph's actual edge vocabulary.
+const GRAPH_EDGE_TYPE_FLAGS: Record<GraphEdgeType, true> = {
+  anchor_project: true,
+  milestone_anchor: true,
+  milestone_goal: true,
+  roadmap_goal: true,
+  milestone_task: true,
+  task_owner: true,
+  person_project: true,
+  team_project: true,
+  project_repo: true,
+  repo_path: true,
+  anchor_anchor: true,
+  claim_source: true,
+  claim_person: true,
+  claim_section: true,
+  section_anchor: true,
+  derived_from: true,
+  contradicts: true,
+  depends_on: true,
+  implements: true,
+  supersedes: true,
+  related_to: true,
+  owned_by: true,
+};
+const GRAPH_EDGE_TYPE_SET: ReadonlySet<string> = new Set(Object.keys(GRAPH_EDGE_TYPE_FLAGS));
+
+function isGraphEdgeType(value: string): value is GraphEdgeType {
+  return GRAPH_EDGE_TYPE_SET.has(value);
+}
+
+/** Comma-separated `edgeTypes` query param, validated against `isGraphEdgeType`. Rejects the whole param with a 400 on the first unrecognized value (symmetric with `readNodeTypesQuery`, so an unknown edge type is a clear error rather than a silent filter-everything). */
+function readEdgeTypesQuery(req: Request, key: string): GraphEdgeType[] | undefined {
+  const raw = optionalQueryString(req, key);
+  if (!raw) {
+    return undefined;
+  }
+  const values = raw.split(",").map((value) => value.trim()).filter(Boolean);
+  const invalid = values.find((value) => !isGraphEdgeType(value));
+  if (invalid !== undefined) {
+    throw new UiHttpError(400, `Invalid ${key}: unknown edge type ${invalid}`);
+  }
+  return values as GraphEdgeType[];
 }
 
 /**

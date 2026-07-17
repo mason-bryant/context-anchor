@@ -1857,6 +1857,15 @@ describe("UI HTTP routes", () => {
     expect(body.error.message).toContain("not_a_state");
   });
 
+  it("rejects unknown /api/ui/graph/snapshot edgeTypes with 400", async () => {
+    const response = await fetch(`${baseUrl}/api/ui/graph/snapshot?edgeTypes=not_an_edge`, {
+      headers: { Authorization: `Bearer ${TOKEN}` },
+    });
+    const body = (await response.json()) as { error: { message: string } };
+    expect(response.status).toBe(400);
+    expect(body.error.message).toContain("not_an_edge");
+  });
+
   it("filters /api/ui/graph/snapshot by project and free-text q", async () => {
     const byProject = await fetchJson<GraphSnapshotHttpResult>("/api/ui/graph/snapshot?project=demo");
     expect(byProject.appliedFilters.project).toBe("demo");
