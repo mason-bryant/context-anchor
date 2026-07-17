@@ -7528,6 +7528,12 @@ export const UI_JS = `(function () {
     noticeEl.hidden = !snapshot.truncated;
   }
 
+  function pruneToAvailable(selected, available) {
+    var present = {};
+    (available || []).forEach(function (t) { present[t] = true; });
+    return (selected || []).filter(function (t) { return present[t]; });
+  }
+
   function renderGraphFilterOptions(schema) {
     var nodeTypes = Object.keys(schema.nodeTypeCounts || {}).sort();
     var edgeTypes = Object.keys(schema.edgeTypeCounts || {}).sort();
@@ -7535,6 +7541,14 @@ export const UI_JS = `(function () {
     // not coverage-state counts, so the rail always offers every state (a
     // small, stable list) rather than trying to narrow it per graph.
     var coverageStates = ["structured", "partial", "prose_only", "ambiguous", "dangling", "malformed"];
+
+    // Drop any previously-selected node/edge type the (possibly newly
+    // project-scoped) schema no longer offers, so a stale selection can't stay
+    // applied to the query with no checkbox left to clear it. This function is
+    // always followed by a snapshot load, so the pruned state flows straight
+    // into that fetch. (Coverage states are a fixed vocabulary, so no pruning.)
+    state.graphNodeTypes = pruneToAvailable(state.graphNodeTypes, nodeTypes);
+    state.graphEdgeTypes = pruneToAvailable(state.graphEdgeTypes, edgeTypes);
 
     var nodeTypesEl = el("graph-node-type-filters");
     var selectedNodeTypes = {};

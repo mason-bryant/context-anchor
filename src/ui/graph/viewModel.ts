@@ -333,6 +333,19 @@ export function filterOptionsFromSchema(schema: Pick<GraphSchemaResult, "nodeTyp
   };
 }
 
+/**
+ * Drops any previously-selected filter value the current schema no longer
+ * offers (e.g. a node/edge type that only existed in the previously-scoped
+ * project), so a stale selection can't stay applied to the snapshot query with
+ * no checkbox left to clear it. `UI_JS` mirrors this inline as `pruneToAvailable`
+ * in the render path; the rule is unit-tested here. Order and duplicates of the
+ * surviving selection are preserved.
+ */
+export function pruneSelectionToAvailable<T>(selected: readonly T[] | undefined, available: readonly T[]): T[] {
+  const present = new Set(available);
+  return (selected ?? []).filter((value) => present.has(value));
+}
+
 // ---------------------------------------------------------------------------
 // Header counts / truncation notice.
 // ---------------------------------------------------------------------------

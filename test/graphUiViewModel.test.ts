@@ -7,6 +7,7 @@ import {
   graphHeaderSummary,
   graphSnapshotQueryParams,
   nodeTypeShape,
+  pruneSelectionToAvailable,
   snapshotToCyElements,
   sortGraphTableRows,
   tableRowsFromSnapshot,
@@ -235,6 +236,19 @@ describe("filterOptionsFromSchema", () => {
     const options = filterOptionsFromSchema({ nodeTypeCounts: {}, edgeTypeCounts: {} });
     expect(options.nodeTypes).toEqual([]);
     expect(options.edgeTypes).toEqual([]);
+  });
+});
+
+describe("pruneSelectionToAvailable", () => {
+  it("drops selected values the new schema no longer offers, preserving surviving order", () => {
+    // e.g. after switching to a project with no milestones, "milestone" is gone.
+    expect(pruneSelectionToAvailable(["milestone", "anchor"], ["anchor", "task", "claim"])).toEqual(["anchor"]);
+  });
+
+  it("keeps every still-available selection and tolerates an undefined selection", () => {
+    expect(pruneSelectionToAvailable(["anchor", "task"], ["anchor", "task", "claim"])).toEqual(["anchor", "task"]);
+    expect(pruneSelectionToAvailable(undefined, ["anchor"])).toEqual([]);
+    expect(pruneSelectionToAvailable(["anchor"], [])).toEqual([]);
   });
 });
 
