@@ -1111,6 +1111,8 @@ export type ServerConfig = {
   graphScoring: GraphScoringConfig;
   /** Goal 0 Phase 2 slice 3b: warn->block enforcement dial for graph-participating anchor structure. Optional; absent = `legacy` (today's behavior exactly), so callers/configs that predate it are unaffected. */
   anchorSchema?: AnchorSchemaConfig;
+  /** Goal 1 slice 1: read-only graph inspection surface (`graphSnapshot`/`graphSchema`) config. Optional; absent = enabled with the default clamps, so callers/configs that predate it are unaffected. */
+  graphUi?: GraphUiConfig;
   logging?: LoggingConfig;
 };
 
@@ -1139,6 +1141,20 @@ export type AnchorSchemaConfig = {
 export const ANCHOR_SCHEMA_MODES = ["legacy", "warn", "enforce"] as const;
 
 export type AnchorSchemaMode = (typeof ANCHOR_SCHEMA_MODES)[number];
+
+/**
+ * Config for the read-only graph inspection surface (Goal 1 slice 1:
+ * `AnchorService.graphSnapshot`/`graphSchema`, `GET /api/ui/graph/snapshot`
+ * and `/schema`). `enabled` defaults to true (unlike `graphScoring`, this is
+ * a read-only inspection surface with no scoring/ranking side effects, so it
+ * is safe on by default); `maxNodes`/`maxEdges` are CEILINGS a client-supplied
+ * clamp is bounded to, never a floor a client can exceed.
+ */
+export type GraphUiConfig = {
+  enabled?: boolean;
+  maxNodes?: number;
+  maxEdges?: number;
+};
 
 /**
  * Config for the planner's graph-proximity scoring signal (WP7 of the claim
