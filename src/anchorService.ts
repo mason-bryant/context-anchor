@@ -173,6 +173,7 @@ import { parseClaimSource, type ParseClaimSourceContext } from "./graph/sourceId
 import { GraphIndex } from "./graph/index.js";
 import { anchorNodeId, claimNodeId } from "./graph/model.js";
 import {
+  applyProjectionFilters,
   buildGraphProjection,
   materializeGraphProjection,
   type ProjectionAnchorInput,
@@ -5182,7 +5183,19 @@ None.
     const { anchors, claims, edges, effectiveProject, graphGeneration, graphHead } = await this.buildGraphUiInputs(
       input.project,
     );
-    const { nodes, edges: projectionEdges } = materializeGraphProjection({ edges, anchors, claims });
+    // Apply the SAME project scoping `graphSnapshot` uses before counting, so
+    // a project-scoped schema's node/edge type counts agree with
+    // `graphSnapshot({ project })`'s totals for the same generation. Without
+    // this, `allEdges()` pulls in cross-project `project:`/`goal:` endpoints
+    // that snapshot's project filter would drop, and the two disagree. No
+    // node-type/coverage/q filter and no clamp here — schema reports the whole
+    // (optionally project-scoped) graph, not a bounded response.
+    const materialized = materializeGraphProjection({ edges, anchors, claims });
+    const { nodes, edges: projectionEdges } = applyProjectionFilters(
+      materialized.nodes,
+      materialized.edges,
+      effectiveProject ? { project: effectiveProject } : undefined,
+    );
 
     const nodeTypeCounts: Partial<Record<GraphNodeType, number>> = {};
     for (const node of nodes) {

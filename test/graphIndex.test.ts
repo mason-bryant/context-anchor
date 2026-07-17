@@ -924,6 +924,24 @@ None.
     expect(schema.appliedFilters.project).toBe("demo");
   });
 
+  it("graphSchema's project-scoped counts agree with graphSnapshot's totals for the same project", async () => {
+    const repo = new AnchorRepository({ repoPath: tmpDir });
+    await repo.ensureReady();
+    await seedRepo(repo);
+    const service = new AnchorService(repo, { pushOnWrite: false, migrationWarnOnly: false, staleAfterDays: 45 });
+
+    const schema = await service.graphSchema({ project: "demo" });
+    // Large clamps so the snapshot isn't truncated: totals reflect the full
+    // project-scoped (but unclamped) match, directly comparable to schema.
+    const snapshot = await service.graphSnapshot({ project: "demo", maxNodes: 100000, maxEdges: 100000 });
+
+    expect(schema.graphGeneration).toBe(snapshot.graphGeneration);
+    const nodeTotal = Object.values(schema.nodeTypeCounts).reduce((sum, count) => sum + count, 0);
+    const edgeTotal = Object.values(schema.edgeTypeCounts).reduce((sum, count) => sum + count, 0);
+    expect(nodeTotal).toBe(snapshot.totals.matchingNodes);
+    expect(edgeTotal).toBe(snapshot.totals.matchingEdges);
+  });
+
   it("graphSnapshot honors maxNodes: 0 as a metadata-only request", async () => {
     const repo = new AnchorRepository({ repoPath: tmpDir });
     await repo.ensureReady();
