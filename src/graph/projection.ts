@@ -462,7 +462,10 @@ function computeSeed(nodeId: string, project: string | undefined): ProjectionSee
  * tree still agree on every id.
  */
 function nextEdgeId(counts: Map<string, number>, edge: GraphEdge): string {
-  const key = `${edge.from} ${edge.to} ${edge.type} ${edge.sourceOfTruth}`;
+  // NUL joins the parts so no field's value can bleed across a separator (node
+  // ids never contain NUL); written as an explicit "\u0000" escape rather than a
+  // literal NUL byte, so the separator is visible and unambiguous in source.
+  const key = [edge.from, edge.to, edge.type, edge.sourceOfTruth].join("\u0000");
   const occurrence = counts.get(key) ?? 0;
   counts.set(key, occurrence + 1);
   const base = fnv1a(key).toString(16).padStart(8, "0");

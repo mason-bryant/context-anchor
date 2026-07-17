@@ -384,6 +384,8 @@ export type GraphSchemaResult = {
     anchorSchemaMode: AnchorSchemaMode;
   };
   clamps: ProjectionClamps;
+  /** The filter scope these counts reflect, after alias resolution — echoed (like `graphSnapshot`'s `appliedFilters`) so a client using a project alias can confirm which canonical project the counts represent. Absent `project` means the whole (unscoped) graph. */
+  appliedFilters: { project?: string };
 };
 
 /** Input shared by `previewAnchorMigration` and `applyAnchorMigration` (Goal 0 Phase 2 slice 2: `goal0_phase2_migration_write_ops_plan.md`). */
@@ -5177,7 +5179,9 @@ None.
    * generation.
    */
   async graphSchema(input: GraphSchemaInput = {}): Promise<GraphSchemaResult> {
-    const { anchors, claims, edges, graphGeneration, graphHead } = await this.buildGraphUiInputs(input.project);
+    const { anchors, claims, edges, effectiveProject, graphGeneration, graphHead } = await this.buildGraphUiInputs(
+      input.project,
+    );
     const { nodes, edges: projectionEdges } = materializeGraphProjection({ edges, anchors, claims });
 
     const nodeTypeCounts: Partial<Record<GraphNodeType, number>> = {};
@@ -5214,6 +5218,9 @@ None.
       clamps: {
         maxNodes: this.graphUiMaxNodesCeiling,
         maxEdges: this.graphUiMaxEdgesCeiling,
+      },
+      appliedFilters: {
+        ...(effectiveProject ? { project: effectiveProject } : {}),
       },
     };
   }

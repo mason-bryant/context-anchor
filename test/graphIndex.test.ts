@@ -910,6 +910,18 @@ None.
     expect(schema.identityContractVersion).toBe(2);
     expect(schema.features.graphUiEnabled).toBe(true);
     expect(schema.features.anchorSchemaMode).toBe("legacy");
+    // Unscoped request reflects the whole graph: no project echoed.
+    expect(schema.appliedFilters.project).toBeUndefined();
+  });
+
+  it("graphSchema echoes the resolved project filter in appliedFilters", async () => {
+    const repo = new AnchorRepository({ repoPath: tmpDir });
+    await repo.ensureReady();
+    await seedRepo(repo);
+    const service = new AnchorService(repo, { pushOnWrite: false, migrationWarnOnly: false, staleAfterDays: 45 });
+
+    const schema = await service.graphSchema({ project: "demo" });
+    expect(schema.appliedFilters.project).toBe("demo");
   });
 
   it("keeps an id-bearing anchor's node seed unchanged across a rename (seed is keyed off the anchor_id, not the path)", async () => {
