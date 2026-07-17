@@ -1778,6 +1778,210 @@ describe("UI HTTP routes", () => {
     const committed = await service.readAnchor("projects/demo/demo.md");
     expect(committed.content).toBe(preview.newContent);
   });
+
+  type GraphSchemaHttpResult = {
+    nodeTypeCounts: Record<string, number>;
+    edgeTypeCounts: Record<string, number>;
+    propertyKeys: string[];
+    graphGeneration: number;
+    graphHead?: string;
+    identityContractVersion: number;
+    features: { graphUiEnabled: boolean; anchorSchemaMode: string };
+    clamps: { maxNodes: number; maxEdges: number };
+  };
+
+  type GraphSnapshotHttpResult = {
+    nodes: Array<{
+      id: string;
+      type: string;
+      display: string;
+      anchorName?: string;
+      project?: string;
+      coverageState?: string;
+      seed: { x: number; y: number };
+    }>;
+    edges: Array<{ id: string; from: string; to: string; type: string; sourceOfTruth: string }>;
+    graphGeneration: number;
+    graphHead?: string;
+    identityContractVersion: number;
+    appliedFilters: Record<string, unknown>;
+    clamps: { maxNodes: number; maxEdges: number };
+    totals: { matchingNodes: number; returnedNodes: number; matchingEdges: number; returnedEdges: number };
+    truncated: boolean;
+    warnings: string[];
+  };
+
+  it("requires auth and describes the graph shape through /api/ui/graph/schema", async () => {
+    const unauthed = await fetch(`${baseUrl}/api/ui/graph/schema`);
+    expect(unauthed.status).toBe(401);
+
+    const result = await fetchJson<GraphSchemaHttpResult>("/api/ui/graph/schema");
+    expect(result.nodeTypeCounts.anchor).toBeGreaterThan(0);
+    expect(typeof result.graphGeneration).toBe("number");
+    expect(result.identityContractVersion).toBe(2);
+    expect(result.features.graphUiEnabled).toBe(true);
+    expect(result.clamps).toEqual({ maxNodes: 500, maxEdges: 2000 });
+  });
+
+  it("requires auth and returns a bounded node/edge projection through /api/ui/graph/snapshot", async () => {
+    const unauthed = await fetch(`${baseUrl}/api/ui/graph/snapshot`);
+    expect(unauthed.status).toBe(401);
+
+    const result = await fetchJson<GraphSnapshotHttpResult>("/api/ui/graph/snapshot");
+    const demoNode = result.nodes.find((node) => node.anchorName === "projects/demo/demo.md");
+    expect(demoNode).toBeDefined();
+    expect(demoNode?.coverageState).toBeTruthy();
+    expect(typeof demoNode?.seed.x).toBe("number");
+    expect(typeof demoNode?.seed.y).toBe("number");
+    expect(result.edges.every((edge) => edge.type && edge.sourceOfTruth && edge.id)).toBe(true);
+    expect(result.identityContractVersion).toBe(2);
+    expect(result.truncated).toBe(false);
+    expect(result.warnings).toEqual([]);
+  });
+
+  it("rejects unknown /api/ui/graph/snapshot nodeTypes with 400", async () => {
+    const response = await fetch(`${baseUrl}/api/ui/graph/snapshot?nodeTypes=not_a_type`, {
+      headers: { Authorization: `Bearer ${TOKEN}` },
+    });
+    const body = (await response.json()) as { error: { message: string } };
+    expect(response.status).toBe(400);
+    expect(body.error.message).toContain("not_a_type");
+  });
+
+  it("rejects unknown /api/ui/graph/snapshot coverage states with 400", async () => {
+    const response = await fetch(`${baseUrl}/api/ui/graph/snapshot?coverage=not_a_state`, {
+      headers: { Authorization: `Bearer ${TOKEN}` },
+    });
+    const body = (await response.json()) as { error: { message: string } };
+    expect(response.status).toBe(400);
+    expect(body.error.message).toContain("not_a_state");
+  });
+
+  it("filters /api/ui/graph/snapshot by project and free-text q", async () => {
+    const byProject = await fetchJson<GraphSnapshotHttpResult>("/api/ui/graph/snapshot?project=demo");
+    expect(byProject.appliedFilters.project).toBe("demo");
+    expect(byProject.nodes.some((node) => node.anchorName === "projects/demo/demo.md")).toBe(true);
+
+    const byQuery = await fetchJson<GraphSnapshotHttpResult>(
+      `/api/ui/graph/snapshot?q=${encodeURIComponent("Demo Anchor")}`,
+    );
+    expect(byQuery.nodes.length).toBeGreaterThan(0);
+    expect(byQuery.nodes.every((node) => node.display.toLowerCase().includes("demo anchor"))).toBe(true);
+  });
+
+  it("graph/schema and graph/snapshot counts agree for the same generation", async () => {
+    const schema = await fetchJson<GraphSchemaHttpResult>("/api/ui/graph/schema");
+    const snapshot = await fetchJson<GraphSnapshotHttpResult>(
+      "/api/ui/graph/snapshot?maxNodes=500&maxEdges=2000",
+    );
+    expect(schema.graphGeneration).toBe(snapshot.graphGeneration);
+    const nodeTotal = Object.values(schema.nodeTypeCounts).reduce((sum, count) => sum + count, 0);
+    const edgeTotal = Object.values(schema.edgeTypeCounts).reduce((sum, count) => sum + count, 0);
+    expect(nodeTotal).toBe(snapshot.totals.matchingNodes);
+    expect(edgeTotal).toBe(snapshot.totals.matchingEdges);
+  });
+
+  it("clamps /api/ui/graph/snapshot maxNodes/maxEdges to the configured graphUi ceiling", async () => {
+    const clampedTmpDir = await mkdtemp(path.join(os.tmpdir(), "anchor-ui-graph-clamp-"));
+    const clampedRepo = new AnchorRepository({ repoPath: clampedTmpDir });
+    await clampedRepo.ensureReady();
+    const clampedServer = await startHttpServer(
+      {
+        repoPath: clampedTmpDir,
+        anchorRoot: ".",
+        autoSync: false,
+        pushOnWrite: false,
+        syncIntervalMs: 0,
+        migrationWarnOnly: false,
+        staleAfterDays: 45,
+        graphScoring: { enabled: false, maxBoost: 8 },
+        graphUi: { maxNodes: 2, maxEdges: 3 },
+      },
+      { host: "127.0.0.1", port: 0, authToken: TOKEN, stateless: true },
+    );
+    try {
+      const clampedService = new AnchorService(clampedRepo, {
+        pushOnWrite: false,
+        migrationWarnOnly: false,
+        staleAfterDays: 45,
+      });
+      await clampedService.writeAnchor({
+        name: "projects/demo/a.md",
+        content: projectAnchorContent("demo"),
+        message: "test: seed a",
+        approved: true,
+      });
+      await clampedService.writeAnchor({
+        name: "projects/demo/b.md",
+        content: projectAnchorContent("demo"),
+        message: "test: seed b",
+        approved: true,
+      });
+
+      const address = clampedServer.address();
+      if (!address || typeof address === "string") {
+        throw new Error("Expected HTTP server to listen on a TCP port");
+      }
+      const clampedBaseUrl = `http://127.0.0.1:${address.port}`;
+
+      const response = await fetch(`${clampedBaseUrl}/api/ui/graph/snapshot?maxNodes=999&maxEdges=999`, {
+        headers: { Authorization: `Bearer ${TOKEN}` },
+      });
+      const result = (await response.json()) as GraphSnapshotHttpResult;
+      expect(result.clamps).toEqual({ maxNodes: 2, maxEdges: 3 });
+      expect(result.nodes.length).toBeLessThanOrEqual(2);
+      expect(result.edges.length).toBeLessThanOrEqual(3);
+      expect(result.totals.matchingNodes).toBeGreaterThan(result.totals.returnedNodes);
+      expect(result.truncated).toBe(true);
+    } finally {
+      await new Promise<void>((resolve, reject) => {
+        clampedServer.close((error) => (error ? reject(error) : resolve()));
+      });
+      await rm(clampedTmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("404s /api/ui/graph/schema and /api/ui/graph/snapshot when graphUi.enabled is false", async () => {
+    const disabledTmpDir = await mkdtemp(path.join(os.tmpdir(), "anchor-ui-graph-disabled-"));
+    const disabledRepo = new AnchorRepository({ repoPath: disabledTmpDir });
+    await disabledRepo.ensureReady();
+    const disabledServer = await startHttpServer(
+      {
+        repoPath: disabledTmpDir,
+        anchorRoot: ".",
+        autoSync: false,
+        pushOnWrite: false,
+        syncIntervalMs: 0,
+        migrationWarnOnly: false,
+        staleAfterDays: 45,
+        graphScoring: { enabled: false, maxBoost: 8 },
+        graphUi: { enabled: false },
+      },
+      { host: "127.0.0.1", port: 0, authToken: TOKEN, stateless: true },
+    );
+    try {
+      const address = disabledServer.address();
+      if (!address || typeof address === "string") {
+        throw new Error("Expected HTTP server to listen on a TCP port");
+      }
+      const disabledBaseUrl = `http://127.0.0.1:${address.port}`;
+
+      const schemaResponse = await fetch(`${disabledBaseUrl}/api/ui/graph/schema`, {
+        headers: { Authorization: `Bearer ${TOKEN}` },
+      });
+      expect(schemaResponse.status).toBe(404);
+
+      const snapshotResponse = await fetch(`${disabledBaseUrl}/api/ui/graph/snapshot`, {
+        headers: { Authorization: `Bearer ${TOKEN}` },
+      });
+      expect(snapshotResponse.status).toBe(404);
+    } finally {
+      await new Promise<void>((resolve, reject) => {
+        disabledServer.close((error) => (error ? reject(error) : resolve()));
+      });
+      await rm(disabledTmpDir, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("UI HTTP trace routes", () => {
