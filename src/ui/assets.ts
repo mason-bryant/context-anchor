@@ -585,6 +585,10 @@ export const UI_HTML = `<!doctype html>
                   <div id="graph-node-type-filters"></div>
                 </fieldset>
                 <fieldset class="graph-filter-group">
+                  <legend>Edge types</legend>
+                  <div id="graph-edge-type-filters"></div>
+                </fieldset>
+                <fieldset class="graph-filter-group">
                   <legend>Coverage state</legend>
                   <div id="graph-coverage-filters"></div>
                 </fieldset>
@@ -7526,6 +7530,7 @@ export const UI_JS = `(function () {
 
   function renderGraphFilterOptions(schema) {
     var nodeTypes = Object.keys(schema.nodeTypeCounts || {}).sort();
+    var edgeTypes = Object.keys(schema.edgeTypeCounts || {}).sort();
     var coverageStates = ["structured", "partial", "prose_only", "ambiguous", "dangling", "malformed"].filter(function (s) {
       // Only offer a coverage-state checkbox that is at least conceivable
       // for this graph's node types (anchor/claim carry coverage) -- the
@@ -7545,6 +7550,19 @@ export const UI_JS = `(function () {
     nodeTypesEl.querySelectorAll("[data-graph-node-type]").forEach(function (input) {
       input.addEventListener("change", function () {
         toggleGraphArrayFilter("graphNodeTypes", input.dataset.graphNodeType);
+      });
+    });
+
+    var edgeTypesEl = el("graph-edge-type-filters");
+    var selectedEdgeTypes = {};
+    (state.graphEdgeTypes || []).forEach(function (t) { selectedEdgeTypes[t] = true; });
+    edgeTypesEl.innerHTML = edgeTypes.map(function (type) {
+      var checked = selectedEdgeTypes[type] ? " checked" : "";
+      return "<label><input type=\\"checkbox\\" data-graph-edge-type=\\"" + escapeHtml(type) + "\\"" + checked + "> " + escapeHtml(type) + "</label>";
+    }).join("");
+    edgeTypesEl.querySelectorAll("[data-graph-edge-type]").forEach(function (input) {
+      input.addEventListener("change", function () {
+        toggleGraphArrayFilter("graphEdgeTypes", input.dataset.graphEdgeType);
       });
     });
 
@@ -7611,7 +7629,7 @@ export const UI_JS = `(function () {
         }
       });
       cy.on("select", "edge", function (event) {
-        selectGraphElement(event.target.id(), { fromCanvas: true, isEdge: true });
+        selectGraphElement(event.target.id(), { fromCanvas: true });
       });
     }).catch(function () {
       setBanner("Graph rendering is unavailable (the Cytoscape browser bundle failed to load).", "warn");
