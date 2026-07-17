@@ -15,7 +15,8 @@ import type {
   ProposedChangeStatus,
   ProposeChangeInput,
 } from "../types.js";
-import type { GraphEdgeType } from "../graph/model.js";
+import type { GraphEdgeType, GraphNodeType } from "../graph/model.js";
+import { CANONICAL_NODE_PREFIXES } from "../graph/neighbors.js";
 import type { CoverageState } from "../graph/coverage.js";
 import { MIGRATION_OPERATION_CODES, type MigrationOperationCode } from "../migration/anchorMigration.js";
 import { aggregateBudget, aggregateFollowUps, aggregateFrequency, filterEvents, filterSessions } from "../trace/aggregate.js";
@@ -592,6 +593,49 @@ export function registerUiRoutes(
         ...(states && states.length > 0 ? { states: states as CoverageState[] } : {}),
         ...(limit !== undefined ? { limit } : {}),
         ...(cursor ? { cursor } : {}),
+      });
+    }),
+  );
+
+  app.get(
+    "/api/ui/graph/schema",
+    ...protect,
+    jsonRoute(async (req) => {
+      requireGraphUiEnabled(service);
+      const project = optionalQueryString(req, "project");
+      return service.graphSchema({ ...(project ? { project } : {}) });
+    }),
+  );
+
+  app.get(
+    "/api/ui/graph/snapshot",
+    ...protect,
+    jsonRoute(async (req) => {
+      requireGraphUiEnabled(service);
+      const project = optionalQueryString(req, "project");
+      const nodeTypes = readNodeTypesQuery(req, "nodeTypes");
+      const edgeTypesRaw = optionalQueryString(req, "edgeTypes");
+      const edgeTypes = edgeTypesRaw
+        ? (edgeTypesRaw.split(",").map((value) => value.trim()).filter(Boolean) as GraphEdgeType[])
+        : undefined;
+      const coverageRaw = optionalQueryString(req, "coverage");
+      const coverage = coverageRaw?.split(",").map((value) => value.trim());
+      const invalidCoverage = coverage?.find((value) => !isCoverageState(value));
+      if (invalidCoverage !== undefined) {
+        throw new UiHttpError(400, `Invalid coverage: unknown coverage state ${invalidCoverage || "(empty)"}`);
+      }
+      const q = optionalQueryString(req, "q");
+      const maxNodes = positiveIntQuery(req, "maxNodes", GRAPH_UI_QUERY_MAX_CEILING);
+      const maxEdges = positiveIntQuery(req, "maxEdges", GRAPH_UI_QUERY_MAX_CEILING);
+
+      return service.graphSnapshot({
+        ...(project ? { project } : {}),
+        ...(nodeTypes && nodeTypes.length > 0 ? { nodeTypes } : {}),
+        ...(edgeTypes && edgeTypes.length > 0 ? { edgeTypes } : {}),
+        ...(coverage && coverage.length > 0 ? { coverageStates: coverage as CoverageState[] } : {}),
+        ...(q ? { q } : {}),
+        ...(maxNodes !== undefined ? { maxNodes } : {}),
+        ...(maxEdges !== undefined ? { maxEdges } : {}),
       });
     }),
   );
@@ -1299,6 +1343,45 @@ function isCoverageState(value: string): value is CoverageState {
     value === "dangling" ||
     value === "malformed"
   );
+}
+
+// Derived from the same prefix table `resolveGraphNode`'s canonical-passthrough
+// branch uses (src/graph/neighbors.ts), so route validation can never name a
+// node type the graph itself does not recognize.
+const GRAPH_NODE_TYPE_SET: ReadonlySet<string> = new Set(Object.values(CANONICAL_NODE_PREFIXES));
+
+function isGraphNodeType(value: string): value is GraphNodeType {
+  return GRAPH_NODE_TYPE_SET.has(value);
+}
+
+/** Comma-separated `nodeTypes`/`edgeTypes`-shaped query param, validated against `isGraphNodeType`. Rejects the whole param with a 400 on the first unrecognized value. */
+function readNodeTypesQuery(req: Request, key: string): GraphNodeType[] | undefined {
+  const raw = optionalQueryString(req, key);
+  if (!raw) {
+    return undefined;
+  }
+  const values = raw.split(",").map((value) => value.trim()).filter(Boolean);
+  const invalid = values.find((value) => !isGraphNodeType(value));
+  if (invalid !== undefined) {
+    throw new UiHttpError(400, `Invalid ${key}: unknown node type ${invalid}`);
+  }
+  return values as GraphNodeType[];
+}
+
+/**
+ * Generous input-level sanity ceiling for `maxNodes`/`maxEdges` query params —
+ * distinct from (and much larger than) the `graphUi` CONFIG ceiling
+ * `AnchorService.graphSnapshot` actually clamps to. This just rejects
+ * obviously malformed input (negative, non-integer, absurd); the service is
+ * the one true source of the enforced clamp.
+ */
+const GRAPH_UI_QUERY_MAX_CEILING = 1_000_000;
+
+/** 404s a graph-inspection route when `graphUi.enabled` is false — these routes have no other precedent for conditional registration, so the guard lives inside each handler (per-request) rather than at registration time. */
+function requireGraphUiEnabled(service: AnchorService): void {
+  if (!service.isGraphUiEnabled()) {
+    throw new UiHttpError(404, "Not found");
+  }
 }
 
 // Derived from the planner's canonical list so route validation can never
