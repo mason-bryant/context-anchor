@@ -120,6 +120,22 @@ last_validated: 2026-07-07
 
 # Demo Roadmap
 
+## Current State
+
+None.
+
+## Decisions
+
+None.
+
+## Constraints
+
+None.
+
+## PRs
+
+None.
+
 ## Goals
 
 ### Goal G-001 -- Ship the thing

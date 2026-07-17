@@ -7713,6 +7713,12 @@ export const UI_JS = `(function () {
         selectGraphElement(row.dataset.graphNodeId, { fromCanvas: false });
       });
       row.addEventListener("keydown", function (event) {
+        // Same guard as the click handler: when focus is on the inner
+        // "Open detail" link, let Enter/Space activate the link instead of
+        // preventDefault()-ing it into a row selection (keyboard nav must work).
+        if (event.target.closest("a[data-anchor-name]")) {
+          return;
+        }
         if (event.key === "Enter" || event.key === " ") {
           event.preventDefault();
           selectGraphElement(row.dataset.graphNodeId, { fromCanvas: false });
