@@ -1173,7 +1173,7 @@ None.
   });
 
   it("sets multiple sources by line and resolves source links", async () => {
-    const write = await service.writeAnchor({
+    await service.writeAnchor({
       name: "projects/demo/claims-demo",
       content: anchorContent(),
       message: "test: add claims demo",
@@ -1820,7 +1820,6 @@ None.
       content: anchorContent(),
       message: "test: add first claims demo",
     });
-    const secondContent = anchorContent().replace("projects/demo", "projects/demo2");
     await service.writeAnchor({
       name: "projects/demo2/claims-demo-2",
       content: `---

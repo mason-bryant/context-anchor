@@ -116,7 +116,7 @@ describe("resolveCandidateProjects", () => {
   });
 
   it("returns undefined when the registry is empty", () => {
-    expect(resolveCandidateProjects({ repo: "repo-alpha" }, { projects: [] })).toEqual({
+    expect(resolveCandidateProjects({ repo: "repo-alpha" }, { projects: [], claimSourceTypes: [] })).toEqual({
       candidates: [],
       unknownRepo: "repo-alpha",
       explanations: expect.any(Array),

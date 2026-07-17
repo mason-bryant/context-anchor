@@ -373,8 +373,8 @@ describe("graphNeighbors: ambiguous input", () => {
     // "alic" matches both "alice" and "alicia" by substring, and does not
     // exactly resolve to any anchor/goal/claim/canonical node either.
     const result = await service.graphNeighbors({ node: "alic" });
-    expect("candidates" in result).toBe(true);
-    if (!("candidates" in result)) {
+    expect(result.candidates).toBeDefined();
+    if (!result.candidates) {
       throw new Error("expected candidates");
     }
     const candidateIds = result.candidates.map((candidate) => candidate.nodeId).sort();

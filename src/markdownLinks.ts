@@ -76,4 +76,6 @@ function uniqueUrl(links: KnownLink[]): string | undefined { const urls = [...ne
 function uniqueLabel(links: KnownLink[]): string | undefined { const labels = [...new Set(links.map((link) => link.label.trim()).filter(Boolean))]; return labels.length === 1 ? labels[0] : undefined; }
 function escapeRegex(value: string): string { return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); }
 function trimTrailingUrlPunctuation(value: string): string { return value.replace(/[.,;:!?]+$/, ""); }
-function escapeMarkdownLabel(value: string): string { return value.replace(/([\\\[\]])/g, "\\$1"); }
+function escapeMarkdownLabel(value: string): string {
+  return value.replaceAll("\\", "\\\\").replaceAll("[", "\\[").replaceAll("]", "\\]");
+}

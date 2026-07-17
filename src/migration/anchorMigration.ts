@@ -280,10 +280,11 @@ function planConvertRelations(
     if (key === "goal_ids") {
       continue;
     }
-    const values = rel[key];
-    if (!Array.isArray(values)) {
+    const rawValues: unknown = rel[key];
+    if (!Array.isArray(rawValues)) {
       continue;
     }
+    const values: unknown[] = rawValues;
     const vocabEntry = relationVocabularyEntry(key);
     if (!vocabEntry) {
       outcomes.push({
@@ -395,10 +396,11 @@ function planScopeGoalReferences(
     if (key === "goal_ids") {
       continue;
     }
-    const values = rel[key];
-    if (!Array.isArray(values)) {
+    const rawValues: unknown = rel[key];
+    if (!Array.isArray(rawValues)) {
       continue;
     }
+    const values: unknown[] = rawValues;
     const vocabEntry = relationVocabularyEntry(key);
     if (!vocabEntry) {
       // convert_relation already reports key_not_registered for this key;
