@@ -41,6 +41,35 @@ export function resolveMermaidDistDir(resolveModule: (id: string) => string = re
   }
 }
 
+/**
+ * Same optional-vendor-dir pattern as `resolveMermaidDistDir` — Cytoscape
+ * (the Graph tab's canvas renderer) is vendored locally rather than loaded
+ * from a CDN, so its dist dir is resolved once at startup and served
+ * statically; a missing install (e.g. a slim production install that pruned
+ * it) degrades to the Graph tab's own "unavailable" state rather than
+ * failing server startup.
+ *
+ * Resolves the bare `"cytoscape"` specifier rather than the
+ * `cytoscape/dist/cytoscape.esm.min.mjs` subpath directly: cytoscape's
+ * `package.json` `exports` map only advertises an `"import"` condition for
+ * that subpath, which `require.resolve`'s CJS resolution algorithm rejects
+ * ("not defined by exports") even though the file exists — the package
+ * root's `"."` export does advertise a `"require"` condition, and its
+ * resolved file (`dist/cytoscape.cjs.js`) sits in the exact same `dist/`
+ * directory as the ESM build we actually want to serve, so taking its
+ * dirname gets us there without fighting the exports map.
+ */
+export function resolveCytoscapeDistDir(resolveModule: (id: string) => string = require.resolve): string | undefined {
+  try {
+    return path.dirname(resolveModule("cytoscape"));
+  } catch (error) {
+    if (error && typeof error === "object" && "code" in error && error.code === "MODULE_NOT_FOUND") {
+      return undefined;
+    }
+    throw error;
+  }
+}
+
 export function registerUiRoutes(
   app: Express,
   service: AnchorService,
@@ -69,6 +98,16 @@ export function registerUiRoutes(
     app.use(
       "/ui/vendor/mermaid",
       express.static(mermaidDistDir, {
+        fallthrough: false,
+        index: false,
+      }),
+    );
+  }
+  const cytoscapeDistDir = resolveCytoscapeDistDir();
+  if (cytoscapeDistDir) {
+    app.use(
+      "/ui/vendor/cytoscape",
+      express.static(cytoscapeDistDir, {
         fallthrough: false,
         index: false,
       }),
