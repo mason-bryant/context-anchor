@@ -128,7 +128,7 @@ export type CyNodeData = {
   sourceOfTruth: ProjectionNode["sourceOfTruth"];
   project?: string;
   anchorName?: string;
-  /** Set only for anchor/claim/milestone/task nodes carrying an `anchorName` — the Graph tab's "Open detail" deep link target (`?anchor=<name>`). */
+  /** Set only for anchor/claim/milestone/task/section nodes carrying an `anchorName` — the Graph tab's "Open detail" deep link target (`?anchor=<name>`). */
   openDetailAnchorName?: string;
 };
 
@@ -160,8 +160,8 @@ export type CyElements = {
   edges: CyEdgeElement[];
 };
 
-/** Node types whose "Open detail" deep link is meaningful (they resolve to an anchor the existing `?anchor=` deep-link mechanism can render). */
-const OPEN_DETAIL_NODE_TYPES: ReadonlySet<GraphNodeType> = new Set(["anchor", "claim", "milestone", "task"]);
+/** Node types whose "Open detail" deep link is meaningful (they resolve to an anchor the existing `?anchor=` deep-link mechanism can render). `section` joined this set once `materializeGraphProjection` started backfilling its owning anchor's `anchorName` — this set only gates on the type; the `!node.anchorName` check below is what actually makes it a no-op for a section outside the enrichment's project scope. */
+const OPEN_DETAIL_NODE_TYPES: ReadonlySet<GraphNodeType> = new Set(["anchor", "claim", "milestone", "task", "section"]);
 
 function openDetailAnchorName(node: ProjectionNode): string | undefined {
   if (!node.anchorName || !OPEN_DETAIL_NODE_TYPES.has(node.type)) {
@@ -367,4 +367,140 @@ export function graphHeaderSummary(snapshot: Pick<GraphSnapshotResult, "totals" 
     matchingEdges: snapshot.totals.matchingEdges,
     truncated: snapshot.truncated,
   };
+}
+
+// ---------------------------------------------------------------------------
+// URL <-> filter/sort/selection state, mirroring `coverageFiltersFromUrlParams`
+// / `coverageUrlParamsFromFilters` in `src/ui/viewModel.ts`. `UI_JS`
+// re-implements this inline in `applyUrlStateToControls`/`paramsForState` (it
+// cannot import this module — no bundler); the pure round-trip rules are
+// tested here. Satisfies the Goal 1 acceptance criterion "the graph URL can
+// be copied and reopened to restore mode, filters, selected node, and layout"
+// (layout has no param yet — Explore mode ships one canvas layout, nothing to
+// select between).
+// ---------------------------------------------------------------------------
+
+export type GraphUrlState = {
+  project?: string;
+  nodeTypes?: readonly GraphNodeType[];
+  edgeTypes?: readonly GraphEdgeType[];
+  coverageStates?: readonly CoverageState[];
+  q?: string;
+  sortKey?: GraphTableSortKey;
+  sortDir?: "asc" | "desc";
+  /** Canonical id of the selected node or edge, so a copied URL reopens with the same inspector/table selection. */
+  selectedId?: string;
+};
+
+/** Every URL query key the Graph tab owns. Prefixed `graph*` throughout so it can never collide with the Anchors tab's own `project`/`sort`/`search` or the Coverage tab's `coverage*` params — all three tabs' state coexists in one URL simultaneously. */
+export const GRAPH_URL_PARAM_KEYS = {
+  project: "graphProject",
+  nodeTypes: "graphNodeTypes",
+  edgeTypes: "graphEdgeTypes",
+  coverageStates: "graphCoverage",
+  q: "graphSearch",
+  sortKey: "graphSort",
+  sortDir: "graphSortDir",
+  selectedId: "graphSelected",
+} as const;
+
+export const DEFAULT_GRAPH_SORT_KEY: GraphTableSortKey = "type";
+export const DEFAULT_GRAPH_SORT_DIR: "asc" | "desc" = "asc";
+
+const VALID_GRAPH_TABLE_SORT_KEYS: ReadonlySet<GraphTableSortKey> = new Set(["type", "display", "coverageState", "project"]);
+function isGraphTableSortKeyValue(value: string): value is GraphTableSortKey {
+  return VALID_GRAPH_TABLE_SORT_KEYS.has(value as GraphTableSortKey);
+}
+
+const VALID_GRAPH_COVERAGE_STATES: ReadonlySet<CoverageState> = new Set([
+  "structured",
+  "partial",
+  "prose_only",
+  "ambiguous",
+  "dangling",
+  "malformed",
+]);
+function isGraphCoverageStateValue(value: string): value is CoverageState {
+  return VALID_GRAPH_COVERAGE_STATES.has(value as CoverageState);
+}
+
+/** Trimmed, deduplicated (order-preserving), non-empty tokens from a comma-separated URL value. No fixed-vocabulary validation — node/edge types have no closed enum here (they vary with the graph); `pruneSelectionToAvailable` is the actual gatekeeper once the live schema is known, same as a stale checkbox selection left over from a different project scope. */
+function splitUrlTokenList(raw: string | null): string[] {
+  if (!raw) {
+    return [];
+  }
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const token of raw.split(",")) {
+    const value = token.trim();
+    if (value && !seen.has(value)) {
+      seen.add(value);
+      out.push(value);
+    }
+  }
+  return out;
+}
+
+/** Parse the Graph tab's filter/sort/selection state back out of a `URLSearchParams`-like plain object. `coverageStates` and `sortKey`/`sortDir` have small closed vocabularies and are validated (unknown tokens dropped, same forgiving policy `coverageFiltersFromUrlParams` uses for a stale/foreign link); `nodeTypes`/`edgeTypes` are accepted as-is. */
+export function graphFiltersFromUrlParams(getParam: (key: string) => string | null): GraphUrlState {
+  const project = (getParam(GRAPH_URL_PARAM_KEYS.project) || "").trim();
+  const nodeTypes = splitUrlTokenList(getParam(GRAPH_URL_PARAM_KEYS.nodeTypes)) as GraphNodeType[];
+  const edgeTypes = splitUrlTokenList(getParam(GRAPH_URL_PARAM_KEYS.edgeTypes)) as GraphEdgeType[];
+  const seenStates = new Set<CoverageState>();
+  const coverageStates = splitUrlTokenList(getParam(GRAPH_URL_PARAM_KEYS.coverageStates)).filter(
+    (value): value is CoverageState => {
+      if (!isGraphCoverageStateValue(value) || seenStates.has(value)) {
+        return false;
+      }
+      seenStates.add(value);
+      return true;
+    },
+  );
+  const q = (getParam(GRAPH_URL_PARAM_KEYS.q) || "").trim();
+  const sortKeyRaw = getParam(GRAPH_URL_PARAM_KEYS.sortKey) || "";
+  const sortDirRaw = getParam(GRAPH_URL_PARAM_KEYS.sortDir);
+  const selectedId = (getParam(GRAPH_URL_PARAM_KEYS.selectedId) || "").trim();
+  return {
+    ...(project ? { project } : {}),
+    ...(nodeTypes.length > 0 ? { nodeTypes } : {}),
+    ...(edgeTypes.length > 0 ? { edgeTypes } : {}),
+    ...(coverageStates.length > 0 ? { coverageStates } : {}),
+    ...(q ? { q } : {}),
+    ...(isGraphTableSortKeyValue(sortKeyRaw) ? { sortKey: sortKeyRaw } : {}),
+    ...(sortDirRaw === "desc" || sortDirRaw === "asc" ? { sortDir: sortDirRaw } : {}),
+    ...(selectedId ? { selectedId } : {}),
+  };
+}
+
+/** Inverse of `graphFiltersFromUrlParams`. Only includes a key when it has an effective, non-default value, so applying it never leaves stale or no-op params behind (same convention `setParam`/`setNonDefaultParam` follow in `src/ui/assets.ts`). */
+export function graphUrlParamsFromState(state: GraphUrlState): Record<string, string> {
+  const params: Record<string, string> = {};
+  const project = state.project?.trim();
+  if (project) {
+    params[GRAPH_URL_PARAM_KEYS.project] = project;
+  }
+  if (state.nodeTypes && state.nodeTypes.length > 0) {
+    params[GRAPH_URL_PARAM_KEYS.nodeTypes] = state.nodeTypes.join(",");
+  }
+  if (state.edgeTypes && state.edgeTypes.length > 0) {
+    params[GRAPH_URL_PARAM_KEYS.edgeTypes] = state.edgeTypes.join(",");
+  }
+  if (state.coverageStates && state.coverageStates.length > 0) {
+    params[GRAPH_URL_PARAM_KEYS.coverageStates] = state.coverageStates.join(",");
+  }
+  const q = state.q?.trim();
+  if (q) {
+    params[GRAPH_URL_PARAM_KEYS.q] = q;
+  }
+  if (state.sortKey && state.sortKey !== DEFAULT_GRAPH_SORT_KEY) {
+    params[GRAPH_URL_PARAM_KEYS.sortKey] = state.sortKey;
+  }
+  if (state.sortDir && state.sortDir !== DEFAULT_GRAPH_SORT_DIR) {
+    params[GRAPH_URL_PARAM_KEYS.sortDir] = state.sortDir;
+  }
+  const selectedId = state.selectedId?.trim();
+  if (selectedId) {
+    params[GRAPH_URL_PARAM_KEYS.selectedId] = selectedId;
+  }
+  return params;
 }

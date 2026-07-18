@@ -4,8 +4,10 @@ import {
   coverageStyle,
   edgeStrokeStyle,
   filterOptionsFromSchema,
+  graphFiltersFromUrlParams,
   graphHeaderSummary,
   graphSnapshotQueryParams,
+  graphUrlParamsFromState,
   nodeTypeShape,
   pruneSelectionToAvailable,
   snapshotToCyElements,
@@ -136,12 +138,17 @@ describe("snapshotToCyElements", () => {
     expect(elements.edges).toHaveLength(0);
   });
 
-  it("sets openDetailAnchorName only for anchor/claim/milestone/task nodes carrying an anchorName", () => {
+  it("sets openDetailAnchorName only for anchor/claim/milestone/task/section nodes carrying an anchorName", () => {
     const snap = snapshot(
       [
         node({ id: "anchor:a.md", type: "anchor", display: "a.md", anchorName: "a.md" }),
         node({ id: "project:demo", type: "project", display: "demo" }),
         node({ id: "milestone:a.md", type: "milestone", display: "a.md milestone", anchorName: "a.md" }),
+        node({ id: "section:a.md#Constraints", type: "section", display: "Constraints", anchorName: "a.md" }),
+        // A section outside the enrichment's project scope has no anchorName
+        // backfilled (materializeGraphProjection's documented no-op case) --
+        // still gated off even though "section" is in OPEN_DETAIL_NODE_TYPES.
+        node({ id: "section:a-other#Notes", type: "section", display: "a-other#Notes" }),
       ],
       [],
     );
@@ -150,6 +157,8 @@ describe("snapshotToCyElements", () => {
     expect(byId["anchor:a.md"].openDetailAnchorName).toBe("a.md");
     expect(byId["project:demo"].openDetailAnchorName).toBeUndefined();
     expect(byId["milestone:a.md"].openDetailAnchorName).toBe("a.md");
+    expect(byId["section:a.md#Constraints"].openDetailAnchorName).toBe("a.md");
+    expect(byId["section:a-other#Notes"].openDetailAnchorName).toBeUndefined();
   });
 
   it("handles an empty snapshot", () => {
@@ -265,5 +274,81 @@ describe("graphHeaderSummary", () => {
       matchingEdges: 900,
       truncated: true,
     });
+  });
+});
+
+describe("graph URL state round-trip", () => {
+  it("round-trips filters, sort, and selection through URL query params", () => {
+    const state = {
+      project: "anchor-mcp",
+      nodeTypes: ["anchor", "claim"] as const,
+      edgeTypes: ["depends_on"] as const,
+      coverageStates: ["structured", "partial"] as const,
+      q: "roadmap",
+      sortKey: "display" as const,
+      sortDir: "desc" as const,
+      selectedId: "anchor:a-abc123",
+    };
+    const params = graphUrlParamsFromState(state);
+    const restored = graphFiltersFromUrlParams((key) => params[key] ?? null);
+    expect(restored).toEqual(state);
+  });
+
+  it("omits every key (including default sort) when serializing empty/default state", () => {
+    expect(graphUrlParamsFromState({})).toEqual({});
+    expect(graphUrlParamsFromState({ sortKey: "type", sortDir: "asc" })).toEqual({});
+  });
+
+  it("parses nothing from an empty URL", () => {
+    expect(graphFiltersFromUrlParams(() => null)).toEqual({});
+  });
+
+  it("drops an unknown coverage state or sort key instead of throwing, matching the ES5 mirror's forgiving URL policy", () => {
+    const restored = graphFiltersFromUrlParams((key) => {
+      if (key === "graphCoverage") return "structured,not_a_real_state,dangling";
+      if (key === "graphSort") return "not_a_real_column";
+      return null;
+    });
+    expect(restored.coverageStates).toEqual(["structured", "dangling"]);
+    expect(restored.sortKey).toBeUndefined();
+  });
+
+  it("deduplicates repeated node/edge/coverage tokens from the URL in order", () => {
+    const restored = graphFiltersFromUrlParams((key) => {
+      if (key === "graphNodeTypes") return "anchor,task,anchor";
+      if (key === "graphCoverage") return "dangling,dangling,malformed";
+      return null;
+    });
+    expect(restored.nodeTypes).toEqual(["anchor", "task"]);
+    expect(restored.coverageStates).toEqual(["dangling", "malformed"]);
+  });
+
+  it("trims whitespace-padded project, search, and selection values when parsing from the URL", () => {
+    const restored = graphFiltersFromUrlParams((key) => {
+      if (key === "graphProject") return "  anchor-mcp  ";
+      if (key === "graphSearch") return "  roadmap  ";
+      if (key === "graphSelected") return "  anchor:a-abc123  ";
+      return null;
+    });
+    expect(restored.project).toBe("anchor-mcp");
+    expect(restored.q).toBe("roadmap");
+    expect(restored.selectedId).toBe("anchor:a-abc123");
+
+    const whitespaceOnly = graphFiltersFromUrlParams((key) =>
+      key === "graphProject" || key === "graphSearch" || key === "graphSelected" ? "   " : null,
+    );
+    expect(whitespaceOnly.project).toBeUndefined();
+    expect(whitespaceOnly.q).toBeUndefined();
+    expect(whitespaceOnly.selectedId).toBeUndefined();
+  });
+
+  it("accepts node/edge type tokens as-is (no fixed vocabulary — pruneSelectionToAvailable is the real gatekeeper)", () => {
+    const restored = graphFiltersFromUrlParams((key) => (key === "graphNodeTypes" ? "anchor,not_a_real_type" : null));
+    expect(restored.nodeTypes).toEqual(["anchor", "not_a_real_type"]);
+  });
+
+  it("ignores an invalid sortDir instead of restoring a bogus value", () => {
+    const restored = graphFiltersFromUrlParams((key) => (key === "graphSortDir" ? "sideways" : null));
+    expect(restored.sortDir).toBeUndefined();
   });
 });
