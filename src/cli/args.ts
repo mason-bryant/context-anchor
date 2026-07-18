@@ -76,10 +76,7 @@ export function parseCliArgs(argv: string[], env: NodeJS.ProcessEnv = process.en
       migrationWarnOnly: booleanFlag(flags, "migration-warn-only"),
       staleAfterDays: numberFlag(flags, "stale-after-days") ?? numberEnv(env.ANCHOR_MCP_STALE_AFTER_DAYS) ?? 45,
       graphScoring: {
-        enabled:
-          booleanFlag(flags, "graph-scoring-enabled") ||
-          booleanEnv(env.ANCHOR_MCP_GRAPH_SCORING_ENABLED) ||
-          DEFAULT_GRAPH_SCORING_ENABLED,
+        enabled: resolveGraphScoringEnabled(flags, env),
         maxBoost: clampGraphScoringMaxBoost(
           numberFlag(flags, "graph-scoring-max-boost") ??
             numberEnv(env.ANCHOR_MCP_GRAPH_SCORING_MAX_BOOST) ??
@@ -98,6 +95,26 @@ export function parseCliArgs(argv: string[], env: NodeJS.ProcessEnv = process.en
 
 function booleanEnv(value: string | undefined): boolean {
   return value === "true" || value === "1";
+}
+
+/**
+ * `graphScoring.enabled` resolution. Unlike `autoSync`/`pushOnWrite` (which
+ * only ever have a `--no-X` opt-out, no positive flag), this field already
+ * shipped an explicit `--graph-scoring-enabled` / `ANCHOR_MCP_GRAPH_SCORING_ENABLED`
+ * opt-in flag from when the CLI/server default was off — kept working here so
+ * an existing invocation that sets it stays a harmless no-op now that the
+ * default is on. `--no-graph-scoring-enabled` / `ANCHOR_MCP_NO_GRAPH_SCORING_ENABLED`
+ * is the new opt-out, and takes precedence if both are somehow set (fail
+ * toward the more conservative, ranking-unaffecting state).
+ */
+function resolveGraphScoringEnabled(flags: Map<string, string | boolean>, env: NodeJS.ProcessEnv): boolean {
+  if (booleanFlag(flags, "no-graph-scoring-enabled") || booleanEnv(env.ANCHOR_MCP_NO_GRAPH_SCORING_ENABLED)) {
+    return false;
+  }
+  if (booleanFlag(flags, "graph-scoring-enabled") || booleanEnv(env.ANCHOR_MCP_GRAPH_SCORING_ENABLED)) {
+    return true;
+  }
+  return DEFAULT_GRAPH_SCORING_ENABLED;
 }
 
 /** Parse `--anchor-schema-mode` / `ANCHOR_MCP_ANCHOR_SCHEMA_MODE` against the tri-state enum; an unrecognized value throws so a typo fails fast rather than silently defaulting. Returns undefined only when unset (caller defaults to `legacy`). */

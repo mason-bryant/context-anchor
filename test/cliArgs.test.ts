@@ -337,3 +337,34 @@ describe("CLI args — anchorSchema.mode (Goal 0 Phase 2 slice 3b)", () => {
     expect(() => parseCliArgs(["--anchor-schema-mode", "strict"], {})).toThrow(/anchorSchema\.mode/);
   });
 });
+
+describe("CLI args — graphScoring.enabled", () => {
+  it("defaults to enabled when unset", () => {
+    expect(parseCliArgs([], {}).config.graphScoring.enabled).toBe(true);
+  });
+
+  it("stays enabled when the legacy opt-in flag/env var is set (harmless no-op now that the default is on)", () => {
+    expect(parseCliArgs(["--graph-scoring-enabled"], {}).config.graphScoring.enabled).toBe(true);
+    expect(parseCliArgs([], { ANCHOR_MCP_GRAPH_SCORING_ENABLED: "true" }).config.graphScoring.enabled).toBe(true);
+  });
+
+  it("opts out via --no-graph-scoring-enabled", () => {
+    expect(parseCliArgs(["--no-graph-scoring-enabled"], {}).config.graphScoring.enabled).toBe(false);
+  });
+
+  it("opts out via ANCHOR_MCP_NO_GRAPH_SCORING_ENABLED", () => {
+    expect(parseCliArgs([], { ANCHOR_MCP_NO_GRAPH_SCORING_ENABLED: "true" }).config.graphScoring.enabled).toBe(false);
+  });
+
+  it("the opt-out flag wins if both the opt-in and opt-out are somehow set", () => {
+    expect(
+      parseCliArgs(["--graph-scoring-enabled", "--no-graph-scoring-enabled"], {}).config.graphScoring.enabled,
+    ).toBe(false);
+  });
+
+  it("still honors --graph-scoring-max-boost independent of the enabled resolution", () => {
+    const options = parseCliArgs(["--no-graph-scoring-enabled", "--graph-scoring-max-boost", "3"], {});
+    expect(options.config.graphScoring.enabled).toBe(false);
+    expect(options.config.graphScoring.maxBoost).toBe(3);
+  });
+});

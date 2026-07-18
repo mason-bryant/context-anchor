@@ -30,7 +30,19 @@ import type { GraphIndex } from "./index.js";
 /** Bound on `graphScoring.maxBoost` so BM25 stays the primary signal (ground rule: boost stays small relative to BM25's ~18-point body-match contribution). */
 export const GRAPH_SCORING_MAX_BOOST_CEILING = 15;
 export const DEFAULT_GRAPH_SCORING_MAX_BOOST = 8;
-export const DEFAULT_GRAPH_SCORING_ENABLED = false;
+/**
+ * The CLI/server default (`src/cli/args.ts`'s `--graph-scoring-enabled` /
+ * `ANCHOR_MCP_GRAPH_SCORING_ENABLED` resolution). `--no-graph-scoring-enabled`
+ * / `ANCHOR_MCP_NO_GRAPH_SCORING_ENABLED` opts back out. This is independent
+ * of `AnchorService`'s own construction-time behavior: a caller that omits
+ * `graphScoring` from the service options entirely (as
+ * `contextPlanner-proximity.test.ts`'s "no-graphScoring service" case does)
+ * still gets scoring OFF regardless of this constant — see the `?.enabled`
+ * optional chaining in `AnchorService.planContextBundle` — so that hard,
+ * test-enforced "omit the option, get byte-identical pre-WP7 output"
+ * acceptance criterion holds either way.
+ */
+export const DEFAULT_GRAPH_SCORING_ENABLED = true;
 /** Hop depth clamp for the planner proximity walk (design doc: "anchors within <=2 hops"). */
 const PROXIMITY_MAX_DEPTH = 2;
 
