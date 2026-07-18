@@ -7532,14 +7532,19 @@ export const UI_JS = `(function () {
   // state.graphSelectedId, so it stays correct even if Cytoscape's default
   // box-selection ever yields more than one selected element.
   function applyGraphNeighborhoodHighlight(cy) {
-    var selected = cy.$(":selected");
-    cy.elements().removeClass("graph-dimmed");
-    if (selected.empty()) {
-      return;
-    }
-    var selectedEdges = selected.edges();
-    var keep = selected.nodes().closedNeighborhood().union(selectedEdges).union(selectedEdges.connectedNodes());
-    cy.elements().not(keep).addClass("graph-dimmed");
+    // Batched so removeClass + addClass across the whole element set trigger
+    // one style recalculation instead of one per call -- keeps selection
+    // snappy on a large (up to 500-node/2000-edge) graph.
+    cy.batch(function () {
+      var selected = cy.$(":selected");
+      cy.elements().removeClass("graph-dimmed");
+      if (selected.empty()) {
+        return;
+      }
+      var selectedEdges = selected.edges();
+      var keep = selected.nodes().closedNeighborhood().union(selectedEdges).union(selectedEdges.connectedNodes());
+      cy.elements().not(keep).addClass("graph-dimmed");
+    });
   }
 
   function destroyGraphCy() {

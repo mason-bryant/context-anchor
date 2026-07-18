@@ -6376,7 +6376,6 @@ function normalizeGraphDirection(direction: GraphNeighborsInput["direction"]): G
   return direction === "forward" || direction === "reverse" ? direction : "both";
 }
 
-/** Clamp a client-requested `graphSnapshot` node/edge cap to the configured ceiling — the client may request fewer, never more; an omitted/non-finite/negative request falls back to the ceiling itself. */
 /**
  * Normalize a value into a single-line graph node label, capped so a
  * pathologically long claim (a multi-sentence bullet) can't bloat the
@@ -6388,6 +6387,7 @@ function truncateGraphLabel(text: string, max = 160): string {
   return trimmed.length > max ? `${trimmed.slice(0, max - 1)}…` : trimmed;
 }
 
+/** Clamp a client-requested `graphSnapshot` node/edge cap to the configured ceiling — the client may request fewer, never more; an omitted/non-finite/negative request falls back to the ceiling itself. */
 function clampGraphUiCount(requested: number | undefined, ceiling: number): number {
   if (requested === undefined || !Number.isFinite(requested)) {
     return ceiling;
