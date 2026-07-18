@@ -382,8 +382,9 @@ export function graphHeaderSummary(snapshot: Pick<GraphSnapshotResult, "totals" 
 
 export type GraphUrlState = {
   project?: string;
-  nodeTypes?: readonly GraphNodeType[];
-  edgeTypes?: readonly GraphEdgeType[];
+  /** Node/edge type tokens as read from the URL -- deliberately `string[]`, not `GraphNodeType[]`/`GraphEdgeType[]`: the URL has no closed vocabulary for these (unlike `coverageStates`/`sortKey` below), so an unknown or stale token round-trips as-is until `pruneSelectionToAvailable` gates it against the live schema. A narrower type here would be unsound and force casts in `graphFiltersFromUrlParams`. */
+  nodeTypes?: readonly string[];
+  edgeTypes?: readonly string[];
   coverageStates?: readonly CoverageState[];
   q?: string;
   sortKey?: GraphTableSortKey;
@@ -444,8 +445,8 @@ function splitUrlTokenList(raw: string | null): string[] {
 /** Parse the Graph tab's filter/sort/selection state back out of a `URLSearchParams`-like plain object. `coverageStates` and `sortKey`/`sortDir` have small closed vocabularies and are validated (unknown tokens dropped, same forgiving policy `coverageFiltersFromUrlParams` uses for a stale/foreign link); `nodeTypes`/`edgeTypes` are accepted as-is. */
 export function graphFiltersFromUrlParams(getParam: (key: string) => string | null): GraphUrlState {
   const project = (getParam(GRAPH_URL_PARAM_KEYS.project) || "").trim();
-  const nodeTypes = splitUrlTokenList(getParam(GRAPH_URL_PARAM_KEYS.nodeTypes)) as GraphNodeType[];
-  const edgeTypes = splitUrlTokenList(getParam(GRAPH_URL_PARAM_KEYS.edgeTypes)) as GraphEdgeType[];
+  const nodeTypes = splitUrlTokenList(getParam(GRAPH_URL_PARAM_KEYS.nodeTypes));
+  const edgeTypes = splitUrlTokenList(getParam(GRAPH_URL_PARAM_KEYS.edgeTypes));
   const seenStates = new Set<CoverageState>();
   const coverageStates = splitUrlTokenList(getParam(GRAPH_URL_PARAM_KEYS.coverageStates)).filter(
     (value): value is CoverageState => {

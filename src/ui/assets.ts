@@ -7937,11 +7937,17 @@ export const UI_JS = `(function () {
     }
     renderGraphTableSelection();
     renderGraphInspector(id ? findGraphElementById(id) : null);
-    // Only a real user interaction (canvas click, table row click/keydown)
-    // passes persistUrl -- internal restore/sync calls (URL-restore on load,
-    // re-applying the selection onto a freshly-built cy instance) must not
-    // write history, since they're replaying state the URL already has.
-    if (opts.persistUrl) {
+    // Real user interactions persist to the URL; internal restore/sync calls
+    // (URL-restore on load, re-applying the selection onto a freshly-built cy
+    // instance -- both fromCanvas: false, no persistUrl) must not, since
+    // they're replaying state the URL already has. persistUrl defaults to
+    // fromCanvas when not given explicitly, so a caller like the Reset button
+    // (fromCanvas: true, no persistUrl) still persists: relying on it to fall
+    // out incidentally from a cy select/unselect event -- which may not even
+    // fire, e.g. clearing a selection whose element was never actually
+    // applied to canvas -- left the URL's graphSelected stale.
+    var shouldPersistUrl = opts.persistUrl === undefined ? !!opts.fromCanvas : opts.persistUrl;
+    if (shouldPersistUrl) {
       updateLocationFromState({ view: "graph", history: "replace" });
     }
   }
