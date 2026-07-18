@@ -527,7 +527,7 @@ export class AnchorService {
     return this.options.certainty ?? DEFAULT_CERTAINTY_CONFIG;
   }
 
-  /** Whether `graphSnapshot`/`graphSchema` (and their HTTP routes) are enabled. Defaults to true — see `GraphUiConfig`'s docstring for why this surface defaults on unlike `graphScoring`. */
+  /** Whether `graphSnapshot`/`graphSchema` (and their HTTP routes) are enabled. Defaults to true — see `GraphUiConfig`'s docstring for why this read-only surface is safe to default on. */
   isGraphUiEnabled(): boolean {
     return this.options.graphUi?.enabled ?? true;
   }
@@ -5105,12 +5105,16 @@ None.
       }
       const canonicalNodeId = await graph.canonicalizeNodeId(claimNodeId(claimRecord.anchorName, claimRecord.claimId));
       const owningProject = anchorCoverageByName.get(claimRecord.anchorName)?.projectSlug;
+      // Label the claim node with its bullet text (capped to bound payload for
+      // a pathologically long claim) instead of the opaque <anchor-id>#<claim-id>.
+      const display = truncateGraphLabel(claimRecord.text);
       claims.push({
         anchorName: claimRecord.anchorName,
         claimId: claimRecord.claimId,
         canonicalNodeId,
         coverageState: claimRecord.state,
         ...(owningProject ? { project: owningProject } : {}),
+        ...(display ? { display } : {}),
       });
     }
 
@@ -6373,6 +6377,17 @@ function normalizeGraphDirection(direction: GraphNeighborsInput["direction"]): G
 }
 
 /** Clamp a client-requested `graphSnapshot` node/edge cap to the configured ceiling — the client may request fewer, never more; an omitted/non-finite/negative request falls back to the ceiling itself. */
+/**
+ * Normalize a value into a single-line graph node label, capped so a
+ * pathologically long claim (a multi-sentence bullet) can't bloat the
+ * projection payload or the canvas label. Internal whitespace/newlines
+ * collapse to single spaces; the UI truncates further for on-canvas display.
+ */
+function truncateGraphLabel(text: string, max = 160): string {
+  const trimmed = text.trim().replace(/\s+/g, " ");
+  return trimmed.length > max ? `${trimmed.slice(0, max - 1)}…` : trimmed;
+}
+
 function clampGraphUiCount(requested: number | undefined, ceiling: number): number {
   if (requested === undefined || !Number.isFinite(requested)) {
     return ceiling;

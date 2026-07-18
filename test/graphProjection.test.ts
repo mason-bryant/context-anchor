@@ -290,3 +290,56 @@ describe("buildGraphProjection: composition", () => {
     expect(projection.totals.matchingNodes).toBe(projection.totals.returnedNodes);
   });
 });
+
+describe("materializeGraphProjection: section/milestone/task owner-anchor enrichment", () => {
+  it("labels a section node with its heading text and backfills anchorName/project from the owning anchor", () => {
+    const result = materializeGraphProjection({
+      edges: [edge({ from: "section:a-abc123#Constraints", to: "anchor:a-abc123", type: "section_anchor" })],
+      anchors: [anchor({ anchorName: "projects/demo/a.md", canonicalNodeId: "anchor:a-abc123", project: "demo" })],
+      claims: [],
+    });
+    const section = result.nodes.find((node) => node.id === "section:a-abc123#Constraints");
+    expect(section).toMatchObject({
+      display: "Constraints",
+      anchorName: "projects/demo/a.md",
+      project: "demo",
+    });
+  });
+
+  it("splits owner-vs-heading on the FIRST # so a heading that itself contains # is preserved intact", () => {
+    const result = materializeGraphProjection({
+      edges: [edge({ from: "section:a-abc123#C# notes", to: "anchor:a-abc123", type: "section_anchor" })],
+      anchors: [anchor({ anchorName: "a.md", canonicalNodeId: "anchor:a-abc123" })],
+      claims: [],
+    });
+    const section = result.nodes.find((node) => node.id === "section:a-abc123#C# notes");
+    expect(section?.display).toBe("C# notes");
+    expect(section?.anchorName).toBe("a.md");
+  });
+
+  it("backfills anchorName/project for milestone and task nodes the same way (display unchanged -- no title data available at this slice)", () => {
+    const result = materializeGraphProjection({
+      edges: [
+        edge({ from: "milestone:a-abc123", to: "anchor:a-abc123", type: "milestone_anchor" }),
+        edge({ from: "task:a-abc123#T-1", to: "milestone:a-abc123", type: "milestone_task" }),
+      ],
+      anchors: [anchor({ anchorName: "projects/demo/m1.md", canonicalNodeId: "anchor:a-abc123", project: "demo" })],
+      claims: [],
+    });
+    const milestone = result.nodes.find((node) => node.id === "milestone:a-abc123");
+    const task = result.nodes.find((node) => node.id === "task:a-abc123#T-1");
+    expect(milestone).toMatchObject({ anchorName: "projects/demo/m1.md", project: "demo", display: "a-abc123" });
+    expect(task).toMatchObject({ anchorName: "projects/demo/m1.md", project: "demo", display: "a-abc123#T-1" });
+  });
+
+  it("leaves a section/milestone/task node unenriched when its owning anchor is outside the supplied anchor set (e.g. a different project's scope)", () => {
+    const result = materializeGraphProjection({
+      edges: [edge({ from: "section:a-outside#Notes", to: "anchor:a-outside", type: "section_anchor" })],
+      anchors: [], // owner not supplied -- as when a project-scoped snapshot excludes it
+      claims: [],
+    });
+    const section = result.nodes.find((node) => node.id === "section:a-outside#Notes");
+    expect(section?.anchorName).toBeUndefined();
+    expect(section?.display).toBe("a-outside#Notes"); // unchanged fallback, no crash
+  });
+});

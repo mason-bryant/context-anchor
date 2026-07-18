@@ -443,6 +443,7 @@ function claimRecord(overrides: Partial<Extract<CoverageRecordKind, { kind: "cla
     kind: "claim",
     anchorName: "projects/demo/demo.md",
     line: 1,
+    text: "A demo claim.",
     state: "structured",
     reasons: [],
     suggestedOperations: [],

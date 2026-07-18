@@ -90,6 +90,8 @@ export type ProjectionClaimInput = {
   canonicalNodeId: string;
   coverageState: CoverageState;
   project?: string;
+  /** Human-readable label (the claim's bullet text, caller-truncated) shown instead of the opaque `<anchor-id>#<claim-id>` id. Omitted → falls back to the id-derived label. */
+  display?: string;
 };
 
 export type ProjectionFilters = {
@@ -186,6 +188,40 @@ function deriveProjectFromNodeId(id: string, type: GraphNodeType): string | unde
   return undefined;
 }
 
+/**
+ * The owning anchor's identity segment embedded in a `section:<owner>#<heading>`,
+ * `milestone:<owner>`, or `task:<owner>#<taskId>` node id — everything between
+ * the type prefix and the FIRST `#` (owner segments never contain `#`; a
+ * section heading legitimately might, e.g. "## C# notes", so splitting on the
+ * first `#` rather than the last is what keeps the owner segment correct).
+ * Mirrors `canonicalizeSectionNodeId`'s own split convention in
+ * `src/graph/canonicalIds.ts`. `undefined` for a node type with no owner
+ * (anchor/claim already get their own record; section/milestone/task never
+ * do, which is exactly the gap this enrichment closes) or a malformed id.
+ */
+function anchorOwnerIdentity(id: string, type: GraphNodeType): string | undefined {
+  if (type !== "section" && type !== "milestone" && type !== "task") {
+    return undefined;
+  }
+  const prefix = `${type}:`;
+  if (!id.startsWith(prefix)) {
+    return undefined;
+  }
+  const rest = id.slice(prefix.length);
+  const hashIndex = rest.indexOf("#");
+  return hashIndex === -1 ? rest : rest.slice(0, hashIndex);
+}
+
+/** The heading text embedded in a `section:<owner>#<heading>` id (first `#` onward), for a nicer label than the raw owner+heading string. `undefined` if the id has no `#` segment. */
+function sectionHeadingFromNodeId(id: string): string | undefined {
+  if (!id.startsWith("section:")) {
+    return undefined;
+  }
+  const rest = id.slice("section:".length);
+  const hashIndex = rest.indexOf("#");
+  return hashIndex === -1 ? undefined : rest.slice(hashIndex + 1);
+}
+
 type MutableNode = ProjectionNode;
 
 function ensureNode(nodes: Map<string, MutableNode>, id: string): MutableNode {
@@ -255,10 +291,45 @@ export function materializeGraphProjection(
     const node = ensureNode(nodes, claim.canonicalNodeId);
     node.anchorName = claim.anchorName;
     node.coverageState = claim.coverageState;
+    if (claim.display) {
+      node.display = claim.display;
+    }
     if (claim.project !== undefined) {
       node.project = claim.project;
     }
     node.seed = computeSeed(node.id, claim.project);
+  }
+
+  // Section/milestone/task nodes never get their own input record (unlike
+  // anchors/claims above), so left alone they carry nothing but a raw
+  // fallback display derived from their own id — no anchorName, no project,
+  // no "Open detail" link. Backfill from the owning anchor's already-known
+  // record when it's in scope (a cross-project reference outside the current
+  // project filter has no entry here and is left as-is — the same documented
+  // permissive-project tradeoff `applyProjectionFilters` already makes).
+  const ownerAnchorsByIdentity = new Map<string, ProjectionAnchorInput>();
+  for (const anchor of input.anchors) {
+    if (anchor.canonicalNodeId.startsWith("anchor:")) {
+      ownerAnchorsByIdentity.set(anchor.canonicalNodeId.slice("anchor:".length), anchor);
+    }
+  }
+  for (const node of nodes.values()) {
+    const ownerIdentity = anchorOwnerIdentity(node.id, node.type);
+    const owner = ownerIdentity ? ownerAnchorsByIdentity.get(ownerIdentity) : undefined;
+    if (!owner) {
+      continue;
+    }
+    node.anchorName = owner.anchorName;
+    if (owner.project !== undefined) {
+      node.project = owner.project;
+    }
+    if (node.type === "section") {
+      const heading = sectionHeadingFromNodeId(node.id);
+      if (heading) {
+        node.display = heading;
+      }
+    }
+    node.seed = computeSeed(node.id, node.project);
   }
 
   const edgeIdCounts = new Map<string, number>();

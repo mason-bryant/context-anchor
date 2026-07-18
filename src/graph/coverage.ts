@@ -58,6 +58,8 @@ export type ClaimCoverageRecord = {
   /** 1-based claim bullet line, for stable identification within the anchor. */
   line: number;
   claimId?: string;
+  /** The claim's bullet text (no leading `- `, no trailing annotation block) — carried so a graph projection can label a claim node with its text instead of its opaque id. */
+  text: string;
   state: CoverageState;
   reasons: CoverageReason[];
   suggestedOperations: SuggestedOperation[];
@@ -521,6 +523,7 @@ function analyzeClaimCoverage(anchorName: string, claim: AnchorClaim): ClaimCove
       anchorName,
       line: claim.line,
       ...(claim.id ? { claimId: claim.id } : {}),
+      text: claim.text,
       state: "malformed",
       reasons,
       suggestedOperations,
@@ -532,6 +535,7 @@ function analyzeClaimCoverage(anchorName: string, claim: AnchorClaim): ClaimCove
     return {
       anchorName,
       line: claim.line,
+      text: claim.text,
       state: "partial",
       reasons,
       suggestedOperations,
@@ -546,6 +550,7 @@ function analyzeClaimCoverage(anchorName: string, claim: AnchorClaim): ClaimCove
       anchorName,
       line: claim.line,
       claimId: claim.id,
+      text: claim.text,
       state: "partial",
       reasons,
       suggestedOperations,
@@ -559,6 +564,7 @@ function analyzeClaimCoverage(anchorName: string, claim: AnchorClaim): ClaimCove
     anchorName,
     line: claim.line,
     claimId: claim.id,
+    text: claim.text,
     state: "structured",
     reasons,
     suggestedOperations,
