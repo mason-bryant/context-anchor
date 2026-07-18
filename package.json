@@ -1,6 +1,6 @@
 {
   "name": "@mason/anchor-mcp",
-  "version": "3.0.0",
+  "version": "4.0.0",
   "description": "Git-backed MCP server for context anchors with write-time discipline enforcement.",
   "license": "MIT",
   "type": "module",
