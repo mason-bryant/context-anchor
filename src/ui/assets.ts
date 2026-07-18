@@ -3473,6 +3473,14 @@ export const UI_JS = `(function () {
   var mermaidRuntimePromise = null;
   var mermaidInitialized = false;
   var cytoscapeRuntimePromise = null;
+  // Guards the id-specific cy select/unselect listeners against their own
+  // re-entrant firing: selectGraphElement's canvas-sync branch calls
+  // select()/unselect() programmatically (URL restore, re-syncing onto a
+  // freshly-built cy instance), which fires the SAME cy events a real click
+  // does. Set true only around those two calls so the listeners can tell
+  // "this was selectGraphElement itself, not a user interaction" and skip
+  // their (otherwise redundant) state/URL write. See selectGraphElement.
+  var graphSuppressSelectSync = false;
   var KNOWN_URL_PARAMS = [
     "anchor",
     "view",
@@ -7761,20 +7769,24 @@ export const UI_JS = `(function () {
         cy.layout({ name: "cose", animate: false, randomize: false, fit: false, numIter: 200 }).run();
       }
       cy.on("select", "node", function (event) {
+        if (graphSuppressSelectSync) return;
         selectGraphElement(event.target.id(), { fromCanvas: true, persistUrl: true });
       });
       cy.on("unselect", "node", function () {
+        if (graphSuppressSelectSync) return;
         if (!cy.$(":selected").length) {
           selectGraphElement(null, { fromCanvas: true, persistUrl: true });
         }
       });
       cy.on("select", "edge", function (event) {
+        if (graphSuppressSelectSync) return;
         selectGraphElement(event.target.id(), { fromCanvas: true, persistUrl: true });
       });
       cy.on("unselect", "edge", function () {
         // Mirror the node unselect: clear the selection/inspector when nothing
         // (node or edge) remains selected, so deselecting an edge doesn't leave
         // state.graphSelectedId and the inspector pointing at a gone selection.
+        if (graphSuppressSelectSync) return;
         if (!cy.$(":selected").length) {
           selectGraphElement(null, { fromCanvas: true, persistUrl: true });
         }
@@ -7784,16 +7796,22 @@ export const UI_JS = `(function () {
       // edges" by dimming the rest). Reads whatever cy considers selected at
       // event time rather than threading a specific id through, so it stays
       // correct for both a canvas click and a programmatic sync (below) --
-      // both go through cy's own select/unselect events either way.
+      // unlike the id-specific listeners above, this one is NOT gated on
+      // graphSuppressSelectSync: the highlight must still reflect a
+      // programmatically restored/synced selection, only the state/URL write
+      // those listeners would otherwise duplicate is what gets suppressed.
       cy.on("select unselect", function () {
         applyGraphNeighborhoodHighlight(cy);
       });
       // Sync an already-selected element (from a URL-restored graphSelected,
       // or from before a tab switch destroyed the previous instance) onto
-      // this fresh instance -- registered AFTER the listeners above so the
-      // resulting "select" event drives the same state/URL/highlight sync a
-      // live click would (harmlessly idempotent if the URL already agrees).
-      // selectGraphElement no-ops if the id isn't present in this snapshot.
+      // this fresh instance. selectGraphElement's own canvas-sync branch sets
+      // graphSuppressSelectSync around its select()/unselect() calls, so the
+      // id-specific listeners above skip their state/URL/persistUrl handling
+      // for this call -- it is not a user interaction, and selectGraphElement
+      // already applied the state/table/inspector sync directly. The
+      // neighborhood-highlight listener still runs. No-ops if the id isn't
+      // present in this snapshot.
       if (state.graphSelectedId) {
         selectGraphElement(state.graphSelectedId, { fromCanvas: false });
       }
@@ -7897,10 +7915,19 @@ export const UI_JS = `(function () {
     var opts = options || {};
     state.graphSelectedId = id;
     if (!opts.fromCanvas && state.graphCy && id) {
+      // Suppressed: this is selectGraphElement driving cy's selection to
+      // match state, not a user click -- the id-specific select/unselect
+      // listeners must not treat the resulting event as new user intent (see
+      // graphSuppressSelectSync's declaration). The neighborhood-highlight
+      // listener is unaffected and still runs.
+      graphSuppressSelectSync = true;
       state.graphCy.elements().unselect();
       var ele = state.graphCy.getElementById(id);
       if (ele && ele.length) {
         ele.select();
+      }
+      graphSuppressSelectSync = false;
+      if (ele && ele.length) {
         if (!prefersReducedMotion()) {
           state.graphCy.animate({ center: { eles: ele } }, { duration: 200 });
         } else {
