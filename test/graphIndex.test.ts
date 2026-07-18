@@ -984,6 +984,63 @@ None.
     expect(blank.appliedFilters.q).toBeUndefined();
   });
 
+  it("labels a claim node with its bullet text, not its opaque id", async () => {
+    const repo = new AnchorRepository({ repoPath: tmpDir });
+    await repo.ensureReady();
+    await seedRepo(repo);
+    const service = new AnchorService(repo, { pushOnWrite: false, migrationWarnOnly: false, staleAfterDays: 45 });
+
+    const snapshot = await service.graphSnapshot({ maxNodes: 100000, maxEdges: 100000 });
+    const claim = snapshot.nodes.find((n) => n.type === "claim");
+    expect(claim).toBeDefined();
+    // PROJECT_CONTEXT's claim c-7f3a9d — labeled by its text, not "…#c-7f3a9d".
+    expect(claim?.display).toBe("Effective certainty is never persisted.");
+    expect(claim?.display).not.toContain("#");
+  });
+
+  it("labels a section node with its heading and backfills anchorName/project through the real service pipeline", async () => {
+    const repo = new AnchorRepository({ repoPath: tmpDir });
+    await repo.ensureReady();
+    await repo.writePeopleRegistryRaw({ people: [], teams: [] });
+    await repo.writeProjectMappingsRaw({ projects: [] });
+    // A section node only materializes when a claim actually creates a
+    // claim_section/section_anchor edge -- an ANNOTATED claim (like
+    // PROJECT_CONTEXT's) only does that if one of its sources is itself a
+    // section reference. An id-only (unannotated) claim is simpler: it always
+    // anchors into its OWN containing section (see extractDocumentEdges'
+    // "own section containment" branch), which is what this fixture exercises
+    // (same pattern as the "GraphIndex id-only claim node" describe block).
+    await repo.commitAnchor({
+      name: "projects/demo/id-only.md",
+      content: `---
+project:
+  - demo
+type: context-anchor
+tags: []
+summary: Anchor with an id-only claim.
+read_this_if:
+  - Testing section node labeling.
+last_validated: 2026-07-07
+---
+
+# Anchor With Id Only Claim
+
+## Current State
+
+- Legacy claim with a stable id but no provenance.
+  {id: c-legacy1}
+`,
+    });
+    const service = new AnchorService(repo, { pushOnWrite: false, migrationWarnOnly: false, staleAfterDays: 45 });
+
+    const snapshot = await service.graphSnapshot({ maxNodes: 100000, maxEdges: 100000 });
+    const section = snapshot.nodes.find((n) => n.type === "section");
+    expect(section).toBeDefined();
+    expect(section?.display).toBe("Current State");
+    expect(section?.anchorName).toBe("projects/demo/id-only.md");
+    expect(section?.project).toBe("demo");
+  });
+
   it("graphSnapshot honors maxNodes: 0 as a metadata-only request", async () => {
     const repo = new AnchorRepository({ repoPath: tmpDir });
     await repo.ensureReady();

@@ -3473,6 +3473,14 @@ export const UI_JS = `(function () {
   var mermaidRuntimePromise = null;
   var mermaidInitialized = false;
   var cytoscapeRuntimePromise = null;
+  // Guards the id-specific cy select/unselect listeners against their own
+  // re-entrant firing: selectGraphElement's canvas-sync branch calls
+  // select()/unselect() programmatically (URL restore, re-syncing onto a
+  // freshly-built cy instance), which fires the SAME cy events a real click
+  // does. Set true only around those two calls so the listeners can tell
+  // "this was selectGraphElement itself, not a user interaction" and skip
+  // their (otherwise redundant) state/URL write. See selectGraphElement.
+  var graphSuppressSelectSync = false;
   var KNOWN_URL_PARAMS = [
     "anchor",
     "view",
@@ -3511,6 +3519,14 @@ export const UI_JS = `(function () {
     "coverageProject",
     "coverageStates",
     "coverageSearch",
+    "graphProject",
+    "graphNodeTypes",
+    "graphEdgeTypes",
+    "graphCoverage",
+    "graphSearch",
+    "graphSort",
+    "graphSortDir",
+    "graphSelected",
     // Legacy standalone Claims tab parameters; keep them here so URL rewrites
     // drop stale filters after that tab was folded into inline anchor editing.
     "claimsProject",
@@ -3993,6 +4009,21 @@ export const UI_JS = `(function () {
     state.coverageText = (params.get("coverageSearch") || "").trim();
     setSelectValueAllowingNew("coverage-project-filter", state.coverageProject);
     setControlValue("coverage-text-filter", state.coverageText);
+
+    // Mirrors graphFiltersFromUrlParams in src/ui/graph/viewModel.ts. nodeTypes/
+    // edgeTypes are accepted as-is (no fixed vocabulary); renderGraphFilterOptions
+    // already prunes anything the live schema doesn't offer via pruneToAvailable.
+    // graphSelectedId is restored once the snapshot loads (see loadGraphSnapshot).
+    state.graphProject = (params.get("graphProject") || "").trim();
+    state.graphNodeTypes = splitUrlTokenList(params.get("graphNodeTypes"));
+    state.graphEdgeTypes = splitUrlTokenList(params.get("graphEdgeTypes"));
+    state.graphCoverageStates = validCoverageStates(params.get("graphCoverage"));
+    state.graphText = (params.get("graphSearch") || "").trim();
+    state.graphSortKey = validGraphSortKey(params.get("graphSort"));
+    state.graphSortDir = params.get("graphSortDir") === "desc" ? "desc" : "asc";
+    state.graphSelectedId = (params.get("graphSelected") || "").trim() || null;
+    setSelectValueAllowingNew("graph-project-filter", state.graphProject);
+    setControlValue("graph-text-filter", state.graphText);
   }
 
   function urlForState(overrides) {
@@ -4098,6 +4129,29 @@ export const UI_JS = `(function () {
       params.set("coverageStates", state.coverageStates.join(","));
     }
     setParam(params, "coverageSearch", controlValue("coverage-text-filter", sourceParams.get("coverageSearch") || "").trim());
+
+    // Mirrors graphUrlParamsFromState in src/ui/graph/viewModel.ts. Only
+    // node/edge/coverage arrays and sort come from state directly (like
+    // coverageStates above) -- project/search still read the live control
+    // first so an edit made just before navigating away is captured.
+    setParam(params, "graphProject", controlValue("graph-project-filter", sourceParams.get("graphProject") || "").trim());
+    if (state.graphNodeTypes && state.graphNodeTypes.length > 0) {
+      params.set("graphNodeTypes", state.graphNodeTypes.join(","));
+    }
+    if (state.graphEdgeTypes && state.graphEdgeTypes.length > 0) {
+      params.set("graphEdgeTypes", state.graphEdgeTypes.join(","));
+    }
+    if (state.graphCoverageStates && state.graphCoverageStates.length > 0) {
+      params.set("graphCoverage", state.graphCoverageStates.join(","));
+    }
+    setParam(params, "graphSearch", controlValue("graph-text-filter", sourceParams.get("graphSearch") || "").trim());
+    if (state.graphSortKey && state.graphSortKey !== DEFAULT_GRAPH_SORT_KEY) {
+      params.set("graphSort", state.graphSortKey);
+    }
+    if (state.graphSortDir && state.graphSortDir !== DEFAULT_GRAPH_SORT_DIR) {
+      params.set("graphSortDir", state.graphSortDir);
+    }
+    setParam(params, "graphSelected", (state.graphSelectedId || "").trim());
 
     return params;
   }
@@ -7299,6 +7353,35 @@ export const UI_JS = `(function () {
   // free spec for these same rules.
   // ---------------------------------------------------------------------
 
+  var DEFAULT_GRAPH_SORT_KEY = "type";
+  var DEFAULT_GRAPH_SORT_DIR = "asc";
+  var GRAPH_TABLE_SORT_KEYS = { type: true, display: true, coverageState: true, project: true };
+
+  function validGraphSortKey(value) {
+    return Object.prototype.hasOwnProperty.call(GRAPH_TABLE_SORT_KEYS, value) ? value : DEFAULT_GRAPH_SORT_KEY;
+  }
+
+  // Trimmed, deduplicated (order-preserving), non-empty tokens from a comma-
+  // separated URL value. No fixed-vocabulary check here -- node/edge types
+  // have no closed enum (they vary with the graph); pruneToAvailable is the
+  // real gatekeeper once the live schema is known. Mirrors splitUrlTokenList
+  // in src/ui/graph/viewModel.ts.
+  function splitUrlTokenList(raw) {
+    if (!raw) {
+      return [];
+    }
+    var seen = {};
+    var out = [];
+    String(raw).split(",").forEach(function (token) {
+      var value = token.trim();
+      if (value && !seen[value]) {
+        seen[value] = true;
+        out.push(value);
+      }
+    });
+    return out;
+  }
+
   function loadCytoscapeRuntime() {
     var runtime = window.cytoscape;
     if (runtime) {
@@ -7349,7 +7432,7 @@ export const UI_JS = `(function () {
     return { lineStyle: "solid", weight: "normal" };
   }
 
-  var GRAPH_OPEN_DETAIL_NODE_TYPES = { anchor: true, claim: true, milestone: true, task: true };
+  var GRAPH_OPEN_DETAIL_NODE_TYPES = { anchor: true, claim: true, milestone: true, task: true, section: true };
 
   function graphOpenDetailAnchorName(node) {
     if (!node.anchorName || !GRAPH_OPEN_DETAIL_NODE_TYPES[node.type]) {
@@ -7440,8 +7523,36 @@ export const UI_JS = `(function () {
       } },
       { selector: "edge.edge-thin", style: { "width": 0.75, "line-color": "#c3ccd4", "target-arrow-shape": "none" } },
       { selector: "edge.edge-dashed", style: { "line-style": "dashed" } },
-      { selector: "edge:selected", style: { "line-color": "#c7352d", "target-arrow-color": "#c7352d", "width": 2.5 } }
+      { selector: "edge:selected", style: { "line-color": "#c7352d", "target-arrow-color": "#c7352d", "width": 2.5 } },
+      // Applied by applyGraphNeighborhoodHighlight to everything outside the
+      // selected element's own connections. Last in the array so it wins over
+      // the coverage/edge-type treatments above for the properties it sets;
+      // the selected element itself is always excluded, so it never competes
+      // with the :selected rules.
+      { selector: "node.graph-dimmed", style: { "background-color": "#b7bfc8", "border-color": "#b7bfc8", "opacity": 0.4, "text-opacity": 0.4 } },
+      { selector: "edge.graph-dimmed", style: { "line-color": "#dde2e7", "target-arrow-color": "#dde2e7", "opacity": 0.3 } }
     ];
+  }
+
+  // Grey out every node/edge that is not the selected element(s) or one of
+  // their direct connections, by adding/removing the graph-dimmed class
+  // (styled in graphCyStylesheet). Reads cy's own :selected set rather than
+  // state.graphSelectedId, so it stays correct even if Cytoscape's default
+  // box-selection ever yields more than one selected element.
+  function applyGraphNeighborhoodHighlight(cy) {
+    // Batched so removeClass + addClass across the whole element set trigger
+    // one style recalculation instead of one per call -- keeps selection
+    // snappy on a large (up to 500-node/2000-edge) graph.
+    cy.batch(function () {
+      var selected = cy.$(":selected");
+      cy.elements().removeClass("graph-dimmed");
+      if (selected.empty()) {
+        return;
+      }
+      var selectedEdges = selected.edges();
+      var keep = selected.nodes().closedNeighborhood().union(selectedEdges).union(selectedEdges.connectedNodes());
+      cy.elements().not(keep).addClass("graph-dimmed");
+    });
   }
 
   function destroyGraphCy() {
@@ -7505,11 +7616,19 @@ export const UI_JS = `(function () {
   async function loadGraphSnapshot() {
     var snapshot = await api("/api/ui/graph/snapshot" + (graphQueryString() ? "?" + graphQueryString() : ""));
     state.graphSnapshot = snapshot;
-    state.graphSelectedId = null;
+    // Keep the current selection if it still resolves in the new snapshot
+    // (a filter change that doesn't drop the selected element shouldn't blank
+    // the inspector) -- otherwise clear it. This is also how a URL-restored
+    // graphSelected (set by applyUrlStateToControls before the first load)
+    // takes effect: it survives this check because it's already present in
+    // state.graphSelectedId when the very first snapshot arrives.
+    if (state.graphSelectedId && !findGraphElementById(state.graphSelectedId)) {
+      state.graphSelectedId = null;
+    }
     renderGraphHeader();
     renderGraph();
     renderGraphTable();
-    renderGraphInspector(null);
+    renderGraphInspector(state.graphSelectedId ? findGraphElementById(state.graphSelectedId) : null);
   }
 
   async function reloadGraphSnapshotOnly() {
@@ -7607,6 +7726,7 @@ export const UI_JS = `(function () {
     } else {
       state[stateKey] = current.slice(0, idx).concat(current.slice(idx + 1));
     }
+    updateLocationFromState({ view: "graph", history: "push" });
     reloadGraphSnapshotOnly();
   }
 
@@ -7649,24 +7769,52 @@ export const UI_JS = `(function () {
         cy.layout({ name: "cose", animate: false, randomize: false, fit: false, numIter: 200 }).run();
       }
       cy.on("select", "node", function (event) {
-        selectGraphElement(event.target.id(), { fromCanvas: true });
+        if (graphSuppressSelectSync) return;
+        selectGraphElement(event.target.id(), { fromCanvas: true, persistUrl: true });
       });
       cy.on("unselect", "node", function () {
+        if (graphSuppressSelectSync) return;
         if (!cy.$(":selected").length) {
-          selectGraphElement(null, { fromCanvas: true });
+          selectGraphElement(null, { fromCanvas: true, persistUrl: true });
         }
       });
       cy.on("select", "edge", function (event) {
-        selectGraphElement(event.target.id(), { fromCanvas: true });
+        if (graphSuppressSelectSync) return;
+        selectGraphElement(event.target.id(), { fromCanvas: true, persistUrl: true });
       });
       cy.on("unselect", "edge", function () {
         // Mirror the node unselect: clear the selection/inspector when nothing
         // (node or edge) remains selected, so deselecting an edge doesn't leave
         // state.graphSelectedId and the inspector pointing at a gone selection.
+        if (graphSuppressSelectSync) return;
         if (!cy.$(":selected").length) {
-          selectGraphElement(null, { fromCanvas: true });
+          selectGraphElement(null, { fromCanvas: true, persistUrl: true });
         }
       });
+      // Grey out everything outside the selected element's own connections
+      // (the request: "highlight all the nodes it's connected to and their
+      // edges" by dimming the rest). Reads whatever cy considers selected at
+      // event time rather than threading a specific id through, so it stays
+      // correct for both a canvas click and a programmatic sync (below) --
+      // unlike the id-specific listeners above, this one is NOT gated on
+      // graphSuppressSelectSync: the highlight must still reflect a
+      // programmatically restored/synced selection, only the state/URL write
+      // those listeners would otherwise duplicate is what gets suppressed.
+      cy.on("select unselect", function () {
+        applyGraphNeighborhoodHighlight(cy);
+      });
+      // Sync an already-selected element (from a URL-restored graphSelected,
+      // or from before a tab switch destroyed the previous instance) onto
+      // this fresh instance. selectGraphElement's own canvas-sync branch sets
+      // graphSuppressSelectSync around its select()/unselect() calls, so the
+      // id-specific listeners above skip their state/URL/persistUrl handling
+      // for this call -- it is not a user interaction, and selectGraphElement
+      // already applied the state/table/inspector sync directly. The
+      // neighborhood-highlight listener still runs. No-ops if the id isn't
+      // present in this snapshot.
+      if (state.graphSelectedId) {
+        selectGraphElement(state.graphSelectedId, { fromCanvas: false });
+      }
     }).catch(function () {
       setBanner("Graph rendering is unavailable (the Cytoscape browser bundle failed to load).", "warn");
     });
@@ -7736,7 +7884,7 @@ export const UI_JS = `(function () {
         if (event.target.closest("a[data-anchor-name]")) {
           return;
         }
-        selectGraphElement(row.dataset.graphNodeId, { fromCanvas: false });
+        selectGraphElement(row.dataset.graphNodeId, { fromCanvas: false, persistUrl: true });
       });
       row.addEventListener("keydown", function (event) {
         // Same guard as the click handler: when focus is on the inner
@@ -7747,7 +7895,7 @@ export const UI_JS = `(function () {
         }
         if (event.key === "Enter" || event.key === " ") {
           event.preventDefault();
-          selectGraphElement(row.dataset.graphNodeId, { fromCanvas: false });
+          selectGraphElement(row.dataset.graphNodeId, { fromCanvas: false, persistUrl: true });
         }
       });
     });
@@ -7767,10 +7915,19 @@ export const UI_JS = `(function () {
     var opts = options || {};
     state.graphSelectedId = id;
     if (!opts.fromCanvas && state.graphCy && id) {
+      // Suppressed: this is selectGraphElement driving cy's selection to
+      // match state, not a user click -- the id-specific select/unselect
+      // listeners must not treat the resulting event as new user intent (see
+      // graphSuppressSelectSync's declaration). The neighborhood-highlight
+      // listener is unaffected and still runs.
+      graphSuppressSelectSync = true;
       state.graphCy.elements().unselect();
       var ele = state.graphCy.getElementById(id);
       if (ele && ele.length) {
         ele.select();
+      }
+      graphSuppressSelectSync = false;
+      if (ele && ele.length) {
         if (!prefersReducedMotion()) {
           state.graphCy.animate({ center: { eles: ele } }, { duration: 200 });
         } else {
@@ -7780,6 +7937,19 @@ export const UI_JS = `(function () {
     }
     renderGraphTableSelection();
     renderGraphInspector(id ? findGraphElementById(id) : null);
+    // Real user interactions persist to the URL; internal restore/sync calls
+    // (URL-restore on load, re-applying the selection onto a freshly-built cy
+    // instance -- both fromCanvas: false, no persistUrl) must not, since
+    // they're replaying state the URL already has. persistUrl defaults to
+    // fromCanvas when not given explicitly, so a caller like the Reset button
+    // (fromCanvas: true, no persistUrl) still persists: relying on it to fall
+    // out incidentally from a cy select/unselect event -- which may not even
+    // fire, e.g. clearing a selection whose element was never actually
+    // applied to canvas -- left the URL's graphSelected stale.
+    var shouldPersistUrl = opts.persistUrl === undefined ? !!opts.fromCanvas : opts.persistUrl;
+    if (shouldPersistUrl) {
+      updateLocationFromState({ view: "graph", history: "replace" });
+    }
   }
 
   function renderGraphTableSelection() {
@@ -7842,6 +8012,7 @@ export const UI_JS = `(function () {
     setControlValue("graph-text-filter", "");
     setSelectValueAllowingNew("graph-project-filter", "");
     state.graphProject = "";
+    updateLocationFromState({ view: "graph", history: "push" });
     loadGraphData();
   }
 
@@ -11878,10 +12049,12 @@ export const UI_JS = `(function () {
       state.graphProject = controlValue("graph-project-filter", state.graphProject);
       state.graphSchema = null;
       state.graphSnapshot = null;
+      updateLocationFromState({ view: "graph", history: "push" });
       loadGraphData();
     });
     el("graph-text-filter").addEventListener("input", debounce(function () {
       state.graphText = controlValue("graph-text-filter", state.graphText);
+      updateLocationFromState({ view: "graph", history: "replace" });
       reloadGraphSnapshotOnly();
     }, 200));
     el("graph-clear-filters").addEventListener("click", clearGraphFilters);
@@ -11894,6 +12067,7 @@ export const UI_JS = `(function () {
           state.graphSortKey = key;
           state.graphSortDir = "asc";
         }
+        updateLocationFromState({ view: "graph", history: "push" });
         renderGraphTable();
       });
     });

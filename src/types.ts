@@ -1107,7 +1107,7 @@ export type ServerConfig = {
   migrationWarnOnly: boolean;
   /** Flag included planner anchors when last_validated is older than this many days. */
   staleAfterDays: number;
-  /** WP7 planner graph-proximity scoring signal — config-gated, off by default. */
+  /** WP7 planner graph-proximity scoring signal — config-gated, on by default (`--no-graph-scoring-enabled` to opt out). */
   graphScoring: GraphScoringConfig;
   /** Goal 0 Phase 2 slice 3b: warn->block enforcement dial for graph-participating anchor structure. Optional; absent = `legacy` (today's behavior exactly), so callers/configs that predate it are unaffected. */
   anchorSchema?: AnchorSchemaConfig;
@@ -1145,10 +1145,12 @@ export type AnchorSchemaMode = (typeof ANCHOR_SCHEMA_MODES)[number];
 /**
  * Config for the read-only graph inspection surface (Goal 1 slice 1:
  * `AnchorService.graphSnapshot`/`graphSchema`, `GET /api/ui/graph/snapshot`
- * and `/schema`). `enabled` defaults to true (unlike `graphScoring`, this is
- * a read-only inspection surface with no scoring/ranking side effects, so it
- * is safe on by default); `maxNodes`/`maxEdges` are CEILINGS a client-supplied
- * clamp is bounded to, never a floor a client can exceed.
+ * and `/schema`). `enabled` defaults to true: it's a read-only inspection
+ * surface with no scoring/ranking side effects (`graphScoring` is the
+ * planner-ranking-affecting counterpart, config'd separately — both default
+ * on today, but for unrelated reasons), so it's safe on by default.
+ * `maxNodes`/`maxEdges` are CEILINGS a client-supplied clamp is bounded to,
+ * never a floor a client can exceed.
  */
 export type GraphUiConfig = {
   enabled?: boolean;
@@ -1158,9 +1160,11 @@ export type GraphUiConfig = {
 
 /**
  * Config for the planner's graph-proximity scoring signal (WP7 of the claim
- * knowledge graph plan). `enabled` defaults to false: with the flag off,
- * `buildContextBundlePlan` never receives a graph-proximity boost map and its
- * output is byte-identical to the pre-WP7 planner (hard, test-enforced
+ * knowledge graph plan). `enabled` defaults to true (CLI: `--no-graph-scoring-enabled`
+ * / `ANCHOR_MCP_NO_GRAPH_SCORING_ENABLED` opts back out — see
+ * `DEFAULT_GRAPH_SCORING_ENABLED` in `src/graph/proximity.ts`). With the flag
+ * off, `buildContextBundlePlan` never receives a graph-proximity boost map and
+ * its output is byte-identical to the pre-WP7 planner (hard, test-enforced
  * acceptance criterion). `maxBoost` bounds every single anchor's graph boost
  * so BM25 stays the primary signal; see `GRAPH_SCORING_MAX_BOOST_CEILING` in
  * `src/graph/proximity.ts` for the hard ceiling this is clamped to.
