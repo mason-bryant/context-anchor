@@ -73,8 +73,18 @@ CREATE INDEX record_versions_changed_at_idx ON record_versions (workspace_guid, 
 -- before `commands` existed, so the column lands here alongside the machinery that uses it.
 ALTER TABLE scopes ADD COLUMN version integer NOT NULL DEFAULT 0 CHECK (version >= 0);
 
--- 0001 left these as bare uuid columns because `commands` did not exist yet. Closing them
--- now means a tombstone can never name a command that was never accepted.
+-- Exactly one of 0001's two bare tombstone columns gains a foreign key here.
+--
+-- `retirement_command_guid` gets one now that `commands` exists, so a tombstone can never
+-- name a command that was never accepted.
+--
+-- `retirement_batch_guid` stays a bare uuid, and not just for now: a batch has no table of
+-- its own. It is a grouping value repeated across the `commands` rows that must reverse
+-- together, so `commands.batch_guid` is deliberately non-unique and cannot be the target of
+-- a foreign key. The same is true of `mutation_log.batch_guid`. 0001's comment calling both
+-- columns "no FK yet" reads as though both were waiting on this migration; only one was.
+-- That file is already applied elsewhere, so its checksum is fixed and the correction lives
+-- here rather than as an edit to it.
 ALTER TABLE scopes
   ADD CONSTRAINT scopes_retirement_command_fk
   FOREIGN KEY (workspace_guid, retirement_command_guid) REFERENCES commands (workspace_guid, command_guid);
