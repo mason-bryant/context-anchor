@@ -43,6 +43,32 @@ describe("status", () => {
     expect(report).toContain(options.configPath ?? "MISSING");
   });
 
+  // The failure this prevents: a defaulted or mistyped repo path is created empty on
+  // demand, so the server starts happily and then 500s on every lookup with an ENOENT
+  // that names a file the user never expected to be looked for.
+  it("calls out an anchor repo that exists but holds no anchors", async () => {
+    const emptyRepo = await mkdtemp(path.join(os.tmpdir(), "anchor-mcp-emptyrepo-"));
+    const options = await optionsWith({ repo: emptyRepo });
+
+    const report = (
+      await statusReport(options, { home: await mkdtemp(path.join(os.tmpdir(), "anchor-mcp-home-")) })
+    ).join("\n");
+
+    expect(report).toMatch(/EMPTY/);
+  });
+
+  it("says nothing extra when the repo actually holds anchors", async () => {
+    const repo = await mkdtemp(path.join(os.tmpdir(), "anchor-mcp-fullrepo-"));
+    await writeFile(path.join(repo, "some-anchor.md"), "# anchor\n", "utf8");
+    const options = await optionsWith({ repo });
+
+    const report = (
+      await statusReport(options, { home: await mkdtemp(path.join(os.tmpdir(), "anchor-mcp-home-")) })
+    ).join("\n");
+
+    expect(report).not.toMatch(/EMPTY/);
+  });
+
   it("says the database is not configured rather than implying it is broken", async () => {
     const options = await optionsWith({});
 

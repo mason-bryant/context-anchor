@@ -153,6 +153,13 @@ const THREE_SOURCE_CASES: Record<
     read: (o) => o.port,
     expected: 4100,
   },
+  repo: {
+    flag: ["--repo", "/tmp/anchors-x"],
+    env: { ANCHOR_MCP_REPO: "/tmp/anchors-x" },
+    file: "/tmp/anchors-x",
+    read: (o) => o.config.repoPath,
+    expected: "/tmp/anchors-x",
+  },
 };
 
 describe("documented three-source precedence", () => {

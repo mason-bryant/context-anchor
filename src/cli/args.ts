@@ -80,12 +80,20 @@ Every flag above has an environment equivalent except --no-auto-sync,
   ANCHOR_MCP_NO_GRAPH_SCORING_ENABLED, ANCHOR_MCP_GRAPH_SCORING_MAX_BOOST, DATABASE_URL.
 
 Precedence is flag, then environment, then config file — but only these are readable
-from all three: allowedHosts, authToken, stateful, transport, host, port.
+from all three: allowedHosts, authToken, stateful, transport, host, port, repo.
 Everything else is either flag-and-environment or config-file-only, as marked above.
 The database connection string is deliberately never read from the config file.`;
 
 /** The keys the help text claims are readable from flag, environment, and config file alike. Asserted against real resolution in test/cli/commandParsing.test.ts so the promise cannot drift from the parser. */
-export const THREE_SOURCE_KEYS = ["allowedHosts", "authToken", "stateful", "transport", "host", "port"] as const;
+export const THREE_SOURCE_KEYS = [
+  "allowedHosts",
+  "authToken",
+  "stateful",
+  "transport",
+  "host",
+  "port",
+  "repo",
+] as const;
 
 export const CLI_COMMANDS = ["serve", "start", "stop", "restart", "status", "db"] as const;
 export type CliCommand = (typeof CLI_COMMANDS)[number];
@@ -160,9 +168,13 @@ export function parseCliArgs(
     assertNoStraySubcommand(positionals);
   }
 
-  const repo = stringFlag(flags, "repo") ?? env.ANCHOR_MCP_REPO ?? "~/agent-context";
   const configPath = resolveConfigPath(flags, env, options.cwd ?? process.cwd());
   const fileConfig = readConfigFile(configPath);
+  const repo =
+    stringFlag(flags, "repo") ??
+    env.ANCHOR_MCP_REPO ??
+    stringConfigValue(fileConfig.repo, "repo") ??
+    "~/agent-context";
   const chosenTransport =
     stringFlag(flags, "transport") ??
     env.ANCHOR_MCP_TRANSPORT ??
@@ -312,6 +324,8 @@ type CliConfigFile = {
   transport?: unknown;
   host?: unknown;
   port?: unknown;
+  /** Anchor repository path. In the file so `status`, `serve`, and `start` cannot disagree about which repo is being served. */
+  repo?: unknown;
   /** HTTP transport session mode; CLI --stateful and ANCHOR_MCP_STATEFUL take precedence. */
   stateful?: unknown;
   logging?: unknown;

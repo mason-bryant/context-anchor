@@ -1,3 +1,6 @@
+import { existsSync, readdirSync } from "node:fs";
+import path from "node:path";
+
 import pg from "pg";
 
 import type { CliOptions } from "./args.js";
@@ -27,6 +30,44 @@ async function readDatabaseStatus(
 }
 
 /**
+ * An anchor repository is created on demand if the path does not exist, so a mistyped or
+ * defaulted `repo` produces an empty repo that serves 500s on every lookup rather than
+ * failing at startup. Naming that here is the difference between "wrong path" and an
+ * inscrutable ENOENT from the UI.
+ */
+function describeRepo(repoPath: string): string {
+  if (!existsSync(repoPath)) {
+    return " — does not exist yet (it will be created on first use)";
+  }
+
+  let anchors = 0;
+  const walk = (dir: string, depth: number): void => {
+    if (depth > 4 || anchors > 0) {
+      return;
+    }
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      if (entry.name.startsWith(".")) {
+        continue;
+      }
+      if (entry.isDirectory()) {
+        walk(path.join(dir, entry.name), depth + 1);
+      } else if (entry.name.endsWith(".md")) {
+        anchors += 1;
+        return;
+      }
+    }
+  };
+
+  try {
+    walk(repoPath, 0);
+  } catch {
+    return " — unreadable";
+  }
+
+  return anchors > 0 ? "" : " — EMPTY: no anchors found, every lookup will 404/500";
+}
+
+/**
  * Reports resolved setup rather than a supervised process: which config was used, where the
  * anchor repo is, whether the database is reachable and migrated, and whether anything is
  * answering on the configured port. Nothing here needs a daemon.
@@ -36,7 +77,7 @@ export async function statusReport(options: CliOptions, statusOptions: StatusOpt
   const { pidFile, logFile } = runtimePaths(options.host, options.port, statusOptions.home);
 
   lines.push(`config     ${options.configPath ?? "none found (using flags, environment, and defaults)"}`);
-  lines.push(`repo       ${options.config.repoPath}`);
+  lines.push(`repo       ${options.config.repoPath}${describeRepo(options.config.repoPath)}`);
   lines.push(`transport  ${options.transport}`);
   // Never the token itself: `status` is the command people paste into issues.
   lines.push(`auth       ${options.authToken ? "token configured" : "no token"}`);
