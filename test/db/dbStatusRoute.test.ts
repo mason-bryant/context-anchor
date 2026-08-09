@@ -95,3 +95,17 @@ describe("GET /api/db/scope-changes", () => {
     expect(response.status).toBe(503);
   });
 });
+
+describe("GET /api/db/scopes", () => {
+  it("requires authentication", async () => {
+    const response = await fetch(`${baseUrl}/api/db/scopes`);
+    expect(response.status).toBe(401);
+  });
+
+  it("reports 503 when the database backend is not configured", async () => {
+    const response = await fetch(`${baseUrl}/api/db/scopes`, {
+      headers: { Authorization: `Bearer ${TOKEN}` },
+    });
+    expect(response.status).toBe(503);
+  });
+});

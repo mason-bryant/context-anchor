@@ -10,8 +10,12 @@ export type CommandTransaction = Pick<PoolClient, "query">;
 export type CommandEntity = {
   entityType: string;
   entityGuid: string;
-  /** The scope whose history this change belongs to — what T4 reads by. */
-  ownerScopeGuid: string;
+  /**
+   * The scope whose history this change belongs to — what T4 reads by. Optional because a
+   * command sometimes only discovers it while running (import derives a document's scope
+   * from its path inside the transaction); such commands return it from `apply` instead.
+   */
+  ownerScopeGuid?: string;
 };
 
 export type ApplyResult = {
@@ -19,6 +23,8 @@ export type ApplyResult = {
   resultingValue: Record<string, unknown>;
   /** Domain-shaped log entry type, e.g. `scope.renamed` — not a table name. */
   entryType: string;
+  /** Overrides `entity.ownerScopeGuid` when the owning scope is resolved during apply. */
+  ownerScopeGuid?: string;
 };
 
 export type CommandInput = {
@@ -181,6 +187,15 @@ export class CommandHandler {
         throw error;
       }
 
+      const ownerScopeGuid = applied.ownerScopeGuid ?? input.entity.ownerScopeGuid;
+      if (!ownerScopeGuid) {
+        // Without an owning scope the entry would be invisible to T4's per-scope history,
+        // which is the only way this change is ever reviewed. Fail rather than orphan it.
+        throw new Error(
+          `Command ${input.commandType} produced no ownerScopeGuid: supply it on the entity, or return it from apply.`,
+        );
+      }
+
       await client.query(
         `INSERT INTO "${this.schemaName}".mutation_log
            (workspace_guid, entry_guid, owner_scope_guid, stream_id, entry_type, prior_value, resulting_value,
@@ -189,7 +204,7 @@ export class CommandHandler {
         [
           input.workspaceGuid,
           randomUUID(),
-          input.entity.ownerScopeGuid,
+          ownerScopeGuid,
           `${input.entity.entityType}:${input.entity.entityGuid}`,
           applied.entryType,
           priorVersionRow ? JSON.stringify(priorVersionRow.payload) : null,

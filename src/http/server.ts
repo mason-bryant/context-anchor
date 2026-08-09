@@ -145,6 +145,26 @@ export async function startHttpServer(
     })();
   });
 
+  // T2's surface: the scope browser's backing read — what the import produced, with each
+  // derived association carrying the signal behind it so an inference is never mistaken for
+  // a decision.
+  app.get("/api/db/scopes", auth, (_req: Request, res: Response) => {
+    void (async () => {
+      const knowledgeDb = runtime.knowledgeDb;
+      if (!knowledgeDb) {
+        res.status(503).json({ error: "Database backend is not configured" });
+        return;
+      }
+
+      try {
+        res.json({ scopes: await knowledgeDb.listScopesForOwner() });
+      } catch (error) {
+        runtime.logger.error("scopes request failed", { error: errorMetadata(error) });
+        res.status(500).json({ error: "Failed to read scopes" });
+      }
+    })();
+  });
+
   // Minimal "backend indicator" (design doc UI capability list): whether the database
   // backend is configured, and if so which schema and migration version answered. The full
   // routes/scope browser surface lands with later PRs; this is only enough to make a

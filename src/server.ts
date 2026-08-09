@@ -5,6 +5,7 @@ import * as z from "zod/v4";
 import type { AnchorService } from "./anchorService.js";
 import { anchorSectionGuidance } from "./anchorStructure.js";
 import type { ScopeSummary } from "./db/knowledgeDb.js";
+import type { ImportReport } from "./db/importDocuments.js";
 import type { ScopeChange } from "./db/scopeChanges.js";
 import { PeopleRegistryConflictError, ProjectMappingsConflictError } from "./git/repo.js";
 import { errorMetadata, noopRequestLogger, type RequestLogger } from "./logger.js";
@@ -168,6 +169,19 @@ const SharedWriteOptsSchema = z.object({
 export type KnowledgeDatabaseTool = {
   listScopesForOwner(): Promise<ScopeSummary[]>;
   listScopeChangesForOwner(input: { scope: string; since?: string; limit?: number }): Promise<ScopeChange[]>;
+  importDocumentsAsOwner(input: {
+    repository: string;
+    commitSha: string;
+    files: Array<{ path: string; content: string }>;
+    projectMappings?: Array<{
+      repository: string;
+      pathPrefix: string;
+      project: string;
+      name: string;
+      webConfig?: Record<string, unknown>;
+    }>;
+    people?: Array<{ id: string; displayName: string; identities: Array<{ kind: string; value: string }> }>;
+  }): Promise<ImportReport>;
 };
 
 export function createAnchorMcpServer(
@@ -1920,6 +1934,79 @@ the index when your workflow checks in that file.`,
       },
       async ({ scope, since, limit }) =>
         jsonResult({ changes: await knowledgeDb.listScopeChangesForOwner({ scope, since, limit }) }),
+    );
+
+    server.registerTool(
+      "importDocuments",
+      {
+        title: "Import Documents",
+        description:
+          "One-pass import of a pinned repository commit: each Markdown file becomes a source document with a " +
+          "byte-complete revision, sections, and blocks, carrying repository, commit, and path provenance. Scopes " +
+          "are derived on a fixed mapping and related `part_of` their domain; roadmap goal sections associate to " +
+          "the initiative scopes referencing them. Nothing is extracted into assertions. Re-importing the same " +
+          "commit writes nothing. Requires the database backend.",
+        inputSchema: z.object({
+          traceId: TraceIdSchema,
+          repository: z.string().trim().min(1),
+          // A full 40-hex sha, because the import is defined as being of a PINNED commit:
+          // the value goes into the idempotency key and the audit reason, and an arbitrary
+          // string there makes "same commit" unverifiable after the fact.
+          // Lowercased after validation: the value is interpolated into idempotency keys, so
+          // the same commit in different casing would otherwise read as a different command
+          // and import it a second time.
+          commitSha: z
+            .string()
+            .trim()
+            .regex(/^[0-9a-f]{40}$/i, "commitSha must be a full 40-character git SHA")
+            .transform((value) => value.toLowerCase()),
+          files: z
+            .array(z.object({ path: z.string().trim().min(1), content: z.string() }))
+            .min(1),
+          // project-mappings.json, so routing is reproducible from the database alone
+          // rather than by reading Git at query time.
+          projectMappings: z
+            .array(
+              z.object({
+                repository: z.string().trim().min(1),
+                pathPrefix: z.string().trim().min(1),
+                project: z.string().trim().min(1),
+                name: z.string().trim().min(1),
+                webConfig: z.record(z.string(), z.unknown()).optional(),
+              }),
+            )
+            .optional(),
+          // The people registry. Nothing reads it yet; it is carried across because
+          // reconstructing identity history later costs far more than importing it now.
+          people: z
+            .array(
+              z.object({
+                id: z.string().trim().min(1),
+                displayName: z.string().trim().min(1),
+                identities: z.array(
+                  z.object({
+                    // Mirrors the CHECK on user_identities.identity_kind, so an unsupported
+                    // kind fails at the surface with a clear message instead of reaching
+                    // Postgres and coming back as a constraint violation.
+                    kind: z.enum(["email", "slack", "github", "confluence", "nickname", "alias"]),
+                    value: z.string().trim().min(1),
+                  }),
+                ),
+              }),
+            )
+            .optional(),
+        }),
+      },
+      async ({ repository, commitSha, files, projectMappings, people }) =>
+        jsonResult({
+          report: await knowledgeDb.importDocumentsAsOwner({
+            repository,
+            commitSha,
+            files,
+            projectMappings,
+            people,
+          }),
+        }),
     );
   }
 
