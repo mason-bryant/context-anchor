@@ -109,6 +109,9 @@ describe.runIf(await isTestDatabaseReachable())("CommandHandler (real Postgres)"
 
   it("rolls the whole command back when apply throws — nothing partially written", async () => {
     const scopeGuid = await createScope(`rollback-${randomUUID().slice(0, 8)}`);
+    // A unique key per assertion target, so each check is scoped to THIS command and cannot
+    // be satisfied (or confused) by rows other tests in this file wrote.
+    const idempotencyKey = randomUUID();
 
     await expect(
       handler.execute({
@@ -116,7 +119,7 @@ describe.runIf(await isTestDatabaseReachable())("CommandHandler (real Postgres)"
         actorPrincipalGuid: bootstrap.ownerPrincipalGuid,
         commandType: "scope.rename",
         origin: "mcp",
-        idempotencyKey: randomUUID(),
+        idempotencyKey,
         entity: { entityType: "scope", entityGuid: scopeGuid, ownerScopeGuid: scopeGuid },
         apply: async (tx) => {
           await tx.query(`UPDATE "${schemaName}".scopes SET title = 'half written' WHERE scope_guid = $1`, [scopeGuid]);
@@ -128,14 +131,77 @@ describe.runIf(await isTestDatabaseReachable())("CommandHandler (real Postgres)"
     const scope = await pool.query(`SELECT title FROM "${schemaName}".scopes WHERE scope_guid = $1`, [scopeGuid]);
     expect(scope.rows[0]!.title).not.toBe("half written");
 
-    for (const table of ["commands", "record_versions", "mutation_log"]) {
-      const column = table === "commands" ? "command_type" : table === "record_versions" ? "entity_guid" : "owner_scope_guid";
-      const where = table === "commands" ? `command_type = 'scope.rename'` : `${column} = '${scopeGuid}'`;
-      const rows = await pool.query(`SELECT count(*)::int AS n FROM "${schemaName}".${table} WHERE ${where}`);
-      if (table !== "commands") {
-        expect(rows.rows[0]!.n, `${table} must have no rows for a rolled-back command`).toBe(0);
-      }
-    }
+    // The core atomicity guarantee: no command is accepted without its version and log
+    // writes, so the commands row must be gone too.
+    const commands = await pool.query<{ n: number }>(
+      `SELECT count(*)::int AS n FROM "${schemaName}".commands WHERE workspace_guid = $1 AND idempotency_key = $2`,
+      [bootstrap.workspaceGuid, idempotencyKey],
+    );
+    expect(commands.rows[0]!.n, "commands row must be rolled back").toBe(0);
+
+    const versions = await pool.query<{ n: number }>(
+      `SELECT count(*)::int AS n FROM "${schemaName}".record_versions WHERE entity_guid = $1`,
+      [scopeGuid],
+    );
+    expect(versions.rows[0]!.n, "record_versions must be rolled back").toBe(0);
+
+    const entries = await pool.query<{ n: number }>(
+      `SELECT count(*)::int AS n FROM "${schemaName}".mutation_log WHERE owner_scope_guid = $1`,
+      [scopeGuid],
+    );
+    expect(entries.rows[0]!.n, "mutation_log must be rolled back").toBe(0);
+  });
+
+  it("reports a genuinely concurrent write as ConcurrentModificationError, not a raw unique violation", async () => {
+    const scopeGuid = await createScope(`race-${randomUUID().slice(0, 8)}`);
+
+    // Racing two calls and hoping they overlap is unreliable — they serialize naturally and
+    // the second simply reads the new version. This barrier holds both transactions open
+    // until each has read prior version 0, which is the exact interleaving the
+    // expectedVersion fast path cannot catch: both pass it, then both try to write version 1.
+    const reachedApply: Array<() => void> = [];
+    const bothRead = new Promise<void>((resolveAll) => {
+      let seen = 0;
+      reachedApply.push(() => {
+        seen += 1;
+        if (seen === 2) {
+          resolveAll();
+        }
+      });
+    });
+
+    const racer = (title: string) =>
+      handler.execute({
+        workspaceGuid: bootstrap.workspaceGuid,
+        actorPrincipalGuid: bootstrap.ownerPrincipalGuid,
+        commandType: "scope.rename",
+        origin: "mcp",
+        idempotencyKey: randomUUID(),
+        entity: { entityType: "scope", entityGuid: scopeGuid, ownerScopeGuid: scopeGuid },
+        apply: async (tx) => {
+          reachedApply[0]!();
+          await bothRead;
+          // One of these blocks on the other's row lock until that transaction commits.
+          const updated = await tx.query<{ title: string; version: number }>(
+            `UPDATE "${schemaName}".scopes SET title = $1, version = version + 1
+             WHERE workspace_guid = $2 AND scope_guid = $3 RETURNING title, version`,
+            [title, bootstrap.workspaceGuid, scopeGuid],
+          );
+          return { resultingValue: updated.rows[0]!, entryType: "scope.renamed" };
+        },
+      });
+
+    const results = await Promise.allSettled([racer("Racer A"), racer("Racer B")]);
+
+    const rejected = results.filter((r) => r.status === "rejected");
+    expect(rejected.length, "exactly one writer must lose the race").toBe(1);
+    expect((rejected[0] as PromiseRejectedResult).reason).toBeInstanceOf(ConcurrentModificationError);
+
+    const versions = await pool.query<{ n: number }>(
+      `SELECT count(*)::int AS n FROM "${schemaName}".record_versions WHERE entity_guid = $1`,
+      [scopeGuid],
+    );
+    expect(versions.rows[0]!.n, "the loser must leave nothing behind").toBe(1);
   });
 
   it("is idempotent: replaying the same idempotency key does not apply twice", async () => {

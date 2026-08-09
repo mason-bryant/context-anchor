@@ -15,8 +15,17 @@ describe("parseChangeWindow", () => {
     expect(parseChangeWindow("90m", NOW)).toEqual(new Date("2026-08-08T10:30:00.000Z"));
   });
 
-  it("accepts an absolute ISO timestamp", () => {
+  it("accepts an absolute ISO timestamp with an explicit timezone", () => {
     expect(parseChangeWindow("2026-07-01T00:00:00.000Z", NOW)).toEqual(new Date("2026-07-01T00:00:00.000Z"));
+    expect(parseChangeWindow("2026-07-01T00:00:00Z", NOW)).toEqual(new Date("2026-07-01T00:00:00.000Z"));
+    expect(parseChangeWindow("2026-07-01T02:00:00+02:00", NOW)).toEqual(new Date("2026-07-01T00:00:00.000Z"));
+  });
+
+  it("rejects a timestamp with no timezone, which Node would read as server-local time", () => {
+    // The same string would mean different instants on two machines, silently shifting the
+    // lower bound of a history query.
+    expect(() => parseChangeWindow("2026-07-01T00:00:00", NOW)).toThrow(/timezone/i);
+    expect(() => parseChangeWindow("2026-07-01T00:00:00.000", NOW)).toThrow(/timezone/i);
   });
 
   it("accepts a plain ISO date", () => {

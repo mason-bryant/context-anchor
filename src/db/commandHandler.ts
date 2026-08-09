@@ -42,6 +42,11 @@ export type CommandResult = {
   replayed: boolean;
 };
 
+/** Postgres unique_violation. The record_versions PK is what actually serializes writers. */
+function isUniqueViolation(error: unknown): boolean {
+  return typeof error === "object" && error !== null && (error as { code?: string }).code === "23505";
+}
+
 export class ConcurrentModificationError extends Error {
   constructor(
     public readonly entityType: string,
@@ -121,20 +126,36 @@ export class CommandHandler {
       const applied = await input.apply(client);
       const version = priorVersion + 1;
 
-      await client.query(
-        `INSERT INTO "${this.schemaName}".record_versions
-           (workspace_guid, entity_type, entity_guid, version, payload, changed_by_principal_guid, command_guid)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-        [
-          input.workspaceGuid,
-          input.entity.entityType,
-          input.entity.entityGuid,
-          version,
-          JSON.stringify(applied.resultingValue),
-          input.actorPrincipalGuid,
-          commandGuid,
-        ],
-      );
+      try {
+        await client.query(
+          `INSERT INTO "${this.schemaName}".record_versions
+             (workspace_guid, entity_type, entity_guid, version, payload, changed_by_principal_guid, command_guid)
+           VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+          [
+            input.workspaceGuid,
+            input.entity.entityType,
+            input.entity.entityGuid,
+            version,
+            JSON.stringify(applied.resultingValue),
+            input.actorPrincipalGuid,
+            commandGuid,
+          ],
+        );
+      } catch (error) {
+        // The expectedVersion check above is a fast path with a good message, not a lock:
+        // two concurrent commands can read the same priorVersion and both pass it. The
+        // record_versions primary key is the real serialization point, so a duplicate-key
+        // violation here IS the lost race — reported as such rather than as a raw 23505.
+        if (isUniqueViolation(error)) {
+          throw new ConcurrentModificationError(
+            input.entity.entityType,
+            input.entity.entityGuid,
+            input.expectedVersion ?? priorVersion,
+            version,
+          );
+        }
+        throw error;
+      }
 
       await client.query(
         `INSERT INTO "${this.schemaName}".mutation_log

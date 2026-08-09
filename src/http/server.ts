@@ -98,11 +98,22 @@ export async function startHttpServer(
         return;
       }
 
+      // Validate before it can reach SQL: an unparseable limit would otherwise arrive as
+      // NaN in the LIMIT parameter and surface as a 500 for what is caller error.
+      let limit: number | undefined;
+      if (typeof req.query.limit === "string") {
+        limit = Number(req.query.limit);
+        if (!Number.isInteger(limit) || limit <= 0) {
+          res.status(400).json({ error: "limit must be a positive integer" });
+          return;
+        }
+      }
+
       try {
         const changes = await knowledgeDb.listScopeChangesForOwner({
           scope,
           since: typeof req.query.since === "string" ? req.query.since : undefined,
-          limit: typeof req.query.limit === "string" ? Number(req.query.limit) : undefined,
+          limit,
         });
         res.json({ scope, changes });
       } catch (error) {

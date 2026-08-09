@@ -36,9 +36,26 @@ export function parseChangeWindow(since: string | undefined, now: Date = new Dat
     return new Date(now.getTime() - amount * UNIT_MS[relative[2]!]!);
   }
 
-  // Only ISO-shaped absolutes, so locale-dependent parsing can't quietly shift the bound.
-  if (/^\d{4}-\d{2}-\d{2}(T.*)?$/.test(trimmed)) {
-    const parsed = new Date(trimmed.length === 10 ? `${trimmed}T00:00:00.000Z` : trimmed);
+  // A bare date is unambiguous once we pin it to UTC ourselves.
+  if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
+    const parsed = new Date(`${trimmed}T00:00:00.000Z`);
+    if (!Number.isNaN(parsed.getTime())) {
+      return parsed;
+    }
+    throw invalidSince(since);
+  }
+
+  // A timestamp must name its timezone. Without one, Node reads it as server-local, so the
+  // same string would mean different instants on two machines and silently shift the bound.
+  if (/^\d{4}-\d{2}-\d{2}T[\d:.]+$/.test(trimmed)) {
+    throw new Error(
+      `Invalid since value ${JSON.stringify(since)}: timestamps must carry an explicit timezone ` +
+        `(for example "${trimmed}Z" or "${trimmed}+02:00"), otherwise the bound depends on server local time.`,
+    );
+  }
+
+  if (/^\d{4}-\d{2}-\d{2}T[\d:.]+(Z|[+-]\d{2}:?\d{2})$/.test(trimmed)) {
+    const parsed = new Date(trimmed);
     if (!Number.isNaN(parsed.getTime())) {
       return parsed;
     }

@@ -130,6 +130,20 @@ describe.runIf(await isTestDatabaseReachable())("GET /api/db/scope-changes (real
     expect(((await response.json()) as { error: string }).error).toMatch(/scope is required/i);
   });
 
+  it("rejects a non-numeric or non-positive limit with 400 rather than failing in SQL", async () => {
+    for (const bad of ["abc", "-1", "0", "1.5", ""]) {
+      const response = await get(`?scope=workspace&limit=${encodeURIComponent(bad)}`);
+      expect(response.status, `limit=${JSON.stringify(bad)}`).toBe(400);
+      expect(((await response.json()) as { error: string }).error).toMatch(/limit/i);
+    }
+  });
+
+  it("honors a valid limit", async () => {
+    const response = await get("?scope=workspace&limit=1");
+    expect(response.status).toBe(200);
+    expect(((await response.json()) as { changes: unknown[] }).changes).toHaveLength(1);
+  });
+
   it("honors a since window that excludes the change", async () => {
     const response = await get("?scope=workspace&since=2099-01-01");
     expect(response.status).toBe(200);
