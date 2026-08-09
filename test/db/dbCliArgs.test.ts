@@ -4,7 +4,12 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { parseDbCliArgs, resolveDbCliSchemaName } from "../../src/db/cliArgs.js";
+import {
+  assertComposeManagedTarget,
+  COMPOSE_MANAGED_DATABASE_URL,
+  parseDbCliArgs,
+  resolveDbCliSchemaName,
+} from "../../src/db/cliArgs.js";
 import { DEFAULT_DATABASE_SCHEMA_NAME } from "../../src/db/config.js";
 
 describe("parseDbCliArgs", () => {
@@ -48,6 +53,58 @@ describe("parseDbCliArgs", () => {
   it("still accepts the exact supported forms", () => {
     expect(parseDbCliArgs(["reset", "--yes"])).toEqual({ command: "reset", yes: true });
     expect(parseDbCliArgs(["up"])).toEqual({ command: "up" });
+  });
+});
+
+describe("assertComposeManagedTarget", () => {
+  const CONTAINER_COMMANDS = ["up", "down", "reset", "psql"] as const;
+  const DB_ONLY_COMMANDS = ["migrate", "status"] as const;
+
+  it("allows container commands when DATABASE_URL is unset", () => {
+    for (const command of CONTAINER_COMMANDS) {
+      expect(() => assertComposeManagedTarget(command, undefined)).not.toThrow();
+    }
+  });
+
+  it("allows container commands pointed at the compose-managed instance", () => {
+    for (const command of CONTAINER_COMMANDS) {
+      expect(() => assertComposeManagedTarget(command, COMPOSE_MANAGED_DATABASE_URL)).not.toThrow();
+      expect(() =>
+        assertComposeManagedTarget(command, "postgres://anchor:anchor@localhost:55432/anchor_mcp"),
+      ).not.toThrow();
+    }
+  });
+
+  it("refuses container commands pointed at any other database", () => {
+    const elsewhere = [
+      "postgres://anchor:anchor@db.prod.example.com:5432/anchor_mcp",
+      "postgres://anchor:anchor@127.0.0.1:5432/anchor_mcp",
+      "postgres://anchor:anchor@127.0.0.1:55432/some_other_db",
+    ];
+    for (const command of CONTAINER_COMMANDS) {
+      for (const url of elsewhere) {
+        expect(() => assertComposeManagedTarget(command, url), `${command} -> ${url}`).toThrow(/DATABASE_URL/);
+      }
+    }
+  });
+
+  it("never echoes the password when refusing", () => {
+    expect(() => assertComposeManagedTarget("reset", "postgres://anchor:sup3rs3cret@prod.example.com:5432/db")).toThrow(
+      /\*\*\*/,
+    );
+    try {
+      assertComposeManagedTarget("reset", "postgres://anchor:sup3rs3cret@prod.example.com:5432/db");
+    } catch (error) {
+      expect(String(error)).not.toContain("sup3rs3cret");
+    }
+  });
+
+  it("leaves migrate and status free to target any database", () => {
+    for (const command of DB_ONLY_COMMANDS) {
+      expect(() =>
+        assertComposeManagedTarget(command, "postgres://anchor:anchor@db.example.com:5432/anchor_mcp"),
+      ).not.toThrow();
+    }
   });
 });
 

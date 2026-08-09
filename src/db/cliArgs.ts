@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 
-import { assertValidSchemaName, DEFAULT_DATABASE_SCHEMA_NAME } from "./config.js";
+import { assertValidSchemaName, DEFAULT_DATABASE_SCHEMA_NAME, redactDatabaseUrl } from "./config.js";
 
 export type DbCliCommand = "up" | "down" | "status" | "migrate" | "psql" | "reset";
 
@@ -46,6 +46,60 @@ export function parseDbCliArgs(argv: string[]): DbCliArgs {
   }
 
   return { command: command as Exclude<DbCliCommand, "reset"> };
+}
+
+/** Must match docker-compose.yml's postgres service exactly. */
+export const COMPOSE_MANAGED_DATABASE_URL = "postgres://anchor:anchor@127.0.0.1:55432/anchor_mcp";
+
+/**
+ * Commands that act on the compose-managed container itself, rather than on whatever
+ * database a connection string happens to name.
+ */
+const CONTAINER_LIFECYCLE_COMMANDS = new Set<DbCliCommand>(["up", "down", "reset", "psql"]);
+
+const LOCAL_HOSTNAMES = new Set(["127.0.0.1", "localhost", "::1", "[::1]"]);
+
+/**
+ * `up`, `reset`, `down`, and `psql` start, destroy, or attach to the container that
+ * docker-compose.yml hard-codes to 127.0.0.1:55432/anchor_mcp. Honoring an arbitrary
+ * `DATABASE_URL` for those is incoherent at best and dangerous at worst: `db reset` would
+ * delete the local volume and then run migrations against whatever else the variable
+ * names. So they refuse rather than guess.
+ *
+ * `migrate` and `status` are deliberately exempt — pointing them at another database is
+ * the legitimate way to prepare or inspect one, and neither touches the container.
+ */
+export function assertComposeManagedTarget(command: DbCliCommand, databaseUrl: string | undefined): void {
+  if (!CONTAINER_LIFECYCLE_COMMANDS.has(command) || !databaseUrl) {
+    return;
+  }
+
+  if (isComposeManagedUrl(databaseUrl)) {
+    return;
+  }
+
+  throw new Error(
+    `Refusing to run "${command}": DATABASE_URL points at ${redactDatabaseUrl(databaseUrl)}, but this command ` +
+      `manages the local compose container at ${COMPOSE_MANAGED_DATABASE_URL}. Unset DATABASE_URL, or use ` +
+      `\`migrate\`/\`status\` if you meant to act on that database.`,
+  );
+}
+
+function isComposeManagedUrl(databaseUrl: string): boolean {
+  let parsed: URL;
+  let expected: URL;
+  try {
+    parsed = new URL(databaseUrl);
+    expected = new URL(COMPOSE_MANAGED_DATABASE_URL);
+  } catch {
+    return false;
+  }
+
+  return (
+    LOCAL_HOSTNAMES.has(parsed.hostname) &&
+    parsed.port === expected.port &&
+    parsed.pathname === expected.pathname
+  );
 }
 
 /**

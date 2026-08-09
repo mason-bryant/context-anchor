@@ -14,13 +14,18 @@ import { spawnSync } from "node:child_process";
 
 import pg from "pg";
 
-import { parseDbCliArgs, resolveDbCliSchemaName } from "../src/db/cliArgs.js";
+import {
+  assertComposeManagedTarget,
+  COMPOSE_MANAGED_DATABASE_URL,
+  parseDbCliArgs,
+  resolveDbCliSchemaName,
+} from "../src/db/cliArgs.js";
 import { redactDatabaseUrl } from "../src/db/config.js";
 import { getMigrationStatus, runMigrations } from "../src/db/migrate.js";
 
-// Must match docker-compose.yml's postgres service (also mirrored in
-// test/db/testDatabase.ts, which is why CI's Postgres service binds the same port).
-const DEFAULT_DEV_DATABASE_URL = "postgres://anchor:anchor@127.0.0.1:55432/anchor_mcp";
+// Matches docker-compose.yml's postgres service (also mirrored in test/db/testDatabase.ts,
+// which is why CI's Postgres service binds the same port).
+const DEFAULT_DEV_DATABASE_URL = COMPOSE_MANAGED_DATABASE_URL;
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const MIGRATIONS_DIR = path.join(REPO_ROOT, "migrations", "knowledge");
@@ -117,6 +122,10 @@ async function printStatus(): Promise<void> {
 
 async function main(): Promise<void> {
   const args = parseDbCliArgs(process.argv.slice(2));
+  // Before anything starts or destroys a container: the lifecycle commands only make sense
+  // against the compose-managed instance, so refuse rather than act on one database while
+  // migrating another.
+  assertComposeManagedTarget(args.command, process.env.DATABASE_URL);
 
   switch (args.command) {
     case "up": {
