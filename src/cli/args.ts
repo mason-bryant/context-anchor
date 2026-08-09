@@ -55,7 +55,9 @@ export function parseCliArgs(argv: string[], env: NodeJS.ProcessEnv = process.en
     listEnv(env.ANCHOR_MCP_ALLOWED_HOSTS) ??
     listConfigValue(fileConfig.allowedHosts, "allowedHosts");
 
-  const databaseUrl = stringFlag(flags, "database-url") ?? env.DATABASE_URL ?? undefined;
+  // `|| undefined` rather than `??`: an exported-but-empty DATABASE_URL="" must read as
+  // "no database configured" (server boots Git-only), not as a connection string.
+  const databaseUrl = stringFlag(flags, "database-url")?.trim() || env.DATABASE_URL?.trim() || undefined;
   if (databaseUrl) {
     assertValidDatabaseUrl(databaseUrl);
   }

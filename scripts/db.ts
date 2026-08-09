@@ -33,7 +33,9 @@ const DATA_DIR = path.join(REPO_ROOT, ".data", "postgres");
 const DEFAULT_CONFIG_PATH = path.join(REPO_ROOT, "anchor-mcp.config.json");
 
 function databaseUrl(): string {
-  return process.env.DATABASE_URL ?? DEFAULT_DEV_DATABASE_URL;
+  // Trim-and-check rather than `??`: an exported-but-empty DATABASE_URL="" is common in
+  // shell profiles and CI matrices, and `??` would treat it as a real connection string.
+  return process.env.DATABASE_URL?.trim() || DEFAULT_DEV_DATABASE_URL;
 }
 
 /**
@@ -125,7 +127,7 @@ async function main(): Promise<void> {
   // Before anything starts or destroys a container: the lifecycle commands only make sense
   // against the compose-managed instance, so refuse rather than act on one database while
   // migrating another.
-  assertComposeManagedTarget(args.command, process.env.DATABASE_URL);
+  assertComposeManagedTarget(args.command, process.env.DATABASE_URL?.trim() || undefined);
 
   switch (args.command) {
     case "up": {

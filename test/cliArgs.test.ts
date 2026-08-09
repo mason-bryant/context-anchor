@@ -395,6 +395,18 @@ describe("CLI args — databaseUrl", () => {
     expect(() => parseCliArgs(["--database-url", "mysql://localhost/db"], {})).toThrow(/postgres/i);
   });
 
+  it("treats an exported-but-empty DATABASE_URL as unset rather than as a connection string", () => {
+    expect(parseCliArgs([], { DATABASE_URL: "" }).databaseUrl).toBeUndefined();
+    expect(parseCliArgs([], { DATABASE_URL: "   " }).databaseUrl).toBeUndefined();
+    expect(parseCliArgs(["--database-url", "  "], {}).databaseUrl).toBeUndefined();
+  });
+
+  it("trims surrounding whitespace off a real connection string", () => {
+    expect(parseCliArgs([], { DATABASE_URL: "  postgres://anchor@localhost:55432/db  " }).databaseUrl).toBe(
+      "postgres://anchor@localhost:55432/db",
+    );
+  });
+
   it("never reads a connection string from the config file", async () => {
     const tmpDir = await mkdtemp(path.join(os.tmpdir(), "anchor-mcp-config-"));
     const configPath = path.join(tmpDir, "anchor-mcp.config.json");

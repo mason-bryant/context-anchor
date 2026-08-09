@@ -32,6 +32,33 @@ export async function createAnchorRuntime(
   const logger = options.logger ?? createAppLogger(config.logging);
   const requestLogger = options.requestLogger ?? createRequestLogger(config.logging);
   const traceLogger = options.traceLogger ?? createTraceLogger(config.logging);
+
+  // Only loggers this function created are ours to close. A caller-supplied one outlives
+  // this call — src/bin/anchor-mcp.ts keeps using its logger to report the very failure
+  // that aborted startup — so closing it here would silence that report.
+  const ownedLoggers: Array<AppLogger | RequestLogger | TraceLogger> = [
+    ...(options.logger ? [] : [logger]),
+    ...(options.requestLogger ? [] : [requestLogger]),
+    ...(options.traceLogger ? [] : [traceLogger]),
+  ];
+
+  try {
+    return await initializeRuntime(config, options, { logger, requestLogger, traceLogger });
+  } catch (error) {
+    // Nothing was returned, so the caller has no handle on these: without this they leak
+    // file handles and their rotation timers can keep the process alive after a fail-fast
+    // startup. Best-effort and settled, so a cleanup failure cannot mask the real error.
+    await Promise.allSettled(ownedLoggers.map((closable) => closable.close()));
+    throw error;
+  }
+}
+
+async function initializeRuntime(
+  config: ServerConfig,
+  options: { databaseUrl?: string },
+  loggers: { logger: AppLogger; requestLogger: RequestLogger; traceLogger: TraceLogger },
+): Promise<AnchorRuntime> {
+  const { logger, requestLogger, traceLogger } = loggers;
   const traceRatings = new TraceRatingsStore(traceLogger.dirname);
   const traceIndex = new TraceIndex(traceLogger, traceRatings);
   const repo = new AnchorRepository({
