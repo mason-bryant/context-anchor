@@ -207,6 +207,93 @@ describe.runIf(await isTestDatabaseReachable())("importDocuments (real Postgres)
     expect(g041.map((row) => row.scope_slug)).not.toContain("anchor-mcp-db-backed");
   });
 
+  it("records each association against the real section row it was made from", async () => {
+    await runImport();
+
+    const orphaned = await pool.query<{ n: number }>(
+      `SELECT count(*)::int AS n
+       FROM "${schemaName}".record_scopes a
+       WHERE a.workspace_guid = $1
+         AND a.record_type = 'section'
+         AND NOT EXISTS (
+           SELECT 1 FROM "${schemaName}".source_sections s
+           WHERE s.workspace_guid = a.workspace_guid AND s.section_guid = a.record_guid
+         )`,
+      [bootstrap.workspaceGuid],
+    );
+    // record_guid is provenance, not a live pointer — but it must still name a row that
+    // existed, or the audit trail is fiction.
+    expect(orphaned.rows[0]!.n, "every association's record_guid must be a real section").toBe(0);
+
+    const matched = await pool.query<{ n: number }>(
+      `SELECT count(*)::int AS n
+       FROM "${schemaName}".record_scopes a
+       JOIN "${schemaName}".source_sections s
+         ON s.workspace_guid = a.workspace_guid AND s.section_guid = a.record_guid
+       WHERE a.workspace_guid = $1 AND s.stable_key <> a.stable_key`,
+      [bootstrap.workspaceGuid],
+    );
+    expect(matched.rows[0]!.n, "the referenced section must be the one the key names").toBe(0);
+  });
+
+  it("does not derive goal associations from goal_ids appearing in body prose", async () => {
+    // docs/milestones.md documents the field by showing it, so a whole-file regex would
+    // attach that milestone's initiative to goals the document merely talks about.
+    const decoy: ImportFile = {
+      path: "projects/anchor-mcp/milestones/decoy.md",
+      content: [
+        "---",
+        "project: anchor-mcp",
+        "---",
+        "",
+        "# Milestone -- Decoy",
+        "",
+        "Example front matter looks like:",
+        "",
+        "```yaml",
+        "relations:",
+        "  goal_ids:",
+        "    - G-042",
+        "```",
+        "",
+      ].join("\n"),
+    };
+
+    await runImport({ files: [...files(), decoy] });
+
+    const decoyAssociations = await pool.query<{ n: number }>(
+      `SELECT count(*)::int AS n FROM "${schemaName}".record_scopes a
+       JOIN "${schemaName}".scopes s ON s.scope_guid = a.scope_guid
+       WHERE a.workspace_guid = $1 AND s.scope_slug = 'anchor-mcp-decoy' AND a.association_type = 'referenced-goal'`,
+      [bootstrap.workspaceGuid],
+    );
+    expect(decoyAssociations.rows[0]!.n).toBe(0);
+  });
+
+  it("counts only the mappings it actually wrote", async () => {
+    const duplicated = {
+      repository: "context-anchor",
+      pathPrefix: "src/http",
+      project: "anchor-mcp",
+      name: "http-transport",
+    };
+
+    const report = await importDocuments({
+      pool,
+      schemaName,
+      handler,
+      workspaceGuid: bootstrap.workspaceGuid,
+      actorPrincipalGuid: bootstrap.ownerPrincipalGuid,
+      repository: "context-anchor",
+      commitSha: "f".repeat(40),
+      files: files(),
+      projectMappings: [duplicated, duplicated],
+    });
+
+    // The report is what an operator reads to decide whether the import did what they meant.
+    expect(report.mappingsImported).toBe(1);
+  });
+
   it("records the import as one reversible batch of commands", async () => {
     const report = await runImport();
 

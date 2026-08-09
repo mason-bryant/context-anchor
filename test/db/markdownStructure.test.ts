@@ -101,6 +101,18 @@ describe("parseMarkdownStructure", () => {
     expect(blocks.map((b) => b.blockType)).toEqual(["paragraph"]);
   });
 
+  it("parses a document whose closing front-matter fence is the final line with no trailing newline", () => {
+    // The closing `---` at EOF made bodyStart land past content.length, which skipped the
+    // entire body silently — a document that imports as zero sections and zero blocks.
+    const noBody = "---\ntitle: x\n---";
+    expect(parseMarkdownStructure(noBody)).toEqual({ sections: [], blocks: [] });
+
+    const withBody = "---\ntitle: x\n---\n# Heading\n\nBody text.";
+    const parsed = parseMarkdownStructure(withBody);
+    expect(parsed.sections.map((s) => s.title)).toEqual(["Heading"]);
+    expect(parsed.blocks.map((b) => b.rawContent)).toEqual(["Body text."]);
+  });
+
   it("excludes front matter from block content", () => {
     const { blocks } = parseMarkdownStructure(DOC);
     expect(blocks.every((b) => !b.rawContent.includes("project: anchor-mcp"))).toBe(true);

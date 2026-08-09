@@ -230,6 +230,7 @@ async function importOneFile(args: {
         file,
         scopeGuid,
         sections: structure.sections,
+        sectionGuids,
         goalReferences,
         report,
       });
@@ -423,14 +424,16 @@ async function deriveSectionAssociations(args: {
   file: ImportFile;
   scopeGuid: string;
   sections: ReturnType<typeof parseMarkdownStructure>["sections"];
+  sectionGuids: string[];
   goalReferences: Map<string, Set<string>>;
   report: ImportReport;
 }): Promise<void> {
-  const { tx, input, scopeGuid, sections, goalReferences, report } = args;
+  const { tx, input, scopeGuid, sections, sectionGuids, goalReferences, report } = args;
   const schema = input.schemaName;
 
   for (const section of sections) {
-    await associate(tx, input, section.stableKey, scopeGuid, "owning-scope", "derived:document-scope", report);
+    const sectionGuid = sectionGuids[section.ordinal]!;
+    await associate(tx, input, sectionGuid, section.stableKey, scopeGuid, "owning-scope", "derived:document-scope", report);
 
     const goalId = GOAL_HEADING.exec(section.title);
     if (!goalId) {
@@ -450,6 +453,7 @@ async function deriveSectionAssociations(args: {
         await associate(
           tx,
           input,
+          sectionGuid,
           section.stableKey,
           initiative.rows[0].scope_guid,
           "referenced-goal",
@@ -464,6 +468,7 @@ async function deriveSectionAssociations(args: {
 async function associate(
   tx: CommandTransaction,
   input: ImportInput,
+  sectionGuid: string,
   stableKey: string,
   scopeGuid: string,
   associationType: string,
@@ -476,11 +481,23 @@ async function associate(
         derived_from_signal)
      VALUES ($1, $2, 'section', $3, $4, $5, $6, $7)
      ON CONFLICT DO NOTHING`,
-    [input.workspaceGuid, randomUUID(), randomUUID(), stableKey, scopeGuid, associationType, signal],
+    // record_guid is the section row this association was made against — provenance, not a
+    // live pointer. Resolution goes through stable_key, since section guids are
+    // revision-scoped, but recording a fresh uuid here would make the audit trail a lie.
+    [input.workspaceGuid, randomUUID(), sectionGuid, stableKey, scopeGuid, associationType, signal],
   );
   if (result.rowCount && result.rowCount > 0) {
     report.associationsDerived += 1;
   }
+}
+
+/** The leading `---` delimited block, or undefined when a document has no front matter. */
+function extractFrontMatter(content: string): string | undefined {
+  if (!content.startsWith("---")) {
+    return undefined;
+  }
+  const closing = content.indexOf("\n---", 3);
+  return closing === -1 ? undefined : content.slice(0, closing);
 }
 
 /** Milestone front matter is the only place goal ids are declared (verified in PR1 review). */
@@ -492,7 +509,14 @@ function collectGoalReferences(files: ImportFile[]): Map<string, Set<string>> {
     if (derived.scopeKind !== "initiative") {
       continue;
     }
-    const block = GOAL_IDS_IN_FRONT_MATTER.exec(file.content);
+    // Scoped to the front-matter block: `goal_ids:` also appears in body prose and fenced
+    // examples (docs/milestones.md documents the field by showing it), and matching those
+    // would attach a milestone's initiative to goals it never referenced.
+    const frontMatter = extractFrontMatter(file.content);
+    if (!frontMatter) {
+      continue;
+    }
+    const block = GOAL_IDS_IN_FRONT_MATTER.exec(frontMatter);
     if (!block) {
       continue;
     }
@@ -534,7 +558,7 @@ async function importProjectMappings(args: {
           derivedFromSignal: "project-mappings.json",
         });
 
-        await tx.query(
+        const inserted = await tx.query(
           `INSERT INTO "${schema}".repository_mappings
              (workspace_guid, mapping_guid, scope_guid, repository, path_prefix, web_config)
            VALUES ($1, $2, $3, $4, $5, $6)
@@ -548,7 +572,11 @@ async function importProjectMappings(args: {
             mapping.webConfig ? JSON.stringify(mapping.webConfig) : null,
           ],
         );
-        report.mappingsImported += 1;
+        // Count what was actually written, not what was offered: a duplicate mapping in the
+        // input would otherwise inflate the report the operator reads.
+        if (inserted.rowCount && inserted.rowCount > 0) {
+          report.mappingsImported += 1;
+        }
 
         await relateToDomain(tx, input, scopeGuid, `${mapping.project}-${mapping.name}`, report);
       }

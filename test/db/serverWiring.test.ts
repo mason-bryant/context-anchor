@@ -159,6 +159,26 @@ describe("importDocuments tool registration", () => {
     expect(result.structuredContent.report.documentsImported).toBe(1);
   });
 
+  it("requires a full 40-hex commit sha, since the import is defined as being of a pinned commit", () => {
+    const server = createAnchorMcpServer({} as AnchorService, {
+      knowledgeDb: {
+        listScopesForOwner: async () => SAMPLE_SCOPES,
+        listScopeChangesForOwner: async () => [],
+        importDocumentsAsOwner: async () => SAMPLE_REPORT,
+      },
+    }) as unknown as AdvertisedServer;
+
+    const schema = server._registeredTools.importDocuments!.inputSchema!;
+    const files = [{ path: "docs/a.md", content: "# A\n" }];
+
+    expect(schema.parse({ repository: "r", commitSha: "a".repeat(40), files })).toMatchObject({
+      commitSha: "a".repeat(40),
+    });
+    for (const bad of ["HEAD", "main", "abc123", "a".repeat(39), "a".repeat(41), "z".repeat(40)]) {
+      expect(() => schema.parse({ repository: "r", commitSha: bad, files }), bad).toThrow();
+    }
+  });
+
   it("requires at least one file", () => {
     const server = createAnchorMcpServer({} as AnchorService, {
       knowledgeDb: {

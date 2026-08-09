@@ -182,7 +182,11 @@ function frontMatterEnd(lines: Array<{ text: string; start: number; end: number 
   }
   for (let index = 1; index < lines.length; index += 1) {
     if (lines[index]!.text.trim() === "---") {
-      return lines[index]!.end + 1;
+      // Clamped: when the closing fence is the final line and the file has no trailing
+      // newline, `end + 1` lands past EOF and every body line is skipped as front matter —
+      // the document would import as zero sections and zero blocks, silently.
+      const lastLine = lines[lines.length - 1]!;
+      return Math.min(lines[index]!.end + 1, lastLine.end);
     }
   }
   // Unterminated front matter: treat the whole file as body rather than swallowing it.
