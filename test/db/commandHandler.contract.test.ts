@@ -152,6 +152,66 @@ describe.runIf(await isTestDatabaseReachable())("CommandHandler (real Postgres)"
     expect(entries.rows[0]!.n, "mutation_log must be rolled back").toBe(0);
   });
 
+  it("treats a concurrent duplicate idempotency key as a replay, not a unique violation", async () => {
+    const scopeGuid = await createScope(`idem-race-${randomUUID().slice(0, 8)}`);
+    const sharedKey = randomUUID();
+
+    // Same barrier shape as the version race: hold both transactions open until each has
+    // passed its own replay lookup, so both believe the key is unused and both try to
+    // insert it. Firing them unsynchronized would let the second simply see the first.
+    const reachedApply: Array<() => void> = [];
+    const bothStarted = new Promise<void>((resolveAll) => {
+      let seen = 0;
+      reachedApply.push(() => {
+        seen += 1;
+        if (seen === 2) {
+          resolveAll();
+        }
+      });
+    });
+
+    const racer = (title: string) =>
+      handler.execute({
+        workspaceGuid: bootstrap.workspaceGuid,
+        actorPrincipalGuid: bootstrap.ownerPrincipalGuid,
+        commandType: "scope.rename",
+        origin: "mcp",
+        idempotencyKey: sharedKey,
+        entity: { entityType: "scope", entityGuid: scopeGuid, ownerScopeGuid: scopeGuid },
+        apply: async (tx) => {
+          const updated = await tx.query<{ title: string; version: number }>(
+            `UPDATE "${schemaName}".scopes SET title = $1, version = version + 1
+             WHERE workspace_guid = $2 AND scope_guid = $3 RETURNING title, version`,
+            [title, bootstrap.workspaceGuid, scopeGuid],
+          );
+          return { resultingValue: updated.rows[0]!, entryType: "scope.renamed" };
+        },
+        onReplayCheckComplete: async () => {
+          reachedApply[0]!();
+          await bothStarted;
+        },
+      });
+
+    const results = await Promise.all([racer("Idem A"), racer("Idem B")]);
+
+    // Neither should throw: an identical command arriving twice is a replay by definition,
+    // whether the duplicate is sequential or concurrent.
+    expect(results.map((r) => r.commandGuid)).toEqual([results[0]!.commandGuid, results[0]!.commandGuid]);
+    expect(results.filter((r) => r.replayed)).toHaveLength(1);
+
+    const versions = await pool.query<{ n: number }>(
+      `SELECT count(*)::int AS n FROM "${schemaName}".record_versions WHERE entity_guid = $1`,
+      [scopeGuid],
+    );
+    expect(versions.rows[0]!.n, "the command must have applied exactly once").toBe(1);
+
+    const entries = await pool.query<{ n: number }>(
+      `SELECT count(*)::int AS n FROM "${schemaName}".mutation_log WHERE owner_scope_guid = $1`,
+      [scopeGuid],
+    );
+    expect(entries.rows[0]!.n).toBe(1);
+  });
+
   it("reports a genuinely concurrent write as ConcurrentModificationError, not a raw unique violation", async () => {
     const scopeGuid = await createScope(`race-${randomUUID().slice(0, 8)}`);
 

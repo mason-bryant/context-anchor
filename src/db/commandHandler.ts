@@ -33,6 +33,8 @@ export type CommandInput = {
   /** Current version the caller believes it is editing. Omit to skip the check. */
   expectedVersion?: number;
   apply: (tx: CommandTransaction) => Promise<ApplyResult>;
+  /** Test seam: runs after the replay lookup, so a test can force two commands to interleave. */
+  onReplayCheckComplete?: () => Promise<void>;
 };
 
 export type CommandResult = {
@@ -94,6 +96,8 @@ export class CommandHandler {
         return { ...replay, replayed: true };
       }
 
+      await input.onReplayCheckComplete?.();
+
       const priorVersionRow = await this.currentVersion(client, input);
       const priorVersion = priorVersionRow?.version ?? 0;
 
@@ -107,10 +111,18 @@ export class CommandHandler {
       }
 
       const commandGuid = randomUUID();
-      await client.query(
+      // ON CONFLICT rather than a bare INSERT: the lookup above only catches a replay that
+      // already committed. Two requests carrying the same key can both pass it, and the
+      // loser would then hit the unique constraint — a 23505 for what is, by definition, a
+      // duplicate submission. DO NOTHING makes the loser wait for the winner to finish:
+      // if the winner commits it reports zero rows and we return the winner's outcome; if
+      // the winner rolls back, the insert simply succeeds and this command proceeds.
+      const inserted = await client.query(
         `INSERT INTO "${this.schemaName}".commands
            (workspace_guid, command_guid, actor_principal_guid, command_type, idempotency_key, batch_guid, origin, reason)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+         ON CONFLICT (workspace_guid, idempotency_key) DO NOTHING
+         RETURNING command_guid`,
         [
           input.workspaceGuid,
           commandGuid,
@@ -122,6 +134,18 @@ export class CommandHandler {
           input.reason ?? null,
         ],
       );
+
+      if (inserted.rowCount === 0) {
+        const winner = await this.findAcceptedCommand(client, input);
+        if (!winner) {
+          throw new Error(
+            `Command with idempotency key ${JSON.stringify(input.idempotencyKey)} conflicted on insert but could ` +
+              `not be read back. This should be unreachable; retry the command.`,
+          );
+        }
+        await client.query("COMMIT");
+        return { ...winner, replayed: true };
+      }
 
       const applied = await input.apply(client);
       const version = priorVersion + 1;
