@@ -5,6 +5,7 @@ import * as z from "zod/v4";
 import type { AnchorService } from "./anchorService.js";
 import { anchorSectionGuidance } from "./anchorStructure.js";
 import type { ScopeSummary } from "./db/knowledgeDb.js";
+import type { ScopeChange } from "./db/scopeChanges.js";
 import { PeopleRegistryConflictError, ProjectMappingsConflictError } from "./git/repo.js";
 import { errorMetadata, noopRequestLogger, type RequestLogger } from "./logger.js";
 import { MIGRATION_OPERATION_CODES, type MigrationOperationCode } from "./migration/anchorMigration.js";
@@ -166,6 +167,7 @@ const SharedWriteOptsSchema = z.object({
 /** Structural, not the concrete class, so tests can pass a plain fake without a real pool. */
 export type KnowledgeDatabaseTool = {
   listScopesForOwner(): Promise<ScopeSummary[]>;
+  listScopeChangesForOwner(input: { scope: string; since?: string; limit?: number }): Promise<ScopeChange[]>;
 };
 
 export function createAnchorMcpServer(
@@ -1894,6 +1896,30 @@ the index when your workflow checks in that file.`,
         annotations: { readOnlyHint: true },
       },
       async () => jsonResult({ scopes: await knowledgeDb.listScopesForOwner() }),
+    );
+
+    server.registerTool(
+      "listScopeChanges",
+      {
+        title: "List Scope Changes",
+        description:
+          "Typed change history for one scope, newest first: what changed, by whom, under which command and batch, " +
+          "with prior and resulting values — domain entries, not file diffs. `scope` accepts a slug or a guid. " +
+          "`since` accepts a relative window (`7d`, `24h`, `90m`, `2w`), an ISO date (`2026-07-01`, read as UTC), " +
+          "or an ISO timestamp carrying an explicit timezone (`2026-07-01T00:00:00Z`). Requires the database " +
+          "backend; absent from the tool list when no database is configured.",
+        inputSchema: z.object({
+          traceId: TraceIdSchema,
+          // Trim before the length check, so a padded value resolves normally while a
+          // whitespace-only one is still rejected at the surface rather than downstream.
+          scope: z.string().trim().min(1),
+          since: z.string().trim().min(1).optional(),
+          limit: z.number().int().positive().optional(),
+        }),
+        annotations: { readOnlyHint: true },
+      },
+      async ({ scope, since, limit }) =>
+        jsonResult({ changes: await knowledgeDb.listScopeChangesForOwner({ scope, since, limit }) }),
     );
   }
 

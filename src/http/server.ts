@@ -78,6 +78,73 @@ export async function startHttpServer(
     traceRatings: runtime.traceRatings,
   });
 
+  // T4's surface: the per-scope history view. The thread ships with its UI rather than
+  // waiting for a batched UI phase (M12 decision).
+  app.get("/api/db/scope-changes", auth, (req: Request, res: Response) => {
+    void (async () => {
+      const knowledgeDb = runtime.knowledgeDb;
+      if (!knowledgeDb) {
+        res.status(503).json({ error: "Database backend is not configured" });
+        return;
+      }
+
+      // A repeated key arrives as an array. Treating that as absent would let an ambiguous
+      // `?since=7d&since=24h` widen silently to all history — the very thing this route
+      // 400s to prevent — and would let `limit` skip its validation entirely.
+      let scope: string | undefined;
+      let sinceParam: string | undefined;
+      try {
+        scope = singleStringParam(req.query.scope, "scope");
+        sinceParam = singleStringParam(req.query.since, "since");
+      } catch (error) {
+        res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
+        return;
+      }
+
+      if (!scope) {
+        res.status(400).json({ error: "scope is required (slug or guid)" });
+        return;
+      }
+
+      // Validate before it can reach SQL: an unparseable limit would otherwise arrive as
+      // NaN in the LIMIT parameter and surface as a 500 for what is caller error.
+      let limit: number | undefined;
+      let limitParam: string | undefined;
+      try {
+        limitParam = singleStringParam(req.query.limit, "limit");
+      } catch (error) {
+        res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
+        return;
+      }
+      if (limitParam !== undefined) {
+        limit = Number(limitParam);
+        if (!Number.isInteger(limit) || limit <= 0) {
+          res.status(400).json({ error: "limit must be a positive integer" });
+          return;
+        }
+      }
+
+      try {
+        const changes = await knowledgeDb.listScopeChangesForOwner({
+          scope,
+          since: sinceParam,
+          limit,
+        });
+        res.json({ scope, changes });
+      } catch (error) {
+        // A bad scope or a malformed `since` is caller error, not a server fault; anything
+        // else keeps its 500 so a real defect is not disguised as a validation message.
+        const name = error instanceof Error ? error.name : "";
+        if (name === "ScopeNotFoundError" || /invalid since/i.test(String(error))) {
+          res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
+          return;
+        }
+        runtime.logger.error("scope-changes request failed", { scope, error: errorMetadata(error) });
+        res.status(500).json({ error: "Failed to read scope changes" });
+      }
+    })();
+  });
+
   // Minimal "backend indicator" (design doc UI capability list): whether the database
   // backend is configured, and if so which schema and migration version answered. The full
   // routes/scope browser surface lands with later PRs; this is only enough to make a
@@ -195,6 +262,30 @@ export async function startHttpServer(
     ]);
   });
   return server;
+}
+
+/**
+ * Read a query parameter that must appear at most once. Express represents a repeated key
+ * as an array; accepting the first or last value would silently pick a winner among
+ * contradictory inputs, so an ambiguous parameter is rejected instead.
+ */
+function singleStringParam(value: unknown, name: string): string | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (typeof value === "string") {
+    // Trimmed once here so a padded value resolves normally instead of failing downstream
+    // with a misleading "no scope matched ' workspace '", and so the echoed value in the
+    // response is the one actually resolved.
+    //
+    // A present-but-blank value is returned as "" rather than collapsed to undefined, and
+    // that distinction matters: undefined means "not supplied", and for `since` that means
+    // no lower bound — so `?since=` would silently widen to all history, which is the
+    // failure this route 400s on malformed and repeated `since` to prevent. Each parameter's
+    // own validation rejects "" instead.
+    return value.trim();
+  }
+  throw new Error(`${name} must be given at most once`);
 }
 
 export function buildAllowedHosts(configuredHosts: string[] | undefined): string[] | undefined {
