@@ -57,7 +57,14 @@ describe.runIf(await isTestDatabaseReachable())("startHttpServer bind-failure cl
       throw new Error("Expected the blocking server to hold a TCP port");
     }
 
-    const before = await activeConnectionCount(adminPool);
+    // vitest runs test files in parallel against this same database, so a global
+    // pg_stat_activity count would drift with unrelated contract tests opening and closing
+    // connections. Tag this server's connections with a unique application_name and count
+    // only those, so the assertion measures exactly the pool under test.
+    const applicationName = `anchor_bind_fail_${randomUUID().replace(/-/g, "").slice(0, 12)}`;
+    const taggedUrl = `${TEST_DATABASE_URL}${TEST_DATABASE_URL.includes("?") ? "&" : "?"}application_name=${applicationName}`;
+
+    expect(await taggedConnectionCount(adminPool, applicationName)).toBe(0);
 
     await expect(
       startHttpServer(
@@ -73,19 +80,24 @@ describe.runIf(await isTestDatabaseReachable())("startHttpServer bind-failure cl
           database: { poolSize: 3, schemaName },
         },
         { host: "127.0.0.1", port: address.port, authToken: TOKEN, stateless: true },
-        { databaseUrl: TEST_DATABASE_URL },
+        { databaseUrl: taggedUrl },
       ),
     ).rejects.toThrow();
 
-    // The pool is closed in the failure path, so its connections must not survive.
-    await waitFor(async () => (await activeConnectionCount(adminPool)) <= before);
-    expect(await activeConnectionCount(adminPool)).toBeLessThanOrEqual(before);
+    // The pool is closed in the failure path, so none of its connections may survive.
+    await waitFor(async () => (await taggedConnectionCount(adminPool, applicationName)) === 0);
+    expect(await taggedConnectionCount(adminPool, applicationName)).toBe(0);
   });
 });
 
-async function activeConnectionCount(pool: Pool): Promise<number> {
+async function taggedConnectionCount(pool: Pool, applicationName: string): Promise<number> {
   const result = await pool.query<{ n: number }>(
-    `SELECT count(*)::int AS n FROM pg_stat_activity WHERE datname = current_database() AND pid <> pg_backend_pid()`,
+    `SELECT count(*)::int AS n
+     FROM pg_stat_activity
+     WHERE datname = current_database()
+       AND application_name = $1
+       AND pid <> pg_backend_pid()`,
+    [applicationName],
   );
   return result.rows[0]!.n;
 }

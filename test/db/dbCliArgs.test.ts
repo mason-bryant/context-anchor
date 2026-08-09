@@ -72,6 +72,20 @@ describe("resolveDbCliSchemaName", () => {
     );
   });
 
+  it("fails loudly when the config file is valid JSON but not an object", async () => {
+    const configPath = await writeConfig([{ database: { schemaName: "knowledge_dev" } }]);
+    expect(() => resolveDbCliSchemaName({ env: {}, configPath })).toThrow(/object/i);
+  });
+
+  it("fails loudly when database is present but not an object", async () => {
+    for (const bad of ["knowledge_dev", 42, null, ["knowledge_dev"]]) {
+      const configPath = await writeConfig({ database: bad });
+      expect(() => resolveDbCliSchemaName({ env: {}, configPath }), `database: ${JSON.stringify(bad)}`).toThrow(
+        /database/i,
+      );
+    }
+  });
+
   it("fails loudly on a malformed config file instead of silently using the default schema", async () => {
     const dir = await mkdtemp(path.join(os.tmpdir(), "anchor-db-cli-config-"));
     const configPath = path.join(dir, "anchor-mcp.config.json");

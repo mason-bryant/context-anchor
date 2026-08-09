@@ -95,8 +95,20 @@ function readSchemaNameFromConfig(configPath: string | undefined): string | unde
     );
   }
 
-  if (!isRecord(parsed) || !isRecord(parsed.database)) {
+  // A config that exists but has the wrong SHAPE gets the same treatment as one that won't
+  // parse: loud. The server already rejects a non-object `database` block, so staying quiet
+  // here is precisely how the CLI and server end up on different schemas.
+  if (!isRecord(parsed)) {
+    throw new Error(`Expected ${configPath} to contain a JSON object.`);
+  }
+
+  // No `database` block at all is a legitimate "nothing configured", unlike a malformed one.
+  if (parsed.database === undefined) {
     return undefined;
+  }
+
+  if (!isRecord(parsed.database)) {
+    throw new Error(`Expected config field database in ${configPath} to be an object.`);
   }
 
   const schemaName = parsed.database.schemaName;
@@ -104,7 +116,7 @@ function readSchemaNameFromConfig(configPath: string | undefined): string | unde
     return undefined;
   }
   if (typeof schemaName !== "string") {
-    throw new Error(`Expected config field database.schemaName to be a string`);
+    throw new Error(`Expected config field database.schemaName in ${configPath} to be a string.`);
   }
   return schemaName;
 }
