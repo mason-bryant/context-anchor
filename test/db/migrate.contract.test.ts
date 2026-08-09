@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
@@ -9,6 +9,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { getMigrationStatus, runMigrations, MigrationChecksumMismatchError } from "../../src/db/migrate.js";
 import { isTestDatabaseReachable, TEST_DATABASE_URL } from "./testDatabase.js";
+import { removeTempDir } from "../tempDir.js";
 
 const REAL_MIGRATIONS_DIR = path.resolve(import.meta.dirname, "../../migrations/knowledge");
 
@@ -91,7 +92,7 @@ describe.runIf(await isTestDatabaseReachable())("runMigrations / getMigrationSta
       ).rejects.toThrow(MigrationChecksumMismatchError);
     } finally {
       await pool.query(`DROP SCHEMA IF EXISTS "${localSchema}" CASCADE`);
-      await rm(tmpMigrationsDir, { recursive: true, force: true });
+      await removeTempDir(tmpMigrationsDir);
     }
   });
 
@@ -113,7 +114,7 @@ describe.runIf(await isTestDatabaseReachable())("runMigrations / getMigrationSta
       expect(status.pendingCount).toBe(1);
     } finally {
       await pool.query(`DROP SCHEMA IF EXISTS "${localSchema}" CASCADE`);
-      await rm(tmpMigrationsDir, { recursive: true, force: true });
+      await removeTempDir(tmpMigrationsDir);
     }
   });
 });

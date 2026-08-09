@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
@@ -8,6 +8,7 @@ import { AnchorService } from "../src/anchorService.js";
 import { AnchorRepository } from "../src/git/repo.js";
 import { createAnchorMcpServer } from "../src/server.js";
 import type { GraphNeighborsResult } from "../src/graph/neighbors.js";
+import { removeTempDir } from "./tempDir.js";
 
 let tmpDir: string;
 
@@ -16,7 +17,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
-  await rm(tmpDir, { recursive: true, force: true });
+  await removeTempDir(tmpDir);
 });
 
 const PROJECT_CONTEXT = `---

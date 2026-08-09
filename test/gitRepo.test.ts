@@ -1,10 +1,11 @@
-import { mkdir, mkdtemp, rm, utimes, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, utimes, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { AnchorRepository } from "../src/git/repo.js";
+import { removeTempDir } from "./tempDir.js";
 
 let tmpDir: string;
 
@@ -13,7 +14,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
-  await rm(tmpDir, { recursive: true, force: true });
+  await removeTempDir(tmpDir);
 });
 
 describe("AnchorRepository", () => {

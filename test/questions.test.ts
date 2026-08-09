@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { AnchorService } from "../src/anchorService.js";
 import { AnchorRepository } from "../src/git/repo.js";
 import { deleteQuestion, extractQuestions, replaceQuestionText, setQuestionStatus } from "../src/questions.js";
+import { removeTempDir } from "./tempDir.js";
 
 const QUESTION_DOC = `---
 type: context-anchor
@@ -106,7 +107,7 @@ describe("AnchorService questions", () => {
   });
 
   afterEach(async () => {
-    await rm(tmpDir, { recursive: true, force: true });
+    await removeTempDir(tmpDir);
   });
 
   it("lists, resolves, and reopens questions in anchors", async () => {

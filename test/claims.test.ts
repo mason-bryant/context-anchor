@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
@@ -27,6 +27,7 @@ import {
   upsertClaimAnnotation,
   upsertClaimSources,
 } from "../src/claims.js";
+import { removeTempDir } from "./tempDir.js";
 
 describe("parseAnnotationBody", () => {
   it("parses a full annotation", () => {
@@ -1013,7 +1014,7 @@ describe("AnchorService claims", () => {
   });
 
   afterEach(async () => {
-    await rm(tmpDir, { recursive: true, force: true });
+    await removeTempDir(tmpDir);
   });
 
   function anchorContent(extraClaim = "", lastValidated?: string): string {

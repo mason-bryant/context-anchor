@@ -1,5 +1,5 @@
 import type { Server } from "node:http";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { AnchorRepository } from "../../src/git/repo.js";
 import { startHttpServer } from "../../src/http/server.js";
+import { removeTempDir } from "../tempDir.js";
 
 let tmpDir: string;
 let server: Server | undefined;
@@ -52,7 +53,7 @@ afterEach(async () => {
     });
     server = undefined;
   }
-  await rm(tmpDir, { recursive: true, force: true });
+  await removeTempDir(tmpDir);
 });
 
 describe("GET /api/db/status", () => {

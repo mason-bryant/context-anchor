@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
@@ -10,6 +10,7 @@ import { AnchorRepository } from "../src/git/repo.js";
 import { parsePeopleRegistry } from "../src/peopleRegistry.js";
 import { parseProjectMappings } from "../src/projectMappings.js";
 import type { GraphEdge } from "../src/graph/model.js";
+import { removeTempDir } from "./tempDir.js";
 
 let tmpDir: string;
 
@@ -18,7 +19,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
-  await rm(tmpDir, { recursive: true, force: true });
+  await removeTempDir(tmpDir);
 });
 
 function graphDeps(repo: AnchorRepository) {

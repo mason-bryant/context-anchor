@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { Server } from "node:http";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
@@ -12,6 +12,7 @@ import { AnchorRepository } from "../../src/git/repo.js";
 import { startHttpServer } from "../../src/http/server.js";
 import { runMigrations } from "../../src/db/migrate.js";
 import { isTestDatabaseReachable, TEST_DATABASE_URL } from "./testDatabase.js";
+import { removeTempDir } from "../tempDir.js";
 
 const REAL_MIGRATIONS_DIR = path.resolve(import.meta.dirname, "../../migrations/knowledge");
 const TOKEN = "test-token";
@@ -44,7 +45,7 @@ describe.runIf(await isTestDatabaseReachable())("startHttpServer bind-failure cl
     }
     await adminPool.query(`DROP SCHEMA IF EXISTS "${schemaName}" CASCADE`);
     await adminPool.end();
-    await rm(tmpDir, { recursive: true, force: true });
+    await removeTempDir(tmpDir);
   });
 
   it("closes the knowledge database pool when the HTTP port is already bound", async () => {
