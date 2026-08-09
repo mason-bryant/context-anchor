@@ -24,7 +24,31 @@ export type ParsedMarkdown = {
 };
 
 const HEADING = /^(#{1,6})\s+(.*)$/;
-const FENCE = /^\s*(```|~~~)/;
+
+/**
+ * Fence handling follows the same rules as src/storage/markdown.ts: a fence closes only on
+ * the same marker character, at least as long as the one that opened it. Toggling on any
+ * fence-looking line lets a `~~~` inside a ``` block close it early, after which the code's
+ * own `#` lines parse as headings and every subsequent offset shifts.
+ */
+type OpenFence = { char: "`" | "~"; length: number };
+
+function tryOpenFence(text: string): OpenFence | undefined {
+  const match = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(text);
+  if (!match?.[1]) {
+    return undefined;
+  }
+  return { char: match[1].startsWith("~") ? "~" : "`", length: match[1].length };
+}
+
+function closesFence(text: string, open: OpenFence): boolean {
+  const match = /^ {0,3}(`{3,}|~{3,})\s*$/.exec(text);
+  if (!match?.[1]) {
+    return false;
+  }
+  const char = match[1].startsWith("~") ? "~" : "`";
+  return char === open.char && match[1].length >= open.length;
+}
 
 /**
  * Split a Markdown document into its heading structure and addressable blocks.
@@ -46,7 +70,7 @@ export function parseMarkdownStructure(content: string, options: { documentName?
   const blocks: ParsedBlock[] = [];
   const openHeadings: Array<{ ordinal: number; level: number; title: string }> = [];
 
-  let inFence = false;
+  let openFence: OpenFence | undefined;
   let currentSectionOrdinal: number | undefined;
   let pendingBlockLines: Array<{ text: string; start: number; end: number }> = [];
 
@@ -74,19 +98,20 @@ export function parseMarkdownStructure(content: string, options: { documentName?
       continue;
     }
 
-    if (FENCE.test(line.text)) {
-      // Toggle first, then collect: the fence markers belong to the block they delimit.
+    if (openFence) {
+      // Inside a fence: the marker lines belong to the block they delimit, so collect first
+      // and only then decide whether this line closed it.
       pendingBlockLines.push(line);
-      if (inFence) {
-        inFence = false;
+      if (closesFence(line.text, openFence)) {
+        openFence = undefined;
         flushBlock();
-      } else {
-        inFence = true;
       }
       continue;
     }
 
-    if (inFence) {
+    const opening = tryOpenFence(line.text);
+    if (opening) {
+      openFence = opening;
       pendingBlockLines.push(line);
       continue;
     }
@@ -211,7 +236,7 @@ function extendAncestorRanges(sections: ParsedSection[]): void {
 function classifyBlock(lines: string[]): ParsedBlock["blockType"] {
   const first = lines[0]!.trim();
 
-  if (FENCE.test(first)) {
+  if (tryOpenFence(first)) {
     return "code";
   }
   if (first.startsWith(">")) {

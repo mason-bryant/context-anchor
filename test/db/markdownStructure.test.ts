@@ -113,6 +113,24 @@ describe("parseMarkdownStructure", () => {
     expect(parsed.blocks.map((b) => b.rawContent)).toEqual(["Body text."]);
   });
 
+  it("does not let a different fence marker close an open fence", () => {
+    // A ``` block containing a ~~~ line must stay open. Closing early would treat the rest
+    // of the code as document structure and shift every offset after it.
+    const mixed = ["# One", "", "```md", "~~~", "# not a heading", "~~~", "```", "", "## Two", ""].join("\n");
+    const { sections, blocks } = parseMarkdownStructure(mixed);
+
+    expect(sections.map((s) => s.title)).toEqual(["One", "Two"]);
+    const code = blocks.find((b) => b.blockType === "code")!;
+    expect(code.rawContent).toContain("# not a heading");
+  });
+
+  it("does not let a shorter fence close a longer one", () => {
+    // Per CommonMark a closing fence must be at least as long as the opening one.
+    const longFence = ["# One", "", "````", "```", "# still code", "````", "", "## Two", ""].join("\n");
+    const { sections } = parseMarkdownStructure(longFence);
+    expect(sections.map((s) => s.title)).toEqual(["One", "Two"]);
+  });
+
   it("excludes front matter from block content", () => {
     const { blocks } = parseMarkdownStructure(DOC);
     expect(blocks.every((b) => !b.rawContent.includes("project: anchor-mcp"))).toBe(true);

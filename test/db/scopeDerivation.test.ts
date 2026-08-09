@@ -66,6 +66,13 @@ describe("deriveScopeForPath", () => {
     expect(deriveScopeForPath("projects\\anchor-mcp\\x.md")).toMatchObject({ scopeSlug: "anchor-mcp" });
   });
 
+  it("rejects a milestone path deeper than the documented shape", () => {
+    // Taking the last segment would mint an initiative from nested content the fixed mapping
+    // says nothing about.
+    expect(() => deriveScopeForPath("projects/p/milestones/2026/q1.md")).toThrow(/milestone path/i);
+    expect(() => deriveScopeForPath("projects/p/milestones")).toThrow(/milestone path/i);
+  });
+
   it("rejects a path that escapes the anchor root rather than deriving a scope from it", () => {
     expect(() => deriveScopeForPath("../outside/x.md")).toThrow(/path/i);
   });

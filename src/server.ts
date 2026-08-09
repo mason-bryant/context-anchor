@@ -1952,10 +1952,14 @@ the index when your workflow checks in that file.`,
           // A full 40-hex sha, because the import is defined as being of a PINNED commit:
           // the value goes into the idempotency key and the audit reason, and an arbitrary
           // string there makes "same commit" unverifiable after the fact.
+          // Lowercased after validation: the value is interpolated into idempotency keys, so
+          // the same commit in different casing would otherwise read as a different command
+          // and import it a second time.
           commitSha: z
             .string()
             .trim()
-            .regex(/^[0-9a-f]{40}$/i, "commitSha must be a full 40-character git SHA"),
+            .regex(/^[0-9a-f]{40}$/i, "commitSha must be a full 40-character git SHA")
+            .transform((value) => value.toLowerCase()),
           files: z
             .array(z.object({ path: z.string().trim().min(1), content: z.string() }))
             .min(1),

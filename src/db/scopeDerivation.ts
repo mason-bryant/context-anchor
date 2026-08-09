@@ -38,8 +38,18 @@ export function deriveScopeForPath(rawPath: string): DerivedScope {
   if (head === "projects" && rest.length >= 1) {
     const projectSlug = rest[0]!;
 
-    if (rest[1] === "milestones" && rest.length >= 3) {
-      const milestoneName = stripMarkdownExtension(rest[rest.length - 1]!);
+    // Exactly projects/<slug>/milestones/<name>.md. A deeper path such as
+    // projects/p/milestones/2026/q1.md is not the documented shape, and silently taking its
+    // last segment would mint an initiative that mis-attributes nested content.
+    if (rest[1] === "milestones" && rest.length !== 3) {
+      throw new Error(
+        `Unsupported milestone path ${JSON.stringify(rawPath)}: expected ` +
+          `projects/<slug>/milestones/<name>.md with no extra segments.`,
+      );
+    }
+
+    if (rest[1] === "milestones") {
+      const milestoneName = stripMarkdownExtension(rest[2]!);
       return {
         scopeKind: "initiative",
         // Prefixed with the project: two projects legitimately both have a "backlog".
