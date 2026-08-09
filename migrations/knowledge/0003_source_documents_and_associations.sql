@@ -180,7 +180,8 @@ CREATE TABLE record_scopes (
   -- revision-scoped, so a reimport mints new ones and a join through record_guid would
   -- silently stop matching — routes would come back empty with nothing raised. record_guid
   -- records the row the association was made against and is deliberately not a live pointer;
-  -- import never rewrites it. Null for assertions, whose guids are durable.
+  -- import never rewrites it. stable_key is null for assertions, whose guids are durable and
+  -- are what their associations resolve by; record_guid is NOT NULL for both kinds.
   stable_key text,
   scope_guid uuid NOT NULL,
   association_type text NOT NULL,

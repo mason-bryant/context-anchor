@@ -278,10 +278,10 @@ async function upsertScope(
   // An initiative belongs to the domain of its project; the derivation encodes the project
   // as the slug prefix, so the parent is recoverable without re-parsing the path.
   if (derived.scopeKind === "initiative") {
-    const projectSlug = derived.scopeSlug.split("-")[0];
-    if (projectSlug) {
-      await relateToDomain(tx, input, scopeGuid, derived.scopeSlug, report);
-    }
+    // relateToDomain finds the parent by longest matching domain slug, so no project slug
+    // needs computing here. A split on "-" would be wrong anyway for a dashed project like
+    // "anchor-mcp", and was only ever a truthiness check.
+    await relateToDomain(tx, input, scopeGuid, derived.scopeSlug, report);
   }
 
   return scopeGuid;
@@ -308,14 +308,18 @@ async function relateToDomain(
     return;
   }
 
-  await tx.query(
+  const inserted = await tx.query(
     `INSERT INTO "${schema}".scope_relations
        (workspace_guid, relation_guid, from_scope_guid, to_scope_guid, relation_type, derived_from_signal)
      VALUES ($1, $2, $3, $4, 'part_of', 'derived:slug-prefix')
      ON CONFLICT DO NOTHING`,
     [input.workspaceGuid, randomUUID(), fromScopeGuid, target.scope_guid],
   );
-  report.relationsCreated += 1;
+  // Count what was written, not what was attempted — a re-import would otherwise report
+  // relations it did not create. Same rule as mappingsImported and associationsDerived.
+  if (inserted.rowCount && inserted.rowCount > 0) {
+    report.relationsCreated += 1;
+  }
 }
 
 async function upsertDocument(

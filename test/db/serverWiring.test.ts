@@ -189,6 +189,12 @@ describe("importDocuments tool registration", () => {
     }) as unknown as AdvertisedServer;
 
     const schema = server._registeredTools.importDocuments!.inputSchema!;
-    expect(() => schema.parse({ repository: "r", commitSha: "c", files: [] })).toThrow();
+    // A valid sha, so the rejection can only come from the empty file list. With a short
+    // sha this passed for the wrong reason once commitSha gained its 40-hex check.
+    const commitSha = "a".repeat(40);
+    expect(() => schema.parse({ repository: "r", commitSha, files: [] })).toThrow();
+    expect(schema.parse({ repository: "r", commitSha, files: [{ path: "a.md", content: "" }] })).toMatchObject({
+      repository: "r",
+    });
   });
 });
