@@ -1979,7 +1979,15 @@ the index when your workflow checks in that file.`,
               z.object({
                 id: z.string().trim().min(1),
                 displayName: z.string().trim().min(1),
-                identities: z.array(z.object({ kind: z.string().trim().min(1), value: z.string().trim().min(1) })),
+                identities: z.array(
+                  z.object({
+                    // Mirrors the CHECK on user_identities.identity_kind, so an unsupported
+                    // kind fails at the surface with a clear message instead of reaching
+                    // Postgres and coming back as a constraint violation.
+                    kind: z.enum(["email", "slack", "github", "confluence", "nickname", "alias"]),
+                    value: z.string().trim().min(1),
+                  }),
+                ),
               }),
             )
             .optional(),

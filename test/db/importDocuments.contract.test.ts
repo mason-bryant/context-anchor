@@ -420,6 +420,56 @@ describe.runIf(await isTestDatabaseReachable())("importDocuments (real Postgres)
     await expect(insert()).rejects.toThrow(/user_identities_workspace_addressable_unique_idx/);
   });
 
+  it("still derives goal associations when the scope-derivation command replays", async () => {
+    // Same commit twice: the scopes.derive command hits its idempotency key and returns
+    // without running apply, so the in-memory scope cache is never populated. A cache miss
+    // must fall back to the database, not be read as "this scope does not exist".
+    await runImport();
+
+    const extraRoadmap: ImportFile = {
+      path: "projects/anchor-mcp/second-roadmap.md",
+      content: ["---", "project: anchor-mcp", "---", "", "# Second", "", "### Goal G-042 -- Also this", "", "Text.", ""].join(
+        "\n",
+      ),
+    };
+
+    await runImport({ files: [...files(), extraRoadmap] });
+
+    const associated = await pool.query<{ n: number }>(
+      `SELECT count(*)::int AS n
+       FROM "${schemaName}".record_scopes a
+       JOIN "${schemaName}".scopes s ON s.scope_guid = a.scope_guid
+       WHERE a.workspace_guid = $1
+         AND a.association_type = 'referenced-goal'
+         AND s.scope_slug = 'anchor-mcp-db-backed'
+         AND a.stable_key LIKE 'projects/anchor-mcp/second-roadmap.md#%'`,
+      [bootstrap.workspaceGuid],
+    );
+    expect(associated.rows[0]!.n, "a replayed scope pass must not silently drop associations").toBeGreaterThan(0);
+  });
+
+  it("refuses to merge two scope kinds that collide on one slug", async () => {
+    await runImport();
+
+    // A component from project-mappings.json colliding with an existing initiative slug
+    // would otherwise be silently absorbed into it and mis-route everything hanging off it.
+    await expect(
+      importDocuments({
+        pool,
+        schemaName,
+        handler,
+        workspaceGuid: bootstrap.workspaceGuid,
+        actorPrincipalGuid: bootstrap.ownerPrincipalGuid,
+        repository: "context-anchor",
+        commitSha: "9".repeat(40),
+        files: files(),
+        projectMappings: [
+          { repository: "context-anchor", pathPrefix: "src/x", project: "anchor", name: "mcp-db-backed" },
+        ],
+      }),
+    ).rejects.toThrow(/scope_kind|collide|kind/i);
+  });
+
   it("extracts nothing into assertions", async () => {
     await runImport();
     const tables = await pool.query<{ table_name: string }>(

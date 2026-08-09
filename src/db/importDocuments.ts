@@ -40,6 +40,9 @@ export type ImportReport = {
   unchanged: string[];
 };
 
+/** Slug -> resolved scope. Kind is carried so a cache hit is validated like a database hit. */
+type ScopeCache = Map<string, { scopeGuid: string; scopeKind: string }>;
+
 export type ImportInput = {
   pool: Pool;
   schemaName: string;
@@ -82,7 +85,7 @@ export async function importDocuments(input: ImportInput): Promise<ImportReport>
     unchanged: [],
   };
 
-  const scopeCache = new Map<string, string>();
+  const scopeCache: ScopeCache = new Map();
   const ensureScope = (tx: CommandTransaction, derived: DerivedScope) =>
     upsertScope(tx, input, derived, scopeCache, report);
 
@@ -157,7 +160,7 @@ async function importOneFile(args: {
   report: ImportReport;
   ensureScope: (tx: CommandTransaction, derived: DerivedScope) => Promise<string>;
   goalReferences: Map<string, Set<string>>;
-  scopeCache: Map<string, string>;
+  scopeCache: ScopeCache;
 }): Promise<void> {
   const { input, file, batchGuid, report, ensureScope, goalReferences, scopeCache } = args;
   const schema = input.schemaName;
@@ -250,21 +253,26 @@ async function upsertScope(
   tx: CommandTransaction,
   input: ImportInput,
   derived: DerivedScope,
-  cache: Map<string, string>,
+  cache: ScopeCache,
   report: ImportReport,
 ): Promise<string> {
   const cached = cache.get(derived.scopeSlug);
   if (cached) {
-    return cached;
+    assertScopeKindMatches(derived, cached.scopeKind);
+    return cached.scopeGuid;
   }
 
   const schema = input.schemaName;
-  const existing = await tx.query<{ scope_guid: string }>(
-    `SELECT scope_guid FROM "${schema}".scopes WHERE workspace_guid = $1 AND scope_slug = $2`,
+  const existing = await tx.query<{ scope_guid: string; scope_kind: string }>(
+    `SELECT scope_guid, scope_kind FROM "${schema}".scopes WHERE workspace_guid = $1 AND scope_slug = $2`,
     [input.workspaceGuid, derived.scopeSlug],
   );
   if (existing.rows[0]) {
-    cache.set(derived.scopeSlug, existing.rows[0].scope_guid);
+    // scope_slug is unique per workspace, so two kinds sharing one slug would silently
+    // become a single scope and mis-route everything associated with either. Fail loudly:
+    // the derivation rules are the thing to fix, not the row.
+    assertScopeKindMatches(derived, existing.rows[0].scope_kind);
+    cache.set(derived.scopeSlug, { scopeGuid: existing.rows[0].scope_guid, scopeKind: existing.rows[0].scope_kind });
     return existing.rows[0].scope_guid;
   }
 
@@ -275,7 +283,7 @@ async function upsertScope(
     [input.workspaceGuid, scopeGuid, derived.scopeSlug, derived.scopeKind, derived.title],
   );
   report.scopesCreated += 1;
-  cache.set(derived.scopeSlug, scopeGuid);
+  cache.set(derived.scopeSlug, { scopeGuid, scopeKind: derived.scopeKind });
 
   // An initiative belongs to the domain of its project; the derivation encodes the project
   // as the slug prefix, so the parent is recoverable without re-parsing the path.
@@ -300,8 +308,11 @@ async function relateToDomain(
   // The domain is the longest existing domain slug this scope's slug starts with, so
   // "anchor-mcp-db-backed" finds "anchor-mcp" rather than a hypothetical "anchor".
   const domain = await tx.query<{ scope_guid: string }>(
+    // strpos rather than LIKE: scope_slug is unconstrained text, and a component slug comes
+    // from project-mappings.json, so a '%' or '_' in one would silently become a wildcard
+    // and select the wrong parent.
     `SELECT scope_guid FROM "${schema}".scopes
-     WHERE workspace_guid = $1 AND scope_kind = 'domain' AND $2 LIKE scope_slug || '-%'
+     WHERE workspace_guid = $1 AND scope_kind = 'domain' AND strpos($2, scope_slug || '-') = 1
      ORDER BY length(scope_slug) DESC LIMIT 1`,
     [input.workspaceGuid, fromSlug],
   );
@@ -432,7 +443,7 @@ async function deriveSectionAssociations(args: {
   sections: ReturnType<typeof parseMarkdownStructure>["sections"];
   sectionGuids: string[];
   goalReferences: Map<string, Set<string>>;
-  scopeCache: Map<string, string>;
+  scopeCache: ScopeCache;
   report: ImportReport;
 }): Promise<void> {
   const { tx, input, scopeGuid, sections, sectionGuids, goalReferences, scopeCache, report } = args;
@@ -451,10 +462,12 @@ async function deriveSectionAssociations(args: {
     }
 
     for (const initiativeSlug of initiatives) {
-      // Resolved from the cache the first pass already filled: deriveAllScopes creates every
-      // scope before any document is imported, so a slug that is missing here does not exist
-      // at all. Querying per (section, slug) pair was an N+1 over values already in memory.
-      const initiativeScopeGuid = scopeCache.get(initiativeSlug);
+      // Normally served from the cache the first pass filled, which is what keeps this from
+      // being an N+1. But a miss does NOT mean the scope is absent: when scopes.derive hits
+      // its idempotency key and replays, apply never runs and the cache stays empty even
+      // though every scope exists. Falling back to the database (memoized) is what stops a
+      // replayed import from silently dropping goal associations.
+      const initiativeScopeGuid = await resolveScopeGuid(tx, input, scopeCache, initiativeSlug);
       if (initiativeScopeGuid) {
         await associate(
           tx,
@@ -468,6 +481,42 @@ async function deriveSectionAssociations(args: {
         );
       }
     }
+  }
+}
+
+/**
+ * Cache-first scope lookup that treats a miss as "not yet loaded" rather than "absent", and
+ * memoizes both outcomes so a genuinely missing slug is still only queried once.
+ */
+async function resolveScopeGuid(
+  tx: CommandTransaction,
+  input: ImportInput,
+  cache: ScopeCache,
+  scopeSlug: string,
+): Promise<string | undefined> {
+  const cached = cache.get(scopeSlug);
+  if (cached) {
+    return cached.scopeGuid;
+  }
+
+  const result = await tx.query<{ scope_guid: string; scope_kind: string }>(
+    `SELECT scope_guid, scope_kind FROM "${input.schemaName}".scopes WHERE workspace_guid = $1 AND scope_slug = $2`,
+    [input.workspaceGuid, scopeSlug],
+  );
+  const row = result.rows[0];
+  if (row) {
+    cache.set(scopeSlug, { scopeGuid: row.scope_guid, scopeKind: row.scope_kind });
+  }
+  return row?.scope_guid;
+}
+
+/** One slug can only ever mean one kind; merging two would mis-route everything under both. */
+function assertScopeKindMatches(derived: DerivedScope, existingKind: string): void {
+  if (existingKind !== derived.scopeKind) {
+    throw new Error(
+      `Scope slug ${JSON.stringify(derived.scopeSlug)} already exists as kind ${existingKind}, ` +
+        `but was derived as ${derived.scopeKind}. Refusing to merge two scope kinds under one slug.`,
+    );
   }
 }
 
