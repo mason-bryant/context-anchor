@@ -72,6 +72,16 @@ describe("resolveDbCliSchemaName", () => {
     );
   });
 
+  it("fails loudly on a malformed config file instead of silently using the default schema", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "anchor-db-cli-config-"));
+    const configPath = path.join(dir, "anchor-mcp.config.json");
+    await writeFile(configPath, '{ "database": { "schemaName": "knowledge_dev" ', "utf8");
+
+    // Falling back to the default here would migrate a different schema than the operator
+    // configured — the exact divergence this resolver exists to prevent.
+    expect(() => resolveDbCliSchemaName({ env: {}, configPath })).toThrow(/anchor-mcp\.config\.json|parse|JSON/i);
+  });
+
   it("rejects an invalid schema name from either source", async () => {
     expect(() => resolveDbCliSchemaName({ env: { ANCHOR_MCP_DB_SCHEMA: "Not Valid" }, configPath: undefined })).toThrow(
       /schemaName/,

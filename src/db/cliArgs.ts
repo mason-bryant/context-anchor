@@ -73,11 +73,26 @@ function readSchemaNameFromConfig(configPath: string | undefined): string | unde
     return undefined;
   }
 
-  let parsed: unknown;
+  // A file that isn't there (or can't be read) is a legitimate "nothing configured" —
+  // the CLI must work in a fresh checkout. A file that IS there but malformed is not:
+  // falling back to the default would migrate a different schema than the operator wrote
+  // down, which is precisely the silent divergence this resolver exists to prevent.
+  let raw: string;
   try {
-    parsed = JSON.parse(readFileSync(configPath, "utf8"));
+    raw = readFileSync(configPath, "utf8");
   } catch {
     return undefined;
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(
+      `Could not parse ${configPath}: ${message}. Fix the file or set ANCHOR_MCP_DB_SCHEMA ` +
+        `explicitly — refusing to fall back to the default schema, which could migrate the wrong target.`,
+    );
   }
 
   if (!isRecord(parsed) || !isRecord(parsed.database)) {

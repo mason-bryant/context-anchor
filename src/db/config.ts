@@ -31,6 +31,29 @@ export function assertValidDatabaseUrl(databaseUrl: string): void {
   }
 }
 
+/**
+ * Connection strings routinely carry a password, and `DATABASE_URL` may come from a secret
+ * store, so anything that reaches a console, a log file, or CI output goes through here
+ * first. Keeps host, port, database, and username — the parts an operator needs to tell
+ * which target they are looking at — and drops only the password.
+ *
+ * An unparseable value is never echoed back: it could be anything, including the secret
+ * itself mistyped, so it degrades to a fixed placeholder rather than passing through.
+ */
+export function redactDatabaseUrl(databaseUrl: string): string {
+  let parsed: URL;
+  try {
+    parsed = new URL(databaseUrl);
+  } catch {
+    return "<unparseable database url>";
+  }
+
+  if (parsed.password) {
+    parsed.password = "***";
+  }
+  return parsed.toString();
+}
+
 export type PartialDatabaseConfig = {
   poolSize?: number;
   schemaName?: string;

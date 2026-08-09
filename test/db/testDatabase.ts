@@ -1,5 +1,7 @@
 import pg from "pg";
 
+import { redactDatabaseUrl } from "../../src/db/config.js";
+
 export const TEST_DATABASE_URL =
   process.env.TEST_DATABASE_URL ?? "postgres://anchor:anchor@127.0.0.1:55432/anchor_mcp";
 
@@ -44,8 +46,9 @@ export async function isTestDatabaseReachable(): Promise<boolean> {
   }
 
   reachable = false;
+  // Redacted: TEST_DATABASE_URL can come from a CI secret, and this line lands in build logs.
   console.warn(
-    `[db contract tests] Postgres not usable at ${TEST_DATABASE_URL}; skipping. ` +
+    `[db contract tests] Postgres not usable at ${redactDatabaseUrl(TEST_DATABASE_URL)}; skipping. ` +
       `Run \`npm run db:up\` to enable these tests locally. Last error: ` +
       `${lastError instanceof Error ? lastError.message : String(lastError)}`,
   );

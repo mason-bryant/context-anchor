@@ -5,6 +5,7 @@ import {
   DEFAULT_DATABASE_SCHEMA_NAME,
   assertValidDatabaseUrl,
   assertValidSchemaName,
+  redactDatabaseUrl,
   resolveDatabaseConfig,
 } from "../../src/db/config.js";
 
@@ -59,6 +60,29 @@ describe("assertValidSchemaName", () => {
     expect(() => assertValidSchemaName("knowledge test")).toThrow();
     expect(() => assertValidSchemaName('"knowledge"')).toThrow();
     expect(() => assertValidSchemaName("knowledge; DROP SCHEMA public CASCADE;--")).toThrow();
+  });
+});
+
+describe("redactDatabaseUrl", () => {
+  it("replaces the password while keeping the parts an operator needs to identify the target", () => {
+    const redacted = redactDatabaseUrl("postgres://anchor:sup3rs3cret@db.example.com:55432/anchor_mcp");
+    expect(redacted).not.toContain("sup3rs3cret");
+    expect(redacted).toBe("postgres://anchor:***@db.example.com:55432/anchor_mcp");
+  });
+
+  it("leaves a URL with no password untouched in substance", () => {
+    const redacted = redactDatabaseUrl("postgres://anchor@127.0.0.1:55432/anchor_mcp");
+    expect(redacted).toContain("anchor@127.0.0.1:55432/anchor_mcp");
+    expect(redacted).not.toContain(":***@");
+  });
+
+  it("handles a URL with no userinfo at all", () => {
+    expect(redactDatabaseUrl("postgres://127.0.0.1:55432/anchor_mcp")).toContain("127.0.0.1:55432/anchor_mcp");
+  });
+
+  it("never echoes an unparseable value back verbatim", () => {
+    const redacted = redactDatabaseUrl("not a url with a s3cret in it");
+    expect(redacted).not.toContain("s3cret");
   });
 });
 

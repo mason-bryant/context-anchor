@@ -15,6 +15,7 @@ import { spawnSync } from "node:child_process";
 import pg from "pg";
 
 import { parseDbCliArgs, resolveDbCliSchemaName } from "../src/db/cliArgs.js";
+import { redactDatabaseUrl } from "../src/db/config.js";
 import { getMigrationStatus, runMigrations } from "../src/db/migrate.js";
 
 // Must match docker-compose.yml's postgres service (also mirrored in
@@ -119,7 +120,7 @@ async function main(): Promise<void> {
       dockerCompose(["up", "-d", "postgres"]);
       await waitForReady();
       await migrate();
-      console.log(`Postgres ready at ${databaseUrl()}`);
+      console.log(`Postgres ready at ${redactDatabaseUrl(databaseUrl())}`);
       break;
     }
     case "down": {
@@ -146,7 +147,7 @@ async function main(): Promise<void> {
       dockerCompose(["up", "-d", "postgres"]);
       await waitForReady();
       await migrate();
-      console.log(`Postgres reset and ready at ${databaseUrl()}`);
+      console.log(`Postgres reset and ready at ${redactDatabaseUrl(databaseUrl())}`);
       break;
     }
   }
