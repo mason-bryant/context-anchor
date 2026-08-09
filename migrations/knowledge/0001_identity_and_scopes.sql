@@ -38,13 +38,20 @@ CREATE TABLE users (
 );
 
 -- The authorization subject inside one workspace; what grants, commands, and audit point at.
+-- The principal_identity_shape CHECK keeps the two principal kinds from drifting into
+-- states later code would have to defend against: a 'user' principal always resolves to a
+-- row in users, and a 'service' principal never carries one.
 CREATE TABLE principals (
   workspace_guid uuid NOT NULL REFERENCES workspaces (workspace_guid),
   principal_guid uuid NOT NULL,
   principal_type text NOT NULL CHECK (principal_type IN ('user', 'service')),
   user_guid uuid REFERENCES users (user_guid),
   display_name text NOT NULL,
-  PRIMARY KEY (workspace_guid, principal_guid)
+  PRIMARY KEY (workspace_guid, principal_guid),
+  CONSTRAINT principal_identity_shape CHECK (
+    (principal_type = 'user' AND user_guid IS NOT NULL)
+    OR (principal_type = 'service' AND user_guid IS NULL)
+  )
 );
 
 -- Whether a principal belongs to the workspace and owns it; carries no knowledge access by
@@ -97,3 +104,11 @@ CREATE TABLE scope_grants (
 );
 
 CREATE INDEX scope_grants_principal_idx ON scope_grants (workspace_guid, principal_guid) WHERE retired_at IS NULL;
+
+-- At most one LIVE grant per (workspace, principal, scope). Without this, duplicate active
+-- rows would make a scope appear twice in a listing and leave the effective permission
+-- ambiguous when they disagree. Partial so the tombstone model still works: any number of
+-- retired rows may accumulate as history, and re-granting after a retirement is allowed.
+CREATE UNIQUE INDEX scope_grants_live_unique_idx
+  ON scope_grants (workspace_guid, principal_guid, scope_guid)
+  WHERE retired_at IS NULL;
