@@ -79,13 +79,17 @@ export async function startHttpServer(
   });
 
   // Minimal "backend indicator" (design doc UI capability list): whether the database
-  // backend is configured, and if so its schema and migration state. The full routes/scope
-  // browser surface lands with later PRs; this is only enough to make a missing tool
-  // diagnosable rather than mysterious.
+  // backend is configured, and if so which schema and migration version answered. The full
+  // routes/scope browser surface lands with later PRs; this is only enough to make a
+  // missing tool diagnosable rather than mysterious.
   app.get("/api/db/status", auth, (_req: Request, res: Response) => {
     res.json(
       runtime.knowledgeDb
-        ? { configured: true, schemaName: runtime.knowledgeDb.schemaName }
+        ? {
+            configured: true,
+            schemaName: runtime.knowledgeDb.schemaName,
+            schemaVersion: runtime.knowledgeDb.schemaVersion ?? null,
+          }
         : { configured: false },
     );
   });
@@ -164,9 +168,15 @@ export async function startHttpServer(
       port: options.port,
       error: errorMetadata(error),
     });
-    await runtime.requestLogger.close();
-    await runtime.traceLogger.close();
-    await runtime.logger.close();
+    // Close the database pool too, or a failed bind (port in use) leaks its connections.
+    // Every teardown is best-effort and individually caught so a cleanup failure cannot
+    // mask the bind error the caller actually needs to see.
+    await Promise.allSettled([
+      runtime.requestLogger.close(),
+      runtime.traceLogger.close(),
+      runtime.logger.close(),
+      runtime.knowledgeDb?.close() ?? Promise.resolve(),
+    ]);
     throw error;
   }
 

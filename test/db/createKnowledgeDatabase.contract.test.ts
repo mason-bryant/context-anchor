@@ -31,20 +31,24 @@ describe.runIf(await isTestDatabaseReachable())("createKnowledgeDatabase startup
     ).rejects.toThrow(MigrationsPendingError);
   });
 
-  it("the failure message tells the operator to run db migrate", async () => {
+  it("the failure message names a command this repo actually exposes (npm run db:migrate)", async () => {
     await expect(createKnowledgeDatabase(TEST_DATABASE_URL, { poolSize: 2, schemaName })).rejects.toThrow(
-      /db migrate/,
+      /npm run db:migrate/,
     );
   });
 
-  it("starts successfully once migrations have been applied", async () => {
+  it("starts successfully once migrations have been applied, and reports the applied schema version", async () => {
     const readySchema = `${schemaName}_ready`;
-    await runMigrations(adminPool, { schemaName: readySchema, migrationsDir: REAL_MIGRATIONS_DIR });
+    const { applied } = await runMigrations(adminPool, {
+      schemaName: readySchema,
+      migrationsDir: REAL_MIGRATIONS_DIR,
+    });
 
     const db = await createKnowledgeDatabase(TEST_DATABASE_URL, { poolSize: 2, schemaName: readySchema });
     try {
       const scopes = await db.listScopesForOwner();
       expect(scopes.map((s) => s.scopeSlug)).toContain("workspace");
+      expect(db.schemaVersion).toBe(applied[applied.length - 1]!.id);
     } finally {
       await db.close();
       await adminPool.query(`DROP SCHEMA IF EXISTS "${schemaName}_ready" CASCADE`);

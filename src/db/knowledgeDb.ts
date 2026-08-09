@@ -22,7 +22,7 @@ export class MigrationsPendingError extends Error {
   constructor(schemaName: string, pendingCount: number) {
     super(
       `Database schema "${schemaName}" has ${pendingCount} pending migration(s). ` +
-        `Run \`npm run db:migrate\` (or \`db migrate\`) before starting the server.`,
+        `Run \`npm run db:migrate\` before starting the server.`,
     );
     this.name = "MigrationsPendingError";
   }
@@ -33,6 +33,12 @@ export class KnowledgeDatabase {
     private readonly pool: Pool,
     public readonly schemaName: string,
     public readonly bootstrap: BootstrapResult,
+    /**
+     * Migration id applied at startup. Safe to cache: the server refuses to start with
+     * pending migrations, and migrations are only applied by the `db` CLI against a
+     * stopped/serving-nothing schema, so this cannot drift while the process is up.
+     */
+    public readonly schemaVersion: number | undefined = undefined,
   ) {}
 
   async listScopes(input: { workspaceGuid: string; principalGuid: string; role: WorkspaceRole }): Promise<ScopeSummary[]> {
@@ -136,10 +142,11 @@ export async function createKnowledgeDatabase(
     const bootstrap = await ensureBootstrap(pool, { schemaName: resolvedConfig.schemaName });
     logger?.info("knowledge database ready", {
       schemaName: resolvedConfig.schemaName,
+      schemaVersion: status.currentVersion,
       workspaceGuid: bootstrap.workspaceGuid,
     });
 
-    return new KnowledgeDatabase(pool, resolvedConfig.schemaName, bootstrap);
+    return new KnowledgeDatabase(pool, resolvedConfig.schemaName, bootstrap, status.currentVersion);
   } catch (error) {
     await pool.end().catch(() => {});
     throw error;
