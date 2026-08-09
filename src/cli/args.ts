@@ -3,6 +3,7 @@ import path from "node:path";
 
 import type { AnchorSchemaMode, FileLoggingConfig, LoggingConfig, RequestLoggingConfig, ServerConfig, TraceLoggingConfig } from "../types.js";
 import { ANCHOR_SCHEMA_MODES } from "../types.js";
+import { assertValidDatabaseUrl, resolveDatabaseConfig, type DatabaseConfig } from "../db/config.js";
 import { expandHome } from "../utils/path.js";
 import { DEFAULT_GRAPH_SCORING_ENABLED, DEFAULT_GRAPH_SCORING_MAX_BOOST, clampGraphScoringMaxBoost } from "../graph/proximity.js";
 
@@ -14,6 +15,8 @@ export type CliOptions = {
   allowedHosts?: string[];
   authToken?: string;
   stateless: boolean;
+  /** `--database-url` / `DATABASE_URL` only — never the config file; see ServerConfig.database for the non-secret settings that do live there. */
+  databaseUrl?: string;
 };
 
 export function parseCliArgs(argv: string[], env: NodeJS.ProcessEnv = process.env): CliOptions {
@@ -52,6 +55,11 @@ export function parseCliArgs(argv: string[], env: NodeJS.ProcessEnv = process.en
     listEnv(env.ANCHOR_MCP_ALLOWED_HOSTS) ??
     listConfigValue(fileConfig.allowedHosts, "allowedHosts");
 
+  const databaseUrl = stringFlag(flags, "database-url") ?? env.DATABASE_URL ?? undefined;
+  if (databaseUrl) {
+    assertValidDatabaseUrl(databaseUrl);
+  }
+
   return {
     transport,
     host: stringFlag(flags, "host") ?? env.ANCHOR_MCP_HOST ?? "127.0.0.1",
@@ -61,6 +69,7 @@ export function parseCliArgs(argv: string[], env: NodeJS.ProcessEnv = process.en
       stringFlag(flags, "auth-token") ??
       env.ANCHOR_MCP_AUTH_TOKEN ??
       stringConfigValue(fileConfig.authToken, "authToken"),
+    databaseUrl,
     stateless: !(
       booleanFlag(flags, "stateful") ||
       booleanEnv(env.ANCHOR_MCP_STATEFUL) ||
@@ -89,6 +98,7 @@ export function parseCliArgs(argv: string[], env: NodeJS.ProcessEnv = process.en
           "legacy",
       },
       logging: loggingConfigValue(fileConfig.logging, "logging"),
+      database: databaseConfigValue(fileConfig.database, "database"),
     },
   };
 }
@@ -137,6 +147,8 @@ type CliConfigFile = {
   /** HTTP transport session mode; CLI --stateful and ANCHOR_MCP_STATEFUL take precedence. */
   stateful?: unknown;
   logging?: unknown;
+  /** Non-secret only (poolSize, schemaName) — never a connection string; see databaseUrl. */
+  database?: unknown;
 };
 
 function readConfigFile(flags: Map<string, string | boolean>, env: NodeJS.ProcessEnv): CliConfigFile {
@@ -239,6 +251,33 @@ function listConfigValue(value: unknown, key: string): string[] | undefined {
 
   const hosts = items.filter((item) => item.length > 0);
   return hosts.length > 0 ? hosts : undefined;
+}
+
+function numberConfigValue(value: unknown, key: string): number | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (typeof value !== "number") {
+    throw new Error(`Expected config field ${key} to be a number`);
+  }
+
+  return value;
+}
+
+function databaseConfigValue(value: unknown, key: string): DatabaseConfig | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (!isRecord(value)) {
+    throw new Error(`Expected config field ${key} to be an object`);
+  }
+
+  return resolveDatabaseConfig({
+    poolSize: numberConfigValue(value.poolSize, `${key}.poolSize`),
+    schemaName: stringConfigValue(value.schemaName, `${key}.schemaName`),
+  });
 }
 
 function booleanConfigValue(value: unknown, key: string): boolean | undefined {

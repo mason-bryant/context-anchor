@@ -1,4 +1,5 @@
 import { AnchorService } from "./anchorService.js";
+import { createKnowledgeDatabase, type KnowledgeDatabase } from "./db/knowledgeDb.js";
 import { AutoSync } from "./git/autoSync.js";
 import { AnchorRepository } from "./git/repo.js";
 import { createAppLogger, createRequestLogger, type AppLogger, type RequestLogger } from "./logger.js";
@@ -18,13 +19,15 @@ export type AnchorRuntime = {
   traceLogger: TraceLogger;
   traceIndex: TraceIndex;
   traceRatings: TraceRatingsStore;
+  /** Undefined when no databaseUrl was supplied — the server serves Git-backed tools only. */
+  knowledgeDb?: KnowledgeDatabase;
   startAutoSync(): void;
   stopAutoSync(): void;
 };
 
 export async function createAnchorRuntime(
   config: ServerConfig,
-  options: { logger?: AppLogger; requestLogger?: RequestLogger; traceLogger?: TraceLogger } = {},
+  options: { logger?: AppLogger; requestLogger?: RequestLogger; traceLogger?: TraceLogger; databaseUrl?: string } = {},
 ): Promise<AnchorRuntime> {
   const logger = options.logger ?? createAppLogger(config.logging);
   const requestLogger = options.requestLogger ?? createRequestLogger(config.logging);
@@ -36,6 +39,14 @@ export async function createAnchorRuntime(
     anchorRoot: config.anchorRoot,
   });
   await repo.ensureReady();
+
+  // Fail fast rather than boot with a half-usable database: an operator who set
+  // DATABASE_URL meant to enable the backend, so a schema stuck mid-migration (or never
+  // migrated) should stop the server with a clear fix, not silently serve Git-only.
+  const knowledgeDb = options.databaseUrl
+    ? await createKnowledgeDatabase(options.databaseUrl, config.database, logger)
+    : undefined;
+
   logger.info("anchor runtime initialized", {
     repoPath: config.repoPath,
     anchorRoot: config.anchorRoot,
@@ -45,6 +56,7 @@ export async function createAnchorRuntime(
     staleAfterDays: config.staleAfterDays,
     graphScoringEnabled: config.graphScoring.enabled,
     graphScoringMaxBoost: config.graphScoring.maxBoost,
+    databaseConfigured: Boolean(knowledgeDb),
   });
 
   const service = new AnchorService(repo, {
@@ -55,7 +67,7 @@ export async function createAnchorRuntime(
     anchorSchemaMode: config.anchorSchema?.mode ?? "legacy",
     graphUi: config.graphUi,
   });
-  const mcpServer = createAnchorMcpServer(service, { requestLogger, trace: { logger: traceLogger } });
+  const mcpServer = createAnchorMcpServer(service, { requestLogger, trace: { logger: traceLogger }, knowledgeDb });
   // AutoSync pulls serialize on the service's write lock so a background
   // pull/rebase can never interleave with a write's identity snapshot +
   // duplicate check + commit (see AnchorService.runExclusiveWrite).
@@ -71,6 +83,7 @@ export async function createAnchorRuntime(
     traceLogger,
     traceIndex,
     traceRatings,
+    knowledgeDb,
     startAutoSync() {
       if (config.autoSync) {
         autoSync.start();

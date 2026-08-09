@@ -368,3 +368,87 @@ describe("CLI args — graphScoring.enabled", () => {
     expect(options.config.graphScoring.maxBoost).toBe(3);
   });
 });
+
+describe("CLI args — databaseUrl", () => {
+  it("returns undefined when no source is provided", () => {
+    expect(parseCliArgs([], {}).databaseUrl).toBeUndefined();
+  });
+
+  it("reads databaseUrl from the --database-url flag", () => {
+    const options = parseCliArgs(["--database-url", "postgres://anchor:anchor@localhost:55432/anchor_mcp"], {});
+    expect(options.databaseUrl).toBe("postgres://anchor:anchor@localhost:55432/anchor_mcp");
+  });
+
+  it("reads databaseUrl from the DATABASE_URL environment variable", () => {
+    const options = parseCliArgs([], { DATABASE_URL: "postgres://anchor:anchor@localhost:55432/anchor_mcp" });
+    expect(options.databaseUrl).toBe("postgres://anchor:anchor@localhost:55432/anchor_mcp");
+  });
+
+  it("the --database-url flag takes precedence over DATABASE_URL", () => {
+    const options = parseCliArgs(["--database-url", "postgres://flag@localhost:55432/db"], {
+      DATABASE_URL: "postgres://env@localhost:55432/db",
+    });
+    expect(options.databaseUrl).toBe("postgres://flag@localhost:55432/db");
+  });
+
+  it("rejects a databaseUrl that is not a Postgres connection string", () => {
+    expect(() => parseCliArgs(["--database-url", "mysql://localhost/db"], {})).toThrow(/postgres/i);
+  });
+
+  it("never reads a connection string from the config file", async () => {
+    const tmpDir = await mkdtemp(path.join(os.tmpdir(), "anchor-mcp-config-"));
+    const configPath = path.join(tmpDir, "anchor-mcp.config.json");
+    await writeFile(configPath, JSON.stringify({ database: { url: "postgres://sneaky@localhost/db" } }), "utf8");
+
+    const options = parseCliArgs(["--config", configPath], {});
+    expect(options.databaseUrl).toBeUndefined();
+  });
+});
+
+describe("CLI args — config.database (poolSize, schemaName)", () => {
+  it("is undefined when no database config is supplied", () => {
+    expect(parseCliArgs([], {}).config.database).toBeUndefined();
+  });
+
+  it("reads poolSize and schemaName from the config file", async () => {
+    const tmpDir = await mkdtemp(path.join(os.tmpdir(), "anchor-mcp-config-"));
+    const configPath = path.join(tmpDir, "anchor-mcp.config.json");
+    await writeFile(configPath, JSON.stringify({ database: { poolSize: 4, schemaName: "knowledge_dev" } }), "utf8");
+
+    const options = parseCliArgs(["--config", configPath], {});
+    expect(options.config.database).toEqual({ poolSize: 4, schemaName: "knowledge_dev" });
+  });
+
+  it("defaults poolSize and schemaName when the database block is empty", async () => {
+    const tmpDir = await mkdtemp(path.join(os.tmpdir(), "anchor-mcp-config-"));
+    const configPath = path.join(tmpDir, "anchor-mcp.config.json");
+    await writeFile(configPath, JSON.stringify({ database: {} }), "utf8");
+
+    const options = parseCliArgs(["--config", configPath], {});
+    expect(options.config.database).toEqual({ poolSize: 10, schemaName: "knowledge" });
+  });
+
+  it("rejects a non-object database config value", async () => {
+    const tmpDir = await mkdtemp(path.join(os.tmpdir(), "anchor-mcp-config-"));
+    const configPath = path.join(tmpDir, "anchor-mcp.config.json");
+    await writeFile(configPath, JSON.stringify({ database: "knowledge" }), "utf8");
+
+    expect(() => parseCliArgs(["--config", configPath], {})).toThrow(/Expected config field database to be an object/);
+  });
+
+  it("rejects an invalid schemaName in the config file", async () => {
+    const tmpDir = await mkdtemp(path.join(os.tmpdir(), "anchor-mcp-config-"));
+    const configPath = path.join(tmpDir, "anchor-mcp.config.json");
+    await writeFile(configPath, JSON.stringify({ database: { schemaName: "Not Valid" } }), "utf8");
+
+    expect(() => parseCliArgs(["--config", configPath], {})).toThrow(/schemaName/);
+  });
+
+  it("rejects a non-positive poolSize in the config file", async () => {
+    const tmpDir = await mkdtemp(path.join(os.tmpdir(), "anchor-mcp-config-"));
+    const configPath = path.join(tmpDir, "anchor-mcp.config.json");
+    await writeFile(configPath, JSON.stringify({ database: { poolSize: 0 } }), "utf8");
+
+    expect(() => parseCliArgs(["--config", configPath], {})).toThrow(/poolSize/);
+  });
+});

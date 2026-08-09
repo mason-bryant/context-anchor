@@ -23,7 +23,7 @@ async function main(): Promise<void> {
         authToken: options.authToken,
         stateless: options.stateless,
       },
-      { logger },
+      { logger, databaseUrl: options.databaseUrl },
     );
     console.error(`anchor-mcp listening on http://${options.host}:${options.port}/mcp`);
     process.once("SIGINT", () => server.close());
@@ -31,7 +31,7 @@ async function main(): Promise<void> {
     return;
   }
 
-  const runtime = await createAnchorRuntime(options.config, { logger });
+  const runtime = await createAnchorRuntime(options.config, { logger, databaseUrl: options.databaseUrl });
   runtime.startAutoSync();
   const transport = new StdioServerTransport();
   await runtime.mcpServer.connect(transport);
@@ -41,6 +41,7 @@ async function main(): Promise<void> {
     logger.info("anchor-mcp shutting down");
     runtime.stopAutoSync();
     await runtime.mcpServer.close();
+    await runtime.knowledgeDb?.close();
     await runtime.requestLogger.close();
     await runtime.traceLogger.close();
     await logger.close();

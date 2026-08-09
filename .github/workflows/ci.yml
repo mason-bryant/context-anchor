@@ -9,6 +9,23 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    services:
+      # Bound to the same port/credentials as docker-compose.yml's postgres service so the
+      # db contract tests' default connection string (see test/db/testDatabase.ts) works
+      # here with no extra env wiring, and matches local `npm run db:up` exactly.
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: anchor
+          POSTGRES_PASSWORD: anchor
+          POSTGRES_DB: anchor_mcp
+        ports:
+          - "55432:5432"
+        options: >-
+          --health-cmd "pg_isready -U anchor -d anchor_mcp"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 30
     steps:
       - uses: actions/checkout@v4
 
