@@ -62,7 +62,10 @@ async function waitForReady(timeoutMs = 30_000): Promise<void> {
   let lastError: unknown;
 
   while (Date.now() < deadline) {
-    const client = new pg.Client({ connectionString: databaseUrl() });
+    // Bound each attempt, or one hung connect (unreachable host, stalled DNS) outlives the
+    // wall-clock deadline and `db up`/`db reset` hangs instead of failing. Mirrors the
+    // contract-test probe in test/db/testDatabase.ts.
+    const client = new pg.Client({ connectionString: databaseUrl(), connectionTimeoutMillis: 2_000 });
     try {
       await client.connect();
       await client.query("SELECT 1");

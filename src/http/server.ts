@@ -184,7 +184,10 @@ export async function startHttpServer(
   server.once("close", () => {
     runtime.stopAutoSync();
     runtime.logger.info("http server closed", { host: options.host, port: options.port });
-    void Promise.all([
+    // allSettled, matching the bind-failure path: nothing awaits this, so a rejecting
+    // close (a pool already ended, a logger transport gone) would otherwise surface as an
+    // unhandled rejection during shutdown.
+    void Promise.allSettled([
       runtime.requestLogger.close(),
       runtime.traceLogger.close(),
       runtime.logger.close(),
