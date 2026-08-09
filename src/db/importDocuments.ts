@@ -184,8 +184,8 @@ async function importOneFile(args: {
       const scopeGuid = await ensureScope(tx, derived);
       const documentGuid = await upsertDocument(tx, input, file, scopeGuid, report);
 
-      const latest = await tx.query<{ revision_number: number; content_hash: string }>(
-        `SELECT revision_number, content_hash FROM "${schema}".document_revisions
+      const latest = await tx.query<{ revision_number: number; content_hash: string; revision_guid: string }>(
+        `SELECT revision_number, content_hash, revision_guid FROM "${schema}".document_revisions
          WHERE workspace_guid = $1 AND document_guid = $2
          ORDER BY revision_number DESC LIMIT 1`,
         [input.workspaceGuid, documentGuid],
@@ -195,6 +195,21 @@ async function importOneFile(args: {
       // real event and gets a new revision; history is a log, not a set of distinct states.
       if (latest.rows[0]?.content_hash === contentHash) {
         report.unchanged.push(file.path);
+
+        // Unchanged bytes do NOT mean unchanged associations: goal associations come from
+        // OTHER files' front matter, so a later commit adding a milestone that references a
+        // goal must still reach this untouched roadmap's section. Derive against the rows
+        // the existing revision already has; ON CONFLICT keeps it idempotent.
+        await deriveAssociationsForExistingRevision({
+          tx,
+          input,
+          revisionGuid: latest.rows[0].revision_guid,
+          scopeGuid,
+          goalReferences,
+          scopeCache,
+          report,
+        });
+
         return {
           resultingValue: { path: file.path, unchanged: true },
           entryType: "document.unchanged",
@@ -474,6 +489,57 @@ async function deriveSectionAssociations(args: {
           input,
           sectionGuid,
           section.stableKey,
+          initiativeScopeGuid,
+          "referenced-goal",
+          "derived:milestone-goal-ids",
+          report,
+        );
+      }
+    }
+  }
+}
+
+/**
+ * Re-derive associations for a document whose bytes did not change, using the sections its
+ * existing latest revision already holds. Association inputs are cross-file, so "this file is
+ * unchanged" is not the same claim as "this file's associations are unchanged".
+ */
+async function deriveAssociationsForExistingRevision(args: {
+  tx: CommandTransaction;
+  input: ImportInput;
+  revisionGuid: string;
+  scopeGuid: string;
+  goalReferences: Map<string, Set<string>>;
+  scopeCache: ScopeCache;
+  report: ImportReport;
+}): Promise<void> {
+  const { tx, input, revisionGuid, scopeGuid, goalReferences, scopeCache, report } = args;
+
+  const existing = await tx.query<{ section_guid: string; stable_key: string; title: string }>(
+    `SELECT section_guid, stable_key, title FROM "${input.schemaName}".source_sections
+     WHERE workspace_guid = $1 AND revision_guid = $2 ORDER BY ordinal`,
+    [input.workspaceGuid, revisionGuid],
+  );
+
+  for (const row of existing.rows) {
+    await associate(tx, input, row.section_guid, row.stable_key, scopeGuid, "owning-scope", "derived:document-scope", report);
+
+    const goalId = GOAL_HEADING.exec(row.title);
+    if (!goalId) {
+      continue;
+    }
+    const initiatives = goalReferences.get(`G-${goalId[1]}`);
+    if (!initiatives) {
+      continue;
+    }
+    for (const initiativeSlug of initiatives) {
+      const initiativeScopeGuid = await resolveScopeGuid(tx, input, scopeCache, initiativeSlug);
+      if (initiativeScopeGuid) {
+        await associate(
+          tx,
+          input,
+          row.section_guid,
+          row.stable_key,
           initiativeScopeGuid,
           "referenced-goal",
           "derived:milestone-goal-ids",

@@ -80,6 +80,20 @@ describe.runIf(await isTestDatabaseReachable())("importDocuments (real Postgres)
     await pool.end();
   });
 
+  async function goalAssociationCount(stableKeyFragment: string, scopeSlug: string): Promise<number> {
+    const result = await pool.query<{ n: number }>(
+      `SELECT count(*)::int AS n
+       FROM "${schemaName}".record_scopes a
+       JOIN "${schemaName}".scopes s ON s.scope_guid = a.scope_guid
+       WHERE a.workspace_guid = $1
+         AND a.association_type = 'referenced-goal'
+         AND a.stable_key LIKE '%' || $2 || '%'
+         AND s.scope_slug = $3`,
+      [bootstrap.workspaceGuid, stableKeyFragment, scopeSlug],
+    );
+    return result.rows[0]!.n;
+  }
+
   function runImport(input: { files?: ImportFile[]; commit?: string } = {}) {
     return importDocuments({
       pool,
@@ -468,6 +482,41 @@ describe.runIf(await isTestDatabaseReachable())("importDocuments (real Postgres)
         ],
       }),
     ).rejects.toThrow(/scope_kind|collide|kind/i);
+  });
+
+  it("derives new goal associations for an unchanged document when another file starts referencing it", async () => {
+    // Associations come from OTHER files' front matter, so a roadmap's bytes staying
+    // identical does not mean its associations are still correct. A later commit adding a
+    // milestone that references G-041 must reach the untouched roadmap's goal section.
+    const milestoneWithoutG041: ImportFile = {
+      path: "projects/anchor-mcp/milestones/db-backed.md",
+      content: MILESTONE,
+    };
+    await runImport({ files: [files()[0]!, milestoneWithoutG041, files()[2]!] });
+
+    const before = await goalAssociationCount("goal-g-041", "anchor-mcp-later");
+    expect(before).toBe(0);
+
+    const laterMilestone: ImportFile = {
+      path: "projects/anchor-mcp/milestones/later.md",
+      content: [
+        "---",
+        "project: anchor-mcp",
+        "relations:",
+        "  goal_ids:",
+        "    - G-041",
+        "---",
+        "",
+        "# Milestone -- Later",
+        "",
+      ].join("\n"),
+    };
+
+    // The roadmap's bytes are byte-identical to the first import; only the milestone is new.
+    await runImport({ files: [...files(), laterMilestone], commit: "7".repeat(40) });
+
+    const after = await goalAssociationCount("goal-g-041", "anchor-mcp-later");
+    expect(after, "an unchanged document must still pick up newly-referenced goals").toBeGreaterThan(0);
   });
 
   it("extracts nothing into assertions", async () => {
