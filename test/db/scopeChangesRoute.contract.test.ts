@@ -138,14 +138,19 @@ describe.runIf(await isTestDatabaseReachable())("GET /api/db/scope-changes (real
     }
   });
 
-  it("treats an empty or whitespace-only limit as unspecified, not as invalid", async () => {
-    // An empty parameter means "not provided"; required-ness then decides the outcome.
-    // `limit` is optional, so it falls back to the default — whereas an empty `scope` is
-    // reported as missing, since scope is required. Same rule, different requiredness.
+  it("rejects a present-but-blank parameter rather than treating it as unspecified", async () => {
+    // "Blank means not supplied" is tempting and wrong here. For `since`, not-supplied means
+    // no lower bound, so `?since=` would silently widen to all history — the same failure
+    // this route already 400s on for malformed and repeated `since`. A present parameter
+    // with no value is malformed, uniformly, whatever its type.
     for (const blank of ["", "%20"]) {
-      const response = await get(`?scope=workspace&limit=${blank}`);
-      expect(response.status, `limit=${JSON.stringify(blank)}`).toBe(200);
-      expect(((await response.json()) as { changes: unknown[] }).changes).toHaveLength(1);
+      const emptySince = await get(`?scope=workspace&since=${blank}`);
+      expect(emptySince.status, `since=${JSON.stringify(blank)}`).toBe(400);
+      expect(((await emptySince.json()) as { error: string }).error).toMatch(/since/i);
+
+      const emptyLimit = await get(`?scope=workspace&limit=${blank}`);
+      expect(emptyLimit.status, `limit=${JSON.stringify(blank)}`).toBe(400);
+      expect(((await emptyLimit.json()) as { error: string }).error).toMatch(/limit/i);
     }
   });
 

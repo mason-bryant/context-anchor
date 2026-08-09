@@ -276,10 +276,14 @@ function singleStringParam(value: unknown, name: string): string | undefined {
   if (typeof value === "string") {
     // Trimmed once here so a padded value resolves normally instead of failing downstream
     // with a misleading "no scope matched ' workspace '", and so the echoed value in the
-    // response is the one actually resolved. An all-whitespace value becomes undefined,
-    // which the caller then reports as missing rather than as not-found.
-    const trimmed = value.trim();
-    return trimmed.length > 0 ? trimmed : undefined;
+    // response is the one actually resolved.
+    //
+    // A present-but-blank value is returned as "" rather than collapsed to undefined, and
+    // that distinction matters: undefined means "not supplied", and for `since` that means
+    // no lower bound — so `?since=` would silently widen to all history, which is the
+    // failure this route 400s on malformed and repeated `since` to prevent. Each parameter's
+    // own validation rejects "" instead.
+    return value.trim();
   }
   throw new Error(`${name} must be given at most once`);
 }
