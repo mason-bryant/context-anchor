@@ -74,43 +74,81 @@ async function initializeRuntime(
     ? await createKnowledgeDatabase(options.databaseUrl, config.database, logger)
     : undefined;
 
-  logger.info("anchor runtime initialized", {
-    repoPath: config.repoPath,
-    anchorRoot: config.anchorRoot,
-    autoSync: config.autoSync,
-    pushOnWrite: config.pushOnWrite,
-    migrationWarnOnly: config.migrationWarnOnly,
-    staleAfterDays: config.staleAfterDays,
-    graphScoringEnabled: config.graphScoring.enabled,
-    graphScoringMaxBoost: config.graphScoring.maxBoost,
-    databaseConfigured: Boolean(knowledgeDb),
-  });
+  // Everything past this point can throw while holding an open pool. The caller's catch
+  // only closes loggers — it has no reference to knowledgeDb, which is created here — so
+  // ownership of it has to be discharged here or its connections leak.
+  try {
+    logger.info("anchor runtime initialized", {
+      repoPath: config.repoPath,
+      anchorRoot: config.anchorRoot,
+      autoSync: config.autoSync,
+      pushOnWrite: config.pushOnWrite,
+      migrationWarnOnly: config.migrationWarnOnly,
+      staleAfterDays: config.staleAfterDays,
+      graphScoringEnabled: config.graphScoring.enabled,
+      graphScoringMaxBoost: config.graphScoring.maxBoost,
+      databaseConfigured: Boolean(knowledgeDb),
+    });
 
-  const service = new AnchorService(repo, {
-    pushOnWrite: config.pushOnWrite,
-    migrationWarnOnly: config.migrationWarnOnly,
-    staleAfterDays: config.staleAfterDays,
-    graphScoring: config.graphScoring,
-    anchorSchemaMode: config.anchorSchema?.mode ?? "legacy",
-    graphUi: config.graphUi,
-  });
-  const mcpServer = createAnchorMcpServer(service, { requestLogger, trace: { logger: traceLogger }, knowledgeDb });
-  // AutoSync pulls serialize on the service's write lock so a background
-  // pull/rebase can never interleave with a write's identity snapshot +
-  // duplicate check + commit (see AnchorService.runExclusiveWrite).
-  const autoSync = new AutoSync(repo, config.syncIntervalMs, logger, (fn) => service.runExclusiveWrite(fn));
+    const service = new AnchorService(repo, {
+      pushOnWrite: config.pushOnWrite,
+      migrationWarnOnly: config.migrationWarnOnly,
+      staleAfterDays: config.staleAfterDays,
+      graphScoring: config.graphScoring,
+      anchorSchemaMode: config.anchorSchema?.mode ?? "legacy",
+      graphUi: config.graphUi,
+    });
+    const mcpServer = createAnchorMcpServer(service, { requestLogger, trace: { logger: traceLogger }, knowledgeDb });
+    // AutoSync pulls serialize on the service's write lock so a background
+    // pull/rebase can never interleave with a write's identity snapshot +
+    // duplicate check + commit (see AnchorService.runExclusiveWrite).
+    const autoSync = new AutoSync(repo, config.syncIntervalMs, logger, (fn) => service.runExclusiveWrite(fn));
 
+    return buildRuntime({
+      config,
+      repo,
+      service,
+      mcpServer,
+      autoSync,
+      logger,
+      requestLogger,
+      traceLogger,
+      traceIndex,
+      traceRatings,
+      knowledgeDb,
+    });
+  } catch (error) {
+    // Best-effort and settled, so a close failure cannot mask the real error.
+    await Promise.allSettled([knowledgeDb?.close() ?? Promise.resolve()]);
+    throw error;
+  }
+}
+
+function buildRuntime(parts: {
+  config: ServerConfig;
+  repo: AnchorRepository;
+  service: AnchorService;
+  mcpServer: ReturnType<typeof createAnchorMcpServer>;
+  autoSync: AutoSync;
+  logger: AppLogger;
+  requestLogger: RequestLogger;
+  traceLogger: TraceLogger;
+  traceIndex: TraceIndex;
+  traceRatings: TraceRatingsStore;
+  knowledgeDb: KnowledgeDatabase | undefined;
+}): AnchorRuntime {
+  const { config, autoSync } = parts;
   return {
-    repo,
-    service,
-    mcpServer,
+    repo: parts.repo,
+    service: parts.service,
+    mcpServer: parts.mcpServer,
     autoSync,
-    logger,
-    requestLogger,
-    traceLogger,
-    traceIndex,
-    traceRatings,
-    knowledgeDb,
+    logger: parts.logger,
+    requestLogger: parts.requestLogger,
+    traceLogger: parts.traceLogger,
+    traceIndex: parts.traceIndex,
+    traceRatings: parts.traceRatings,
+    knowledgeDb: parts.knowledgeDb,
     startAutoSync() {
       if (config.autoSync) {
         autoSync.start();
