@@ -27,9 +27,25 @@ CREATE TABLE user_identities (
 -- Addressable identity kinds are unique among LIVE rows only, so a retired identity can be
 -- reissued. Nicknames and aliases are deliberately excluded: they collide legitimately, and
 -- an ambiguous match is surfaced rather than guessed.
-CREATE UNIQUE INDEX user_identities_addressable_unique_idx
+--
+-- Uniqueness is scope-aware, in two parts, because this table holds both kinds of row. A
+-- single global index would stop the same email or Slack handle from existing in two
+-- workspaces at all — and, combined with ON CONFLICT DO NOTHING in the importer, would make
+-- the second workspace's import silently drop that person's identities.
+CREATE UNIQUE INDEX user_identities_workspace_addressable_unique_idx
+  ON user_identities (workspace_guid, identity_kind, normalized_value)
+  WHERE retired_at IS NULL
+    AND workspace_guid IS NOT NULL
+    AND identity_kind IN ('email', 'slack', 'github', 'confluence');
+
+-- Truly global identities (workspace_guid null) stay unique across the whole table; NULL is
+-- not comparable in a unique index, so they need their own predicate rather than relying on
+-- the one above.
+CREATE UNIQUE INDEX user_identities_global_addressable_unique_idx
   ON user_identities (identity_kind, normalized_value)
-  WHERE retired_at IS NULL AND identity_kind IN ('email', 'slack', 'github', 'confluence');
+  WHERE retired_at IS NULL
+    AND workspace_guid IS NULL
+    AND identity_kind IN ('email', 'slack', 'github', 'confluence');
 
 CREATE INDEX user_identities_user_idx ON user_identities (user_guid) WHERE retired_at IS NULL;
 

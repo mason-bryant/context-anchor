@@ -173,6 +173,14 @@ export type KnowledgeDatabaseTool = {
     repository: string;
     commitSha: string;
     files: Array<{ path: string; content: string }>;
+    projectMappings?: Array<{
+      repository: string;
+      pathPrefix: string;
+      project: string;
+      name: string;
+      webConfig?: Record<string, unknown>;
+    }>;
+    people?: Array<{ id: string; displayName: string; identities: Array<{ kind: string; value: string }> }>;
   }): Promise<ImportReport>;
 };
 
@@ -1951,10 +1959,42 @@ the index when your workflow checks in that file.`,
           files: z
             .array(z.object({ path: z.string().trim().min(1), content: z.string() }))
             .min(1),
+          // project-mappings.json, so routing is reproducible from the database alone
+          // rather than by reading Git at query time.
+          projectMappings: z
+            .array(
+              z.object({
+                repository: z.string().trim().min(1),
+                pathPrefix: z.string().trim().min(1),
+                project: z.string().trim().min(1),
+                name: z.string().trim().min(1),
+                webConfig: z.record(z.string(), z.unknown()).optional(),
+              }),
+            )
+            .optional(),
+          // The people registry. Nothing reads it yet; it is carried across because
+          // reconstructing identity history later costs far more than importing it now.
+          people: z
+            .array(
+              z.object({
+                id: z.string().trim().min(1),
+                displayName: z.string().trim().min(1),
+                identities: z.array(z.object({ kind: z.string().trim().min(1), value: z.string().trim().min(1) })),
+              }),
+            )
+            .optional(),
         }),
       },
-      async ({ repository, commitSha, files }) =>
-        jsonResult({ report: await knowledgeDb.importDocumentsAsOwner({ repository, commitSha, files }) }),
+      async ({ repository, commitSha, files, projectMappings, people }) =>
+        jsonResult({
+          report: await knowledgeDb.importDocumentsAsOwner({
+            repository,
+            commitSha,
+            files,
+            projectMappings,
+            people,
+          }),
+        }),
     );
   }
 

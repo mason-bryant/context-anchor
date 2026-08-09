@@ -159,6 +159,53 @@ describe("importDocuments tool registration", () => {
     expect(result.structuredContent.report.documentsImported).toBe(1);
   });
 
+  it("passes projectMappings and people through, so those import paths are reachable", async () => {
+    let received: Record<string, unknown> | undefined;
+    const server = createAnchorMcpServer({} as AnchorService, {
+      knowledgeDb: {
+        listScopesForOwner: async () => SAMPLE_SCOPES,
+        listScopeChangesForOwner: async () => [],
+        importDocumentsAsOwner: async (input: Record<string, unknown>) => {
+          received = input;
+          return SAMPLE_REPORT;
+        },
+      },
+    }) as unknown as AdvertisedServer;
+
+    await server._registeredTools.importDocuments!.handler({
+      repository: "context-anchor",
+      commitSha: "a".repeat(40),
+      files: [{ path: "docs/a.md", content: "# A\n" }],
+      projectMappings: [{ repository: "context-anchor", pathPrefix: "src/http", project: "p", name: "http" }],
+      people: [{ id: "mason", displayName: "Mason", identities: [{ kind: "email", value: "m@example.com" }] }],
+    });
+
+    // Without this, both import paths exist and are tested but can never run in production.
+    expect(received?.projectMappings).toHaveLength(1);
+    expect(received?.people).toHaveLength(1);
+  });
+
+  it("accepts a schema-valid payload carrying mappings and people", () => {
+    const server = createAnchorMcpServer({} as AnchorService, {
+      knowledgeDb: {
+        listScopesForOwner: async () => SAMPLE_SCOPES,
+        listScopeChangesForOwner: async () => [],
+        importDocumentsAsOwner: async () => SAMPLE_REPORT,
+      },
+    }) as unknown as AdvertisedServer;
+
+    const schema = server._registeredTools.importDocuments!.inputSchema!;
+    expect(
+      schema.parse({
+        repository: "r",
+        commitSha: "a".repeat(40),
+        files: [{ path: "a.md", content: "" }],
+        projectMappings: [{ repository: "r", pathPrefix: "src", project: "p", name: "n" }],
+        people: [{ id: "i", displayName: "d", identities: [{ kind: "email", value: "e@x.com" }] }],
+      }),
+    ).toMatchObject({ repository: "r" });
+  });
+
   it("requires a full 40-hex commit sha, since the import is defined as being of a pinned commit", () => {
     const server = createAnchorMcpServer({} as AnchorService, {
       knowledgeDb: {

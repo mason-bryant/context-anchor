@@ -363,6 +363,63 @@ describe.runIf(await isTestDatabaseReachable())("importDocuments (real Postgres)
     expect(identities.rows[0]!.normalized_value).toBe("mason@example.com");
   });
 
+  it("imports the same person into two workspaces without silently dropping identities", async () => {
+    const second = await ensureBootstrap(pool, { schemaName, workspaceSlug: "second-workspace" });
+    const people = [
+      { id: "mason", displayName: "Mason Bryant", identities: [{ kind: "email", value: "mason@example.com" }] },
+    ];
+
+    const common = {
+      pool,
+      schemaName,
+      handler,
+      repository: "context-anchor",
+      commitSha: "1".repeat(40),
+      files: files(),
+      people,
+    };
+
+    await importDocuments({
+      ...common,
+      workspaceGuid: bootstrap.workspaceGuid,
+      actorPrincipalGuid: bootstrap.ownerPrincipalGuid,
+    });
+    await importDocuments({
+      ...common,
+      commitSha: "2".repeat(40),
+      workspaceGuid: second.workspaceGuid,
+      actorPrincipalGuid: second.ownerPrincipalGuid,
+    });
+
+    // A global unique index would have let ON CONFLICT DO NOTHING swallow the second one.
+    const identities = await pool.query<{ n: number }>(
+      `SELECT count(*)::int AS n FROM "${schemaName}".user_identities
+       WHERE identity_kind = 'email' AND normalized_value = 'mason@example.com'`,
+    );
+    expect(identities.rows[0]!.n).toBe(2);
+  });
+
+  it("still rejects a duplicate addressable identity within one workspace", async () => {
+    const workspaceGuid = bootstrap.workspaceGuid;
+    const userGuid = randomUUID();
+    await pool.query(
+      `INSERT INTO "${schemaName}".users (user_guid, identity_issuer, identity_subject, display_name)
+       VALUES ($1, 'test', $2, 'Dup')`,
+      [userGuid, `dup-${userGuid}`],
+    );
+
+    const insert = () =>
+      pool.query(
+        `INSERT INTO "${schemaName}".user_identities
+           (identity_guid, user_guid, workspace_guid, identity_kind, value, normalized_value)
+         VALUES ($1, $2, $3, 'email', 'dup@example.com', 'dup@example.com')`,
+        [randomUUID(), userGuid, workspaceGuid],
+      );
+
+    await expect(insert()).resolves.toBeDefined();
+    await expect(insert()).rejects.toThrow(/user_identities_workspace_addressable_unique_idx/);
+  });
+
   it("extracts nothing into assertions", async () => {
     await runImport();
     const tables = await pool.query<{ table_name: string }>(
