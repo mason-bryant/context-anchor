@@ -5,6 +5,7 @@ import * as z from "zod/v4";
 import type { AnchorService } from "./anchorService.js";
 import { anchorSectionGuidance } from "./anchorStructure.js";
 import type { ScopeSummary } from "./db/knowledgeDb.js";
+import type { ImportReport } from "./db/importDocuments.js";
 import type { ScopeChange } from "./db/scopeChanges.js";
 import { PeopleRegistryConflictError, ProjectMappingsConflictError } from "./git/repo.js";
 import { errorMetadata, noopRequestLogger, type RequestLogger } from "./logger.js";
@@ -168,6 +169,11 @@ const SharedWriteOptsSchema = z.object({
 export type KnowledgeDatabaseTool = {
   listScopesForOwner(): Promise<ScopeSummary[]>;
   listScopeChangesForOwner(input: { scope: string; since?: string; limit?: number }): Promise<ScopeChange[]>;
+  importDocumentsAsOwner(input: {
+    repository: string;
+    commitSha: string;
+    files: Array<{ path: string; content: string }>;
+  }): Promise<ImportReport>;
 };
 
 export function createAnchorMcpServer(
@@ -1920,6 +1926,29 @@ the index when your workflow checks in that file.`,
       },
       async ({ scope, since, limit }) =>
         jsonResult({ changes: await knowledgeDb.listScopeChangesForOwner({ scope, since, limit }) }),
+    );
+
+    server.registerTool(
+      "importDocuments",
+      {
+        title: "Import Documents",
+        description:
+          "One-pass import of a pinned repository commit: each Markdown file becomes a source document with a " +
+          "byte-complete revision, sections, and blocks, carrying repository, commit, and path provenance. Scopes " +
+          "are derived on a fixed mapping and related `part_of` their domain; roadmap goal sections associate to " +
+          "the initiative scopes referencing them. Nothing is extracted into assertions. Re-importing the same " +
+          "commit writes nothing. Requires the database backend.",
+        inputSchema: z.object({
+          traceId: TraceIdSchema,
+          repository: z.string().trim().min(1),
+          commitSha: z.string().trim().min(1),
+          files: z
+            .array(z.object({ path: z.string().trim().min(1), content: z.string() }))
+            .min(1),
+        }),
+      },
+      async ({ repository, commitSha, files }) =>
+        jsonResult({ report: await knowledgeDb.importDocumentsAsOwner({ repository, commitSha, files }) }),
     );
   }
 

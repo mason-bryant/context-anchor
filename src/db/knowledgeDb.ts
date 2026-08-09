@@ -5,6 +5,14 @@ import type { Pool } from "pg";
 import type { AppLogger } from "../logger.js";
 import { resolveScopeAccess, type WorkspaceRole } from "./access.js";
 import { parseChangeWindow } from "./changeWindow.js";
+import { CommandHandler } from "./commandHandler.js";
+import {
+  importDocuments,
+  type ImportFile,
+  type ImportReport,
+  type Person,
+  type ProjectMapping,
+} from "./importDocuments.js";
 import { listScopeChanges, type ScopeChange } from "./scopeChanges.js";
 import { resolveDatabaseConfig, type PartialDatabaseConfig } from "./config.js";
 import { type BootstrapResult, ensureBootstrap } from "./bootstrap.js";
@@ -66,6 +74,24 @@ export class KnowledgeDatabase {
       workspaceGuid: this.bootstrap.workspaceGuid,
       principalGuid: this.bootstrap.ownerPrincipalGuid,
       role: "owner",
+    });
+  }
+
+  /** T2's write, as the bootstrapped owner. Returns the report the UI renders. */
+  async importDocumentsAsOwner(input: {
+    repository: string;
+    commitSha: string;
+    files: ImportFile[];
+    projectMappings?: ProjectMapping[];
+    people?: Person[];
+  }): Promise<ImportReport> {
+    return importDocuments({
+      pool: this.pool,
+      schemaName: this.schemaName,
+      handler: new CommandHandler(this.pool, this.schemaName),
+      workspaceGuid: this.bootstrap.workspaceGuid,
+      actorPrincipalGuid: this.bootstrap.ownerPrincipalGuid,
+      ...input,
     });
   }
 

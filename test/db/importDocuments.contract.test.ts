@@ -1,0 +1,288 @@
+import { randomUUID } from "node:crypto";
+import path from "node:path";
+
+import type { Pool } from "pg";
+import pg from "pg";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+
+import { ensureBootstrap, type BootstrapResult } from "../../src/db/bootstrap.js";
+import { CommandHandler } from "../../src/db/commandHandler.js";
+import { importDocuments, type ImportFile } from "../../src/db/importDocuments.js";
+import { runMigrations } from "../../src/db/migrate.js";
+import { isTestDatabaseReachable, TEST_DATABASE_URL } from "./testDatabase.js";
+
+const REAL_MIGRATIONS_DIR = path.resolve(import.meta.dirname, "../../migrations/knowledge");
+
+const ROADMAP = `---
+project: anchor-mcp
+type: project-roadmap
+---
+
+# Anchor MCP -- Roadmap
+
+## Goals
+
+### Goal G-041 -- Structured substrate
+
+Substrate text.
+
+### Goal G-042 -- Database-backed redesign
+
+Redesign text.
+`;
+
+const MILESTONE = `---
+project: anchor-mcp
+type: project-milestone
+relations:
+  goal_ids:
+    - G-042
+---
+
+# Milestone -- DB Backed
+
+## Current State
+
+Not started.
+`;
+
+const PRACTICE = `# PR Review Workflow
+
+## Workflow
+
+Reply inline.
+`;
+
+function files(): ImportFile[] {
+  return [
+    { path: "projects/anchor-mcp/anchor-mcp-roadmap.md", content: ROADMAP },
+    { path: "projects/anchor-mcp/milestones/db-backed.md", content: MILESTONE },
+    { path: "agent-rules/pr-review-comment-workflow.md", content: PRACTICE },
+  ];
+}
+
+describe.runIf(await isTestDatabaseReachable())("importDocuments (real Postgres)", () => {
+  let pool: Pool;
+  let schemaName: string;
+  let bootstrap: BootstrapResult;
+  let handler: CommandHandler;
+
+  beforeEach(async () => {
+    pool = new pg.Pool({ connectionString: TEST_DATABASE_URL, max: 4 });
+    schemaName = `knowledge_test_${randomUUID().replace(/-/g, "").slice(0, 12)}`;
+    await runMigrations(pool, { schemaName, migrationsDir: REAL_MIGRATIONS_DIR });
+    bootstrap = await ensureBootstrap(pool, { schemaName });
+    handler = new CommandHandler(pool, schemaName);
+  });
+
+  afterEach(async () => {
+    await pool.query(`DROP SCHEMA IF EXISTS "${schemaName}" CASCADE`);
+    await pool.end();
+  });
+
+  function runImport(input: { files?: ImportFile[]; commit?: string } = {}) {
+    return importDocuments({
+      pool,
+      schemaName,
+      handler,
+      workspaceGuid: bootstrap.workspaceGuid,
+      actorPrincipalGuid: bootstrap.ownerPrincipalGuid,
+      repository: "context-anchor",
+      commitSha: input.commit ?? "a".repeat(40),
+      files: input.files ?? files(),
+    });
+  }
+
+  it("imports each file as a document with a revision, sections, and blocks", async () => {
+    const report = await runImport();
+
+    expect(report.documentsImported).toBe(3);
+    expect(report.revisionsCreated).toBe(3);
+    expect(report.sectionsCreated).toBeGreaterThan(0);
+    expect(report.blocksCreated).toBeGreaterThan(0);
+
+    const revision = await pool.query<{ content: string; repository: string; commit_sha: string; source_path: string }>(
+      `SELECT r.content, r.repository, r.commit_sha, r.source_path
+       FROM "${schemaName}".document_revisions r
+       JOIN "${schemaName}".source_documents d ON d.document_guid = r.document_guid
+       WHERE d.name = $1`,
+      ["projects/anchor-mcp/anchor-mcp-roadmap.md"],
+    );
+    // Byte-complete: the stored content is the file, not a normalization of it.
+    expect(revision.rows[0]!.content).toBe(ROADMAP);
+    expect(revision.rows[0]!.repository).toBe("context-anchor");
+    expect(revision.rows[0]!.commit_sha).toBe("a".repeat(40));
+    expect(revision.rows[0]!.source_path).toBe("projects/anchor-mcp/anchor-mcp-roadmap.md");
+  });
+
+  it("derives scopes on the fixed mapping and relates them part_of their domain", async () => {
+    await runImport();
+
+    const scopes = await pool.query<{ scope_slug: string; scope_kind: string }>(
+      `SELECT scope_slug, scope_kind FROM "${schemaName}".scopes WHERE workspace_guid = $1 ORDER BY scope_slug`,
+      [bootstrap.workspaceGuid],
+    );
+    const bySlug = new Map(scopes.rows.map((r) => [r.scope_slug, r.scope_kind]));
+
+    expect(bySlug.get("anchor-mcp")).toBe("domain");
+    expect(bySlug.get("anchor-mcp-db-backed")).toBe("initiative");
+    expect(bySlug.get("agent-rules")).toBe("practice");
+
+    const relations = await pool.query<{ from_slug: string; to_slug: string; relation_type: string }>(
+      `SELECT f.scope_slug AS from_slug, t.scope_slug AS to_slug, r.relation_type
+       FROM "${schemaName}".scope_relations r
+       JOIN "${schemaName}".scopes f ON f.scope_guid = r.from_scope_guid
+       JOIN "${schemaName}".scopes t ON t.scope_guid = r.to_scope_guid
+       WHERE r.workspace_guid = $1`,
+      [bootstrap.workspaceGuid],
+    );
+    expect(relations.rows).toContainEqual({
+      from_slug: "anchor-mcp-db-backed",
+      to_slug: "anchor-mcp",
+      relation_type: "part_of",
+    });
+  });
+
+  /** T2 done-when #1. */
+  it("re-running the import with the same commit creates no duplicate revisions", async () => {
+    const first = await runImport();
+    const second = await runImport();
+
+    expect(first.revisionsCreated).toBe(3);
+    expect(second.revisionsCreated).toBe(0);
+    expect(second.documentsImported).toBe(0);
+
+    const revisions = await pool.query<{ n: number }>(
+      `SELECT count(*)::int AS n FROM "${schemaName}".document_revisions WHERE workspace_guid = $1`,
+      [bootstrap.workspaceGuid],
+    );
+    expect(revisions.rows[0]!.n).toBe(3);
+  });
+
+  /** T2 done-when #2 — dedupe is against the LATEST revision only, so history is a log. */
+  it("a document reverted to earlier content still produces a new revision", async () => {
+    await runImport();
+
+    const changed = files().map((file) =>
+      file.path.endsWith("anchor-mcp-roadmap.md") ? { ...file, content: `${ROADMAP}\n## Added\n\nNew.\n` } : file,
+    );
+    await runImport({ files: changed, commit: "b".repeat(40) });
+
+    // Back to the original bytes: a content-set check would call this a no-op.
+    const reverted = await runImport({ files: files(), commit: "c".repeat(40) });
+    expect(reverted.revisionsCreated).toBe(1);
+
+    const revisions = await pool.query<{ revision_number: number; content: string }>(
+      `SELECT r.revision_number, r.content FROM "${schemaName}".document_revisions r
+       JOIN "${schemaName}".source_documents d ON d.document_guid = r.document_guid
+       WHERE d.name = $1 ORDER BY r.revision_number`,
+      ["projects/anchor-mcp/anchor-mcp-roadmap.md"],
+    );
+    expect(revisions.rows.map((r) => r.revision_number)).toEqual([1, 2, 3]);
+    expect(revisions.rows[2]!.content).toBe(ROADMAP);
+  });
+
+  /** T2 done-when #4 — the roadmap-goal association that record_scopes exists for. */
+  it("makes a roadmap goal section reachable through the initiative scope referencing it", async () => {
+    await runImport();
+
+    const associated = await pool.query<{ stable_key: string; scope_slug: string; derived_from_signal: string }>(
+      `SELECT a.stable_key, s.scope_slug, a.derived_from_signal
+       FROM "${schemaName}".record_scopes a
+       JOIN "${schemaName}".scopes s ON s.scope_guid = a.scope_guid
+       WHERE a.workspace_guid = $1 AND a.record_type = 'section' AND a.retired_at IS NULL`,
+      [bootstrap.workspaceGuid],
+    );
+
+    const g042 = associated.rows.filter((row) => row.stable_key.includes("goal-g-042"));
+    // Reachable through the milestone's initiative scope, not only its own document's domain.
+    expect(g042.map((row) => row.scope_slug)).toContain("anchor-mcp-db-backed");
+    expect(g042.map((row) => row.scope_slug)).toContain("anchor-mcp");
+    for (const row of g042) {
+      expect(row.derived_from_signal, "a derived association must say what derived it").toBeTruthy();
+    }
+
+    // G-041 is referenced by no milestone, so it gets no initiative association.
+    const g041 = associated.rows.filter((row) => row.stable_key.includes("goal-g-041"));
+    expect(g041.map((row) => row.scope_slug)).not.toContain("anchor-mcp-db-backed");
+  });
+
+  it("records the import as one reversible batch of commands", async () => {
+    const report = await runImport();
+
+    expect(report.batchGuid).toBeTruthy();
+    const commands = await pool.query<{ n: number }>(
+      `SELECT count(*)::int AS n FROM "${schemaName}".commands WHERE workspace_guid = $1 AND batch_guid = $2`,
+      [bootstrap.workspaceGuid, report.batchGuid],
+    );
+    expect(commands.rows[0]!.n).toBeGreaterThan(0);
+  });
+
+  it("imports project-mappings into repository_mappings with component scopes", async () => {
+    await importDocuments({
+      pool,
+      schemaName,
+      handler,
+      workspaceGuid: bootstrap.workspaceGuid,
+      actorPrincipalGuid: bootstrap.ownerPrincipalGuid,
+      repository: "context-anchor",
+      commitSha: "d".repeat(40),
+      files: files(),
+      projectMappings: [
+        { repository: "context-anchor", pathPrefix: "src/http", project: "anchor-mcp", name: "http-transport" },
+      ],
+    });
+
+    const mapping = await pool.query<{ path_prefix: string; scope_slug: string; scope_kind: string }>(
+      `SELECT m.path_prefix, s.scope_slug, s.scope_kind
+       FROM "${schemaName}".repository_mappings m
+       JOIN "${schemaName}".scopes s ON s.scope_guid = m.scope_guid
+       WHERE m.workspace_guid = $1`,
+      [bootstrap.workspaceGuid],
+    );
+    expect(mapping.rows[0]).toMatchObject({ path_prefix: "src/http", scope_kind: "component" });
+
+    const relation = await pool.query<{ n: number }>(
+      `SELECT count(*)::int AS n FROM "${schemaName}".scope_relations r
+       JOIN "${schemaName}".scopes f ON f.scope_guid = r.from_scope_guid
+       JOIN "${schemaName}".scopes t ON t.scope_guid = r.to_scope_guid
+       WHERE f.scope_slug = $1 AND t.scope_slug = $2 AND r.relation_type = 'part_of'`,
+      [mapping.rows[0]!.scope_slug, "anchor-mcp"],
+    );
+    expect(relation.rows[0]!.n, "a component is part_of its project's domain").toBe(1);
+  });
+
+  it("imports the people registry into users and user_identities", async () => {
+    await importDocuments({
+      pool,
+      schemaName,
+      handler,
+      workspaceGuid: bootstrap.workspaceGuid,
+      actorPrincipalGuid: bootstrap.ownerPrincipalGuid,
+      repository: "context-anchor",
+      commitSha: "e".repeat(40),
+      files: files(),
+      people: [
+        { id: "mason", displayName: "Mason Bryant", identities: [{ kind: "email", value: "Mason@Example.com" }, { kind: "slack", value: "@mason" }] },
+      ],
+    });
+
+    const identities = await pool.query<{ identity_kind: string; value: string; normalized_value: string }>(
+      `SELECT identity_kind, value, normalized_value FROM "${schemaName}".user_identities ORDER BY identity_kind`,
+    );
+    expect(identities.rows.map((r) => r.identity_kind)).toEqual(["email", "slack"]);
+    // Normalized for matching, original preserved for display.
+    expect(identities.rows[0]!.value).toBe("Mason@Example.com");
+    expect(identities.rows[0]!.normalized_value).toBe("mason@example.com");
+  });
+
+  it("extracts nothing into assertions", async () => {
+    await runImport();
+    const tables = await pool.query<{ table_name: string }>(
+      `SELECT table_name FROM information_schema.tables WHERE table_schema = $1`,
+      [schemaName],
+    );
+    // Assertions do not exist yet at all; import must not be what introduces them.
+    expect(tables.rows.map((r) => r.table_name)).not.toContain("assertions");
+  });
+});
