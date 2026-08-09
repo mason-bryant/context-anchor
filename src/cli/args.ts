@@ -1,15 +1,36 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 
 import type { AnchorSchemaMode, FileLoggingConfig, LoggingConfig, RequestLoggingConfig, ServerConfig, TraceLoggingConfig } from "../types.js";
 import { ANCHOR_SCHEMA_MODES } from "../types.js";
 import { assertValidDatabaseUrl, resolveDatabaseConfig, type DatabaseConfig } from "../db/config.js";
+import { parseDbCliArgs, type DbCliArgs } from "../db/cliArgs.js";
 import { expandHome } from "../utils/path.js";
 import { DEFAULT_GRAPH_SCORING_ENABLED, DEFAULT_GRAPH_SCORING_MAX_BOOST, clampGraphScoringMaxBoost } from "../graph/proximity.js";
 
 export const HELP_TEXT = `anchor-mcp — Git-backed MCP server for context anchors
 
-Usage: anchor-mcp [options]
+Usage: anchor-mcp [command] [options]
+
+Commands (default: serve)
+  serve                         Run the server in the foreground (what MCP clients launch)
+  start                         Run the HTTP server detached, logging to a file
+  stop                          Stop the detached HTTP server started by \`start\`
+  restart                       stop, wait for the port, then start
+  status                        Report resolved config, database, and whether a server is up
+  db <command>                  Manage the database (see below)
+
+Database commands
+  db start                      Start the local Postgres container and apply migrations
+  db stop                       Stop the local Postgres container (data is preserved)
+  db status                     Show schema, applied and pending migrations
+  db migrate                    Apply pending migrations only
+  db psql                       Open a psql shell in the container
+  db reset --yes                Destroy the local database and recreate it
+
+\`db start\`, \`db stop\`, \`db psql\`, and \`db reset\` manage the container declared in this
+repository's docker-compose.yml and are unavailable from an installed package; \`db migrate\`
+and \`db status\` work against any DATABASE_URL.
 
 Anchor store
   --repo <path>                 Anchor repository (default ~/agent-context, created if missing)
@@ -41,19 +62,47 @@ Database (optional; absent means Git-backed tools only)
 Other
   -h, --help                    Show this message
 
-Environment equivalents: ANCHOR_MCP_REPO, ANCHOR_MCP_ANCHOR_ROOT, ANCHOR_MCP_CONFIG,
-ANCHOR_MCP_TRANSPORT, ANCHOR_MCP_HOST, ANCHOR_MCP_PORT, ANCHOR_MCP_ALLOWED_HOSTS,
-ANCHOR_MCP_AUTH_TOKEN, ANCHOR_MCP_STATEFUL, ANCHOR_MCP_SYNC_INTERVAL_MS,
-ANCHOR_MCP_STALE_AFTER_DAYS, ANCHOR_MCP_ANCHOR_SCHEMA_MODE, DATABASE_URL.
+Config file
+  Read from --config, else ANCHOR_MCP_CONFIG, else ./anchor-mcp.config.json if present.
+  The server and the db commands resolve it identically, so \`db migrate\` cannot target a
+  different schema than the one the server starts against.
 
-Flags take precedence over environment variables, which take precedence over the
-config file. The connection string is never read from the config file.`;
+Config-file only (no flag or variable)
+  logging                       file, requests, and traces blocks
+  database                      poolSize and schemaName
+
+Every flag above has an environment equivalent except --no-auto-sync,
+--no-push-on-write, and --migration-warn-only, which are flags only:
+  ANCHOR_MCP_REPO, ANCHOR_MCP_ANCHOR_ROOT, ANCHOR_MCP_CONFIG, ANCHOR_MCP_TRANSPORT,
+  ANCHOR_MCP_HOST, ANCHOR_MCP_PORT, ANCHOR_MCP_ALLOWED_HOSTS, ANCHOR_MCP_AUTH_TOKEN,
+  ANCHOR_MCP_STATEFUL, ANCHOR_MCP_SYNC_INTERVAL_MS, ANCHOR_MCP_STALE_AFTER_DAYS,
+  ANCHOR_MCP_ANCHOR_SCHEMA_MODE, ANCHOR_MCP_GRAPH_SCORING_ENABLED,
+  ANCHOR_MCP_NO_GRAPH_SCORING_ENABLED, ANCHOR_MCP_GRAPH_SCORING_MAX_BOOST, DATABASE_URL.
+
+Precedence is flag, then environment, then config file — but only these are readable
+from all three: allowedHosts, authToken, stateful, transport, host, port.
+Everything else is either flag-and-environment or config-file-only, as marked above.
+The database connection string is deliberately never read from the config file.`;
+
+/** The keys the help text claims are readable from flag, environment, and config file alike. Asserted against real resolution in test/cli/commandParsing.test.ts so the promise cannot drift from the parser. */
+export const THREE_SOURCE_KEYS = ["allowedHosts", "authToken", "stateful", "transport", "host", "port"] as const;
+
+export const CLI_COMMANDS = ["serve", "start", "stop", "restart", "status", "db"] as const;
+export type CliCommand = (typeof CLI_COMMANDS)[number];
 
 export type CliOptions = {
   config: ServerConfig;
+  /** Subcommand to run. Absent on the command line means `serve`, which is what every MCP client stanza relies on. */
+  command: CliCommand;
+  /** Set only when command is `db`. */
+  db?: DbCliArgs;
+  /** Config file actually used, after --config / ANCHOR_MCP_CONFIG / discovery; undefined when none was found. */
+  configPath?: string;
   /** True when the caller asked for usage; nothing else in this object is meaningful. */
   help: boolean;
   transport: "stdio" | "http";
+  /** False when `transport` is the stdio default rather than a choice, letting `start` pick http without overriding an explicit setting. */
+  transportExplicit: boolean;
   host: string;
   port: number;
   allowedHosts?: string[];
@@ -63,7 +112,11 @@ export type CliOptions = {
   databaseUrl?: string;
 };
 
-export function parseCliArgs(argv: string[], env: NodeJS.ProcessEnv = process.env): CliOptions {
+export function parseCliArgs(
+  argv: string[],
+  env: NodeJS.ProcessEnv = process.env,
+  options: { cwd?: string } = {},
+): CliOptions {
   // Checked against argv directly, before the flag loop: that loop only recognizes `--`
   // arguments, so `-h` would never reach it. Resolving help first also means asking a tool
   // how to use it never depends on being correctly configured — including not depending on
@@ -72,11 +125,18 @@ export function parseCliArgs(argv: string[], env: NodeJS.ProcessEnv = process.en
     return helpOnlyOptions();
   }
 
+  const { command, rest } = takeSubcommand(argv);
   const flags = new Map<string, string | boolean>();
+  const positionals: string[] = [];
 
-  for (let index = 0; index < argv.length; index += 1) {
-    const arg = argv[index];
+  for (let index = 0; index < rest.length; index += 1) {
+    const arg = rest[index];
     if (!arg?.startsWith("--")) {
+      // Anything reaching here was not consumed as a flag value below, so it is a true
+      // positional rather than, say, the `db` in `--anchor-root db`.
+      if (arg !== undefined) {
+        positionals.push(arg);
+      }
       continue;
     }
 
@@ -86,8 +146,8 @@ export function parseCliArgs(argv: string[], env: NodeJS.ProcessEnv = process.en
       continue;
     }
 
-    const next = argv[index + 1];
-    if (next && !next.startsWith("--")) {
+    const next = rest[index + 1];
+    if (next !== undefined && !next.startsWith("--") && takesValue(rawKey, next)) {
       flags.set(rawKey, next);
       index += 1;
     } else {
@@ -95,11 +155,21 @@ export function parseCliArgs(argv: string[], env: NodeJS.ProcessEnv = process.en
     }
   }
 
+  const db = command === "db" ? parseDbCliArgs(dbArgv(positionals, flags)) : undefined;
+  if (command !== "db") {
+    assertNoStraySubcommand(positionals);
+  }
+
   const repo = stringFlag(flags, "repo") ?? env.ANCHOR_MCP_REPO ?? "~/agent-context";
-  const fileConfig = readConfigFile(flags, env);
-  const transport = (stringFlag(flags, "transport") ?? env.ANCHOR_MCP_TRANSPORT ?? "stdio") as "stdio" | "http";
+  const configPath = resolveConfigPath(flags, env, options.cwd ?? process.cwd());
+  const fileConfig = readConfigFile(configPath);
+  const chosenTransport =
+    stringFlag(flags, "transport") ??
+    env.ANCHOR_MCP_TRANSPORT ??
+    stringConfigValue(fileConfig.transport, "transport");
+  const transport = (chosenTransport ?? "stdio") as "stdio" | "http";
   if (transport !== "stdio" && transport !== "http") {
-    throw new Error(`Unsupported --transport ${transport}; expected stdio or http`);
+    throw new Error(`Unsupported transport ${transport}; expected stdio or http`);
   }
 
   const allowedHosts =
@@ -116,9 +186,21 @@ export function parseCliArgs(argv: string[], env: NodeJS.ProcessEnv = process.en
 
   return {
     help: false,
+    command,
+    ...(db ? { db } : {}),
+    ...(configPath ? { configPath } : {}),
     transport,
-    host: stringFlag(flags, "host") ?? env.ANCHOR_MCP_HOST ?? "127.0.0.1",
-    port: numberFlag(flags, "port") ?? numberEnv(env.ANCHOR_MCP_PORT) ?? 3000,
+    transportExplicit: chosenTransport !== undefined,
+    host:
+      stringFlag(flags, "host") ??
+      env.ANCHOR_MCP_HOST ??
+      stringConfigValue(fileConfig.host, "host") ??
+      "127.0.0.1",
+    port:
+      numberFlag(flags, "port") ??
+      numberEnv(env.ANCHOR_MCP_PORT) ??
+      numberConfigValue(fileConfig.port, "port") ??
+      3000,
     allowedHosts,
     authToken:
       stringFlag(flags, "auth-token") ??
@@ -166,7 +248,9 @@ export function parseCliArgs(argv: string[], env: NodeJS.ProcessEnv = process.en
 function helpOnlyOptions(): CliOptions {
   return {
     help: true,
+    command: "serve",
     transport: "stdio",
+    transportExplicit: false,
     host: "127.0.0.1",
     port: 3000,
     stateless: true,
@@ -224,6 +308,10 @@ function anchorSchemaModeValue(value: string | undefined): AnchorSchemaMode | un
 type CliConfigFile = {
   allowedHosts?: unknown;
   authToken?: unknown;
+  /** Transport/bind settings; needed in the file so `stop` can find the same host:port `start` bound. */
+  transport?: unknown;
+  host?: unknown;
+  port?: unknown;
   /** HTTP transport session mode; CLI --stateful and ANCHOR_MCP_STATEFUL take precedence. */
   stateful?: unknown;
   logging?: unknown;
@@ -231,13 +319,99 @@ type CliConfigFile = {
   database?: unknown;
 };
 
-function readConfigFile(flags: Map<string, string | boolean>, env: NodeJS.ProcessEnv): CliConfigFile {
-  const configPath = stringFlag(flags, "config") ?? env.ANCHOR_MCP_CONFIG;
-  if (!configPath) {
+export const CONFIG_FILE_NAME = "anchor-mcp.config.json";
+
+/** Flags that take a separate value token. Everything else is a switch. */
+const VALUE_FLAGS = new Set([
+  "repo",
+  "anchor-root",
+  "config",
+  "sync-interval-ms",
+  "stale-after-days",
+  "anchor-schema-mode",
+  "transport",
+  "host",
+  "port",
+  "allowed-hosts",
+  "auth-token",
+  "graph-scoring-max-boost",
+  "database-url",
+]);
+
+/**
+ * Switches must not swallow the following token, or `--no-auto-sync start` parses as
+ * `autoSync="start"` — which is falsy, so sync stays on — and the `start` is lost. They
+ * still accept an explicit `--stateful true|false`, which previously worked and is the only
+ * value a switch has ever meaningfully taken.
+ */
+function takesValue(key: string, next: string): boolean {
+  return VALUE_FLAGS.has(key) || next === "true" || next === "false";
+}
+
+/**
+ * Only a bare first argument is a subcommand. The flag loop consumes the word after a
+ * valueless flag as that flag's value, so `--no-auto-sync start` would otherwise parse as
+ * `autoSync="start"` — falsy, leaving sync ON — and then quietly serve. Requiring the
+ * subcommand first turns that into an error instead of a wrong-but-running server.
+ */
+function takeSubcommand(argv: string[]): { command: CliCommand; rest: string[] } {
+  const first = argv[0];
+  if (first === undefined || first.startsWith("-")) {
+    return { command: "serve", rest: argv };
+  }
+
+  if (!(CLI_COMMANDS as readonly string[]).includes(first)) {
+    throw new Error(`Unknown command "${first}". Expected one of: ${CLI_COMMANDS.join(", ")}`);
+  }
+
+  return { command: first as CliCommand, rest: argv.slice(1) };
+}
+
+function assertNoStraySubcommand(positionals: string[]): void {
+  const stray = positionals.find((value) => (CLI_COMMANDS as readonly string[]).includes(value));
+  if (stray) {
+    throw new Error(
+      `The "${stray}" subcommand must come first, before any flags (anchor-mcp ${stray} [options]).`,
+    );
+  }
+  if (positionals.length > 0) {
+    throw new Error(`Unexpected argument(s): ${positionals.join(", ")}`);
+  }
+}
+
+/**
+ * Rebuilds the argv slice the db parser expects. Server flags (`--config`, `--database-url`)
+ * are handled by the shared flag loop and deliberately not forwarded — the db parser rejects
+ * anything it does not recognize, which is what keeps `reset --dry-run` from reading as safe.
+ */
+function dbArgv(positionals: string[], flags: Map<string, string | boolean>): string[] {
+  return [...positionals, ...(booleanFlag(flags, "yes") ? ["--yes"] : [])];
+}
+
+/**
+ * `--config`, then ANCHOR_MCP_CONFIG, then ./anchor-mcp.config.json when it exists. An
+ * explicit path that cannot be read is an error; a discovered one is simply absent. Shared
+ * by the server and the db commands so the two cannot resolve different schemas.
+ */
+function resolveConfigPath(
+  flags: Map<string, string | boolean>,
+  env: NodeJS.ProcessEnv,
+  cwd: string,
+): string | undefined {
+  const explicit = stringFlag(flags, "config") ?? env.ANCHOR_MCP_CONFIG;
+  if (explicit) {
+    return path.resolve(expandHome(explicit));
+  }
+
+  const discovered = path.join(cwd, CONFIG_FILE_NAME);
+  return existsSync(discovered) ? discovered : undefined;
+}
+
+function readConfigFile(resolvedPath: string | undefined): CliConfigFile {
+  if (!resolvedPath) {
     return {};
   }
 
-  const resolvedPath = path.resolve(expandHome(configPath));
   let parsed: unknown;
   try {
     parsed = JSON.parse(readFileSync(resolvedPath, "utf8"));

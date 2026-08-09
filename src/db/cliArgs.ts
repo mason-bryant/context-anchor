@@ -6,19 +6,29 @@ export type DbCliCommand = "up" | "down" | "status" | "migrate" | "psql" | "rese
 
 const KNOWN_COMMANDS: readonly DbCliCommand[] = ["up", "down", "status", "migrate", "psql", "reset"];
 
+/**
+ * `db start`/`db stop` mirror the server's own start/stop, which is how the unified CLI
+ * reads; `up`/`down` predate it, are in the docs, and stay valid.
+ */
+const COMMAND_ALIASES: Readonly<Record<string, DbCliCommand>> = { start: "up", stop: "down" };
+
 export type DbCliArgs =
   | { command: Exclude<DbCliCommand, "reset"> }
   | { command: "reset"; yes: true };
 
 export function parseDbCliArgs(argv: string[]): DbCliArgs {
-  const [command, ...rest] = argv;
+  const [rawCommand, ...rest] = argv;
 
-  if (!command) {
+  if (!rawCommand) {
     throw new Error(`Missing command. Expected one of: ${KNOWN_COMMANDS.join(", ")}`);
   }
 
+  const command = COMMAND_ALIASES[rawCommand] ?? rawCommand;
+
   if (!(KNOWN_COMMANDS as readonly string[]).includes(command)) {
-    throw new Error(`Unknown command "${command}". Expected one of: ${KNOWN_COMMANDS.join(", ")}`);
+    throw new Error(
+      `Unknown command "${rawCommand}". Expected one of: ${[...KNOWN_COMMANDS, ...Object.keys(COMMAND_ALIASES)].join(", ")}`,
+    );
   }
 
   const hasYes = rest.includes("--yes");

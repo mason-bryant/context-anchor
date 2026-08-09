@@ -44,6 +44,49 @@ mkdir -p ~/agent-context
 ln -sfn ~/agent-context /path/to/your-project/.agents/context
 ```
 
+## Server Lifecycle
+
+```sh
+anchor-mcp             # serve in the foreground on stdio — what MCP clients launch
+anchor-mcp serve       # the same thing, named explicitly
+anchor-mcp start       # run the HTTP server detached, logging to a file
+anchor-mcp status      # resolved config, database state, and whether a server is up
+anchor-mcp restart     # stop, wait for the port to free, start
+anchor-mcp stop        # stop the detached server
+```
+
+A bare `anchor-mcp` with no subcommand still serves, so existing MCP client stanzas need
+no change. The subcommand must come first, before any flags.
+
+`start`, `stop`, and `restart` apply only to the **HTTP** transport. A stdio server is a
+child process of the MCP client that spawned it, with its stdin and stdout wired to that
+client — there is typically one per client session, and its lifecycle belongs to the
+client, not here. `stop` says so explicitly rather than reporting "nothing to stop",
+which would read as a bug to anyone whose editor plainly has a server running.
+
+`start` defaults to the HTTP transport, since detaching only makes sense there. Do not
+set `transport: "http"` in the config file to achieve this — that would also flip every
+bare `anchor-mcp` launch, which is what stdio clients run. An explicit
+`--transport stdio` with `start` is an error rather than something silently overridden.
+
+Runtime files live under `~/.anchor-mcp/`, keyed by host and port so instances on
+different ports do not collide:
+
+- `~/.anchor-mcp/run/<host>-<port>.pid`
+- `~/.anchor-mcp/logs/server-<host>-<port>.log`
+
+They are deliberately not written to the anchor repository, which auto-commits and
+auto-pushes — a pidfile there would be committed to the context repo on the next sync.
+
+`stop` reads the pidfile rather than probing the port, and verifies the recorded pid is
+still an `anchor-mcp` process before signalling it. Pids get recycled; killing whatever
+inherited the number would be worse than failing. A pidfile pointing at a foreign process
+is reported and left in place, not silently deleted. A pidfile whose process is simply
+gone is cleaned up.
+
+Ordering after a reboot is `db start`, then `start`: with a database configured, the
+server reads migration state during startup and will not boot if Postgres is unreachable.
+
 ## HTTP Transport
 
 HTTP transport always requires an auth token, even on localhost. A localhost-bound
@@ -645,13 +688,28 @@ these tools are not registered at all.
 Local lifecycle (Docker required):
 
 ```sh
-npm run db:up       # start Postgres, wait for readiness, apply pending migrations
-npm run db:status   # schema version and pending migration count
-npm run db:migrate  # apply pending migrations only
-npm run db:psql     # interactive shell against the running database
-npm run db:down     # stop the container, leaving data in place
-npm run db:reset -- --yes   # drop and recreate from migrations (destructive; --yes required)
+anchor-mcp db start          # start Postgres, wait for readiness, apply pending migrations
+anchor-mcp db status         # schema version and pending migration count
+anchor-mcp db migrate        # apply pending migrations only
+anchor-mcp db psql           # interactive shell against the running database
+anchor-mcp db stop           # stop the container, leaving data in place
+anchor-mcp db reset --yes    # drop and recreate from migrations (destructive; --yes required)
 ```
+
+`db start`/`db stop` are also spelled `db up`/`db down`, and the `npm run db:*` scripts
+still work in this repository — they forward to the same implementation.
+
+`db migrate` and `db status` talk to whatever `DATABASE_URL` names and work from an
+installed package. `db start`, `db stop`, `db psql`, and `db reset` drive the container
+declared in this repository's `docker-compose.yml`; from an installed package they report
+that rather than failing inside `docker compose`. This is why a pending-migration failure
+at startup names `anchor-mcp db migrate` and not an `npm` script: the script only exists
+for people working in this repository, but the error is the first thing a package consumer
+hits.
+
+The server and every `db` command resolve `--config` / `ANCHOR_MCP_CONFIG` /
+`./anchor-mcp.config.json` through the same code path, so `db migrate` cannot apply
+migrations to one schema while the server refuses to start against another.
 
 `docker-compose.yml` pins the Postgres major version, sets `PGDATA` explicitly, and
 bind-mounts data to the gitignored `.data/postgres/` directory. It publishes port

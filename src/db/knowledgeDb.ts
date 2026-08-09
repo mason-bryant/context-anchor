@@ -42,7 +42,7 @@ export class MigrationsPendingError extends Error {
   constructor(schemaName: string, pendingCount: number) {
     super(
       `Database schema "${schemaName}" has ${pendingCount} pending migration(s). ` +
-        `Run \`npm run db:migrate\` before starting the server.`,
+        `Run \`anchor-mcp db migrate\` before starting the server.`,
     );
     this.name = "MigrationsPendingError";
   }

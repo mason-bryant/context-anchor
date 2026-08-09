@@ -4,12 +4,22 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
+import { mkdtempSync } from "node:fs";
+
 import { HELP_TEXT, parseCliArgs } from "../src/cli/args.js";
 import { buildAllowedHosts } from "../src/http/server.js";
 
+/**
+ * parseCliArgs discovers ./anchor-mcp.config.json, so any test asserting that a value has
+ * *no* source has to run from a directory without one — otherwise it passes or fails
+ * depending on the developer's working directory, and in this repo it picks up the real
+ * config (including a real auth token).
+ */
+const NO_CONFIG = { cwd: mkdtempSync(path.join(os.tmpdir(), "anchor-mcp-noconfig-")) };
+
 describe("CLI args", () => {
   it("uses MCP Express default host validation without extra allowed hosts", () => {
-    const options = parseCliArgs(["--transport", "http"], {});
+    const options = parseCliArgs(["--transport", "http"], {}, NO_CONFIG);
 
     expect(options.allowedHosts).toBeUndefined();
     expect(buildAllowedHosts(options.allowedHosts)).toBeUndefined();
@@ -78,7 +88,7 @@ describe("CLI args", () => {
 
 describe("CLI args — authToken", () => {
   it("returns undefined when no token source is provided", () => {
-    const options = parseCliArgs(["--transport", "http"], {});
+    const options = parseCliArgs(["--transport", "http"], {}, NO_CONFIG);
     expect(options.authToken).toBeUndefined();
   });
 
@@ -387,6 +397,39 @@ describe("CLI args — help", () => {
     expect(parseCliArgs(["--anchor-schema-mode", "nonsense", "--help"], {}).help).toBe(true);
   });
 
+  it("documents every environment variable the parser actually reads", () => {
+    // The flag assertion below has a blind spot in this dimension: help omitted the three
+    // graph-scoring variables precisely because nothing checked env coverage.
+    for (const variable of [
+      "ANCHOR_MCP_REPO",
+      "ANCHOR_MCP_ANCHOR_ROOT",
+      "ANCHOR_MCP_CONFIG",
+      "ANCHOR_MCP_TRANSPORT",
+      "ANCHOR_MCP_HOST",
+      "ANCHOR_MCP_PORT",
+      "ANCHOR_MCP_ALLOWED_HOSTS",
+      "ANCHOR_MCP_AUTH_TOKEN",
+      "ANCHOR_MCP_STATEFUL",
+      "ANCHOR_MCP_SYNC_INTERVAL_MS",
+      "ANCHOR_MCP_STALE_AFTER_DAYS",
+      "ANCHOR_MCP_ANCHOR_SCHEMA_MODE",
+      "ANCHOR_MCP_GRAPH_SCORING_ENABLED",
+      "ANCHOR_MCP_NO_GRAPH_SCORING_ENABLED",
+      "ANCHOR_MCP_GRAPH_SCORING_MAX_BOOST",
+      "DATABASE_URL",
+    ]) {
+      expect(HELP_TEXT, `help should document ${variable}`).toContain(variable);
+    }
+  });
+
+  it("names the settings reachable only from the config file", () => {
+    // logging and database have no flag and no variable, so help is the only place a reader
+    // could discover they exist at all.
+    expect(HELP_TEXT).toContain("Config-file only");
+    expect(HELP_TEXT).toContain("logging");
+    expect(HELP_TEXT).toContain("poolSize");
+  });
+
   it("documents every flag the parser actually accepts", () => {
     // A help text that omits a flag is worse than none: it implies the flag does not exist.
     for (const flag of [
@@ -413,7 +456,7 @@ describe("CLI args — help", () => {
 
 describe("CLI args — databaseUrl", () => {
   it("returns undefined when no source is provided", () => {
-    expect(parseCliArgs([], {}).databaseUrl).toBeUndefined();
+    expect(parseCliArgs([], {}, NO_CONFIG).databaseUrl).toBeUndefined();
   });
 
   it("reads databaseUrl from the --database-url flag", () => {
@@ -438,9 +481,9 @@ describe("CLI args — databaseUrl", () => {
   });
 
   it("treats an exported-but-empty DATABASE_URL as unset rather than as a connection string", () => {
-    expect(parseCliArgs([], { DATABASE_URL: "" }).databaseUrl).toBeUndefined();
-    expect(parseCliArgs([], { DATABASE_URL: "   " }).databaseUrl).toBeUndefined();
-    expect(parseCliArgs(["--database-url", "  "], {}).databaseUrl).toBeUndefined();
+    expect(parseCliArgs([], { DATABASE_URL: "" }, NO_CONFIG).databaseUrl).toBeUndefined();
+    expect(parseCliArgs([], { DATABASE_URL: "   " }, NO_CONFIG).databaseUrl).toBeUndefined();
+    expect(parseCliArgs(["--database-url", "  "], {}, NO_CONFIG).databaseUrl).toBeUndefined();
   });
 
   it("trims surrounding whitespace off a real connection string", () => {
@@ -461,7 +504,7 @@ describe("CLI args — databaseUrl", () => {
 
 describe("CLI args — config.database (poolSize, schemaName)", () => {
   it("is undefined when no database config is supplied", () => {
-    expect(parseCliArgs([], {}).config.database).toBeUndefined();
+    expect(parseCliArgs([], {}, NO_CONFIG).config.database).toBeUndefined();
   });
 
   it("reads poolSize and schemaName from the config file", async () => {
