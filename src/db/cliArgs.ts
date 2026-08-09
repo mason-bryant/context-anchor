@@ -27,6 +27,17 @@ export function parseDbCliArgs(argv: string[]): DbCliArgs {
     throw new Error(`--yes is only accepted with the "reset" command`);
   }
 
+  // Reject anything else outright. Silently ignoring an unrecognized argument is worst
+  // next to a destructive command: `reset --yes --dry-run` would read as though a safety
+  // flag had been honored while the data was deleted anyway.
+  const unknown = rest.filter((arg) => arg !== "--yes");
+  if (unknown.length > 0) {
+    throw new Error(
+      `Unexpected argument(s) for "${command}": ${unknown.join(", ")}. ` +
+        `Supported: \`reset --yes\`, or a bare command with no arguments.`,
+    );
+  }
+
   if (command === "reset") {
     if (!hasYes) {
       throw new Error(`"reset" is destructive and requires an explicit --yes flag`);

@@ -102,6 +102,11 @@ async function taggedConnectionCount(pool: Pool, applicationName: string): Promi
   return result.rows[0]!.n;
 }
 
+/**
+ * Throws on timeout rather than returning quietly. Returning would let the following
+ * assertion pass on a condition that only became true after the wait gave up — which is
+ * exactly the race this guard exists to catch.
+ */
 async function waitFor(predicate: () => Promise<boolean>, timeoutMs = 5_000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -110,4 +115,5 @@ async function waitFor(predicate: () => Promise<boolean>, timeoutMs = 5_000): Pr
     }
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
+  throw new Error(`Condition did not become true within ${String(timeoutMs)}ms`);
 }

@@ -35,6 +35,20 @@ describe("parseDbCliArgs", () => {
   it("rejects --yes on a command other than reset", () => {
     expect(() => parseDbCliArgs(["up", "--yes"])).toThrow(/reset/);
   });
+
+  it("rejects unknown arguments rather than silently ignoring them", () => {
+    // A typo'd or invented flag next to a destructive command reads as though it was
+    // honored; failing loudly is the only way the operator finds out it wasn't.
+    expect(() => parseDbCliArgs(["reset", "--yes", "--force"])).toThrow(/--force/);
+    expect(() => parseDbCliArgs(["reset", "--yess"])).toThrow(/--yess/);
+    expect(() => parseDbCliArgs(["up", "--verbose"])).toThrow(/--verbose/);
+    expect(() => parseDbCliArgs(["status", "extra"])).toThrow(/extra/);
+  });
+
+  it("still accepts the exact supported forms", () => {
+    expect(parseDbCliArgs(["reset", "--yes"])).toEqual({ command: "reset", yes: true });
+    expect(parseDbCliArgs(["up"])).toEqual({ command: "up" });
+  });
 });
 
 describe("resolveDbCliSchemaName", () => {

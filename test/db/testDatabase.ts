@@ -5,9 +5,17 @@ import { redactDatabaseUrl } from "../../src/db/config.js";
 export const TEST_DATABASE_URL =
   process.env.TEST_DATABASE_URL ?? "postgres://anchor:anchor@127.0.0.1:55432/anchor_mcp";
 
-let reachable: boolean | undefined;
+/**
+ * Only a SUCCESSFUL probe is memoized. Caching a failure would mean a Postgres that came
+ * up slowly (a CI service still starting when the first file probed) leaves every later
+ * contract file skipping against a database that is now perfectly usable. Later callers
+ * re-probe on a short window so re-checking stays cheap when it really is absent.
+ */
+let reachable: true | undefined;
+let hasProbedOnce = false;
 
-const PROBE_TIMEOUT_MS = 10_000;
+const FIRST_PROBE_TIMEOUT_MS = 10_000;
+const REPROBE_TIMEOUT_MS = 1_500;
 const PROBE_RETRY_DELAY_MS = 500;
 
 /**
@@ -23,11 +31,13 @@ const PROBE_RETRY_DELAY_MS = 500;
  * is still coming up is waited for rather than skipped.
  */
 export async function isTestDatabaseReachable(): Promise<boolean> {
-  if (reachable !== undefined) {
-    return reachable;
+  if (reachable) {
+    return true;
   }
 
-  const deadline = Date.now() + PROBE_TIMEOUT_MS;
+  const window = hasProbedOnce ? REPROBE_TIMEOUT_MS : FIRST_PROBE_TIMEOUT_MS;
+  hasProbedOnce = true;
+  const deadline = Date.now() + window;
   let lastError: unknown;
 
   while (Date.now() < deadline) {
@@ -45,7 +55,7 @@ export async function isTestDatabaseReachable(): Promise<boolean> {
     }
   }
 
-  reachable = false;
+  // Deliberately not memoized as false — see the `reachable` declaration above.
   // Redacted: TEST_DATABASE_URL can come from a CI secret, and this line lands in build logs.
   console.warn(
     `[db contract tests] Postgres not usable at ${redactDatabaseUrl(TEST_DATABASE_URL)}; skipping. ` +
