@@ -274,7 +274,12 @@ function singleStringParam(value: unknown, name: string): string | undefined {
     return undefined;
   }
   if (typeof value === "string") {
-    return value;
+    // Trimmed once here so a padded value resolves normally instead of failing downstream
+    // with a misleading "no scope matched ' workspace '", and so the echoed value in the
+    // response is the one actually resolved. An all-whitespace value becomes undefined,
+    // which the caller then reports as missing rather than as not-found.
+    const trimmed = value.trim();
+    return trimmed.length > 0 ? trimmed : undefined;
   }
   throw new Error(`${name} must be given at most once`);
 }

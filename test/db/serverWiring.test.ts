@@ -5,7 +5,14 @@ import { createAnchorMcpServer } from "../../src/server.js";
 import type { ScopeSummary } from "../../src/db/knowledgeDb.js";
 
 type AdvertisedServer = {
-  _registeredTools: Record<string, { description?: string; handler: (input: unknown) => Promise<unknown> }>;
+  _registeredTools: Record<
+    string,
+    {
+      description?: string;
+      handler: (input: unknown) => Promise<unknown>;
+      inputSchema?: { parse: (input: unknown) => unknown };
+    }
+  >;
 };
 
 const SAMPLE_SCOPES: ScopeSummary[] = [
@@ -59,6 +66,23 @@ describe("listScopeChanges tool registration", () => {
       since: "7d",
     })) as { structuredContent: { changes: unknown[] } };
     expect(result.structuredContent.changes).toHaveLength(1);
+  });
+
+  it("trims scope and since at the schema, so a padded value resolves instead of failing downstream", () => {
+    const server = createAnchorMcpServer({} as AnchorService, {
+      knowledgeDb: { listScopesForOwner: async () => SAMPLE_SCOPES, listScopeChangesForOwner: async () => [] },
+    }) as unknown as AdvertisedServer;
+
+    // Asserted against the schema rather than the handler: calling the handler directly
+    // bypasses validation, so a handler-level check would prove nothing about the contract
+    // an actual MCP client goes through.
+    const schema = server._registeredTools.listScopeChanges!.inputSchema!;
+    expect(schema.parse({ scope: "  http-transport  ", since: "  7d  " })).toMatchObject({
+      scope: "http-transport",
+      since: "7d",
+    });
+
+    expect(() => schema.parse({ scope: "   " })).toThrow();
   });
 });
 

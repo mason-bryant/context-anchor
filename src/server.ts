@@ -1910,8 +1910,10 @@ the index when your workflow checks in that file.`,
           "backend; absent from the tool list when no database is configured.",
         inputSchema: z.object({
           traceId: TraceIdSchema,
-          scope: z.string().min(1),
-          since: z.string().min(1).optional(),
+          // Trim before the length check, so a padded value resolves normally while a
+          // whitespace-only one is still rejected at the surface rather than downstream.
+          scope: z.string().trim().min(1),
+          since: z.string().trim().min(1).optional(),
           limit: z.number().int().positive().optional(),
         }),
         annotations: { readOnlyHint: true },

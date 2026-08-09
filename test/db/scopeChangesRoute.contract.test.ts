@@ -131,15 +131,48 @@ describe.runIf(await isTestDatabaseReachable())("GET /api/db/scope-changes (real
   });
 
   it("rejects a non-numeric or non-positive limit with 400 rather than failing in SQL", async () => {
-    for (const bad of ["abc", "-1", "0", "1.5", ""]) {
+    for (const bad of ["abc", "-1", "0", "1.5"]) {
       const response = await get(`?scope=workspace&limit=${encodeURIComponent(bad)}`);
       expect(response.status, `limit=${JSON.stringify(bad)}`).toBe(400);
       expect(((await response.json()) as { error: string }).error).toMatch(/limit/i);
     }
   });
 
+  it("treats an empty or whitespace-only limit as unspecified, not as invalid", async () => {
+    // An empty parameter means "not provided"; required-ness then decides the outcome.
+    // `limit` is optional, so it falls back to the default — whereas an empty `scope` is
+    // reported as missing, since scope is required. Same rule, different requiredness.
+    for (const blank of ["", "%20"]) {
+      const response = await get(`?scope=workspace&limit=${blank}`);
+      expect(response.status, `limit=${JSON.stringify(blank)}`).toBe(200);
+      expect(((await response.json()) as { changes: unknown[] }).changes).toHaveLength(1);
+    }
+  });
+
   it("honors a valid limit", async () => {
     const response = await get("?scope=workspace&limit=1");
+    expect(response.status).toBe(200);
+    expect(((await response.json()) as { changes: unknown[] }).changes).toHaveLength(1);
+  });
+
+  it("trims a padded scope rather than failing with a misleading not-found", async () => {
+    const response = await get("?scope=%20workspace%20");
+    expect(response.status).toBe(200);
+
+    const body = (await response.json()) as { scope: string; changes: unknown[] };
+    // The echoed scope must be what was actually resolved, not the raw input.
+    expect(body.scope).toBe("workspace");
+    expect(body.changes).toHaveLength(1);
+  });
+
+  it("still rejects a whitespace-only scope", async () => {
+    const response = await get("?scope=%20%20");
+    expect(response.status).toBe(400);
+    expect(((await response.json()) as { error: string }).error).toMatch(/scope is required/i);
+  });
+
+  it("trims a padded since window", async () => {
+    const response = await get("?scope=workspace&since=%207d%20");
     expect(response.status).toBe(200);
     expect(((await response.json()) as { changes: unknown[] }).changes).toHaveLength(1);
   });
