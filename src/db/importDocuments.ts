@@ -96,7 +96,7 @@ export async function importDocuments(input: ImportInput): Promise<ImportReport>
   await deriveAllScopes({ input, batchGuid, report, ensureScope });
 
   for (const file of input.files) {
-    await importOneFile({ input, file, batchGuid, report, ensureScope, goalReferences });
+    await importOneFile({ input, file, batchGuid, report, ensureScope, goalReferences, scopeCache });
   }
 
   if (input.projectMappings?.length) {
@@ -157,8 +157,9 @@ async function importOneFile(args: {
   report: ImportReport;
   ensureScope: (tx: CommandTransaction, derived: DerivedScope) => Promise<string>;
   goalReferences: Map<string, Set<string>>;
+  scopeCache: Map<string, string>;
 }): Promise<void> {
-  const { input, file, batchGuid, report, ensureScope, goalReferences } = args;
+  const { input, file, batchGuid, report, ensureScope, goalReferences, scopeCache } = args;
   const schema = input.schemaName;
   const derived = deriveScopeForPath(file.path);
   const contentHash = sha256(file.content);
@@ -232,6 +233,7 @@ async function importOneFile(args: {
         sections: structure.sections,
         sectionGuids,
         goalReferences,
+        scopeCache,
         report,
       });
 
@@ -430,10 +432,10 @@ async function deriveSectionAssociations(args: {
   sections: ReturnType<typeof parseMarkdownStructure>["sections"];
   sectionGuids: string[];
   goalReferences: Map<string, Set<string>>;
+  scopeCache: Map<string, string>;
   report: ImportReport;
 }): Promise<void> {
-  const { tx, input, scopeGuid, sections, sectionGuids, goalReferences, report } = args;
-  const schema = input.schemaName;
+  const { tx, input, scopeGuid, sections, sectionGuids, goalReferences, scopeCache, report } = args;
 
   for (const section of sections) {
     const sectionGuid = sectionGuids[section.ordinal]!;
@@ -449,17 +451,17 @@ async function deriveSectionAssociations(args: {
     }
 
     for (const initiativeSlug of initiatives) {
-      const initiative = await tx.query<{ scope_guid: string }>(
-        `SELECT scope_guid FROM "${schema}".scopes WHERE workspace_guid = $1 AND scope_slug = $2`,
-        [input.workspaceGuid, initiativeSlug],
-      );
-      if (initiative.rows[0]) {
+      // Resolved from the cache the first pass already filled: deriveAllScopes creates every
+      // scope before any document is imported, so a slug that is missing here does not exist
+      // at all. Querying per (section, slug) pair was an N+1 over values already in memory.
+      const initiativeScopeGuid = scopeCache.get(initiativeSlug);
+      if (initiativeScopeGuid) {
         await associate(
           tx,
           input,
           sectionGuid,
           section.stableKey,
-          initiative.rows[0].scope_guid,
+          initiativeScopeGuid,
           "referenced-goal",
           "derived:milestone-goal-ids",
           report,
