@@ -665,8 +665,8 @@ config file):
 DATABASE_URL=postgres://anchor:anchor@127.0.0.1:55432/anchor_mcp npm run dev:http
 ```
 
-Non-secret settings — pool size and the schema name migrations run against — go in an
-optional `database` block in `anchor-mcp.config.json`:
+Non-secret settings — pool size and the schema name — go in an optional `database` block
+in `anchor-mcp.config.json`:
 
 ```json
 {
@@ -676,6 +676,12 @@ optional `database` block in `anchor-mcp.config.json`:
   }
 }
 ```
+
+The `db` CLI reads that same `database.schemaName`, so migrations and the server always
+target one schema. It looks for `ANCHOR_MCP_CONFIG` first, then a repo-root
+`anchor-mcp.config.json`, and falls back to `knowledge` when neither exists. Set
+`ANCHOR_MCP_DB_SCHEMA` only when you deliberately want to point the CLI somewhere else
+(a scratch or diagnostic schema) — it overrides the config file for that invocation.
 
 If `DATABASE_URL` is set but the schema has pending migrations, the server refuses to
 start with an explicit error rather than booting into a half-usable state. Access is

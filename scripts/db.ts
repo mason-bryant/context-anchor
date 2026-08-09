@@ -14,24 +14,33 @@ import { spawnSync } from "node:child_process";
 
 import pg from "pg";
 
-import { parseDbCliArgs } from "../src/db/cliArgs.js";
+import { parseDbCliArgs, resolveDbCliSchemaName } from "../src/db/cliArgs.js";
 import { getMigrationStatus, runMigrations } from "../src/db/migrate.js";
 
 // Must match docker-compose.yml's postgres service (also mirrored in
 // test/db/testDatabase.ts, which is why CI's Postgres service binds the same port).
 const DEFAULT_DEV_DATABASE_URL = "postgres://anchor:anchor@127.0.0.1:55432/anchor_mcp";
-const DEFAULT_SCHEMA_NAME = "knowledge";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const MIGRATIONS_DIR = path.join(REPO_ROOT, "migrations", "knowledge");
 const DATA_DIR = path.join(REPO_ROOT, ".data", "postgres");
+const DEFAULT_CONFIG_PATH = path.join(REPO_ROOT, "anchor-mcp.config.json");
 
 function databaseUrl(): string {
   return process.env.DATABASE_URL ?? DEFAULT_DEV_DATABASE_URL;
 }
 
+/**
+ * Same `database.schemaName` the server resolves, so `db migrate` cannot quietly target a
+ * different schema than the one the server then refuses to start against.
+ */
 function schemaName(): string {
-  return process.env.ANCHOR_MCP_DB_SCHEMA ?? DEFAULT_SCHEMA_NAME;
+  const configPath = process.env.ANCHOR_MCP_CONFIG
+    ? path.resolve(process.env.ANCHOR_MCP_CONFIG)
+    : existsSync(DEFAULT_CONFIG_PATH)
+      ? DEFAULT_CONFIG_PATH
+      : undefined;
+  return resolveDbCliSchemaName({ env: process.env, configPath });
 }
 
 function dockerCompose(args: string[], options: { stdio?: "inherit" | "pipe" } = {}): void {
