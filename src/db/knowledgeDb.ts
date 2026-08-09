@@ -151,9 +151,17 @@ export class KnowledgeDatabase {
   }
 
   private async listGrantedScopes(workspaceGuid: string, principalGuid: string): Promise<ScopeSummary[]> {
-    // Only the grant's permission/retired_at are evaluated in application code, through
-    // resolveScopeAccess — the single tested source of truth for deny-by-default and "write
-    // implies read." SQL narrows to candidate rows only; it must not re-decide access itself.
+    // Retired grants are excluded in SQL, not just in application code. They accumulate as
+    // history, so without this predicate the query scales with total grants ever issued
+    // rather than with live ones. Measured against 20k retired grants and one live grant:
+    // without it, a Seq Scan over all 20,001 rows (cost 669.81); with it, a 1-row Nested
+    // Loop (cost 16.32).
+    //
+    // PERMISSION semantics still belong to resolveScopeAccess — the single tested source of
+    // truth for deny-by-default and "write implies read". The filter below therefore stays:
+    // SQL narrows to live candidate rows, application code decides what they entitle. The
+    // retiredAt check there is now redundant by construction, and kept deliberately so the
+    // policy remains complete on its own rather than depending on its caller's WHERE clause.
     const result = await this.pool.query<ScopeRow & { grant_permission: "read" | "write"; grant_retired_at: Date | null }>(
       `SELECT s.scope_guid, s.scope_slug, s.scope_kind, s.title, s.summary, s.aliases,
               g.permission AS grant_permission, g.retired_at AS grant_retired_at
@@ -162,6 +170,7 @@ export class KnowledgeDatabase {
          ON g.workspace_guid = s.workspace_guid AND g.scope_guid = s.scope_guid
        WHERE s.workspace_guid = $1
          AND g.principal_guid = $2
+         AND g.retired_at IS NULL
          AND s.retired_at IS NULL
        ORDER BY s.scope_slug`,
       [workspaceGuid, principalGuid],
