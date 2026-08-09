@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { AnchorService } from "../src/anchorService.js";
 import { AnchorRepository } from "../src/git/repo.js";
 import { isValidAnchorId } from "../src/graph/identity.js";
+import { removeTempDir } from "./tempDir.js";
 
 /**
  * Goal 0 Phase 2 WP-A: mint anchor_id + schema_version on anchor creation
@@ -26,7 +27,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
-  await rm(tmpDir, { recursive: true, force: true });
+  await removeTempDir(tmpDir);
 });
 
 function anchorContent(overrides: { project?: string; anchorId?: string; schemaVersion?: string } = {}): string {

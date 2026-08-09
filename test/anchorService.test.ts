@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { AnchorService } from "../src/anchorService.js";
 import { AnchorRepository } from "../src/git/repo.js";
+import { removeTempDir } from "./tempDir.js";
 
 let tmpDir: string;
 let repo: AnchorRepository;
@@ -19,7 +20,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
-  await rm(tmpDir, { recursive: true, force: true });
+  await removeTempDir(tmpDir);
 });
 
 describe("AnchorService", () => {
@@ -2330,7 +2331,7 @@ describe("AnchorService effective certainty (WP6)", () => {
       const claim = read.claimProvenance?.claims?.find((c) => c.text === "See src/index.ts for detail.");
       expect(claim?.effectiveCertainty?.rows[0].liveness).toBe(1);
     } finally {
-      await rm(checkoutDir, { recursive: true, force: true });
+      await removeTempDir(checkoutDir);
     }
   });
 
@@ -2356,7 +2357,7 @@ describe("AnchorService effective certainty (WP6)", () => {
       expect(claim?.effectiveCertainty?.rows[0].liveness).toBe(0);
       expect(claim?.effectiveCertainty?.certainty).toBe(0);
     } finally {
-      await rm(checkoutDir, { recursive: true, force: true });
+      await removeTempDir(checkoutDir);
     }
   });
 
@@ -2387,7 +2388,7 @@ describe("AnchorService effective certainty (WP6)", () => {
       expect(claim?.effectiveCertainty?.rows[0].liveness).toBe(1);
     } finally {
       await rm(path.join(checkoutDir, "..", "outside-marker.txt"), { force: true });
-      await rm(checkoutDir, { recursive: true, force: true });
+      await removeTempDir(checkoutDir);
     }
   });
 

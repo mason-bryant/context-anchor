@@ -30,7 +30,7 @@ function isLocalhostBinding(host: string): boolean {
 export async function startHttpServer(
   config: ServerConfig,
   options: HttpServerOptions,
-  runtimeOptions: { logger?: AppLogger } = {},
+  runtimeOptions: { logger?: AppLogger; databaseUrl?: string } = {},
 ): Promise<Server> {
   if (!options.authToken) {
     throw new Error(
@@ -78,6 +78,22 @@ export async function startHttpServer(
     traceRatings: runtime.traceRatings,
   });
 
+  // Minimal "backend indicator" (design doc UI capability list): whether the database
+  // backend is configured, and if so which schema and migration version answered. The full
+  // routes/scope browser surface lands with later PRs; this is only enough to make a
+  // missing tool diagnosable rather than mysterious.
+  app.get("/api/db/status", auth, (_req: Request, res: Response) => {
+    res.json(
+      runtime.knowledgeDb
+        ? {
+            configured: true,
+            schemaName: runtime.knowledgeDb.schemaName,
+            schemaVersion: runtime.knowledgeDb.schemaVersion ?? null,
+          }
+        : { configured: false },
+    );
+  });
+
   if (options.stateless) {
     const transport = new NodeStreamableHTTPServerTransport({ sessionIdGenerator: undefined });
     await runtime.mcpServer.connect(transport);
@@ -121,6 +137,7 @@ export async function startHttpServer(
             logger: runtime.traceLogger,
             connection: { transport: "http", getSessionId: () => sessionTransport.sessionId },
           },
+          knowledgeDb: runtime.knowledgeDb,
         }).connect(transport);
       }
 
@@ -151,9 +168,15 @@ export async function startHttpServer(
       port: options.port,
       error: errorMetadata(error),
     });
-    await runtime.requestLogger.close();
-    await runtime.traceLogger.close();
-    await runtime.logger.close();
+    // Close the database pool too, or a failed bind (port in use) leaks its connections.
+    // Every teardown is best-effort and individually caught so a cleanup failure cannot
+    // mask the bind error the caller actually needs to see.
+    await Promise.allSettled([
+      runtime.requestLogger.close(),
+      runtime.traceLogger.close(),
+      runtime.logger.close(),
+      runtime.knowledgeDb?.close() ?? Promise.resolve(),
+    ]);
     throw error;
   }
 
@@ -161,7 +184,15 @@ export async function startHttpServer(
   server.once("close", () => {
     runtime.stopAutoSync();
     runtime.logger.info("http server closed", { host: options.host, port: options.port });
-    void Promise.all([runtime.requestLogger.close(), runtime.traceLogger.close(), runtime.logger.close()]);
+    // allSettled, matching the bind-failure path: nothing awaits this, so a rejecting
+    // close (a pool already ended, a logger transport gone) would otherwise surface as an
+    // unhandled rejection during shutdown.
+    void Promise.allSettled([
+      runtime.requestLogger.close(),
+      runtime.traceLogger.close(),
+      runtime.logger.close(),
+      runtime.knowledgeDb?.close() ?? Promise.resolve(),
+    ]);
   });
   return server;
 }

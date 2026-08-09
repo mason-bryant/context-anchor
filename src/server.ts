@@ -4,6 +4,7 @@ import * as z from "zod/v4";
 
 import type { AnchorService } from "./anchorService.js";
 import { anchorSectionGuidance } from "./anchorStructure.js";
+import type { ScopeSummary } from "./db/knowledgeDb.js";
 import { PeopleRegistryConflictError, ProjectMappingsConflictError } from "./git/repo.js";
 import { errorMetadata, noopRequestLogger, type RequestLogger } from "./logger.js";
 import { MIGRATION_OPERATION_CODES, type MigrationOperationCode } from "./migration/anchorMigration.js";
@@ -162,11 +163,17 @@ const SharedWriteOptsSchema = z.object({
   expectedFileCommit: z.string().optional(),
 });
 
+/** Structural, not the concrete class, so tests can pass a plain fake without a real pool. */
+export type KnowledgeDatabaseTool = {
+  listScopesForOwner(): Promise<ScopeSummary[]>;
+};
+
 export function createAnchorMcpServer(
   service: AnchorService,
   options: {
     requestLogger?: RequestLogger;
     trace?: { logger: TraceLogger; connection?: TraceConnection };
+    knowledgeDb?: KnowledgeDatabaseTool;
   } = {},
 ): McpServer {
   const server = new McpServer(
@@ -1870,6 +1877,25 @@ the index when your workflow checks in that file.`,
       ],
     }),
   );
+
+  // Registered only when a database backend is configured — the agent should not see a
+  // tool it cannot use, so this is omitted rather than registered-and-failing.
+  if (options.knowledgeDb) {
+    const knowledgeDb = options.knowledgeDb;
+    server.registerTool(
+      "listScopes",
+      {
+        title: "List Scopes",
+        description:
+          "Enumerate scopes with kind, title, and aliases for discovery. Requires the database backend; " +
+          "absent from the tool list when no database is configured. Single-operator release: always resolves " +
+          "as the workspace owner.",
+        inputSchema: z.object({ traceId: TraceIdSchema }),
+        annotations: { readOnlyHint: true },
+      },
+      async () => jsonResult({ scopes: await knowledgeDb.listScopesForOwner() }),
+    );
+  }
 
   return server;
 }

@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
@@ -13,6 +13,7 @@ import { extractClaims } from "../src/claims.js";
 import { isValidAnchorId } from "../src/graph/identity.js";
 import { AnchorService } from "../src/anchorService.js";
 import { AnchorRepository } from "../src/git/repo.js";
+import { removeTempDir } from "./tempDir.js";
 
 function makeCtx(overrides: Partial<AnchorMigrationContext> = {}): AnchorMigrationContext {
   return {
@@ -675,7 +676,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
-  await rm(tmpDir, { recursive: true, force: true });
+  await removeTempDir(tmpDir);
 });
 
 async function seedMigrationRepo(): Promise<void> {

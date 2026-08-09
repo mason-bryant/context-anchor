@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
@@ -15,6 +15,7 @@ import {
   resolveTaskSignalNodes,
 } from "../src/graph/proximity.js";
 import type { PlanContextBundleInput, PlanContextBundleResult } from "../src/types.js";
+import { removeTempDir } from "./tempDir.js";
 
 let tmpDir: string;
 
@@ -23,7 +24,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
-  await rm(tmpDir, { recursive: true, force: true });
+  await removeTempDir(tmpDir);
 });
 
 // ---------------------------------------------------------------------------

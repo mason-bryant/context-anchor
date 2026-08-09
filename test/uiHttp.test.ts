@@ -1,5 +1,5 @@
 import type { Server } from "node:http";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
@@ -9,6 +9,7 @@ import { AnchorService } from "../src/anchorService.js";
 import { AnchorRepository } from "../src/git/repo.js";
 import { startHttpServer } from "../src/http/server.js";
 import { resolveCytoscapeDistDir, resolveMermaidDistDir } from "../src/ui/routes.js";
+import { removeTempDir } from "./tempDir.js";
 
 let tmpDir: string;
 let server: Server | undefined;
@@ -65,7 +66,7 @@ afterEach(async () => {
     });
     server = undefined;
   }
-  await rm(tmpDir, { recursive: true, force: true });
+  await removeTempDir(tmpDir);
 });
 
 describe("UI HTTP routes", () => {
@@ -2007,7 +2008,7 @@ describe("UI HTTP routes", () => {
       await new Promise<void>((resolve, reject) => {
         clampedServer.close((error) => (error ? reject(error) : resolve()));
       });
-      await rm(clampedTmpDir, { recursive: true, force: true });
+      await removeTempDir(clampedTmpDir);
     }
   });
 
@@ -2049,7 +2050,7 @@ describe("UI HTTP routes", () => {
       await new Promise<void>((resolve, reject) => {
         disabledServer.close((error) => (error ? reject(error) : resolve()));
       });
-      await rm(disabledTmpDir, { recursive: true, force: true });
+      await removeTempDir(disabledTmpDir);
     }
   });
 });
@@ -2100,8 +2101,8 @@ describe("UI HTTP trace routes", () => {
       });
       traceServer = undefined;
     }
-    await rm(traceTmpDir, { recursive: true, force: true });
-    await rm(tracesDir, { recursive: true, force: true });
+    await removeTempDir(traceTmpDir);
+    await removeTempDir(tracesDir);
   });
 
   async function traceFetchJson<T>(pathSuffix: string): Promise<T> {
@@ -2219,8 +2220,8 @@ describe("UI HTTP trace routes", () => {
       await new Promise<void>((resolve, reject) => {
         soloServer.close((error) => (error ? reject(error) : resolve()));
       });
-      await rm(isolatedTmpDir, { recursive: true, force: true });
-      await rm(isolatedTracesDir, { recursive: true, force: true });
+      await removeTempDir(isolatedTmpDir);
+      await removeTempDir(isolatedTracesDir);
     }
   });
 

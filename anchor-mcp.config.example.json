@@ -4,6 +4,10 @@
     "your-tunnel.ngrok-free.dev"
   ],
   "stateful": false,
+  "database": {
+    "poolSize": 10,
+    "schemaName": "knowledge"
+  },
   "logging": {
     "file": {
       "enabled": true,

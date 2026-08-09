@@ -633,3 +633,58 @@ To include larger repos, pass comma-separated sizes:
 ```sh
 ANCHOR_MCP_PERF_SIZES=100,1000,10000 npm run perf:read-paths
 ```
+
+## Database Backend (Optional)
+
+The Git-backed anchor store above is the default and requires no setup. A separate,
+optional Postgres-backed "knowledge" schema (G-042/M12: the database-backed redesign)
+adds database-backed MCP tools alongside it — currently just `listScopes` — without
+replacing anything. With no database configured, the server boots exactly as before and
+these tools are not registered at all.
+
+Local lifecycle (Docker required):
+
+```sh
+npm run db:up       # start Postgres, wait for readiness, apply pending migrations
+npm run db:status   # schema version and pending migration count
+npm run db:migrate  # apply pending migrations only
+npm run db:psql     # interactive shell against the running database
+npm run db:down     # stop the container, leaving data in place
+npm run db:reset -- --yes   # drop and recreate from migrations (destructive; --yes required)
+```
+
+`docker-compose.yml` pins the Postgres major version, sets `PGDATA` explicitly, and
+bind-mounts data to the gitignored `.data/postgres/` directory. It publishes port
+`55432` (not the default `5432`, and never `3333`, the dev HTTP server's port) so it
+cannot collide with an existing local Postgres.
+
+To point the server at it, set `DATABASE_URL` (never put a connection string in the
+config file):
+
+```sh
+DATABASE_URL=postgres://anchor:anchor@127.0.0.1:55432/anchor_mcp npm run dev:http
+```
+
+Non-secret settings — pool size and the schema name — go in an optional `database` block
+in `anchor-mcp.config.json`:
+
+```json
+{
+  "database": {
+    "poolSize": 10,
+    "schemaName": "knowledge"
+  }
+}
+```
+
+The `db` CLI reads that same `database.schemaName`, so migrations and the server always
+target one schema. It looks for `ANCHOR_MCP_CONFIG` first, then a repo-root
+`anchor-mcp.config.json`, and falls back to `knowledge` when neither exists. Set
+`ANCHOR_MCP_DB_SCHEMA` only when you deliberately want to point the CLI somewhere else
+(a scratch or diagnostic schema) — it overrides the config file for that invocation.
+
+If `DATABASE_URL` is set but the schema has pending migrations, the server refuses to
+start with an explicit error rather than booting into a half-usable state. Access is
+deny-by-default from the first migration: a workspace `owner` has full access with no
+grant row required; a `member` sees nothing until an explicit `scope_grants` row exists
+for them.

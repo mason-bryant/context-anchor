@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { AnchorRepository } from "../src/git/repo.js";
 import type { AnchorStore } from "../src/storage/store.js";
+import { removeTempDir } from "./tempDir.js";
 
 let tmpDir: string;
 let store: AnchorStore;
@@ -17,7 +18,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
-  await rm(tmpDir, { recursive: true, force: true });
+  await removeTempDir(tmpDir);
 });
 
 describe("AnchorStore contract", () => {

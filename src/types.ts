@@ -1,5 +1,6 @@
 import type { ClaimProvenanceSummary } from "./claims.js";
 import type { ClaimWithCertainty } from "./certainty.js";
+import type { DatabaseConfig } from "./db/config.js";
 import type { AnchorQuestion, QuestionStatus } from "./questions.js";
 import type { DiscoveryCategory } from "./taxonomy.js";
 
@@ -1114,6 +1115,13 @@ export type ServerConfig = {
   /** Goal 1 slice 1: read-only graph inspection surface (`graphSnapshot`/`graphSchema`) config. Optional; absent = enabled with the default clamps, so callers/configs that predate it are unaffected. */
   graphUi?: GraphUiConfig;
   logging?: LoggingConfig;
+  /**
+   * Non-secret Postgres knowledge-database settings (G-042/M12 PR1: `src/db/`). The
+   * connection string itself is never config-file material — see `CliOptions.databaseUrl`
+   * in `src/cli/args.ts`, resolved from `--database-url`/`DATABASE_URL` only. Absent (and no
+   * `databaseUrl`) means the server boots Git-only and registers no database-backed tools.
+   */
+  database?: DatabaseConfig;
 };
 
 /**

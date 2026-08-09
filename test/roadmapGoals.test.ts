@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { AnchorService } from "../src/anchorService.js";
 import { AnchorRepository } from "../src/git/repo.js";
 import { listRoadmapGoalsWithStatus } from "../src/roadmap/analyzeRoadmap.js";
+import { removeTempDir } from "./tempDir.js";
 
 const ROADMAP = `---
 project:
@@ -169,7 +170,7 @@ describe("AnchorService.listRoadmapGoals", () => {
   });
 
   afterEach(async () => {
-    await rm(tmpDir, { recursive: true, force: true });
+    await removeTempDir(tmpDir);
   });
 
   it("sorts by status groups with newest goal ids first by default", async () => {

@@ -11,5 +11,8 @@ fixtures/demo-context/
 anchor-mcp.config.json
 *.swp
 
+# Local Postgres data (bind-mounted by docker-compose.yml, see `db up`)
+.data/
+
 # Scratch handoff notes from agent-driven work (never commit)
 HANDOFF.md

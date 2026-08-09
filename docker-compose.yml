@@ -1,0 +1,21 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: anchor
+      POSTGRES_PASSWORD: anchor
+      POSTGRES_DB: anchor_mcp
+      # Postgres 18 changed the on-disk data directory layout; pin it explicitly rather
+      # than trusting the image default so an upgrade never silently reinterprets old data.
+      PGDATA: /var/lib/postgresql/data/pgdata
+    ports:
+      # Non-standard so this never collides with an existing local Postgres, and never the
+      # port anchor-mcp's own dev HTTP server runs on (3333).
+      - "55432:5432"
+    volumes:
+      - ./.data/postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U anchor -d anchor_mcp"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
