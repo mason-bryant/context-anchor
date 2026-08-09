@@ -7,8 +7,52 @@ import { assertValidDatabaseUrl, resolveDatabaseConfig, type DatabaseConfig } fr
 import { expandHome } from "../utils/path.js";
 import { DEFAULT_GRAPH_SCORING_ENABLED, DEFAULT_GRAPH_SCORING_MAX_BOOST, clampGraphScoringMaxBoost } from "../graph/proximity.js";
 
+export const HELP_TEXT = `anchor-mcp — Git-backed MCP server for context anchors
+
+Usage: anchor-mcp [options]
+
+Anchor store
+  --repo <path>                 Anchor repository (default ~/agent-context, created if missing)
+  --anchor-root <path>          Subdirectory within the repo holding anchors (default .)
+  --config <path>               JSON config file for non-secret settings
+  --no-auto-sync                Do not pull --rebase in the background
+  --no-push-on-write            Commit without pushing
+  --sync-interval-ms <ms>       Background sync interval (default 45000)
+  --stale-after-days <days>     Flag anchors older than this in planner output (default 45)
+  --migration-warn-only         Report migration issues without blocking writes
+  --anchor-schema-mode <mode>   legacy | warn | enforce (default legacy)
+
+Transport
+  --transport <stdio|http>      Transport to serve on (default stdio)
+  --host <host>                 HTTP bind address (default 127.0.0.1)
+  --port <port>                 HTTP port (default 3000)
+  --allowed-hosts <list>        Comma-separated extra Host headers to accept
+  --auth-token <token>          Bearer token; required for HTTP
+  --stateful                    Keep per-session HTTP transports (default stateless)
+
+Retrieval
+  --graph-scoring-enabled       Enable graph-proximity scoring (on by default)
+  --no-graph-scoring-enabled    Disable graph-proximity scoring
+  --graph-scoring-max-boost <n> Ceiling on any single anchor's graph boost
+
+Database (optional; absent means Git-backed tools only)
+  --database-url <url>          Postgres connection string; DATABASE_URL is equivalent
+
+Other
+  -h, --help                    Show this message
+
+Environment equivalents: ANCHOR_MCP_REPO, ANCHOR_MCP_ANCHOR_ROOT, ANCHOR_MCP_CONFIG,
+ANCHOR_MCP_TRANSPORT, ANCHOR_MCP_HOST, ANCHOR_MCP_PORT, ANCHOR_MCP_ALLOWED_HOSTS,
+ANCHOR_MCP_AUTH_TOKEN, ANCHOR_MCP_STATEFUL, ANCHOR_MCP_SYNC_INTERVAL_MS,
+ANCHOR_MCP_STALE_AFTER_DAYS, ANCHOR_MCP_ANCHOR_SCHEMA_MODE, DATABASE_URL.
+
+Flags take precedence over environment variables, which take precedence over the
+config file. The connection string is never read from the config file.`;
+
 export type CliOptions = {
   config: ServerConfig;
+  /** True when the caller asked for usage; nothing else in this object is meaningful. */
+  help: boolean;
   transport: "stdio" | "http";
   host: string;
   port: number;
@@ -20,6 +64,14 @@ export type CliOptions = {
 };
 
 export function parseCliArgs(argv: string[], env: NodeJS.ProcessEnv = process.env): CliOptions {
+  // Checked against argv directly, before the flag loop: that loop only recognizes `--`
+  // arguments, so `-h` would never reach it. Resolving help first also means asking a tool
+  // how to use it never depends on being correctly configured — including not depending on
+  // the default anchor repository existing, which on a fresh machine it does not.
+  if (argv.includes("--help") || argv.includes("-h")) {
+    return helpOnlyOptions();
+  }
+
   const flags = new Map<string, string | boolean>();
 
   for (let index = 0; index < argv.length; index += 1) {
@@ -63,6 +115,7 @@ export function parseCliArgs(argv: string[], env: NodeJS.ProcessEnv = process.en
   }
 
   return {
+    help: false,
     transport,
     host: stringFlag(flags, "host") ?? env.ANCHOR_MCP_HOST ?? "127.0.0.1",
     port: numberFlag(flags, "port") ?? numberEnv(env.ANCHOR_MCP_PORT) ?? 3000,
@@ -101,6 +154,31 @@ export function parseCliArgs(argv: string[], env: NodeJS.ProcessEnv = process.en
       },
       logging: loggingConfigValue(fileConfig.logging, "logging"),
       database: databaseConfigValue(fileConfig.database, "database"),
+    },
+  };
+}
+
+/**
+ * A structurally valid CliOptions for the help path. None of it is used — the caller prints
+ * usage and exits — but returning a complete object keeps CliOptions free of optional fields
+ * that every other consumer would then have to narrow.
+ */
+function helpOnlyOptions(): CliOptions {
+  return {
+    help: true,
+    transport: "stdio",
+    host: "127.0.0.1",
+    port: 3000,
+    stateless: true,
+    config: {
+      repoPath: "",
+      anchorRoot: ".",
+      autoSync: false,
+      pushOnWrite: false,
+      syncIntervalMs: 0,
+      migrationWarnOnly: false,
+      staleAfterDays: 45,
+      graphScoring: { enabled: DEFAULT_GRAPH_SCORING_ENABLED, maxBoost: DEFAULT_GRAPH_SCORING_MAX_BOOST },
     },
   };
 }

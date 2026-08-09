@@ -1,4 +1,4 @@
-import type { Stats } from "node:fs";
+import { mkdirSync, type Stats } from "node:fs";
 import { mkdir, readFile, readdir, rename, stat, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 
@@ -125,6 +125,11 @@ export class AnchorRepository implements AnchorStore, SyncableAnchorStore {
     this.anchorRoot = normalizeRelative(options.anchorRoot ?? ".");
     this.anchorRootPath = path.resolve(this.repoPath, this.anchorRoot || ".");
     assertInside(this.repoPath, this.anchorRootPath);
+    // simple-git refuses to construct against a directory that does not exist, so this has
+    // to happen here rather than in ensureReady — which already intends to bootstrap a fresh
+    // repo (mkdir, then `git init`) but never got the chance, because construction threw
+    // first with an error naming neither the path nor the fix.
+    mkdirSync(this.repoPath, { recursive: true });
     this.git = simpleGit({ baseDir: this.repoPath, binary: "git", maxConcurrentProcesses: 1 });
     this.gitMetadata = new GitMetadataCache(this.git, this.repoPath);
   }

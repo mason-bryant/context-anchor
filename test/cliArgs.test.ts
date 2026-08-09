@@ -4,7 +4,7 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { parseCliArgs } from "../src/cli/args.js";
+import { HELP_TEXT, parseCliArgs } from "../src/cli/args.js";
 import { buildAllowedHosts } from "../src/http/server.js";
 
 describe("CLI args", () => {
@@ -366,6 +366,48 @@ describe("CLI args — graphScoring.enabled", () => {
     const options = parseCliArgs(["--no-graph-scoring-enabled", "--graph-scoring-max-boost", "3"], {});
     expect(options.config.graphScoring.enabled).toBe(false);
     expect(options.config.graphScoring.maxBoost).toBe(3);
+  });
+});
+
+describe("CLI args — help", () => {
+  it("reports help for --help and -h without requiring any other argument", () => {
+    // Help must resolve before anything touches the filesystem: the default repo path may
+    // not exist, and asking a tool how to use it should never depend on being configured.
+    expect(parseCliArgs(["--help"], {}).help).toBe(true);
+    expect(parseCliArgs(["-h"], {}).help).toBe(true);
+  });
+
+  it("does not report help when it was not asked for", () => {
+    expect(parseCliArgs([], {}).help).toBe(false);
+    expect(parseCliArgs(["--transport", "http"], {}).help).toBe(false);
+  });
+
+  it("wins over other flags, including invalid ones", () => {
+    // `--help` after a typo should still explain the tool rather than reporting the typo.
+    expect(parseCliArgs(["--anchor-schema-mode", "nonsense", "--help"], {}).help).toBe(true);
+  });
+
+  it("documents every flag the parser actually accepts", () => {
+    // A help text that omits a flag is worse than none: it implies the flag does not exist.
+    for (const flag of [
+      "--repo",
+      "--config",
+      "--transport",
+      "--host",
+      "--port",
+      "--allowed-hosts",
+      "--auth-token",
+      "--stateful",
+      "--anchor-root",
+      "--no-auto-sync",
+      "--no-push-on-write",
+      "--sync-interval-ms",
+      "--stale-after-days",
+      "--anchor-schema-mode",
+      "--database-url",
+    ]) {
+      expect(HELP_TEXT, `help should document ${flag}`).toContain(flag);
+    }
   });
 });
 

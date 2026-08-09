@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { StdioServerTransport } from "@modelcontextprotocol/server";
 
-import { parseCliArgs } from "../cli/args.js";
+import { HELP_TEXT, parseCliArgs } from "../cli/args.js";
 import { startHttpServer } from "../http/server.js";
 import { createAppLogger, errorMetadata, type AppLogger } from "../logger.js";
 import { createAnchorRuntime } from "../runtime.js";
@@ -10,6 +10,14 @@ let activeLogger: AppLogger | undefined;
 
 async function main(): Promise<void> {
   const options = parseCliArgs(process.argv.slice(2));
+
+  // Before creating a logger or touching the anchor repository: printing usage should have
+  // no side effects and no prerequisites.
+  if (options.help) {
+    console.log(HELP_TEXT);
+    return;
+  }
+
   const logger = createAppLogger(options.config.logging);
   activeLogger = logger;
 
