@@ -71,3 +71,27 @@ describe("GET /api/db/status", () => {
     expect(response.status).toBe(401);
   });
 });
+
+describe("GET /api/db/scope-changes", () => {
+  it("requires authentication", async () => {
+    const response = await fetch(`${baseUrl}/api/db/scope-changes?scope=workspace`);
+    expect(response.status).toBe(401);
+  });
+
+  it("reports 503 when the database backend is not configured", async () => {
+    const response = await fetch(`${baseUrl}/api/db/scope-changes?scope=workspace`, {
+      headers: { Authorization: `Bearer ${TOKEN}` },
+    });
+    expect(response.status).toBe(503);
+  });
+
+  it("reports the missing backend even when the request is also malformed", async () => {
+    // Backend availability is checked first on purpose: with no database configured, 503 is
+    // the honest answer whatever the parameters say. The 400 paths are covered against a
+    // real backend in scopeChangesRoute.contract.test.ts.
+    const response = await fetch(`${baseUrl}/api/db/scope-changes`, {
+      headers: { Authorization: `Bearer ${TOKEN}` },
+    });
+    expect(response.status).toBe(503);
+  });
+});

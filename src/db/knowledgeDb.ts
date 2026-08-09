@@ -4,6 +4,8 @@ import type { Pool } from "pg";
 
 import type { AppLogger } from "../logger.js";
 import { resolveScopeAccess, type WorkspaceRole } from "./access.js";
+import { parseChangeWindow } from "./changeWindow.js";
+import { listScopeChanges, type ScopeChange } from "./scopeChanges.js";
 import { resolveDatabaseConfig, type PartialDatabaseConfig } from "./config.js";
 import { type BootstrapResult, ensureBootstrap } from "./bootstrap.js";
 import { getMigrationStatus } from "./migrate.js";
@@ -17,6 +19,16 @@ export type ScopeSummary = {
   summary: string | null;
   aliases: string[];
 };
+
+/** Guarded before a guid lookup so a non-uuid slug never reaches Postgres as a uuid cast. */
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+export class ScopeNotFoundError extends Error {
+  constructor(scope: string) {
+    super(`No scope matched ${JSON.stringify(scope)} in this workspace (looked up by slug, then by guid).`);
+    this.name = "ScopeNotFoundError";
+  }
+}
 
 export class MigrationsPendingError extends Error {
   constructor(schemaName: string, pendingCount: number) {
@@ -55,6 +67,50 @@ export class KnowledgeDatabase {
       principalGuid: this.bootstrap.ownerPrincipalGuid,
       role: "owner",
     });
+  }
+
+  /** T4's read, as the bootstrapped owner. `scope` may be a slug or a guid. */
+  async listScopeChangesForOwner(input: { scope: string; since?: string; limit?: number }): Promise<ScopeChange[]> {
+    // Parse `since` before touching the database so a malformed window fails fast rather
+    // than after a scope lookup that will be thrown away.
+    const since = parseChangeWindow(input.since);
+    const scopeGuid = await this.resolveScopeGuid(input.scope);
+
+    return listScopeChanges(this.pool, this.schemaName, {
+      workspaceGuid: this.bootstrap.workspaceGuid,
+      scopeGuid,
+      since,
+      limit: input.limit,
+    });
+  }
+
+  /**
+   * Slug first, then guid. Callers hold whichever they have — a URL and an agent both carry
+   * the slug, internal code carries the guid — and an unknown value is an error rather than
+   * an empty result, since "no such scope" and "nothing changed" are different facts.
+   */
+  private async resolveScopeGuid(scope: string): Promise<string> {
+    const bySlug = await this.pool.query<{ scope_guid: string }>(
+      `SELECT scope_guid FROM "${this.schemaName}".scopes
+       WHERE workspace_guid = $1 AND scope_slug = $2 AND retired_at IS NULL`,
+      [this.bootstrap.workspaceGuid, scope],
+    );
+    if (bySlug.rows[0]) {
+      return bySlug.rows[0].scope_guid;
+    }
+
+    if (UUID_PATTERN.test(scope)) {
+      const byGuid = await this.pool.query<{ scope_guid: string }>(
+        `SELECT scope_guid FROM "${this.schemaName}".scopes
+         WHERE workspace_guid = $1 AND scope_guid = $2 AND retired_at IS NULL`,
+        [this.bootstrap.workspaceGuid, scope],
+      );
+      if (byGuid.rows[0]) {
+        return byGuid.rows[0].scope_guid;
+      }
+    }
+
+    throw new ScopeNotFoundError(scope);
   }
 
   private async listAllScopes(workspaceGuid: string): Promise<ScopeSummary[]> {

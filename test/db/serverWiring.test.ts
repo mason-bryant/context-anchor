@@ -19,6 +19,49 @@ const SAMPLE_SCOPES: ScopeSummary[] = [
   },
 ];
 
+describe("listScopeChanges tool registration", () => {
+  it("is not registered when no database backend is configured", () => {
+    const server = createAnchorMcpServer({} as AnchorService) as unknown as AdvertisedServer;
+    expect(server._registeredTools.listScopeChanges).toBeUndefined();
+  });
+
+  it("is registered and returns typed change entries when a backend is configured", async () => {
+    const entry = {
+      entryGuid: "e1",
+      entryType: "scope.renamed",
+      streamId: "scope:abc",
+      priorValue: { title: "Before" },
+      resultingValue: { title: "After" },
+      commandGuid: "c1",
+      commandType: "scope.rename",
+      batchGuid: null,
+      actorPrincipalGuid: "p1",
+      actorDisplayName: "Operator",
+      reason: "because",
+      occurredAt: new Date("2026-08-08T12:00:00.000Z"),
+      recordedAt: new Date("2026-08-08T12:00:00.000Z"),
+    };
+
+    const server = createAnchorMcpServer({} as AnchorService, {
+      knowledgeDb: {
+        listScopesForOwner: async () => SAMPLE_SCOPES,
+        listScopeChangesForOwner: async (input: { scope: string }) => {
+          expect(input.scope).toBe("http-transport");
+          return [entry];
+        },
+      },
+    }) as unknown as AdvertisedServer;
+
+    expect(server._registeredTools.listScopeChanges).toBeDefined();
+
+    const result = (await server._registeredTools.listScopeChanges!.handler({
+      scope: "http-transport",
+      since: "7d",
+    })) as { structuredContent: { changes: unknown[] } };
+    expect(result.structuredContent.changes).toHaveLength(1);
+  });
+});
+
 describe("listScopes tool registration", () => {
   it("is not registered when no database backend is configured", () => {
     const server = createAnchorMcpServer({} as AnchorService) as unknown as AdvertisedServer;
@@ -28,6 +71,7 @@ describe("listScopes tool registration", () => {
   it("is registered and returns scopes when a database backend is configured", async () => {
     const fakeKnowledgeDb = {
       listScopesForOwner: async () => SAMPLE_SCOPES,
+      listScopeChangesForOwner: async () => [],
     };
 
     const server = createAnchorMcpServer({} as AnchorService, {

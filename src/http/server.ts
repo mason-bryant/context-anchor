@@ -82,6 +82,43 @@ export async function startHttpServer(
   // backend is configured, and if so which schema and migration version answered. The full
   // routes/scope browser surface lands with later PRs; this is only enough to make a
   // missing tool diagnosable rather than mysterious.
+  // T4's surface: the per-scope history view. The thread ships with its UI rather than
+  // waiting for a batched UI phase (M12 decision).
+  app.get("/api/db/scope-changes", auth, (req: Request, res: Response) => {
+    void (async () => {
+      const knowledgeDb = runtime.knowledgeDb;
+      if (!knowledgeDb) {
+        res.status(503).json({ error: "Database backend is not configured" });
+        return;
+      }
+
+      const scope = typeof req.query.scope === "string" ? req.query.scope : undefined;
+      if (!scope) {
+        res.status(400).json({ error: "scope is required (slug or guid)" });
+        return;
+      }
+
+      try {
+        const changes = await knowledgeDb.listScopeChangesForOwner({
+          scope,
+          since: typeof req.query.since === "string" ? req.query.since : undefined,
+          limit: typeof req.query.limit === "string" ? Number(req.query.limit) : undefined,
+        });
+        res.json({ scope, changes });
+      } catch (error) {
+        // A bad scope or a malformed `since` is caller error, not a server fault; anything
+        // else keeps its 500 so a real defect is not disguised as a validation message.
+        const name = error instanceof Error ? error.name : "";
+        if (name === "ScopeNotFoundError" || /invalid since/i.test(String(error))) {
+          res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
+          return;
+        }
+        runtime.logger.error("scope-changes request failed", { scope, error: errorMetadata(error) });
+        res.status(500).json({ error: "Failed to read scope changes" });
+      }
+    })();
+  });
+
   app.get("/api/db/status", auth, (_req: Request, res: Response) => {
     res.json(
       runtime.knowledgeDb
