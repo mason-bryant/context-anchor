@@ -35,6 +35,8 @@ export type ImportReport = {
   relationsCreated: number;
   associationsDerived: number;
   mappingsImported: number;
+  /** Existing mappings repointed because the imported commit changed them. */
+  mappingsUpdated: number;
   peopleImported: number;
   /** Files whose content matched the latest revision, so nothing was written. */
   unchanged: string[];
@@ -57,7 +59,16 @@ export type ImportInput = {
 };
 
 const GOAL_HEADING = /\bG-(\d{1,6})\b/;
-const GOAL_IDS_IN_FRONT_MATTER = /goal_ids:\s*((?:\s*-\s*G-\d+\s*)+)/;
+
+/**
+ * Only `relations.goal_ids` declares which goals a milestone covers. Milestone front matter
+ * can carry `goal_ids` in other places too — notably per-task under `tasks:` — and matching
+ * those would attribute a milestone's initiative to goals its individual tasks reference
+ * rather than the ones the milestone itself claims.
+ */
+/** The indented lines under `relations:` — YAML block scoping, so sibling keys are excluded. */
+const RELATIONS_BLOCK = /^relations:[ \t]*\r?\n((?:[ \t]+.*\r?\n?)*)/m;
+const GOAL_IDS_IN_RELATIONS = /goal_ids:\s*((?:\s*-\s*G-\d+\s*)+)/;
 
 /**
  * One-pass bootstrap import of a pinned repository commit (T2).
@@ -81,6 +92,7 @@ export async function importDocuments(input: ImportInput): Promise<ImportReport>
     relationsCreated: 0,
     associationsDerived: 0,
     mappingsImported: 0,
+    mappingsUpdated: 0,
     peopleImported: 0,
     unchanged: [],
   };
@@ -630,14 +642,20 @@ function collectGoalReferences(files: ImportFile[]): Map<string, Set<string>> {
     if (derived.scopeKind !== "initiative") {
       continue;
     }
-    // Scoped to the front-matter block: `goal_ids:` also appears in body prose and fenced
-    // examples (docs/milestones.md documents the field by showing it), and matching those
-    // would attach a milestone's initiative to goals it never referenced.
+    // Two levels of scoping, both load-bearing. Front matter only, because `goal_ids:` also
+    // appears in body prose and fenced examples (docs/milestones.md documents the field by
+    // showing it). Then the `relations:` block only, because other front-matter keys carry
+    // goal ids meaning something different — notably per-task ids under `tasks:`, which say
+    // what an individual task advances, not what the milestone itself covers.
     const frontMatter = extractFrontMatter(file.content);
     if (!frontMatter) {
       continue;
     }
-    const block = GOAL_IDS_IN_FRONT_MATTER.exec(frontMatter);
+    const relations = RELATIONS_BLOCK.exec(frontMatter);
+    if (!relations) {
+      continue;
+    }
+    const block = GOAL_IDS_IN_RELATIONS.exec(relations[1]!);
     if (!block) {
       continue;
     }
@@ -679,11 +697,20 @@ async function importProjectMappings(args: {
           derivedFromSignal: "project-mappings.json",
         });
 
-        const inserted = await tx.query(
+        // Upsert rather than DO NOTHING: a later commit can legitimately repoint a path
+        // prefix at a different component or change its web_config, and ignoring that would
+        // leave the database describing a commit that is no longer the one imported. The
+        // DO UPDATE is guarded so an unchanged mapping is not rewritten, and `xmax = 0`
+        // distinguishes a genuine insert from an update for the report.
+        const inserted = await tx.query<{ inserted: boolean }>(
           `INSERT INTO "${schema}".repository_mappings
              (workspace_guid, mapping_guid, scope_guid, repository, path_prefix, web_config)
            VALUES ($1, $2, $3, $4, $5, $6)
-           ON CONFLICT DO NOTHING`,
+           ON CONFLICT (workspace_guid, repository, path_prefix) WHERE retired_at IS NULL
+           DO UPDATE SET scope_guid = EXCLUDED.scope_guid, web_config = EXCLUDED.web_config
+           WHERE repository_mappings.scope_guid IS DISTINCT FROM EXCLUDED.scope_guid
+              OR repository_mappings.web_config IS DISTINCT FROM EXCLUDED.web_config
+           RETURNING (xmax = 0) AS inserted`,
           [
             input.workspaceGuid,
             randomUUID(),
@@ -694,9 +721,14 @@ async function importProjectMappings(args: {
           ],
         );
         // Count what was actually written, not what was offered: a duplicate mapping in the
-        // input would otherwise inflate the report the operator reads.
-        if (inserted.rowCount && inserted.rowCount > 0) {
+        // input would otherwise inflate the report the operator reads. Inserts and updates
+        // are reported separately, since "3 mappings imported" reads very differently from
+        // "3 mappings repointed".
+        const row = inserted.rows[0];
+        if (row?.inserted === true) {
           report.mappingsImported += 1;
+        } else if (row?.inserted === false) {
+          report.mappingsUpdated += 1;
         }
 
         await relateToDomain(tx, input, scopeGuid, `${mapping.project}-${mapping.name}`, report);

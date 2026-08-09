@@ -519,6 +519,103 @@ describe.runIf(await isTestDatabaseReachable())("importDocuments (real Postgres)
     expect(after, "an unchanged document must still pick up newly-referenced goals").toBeGreaterThan(0);
   });
 
+  it("repoints an existing mapping when a later commit changes it, and reports it as updated", async () => {
+    const base = {
+      pool,
+      schemaName,
+      handler,
+      workspaceGuid: bootstrap.workspaceGuid,
+      actorPrincipalGuid: bootstrap.ownerPrincipalGuid,
+      repository: "context-anchor",
+      files: files(),
+    };
+
+    const first = await importDocuments({
+      ...base,
+      commitSha: "3".repeat(40),
+      projectMappings: [
+        { repository: "context-anchor", pathPrefix: "src/http", project: "anchor-mcp", name: "http-transport" },
+      ],
+    });
+    expect(first.mappingsImported).toBe(1);
+    expect(first.mappingsUpdated).toBe(0);
+
+    // Same path prefix, different component: the database must describe the commit being
+    // imported, not the one that happened to get there first.
+    const second = await importDocuments({
+      ...base,
+      commitSha: "4".repeat(40),
+      projectMappings: [
+        { repository: "context-anchor", pathPrefix: "src/http", project: "anchor-mcp", name: "http-server" },
+      ],
+    });
+    expect(second.mappingsImported).toBe(0);
+    expect(second.mappingsUpdated).toBe(1);
+
+    const mapping = await pool.query<{ scope_slug: string }>(
+      `SELECT s.scope_slug FROM "${schemaName}".repository_mappings m
+       JOIN "${schemaName}".scopes s ON s.scope_guid = m.scope_guid
+       WHERE m.workspace_guid = $1 AND m.path_prefix = 'src/http'`,
+      [bootstrap.workspaceGuid],
+    );
+    expect(mapping.rows).toHaveLength(1);
+    expect(mapping.rows[0]!.scope_slug).toBe("anchor-mcp-http-server");
+  });
+
+  it("does not report an unchanged mapping as updated", async () => {
+    const mappings = [
+      { repository: "context-anchor", pathPrefix: "src/http", project: "anchor-mcp", name: "http-transport" },
+    ];
+    const base = {
+      pool,
+      schemaName,
+      handler,
+      workspaceGuid: bootstrap.workspaceGuid,
+      actorPrincipalGuid: bootstrap.ownerPrincipalGuid,
+      repository: "context-anchor",
+      files: files(),
+      projectMappings: mappings,
+    };
+
+    await importDocuments({ ...base, commitSha: "5".repeat(40) });
+    const again = await importDocuments({ ...base, commitSha: "6".repeat(40) });
+
+    expect(again.mappingsImported).toBe(0);
+    expect(again.mappingsUpdated, "an identical mapping is neither inserted nor updated").toBe(0);
+  });
+
+  it("reads goal ids from relations only, not from per-task ids elsewhere in front matter", async () => {
+    // A task's goal_ids say what that task advances; relations.goal_ids say what the
+    // milestone covers. Matching the former would attach the initiative to goals the
+    // milestone never claimed — and which goals, depending on front-matter key order.
+    const taskMilestone: ImportFile = {
+      path: "projects/anchor-mcp/milestones/tasky.md",
+      content: [
+        "---",
+        "project: anchor-mcp",
+        "relations:",
+        "  goal_ids:",
+        "    - G-042",
+        "tasks:",
+        "  - id: T-1",
+        "    title: Something",
+        "    goal_ids:",
+        "      - G-041",
+        "---",
+        "",
+        "# Milestone -- Tasky",
+        "",
+      ].join("\n"),
+    };
+
+    await runImport({ files: [...files(), taskMilestone] });
+
+    // Claimed via relations: associated.
+    expect(await goalAssociationCount("goal-g-042", "anchor-mcp-tasky")).toBeGreaterThan(0);
+    // Referenced only by a task: not associated.
+    expect(await goalAssociationCount("goal-g-041", "anchor-mcp-tasky")).toBe(0);
+  });
+
   it("extracts nothing into assertions", async () => {
     await runImport();
     const tables = await pool.query<{ table_name: string }>(

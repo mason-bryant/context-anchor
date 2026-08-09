@@ -25,6 +25,7 @@ const SAMPLE_REPORT = {
   relationsCreated: 0,
   associationsDerived: 2,
   mappingsImported: 0,
+  mappingsUpdated: 0,
   peopleImported: 0,
   unchanged: [],
 };
