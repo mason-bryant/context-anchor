@@ -144,6 +144,23 @@ describe.runIf(await isTestDatabaseReachable())("GET /api/db/scope-changes (real
     expect(((await response.json()) as { changes: unknown[] }).changes).toHaveLength(1);
   });
 
+  it("rejects repeated query parameters instead of silently ignoring them", async () => {
+    // Express surfaces a repeated key as an array. Treating that as "absent" would let an
+    // ambiguous `since` widen to all history — the exact silent-widening this route 400s to
+    // prevent — and would let `limit` skip validation entirely.
+    const ambiguous = await get("?scope=workspace&since=7d&since=24h");
+    expect(ambiguous.status).toBe(400);
+    expect(((await ambiguous.json()) as { error: string }).error).toMatch(/since/i);
+
+    const twoLimits = await get("?scope=workspace&limit=1&limit=2");
+    expect(twoLimits.status).toBe(400);
+    expect(((await twoLimits.json()) as { error: string }).error).toMatch(/limit/i);
+
+    const twoScopes = await get("?scope=workspace&scope=other");
+    expect(twoScopes.status).toBe(400);
+    expect(((await twoScopes.json()) as { error: string }).error).toMatch(/scope/i);
+  });
+
   it("honors a since window that excludes the change", async () => {
     const response = await get("?scope=workspace&since=2099-01-01");
     expect(response.status).toBe(200);

@@ -1905,7 +1905,8 @@ the index when your workflow checks in that file.`,
         description:
           "Typed change history for one scope, newest first: what changed, by whom, under which command and batch, " +
           "with prior and resulting values — domain entries, not file diffs. `scope` accepts a slug or a guid. " +
-          "`since` accepts a relative window (`7d`, `24h`, `90m`, `2w`) or an ISO date. Requires the database " +
+          "`since` accepts a relative window (`7d`, `24h`, `90m`, `2w`), an ISO date (`2026-07-01`, read as UTC), " +
+          "or an ISO timestamp carrying an explicit timezone (`2026-07-01T00:00:00Z`). Requires the database " +
           "backend; absent from the tool list when no database is configured.",
         inputSchema: z.object({
           traceId: TraceIdSchema,

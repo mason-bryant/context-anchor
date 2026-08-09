@@ -78,10 +78,6 @@ export async function startHttpServer(
     traceRatings: runtime.traceRatings,
   });
 
-  // Minimal "backend indicator" (design doc UI capability list): whether the database
-  // backend is configured, and if so which schema and migration version answered. The full
-  // routes/scope browser surface lands with later PRs; this is only enough to make a
-  // missing tool diagnosable rather than mysterious.
   // T4's surface: the per-scope history view. The thread ships with its UI rather than
   // waiting for a batched UI phase (M12 decision).
   app.get("/api/db/scope-changes", auth, (req: Request, res: Response) => {
@@ -92,7 +88,19 @@ export async function startHttpServer(
         return;
       }
 
-      const scope = typeof req.query.scope === "string" ? req.query.scope : undefined;
+      // A repeated key arrives as an array. Treating that as absent would let an ambiguous
+      // `?since=7d&since=24h` widen silently to all history — the very thing this route
+      // 400s to prevent — and would let `limit` skip its validation entirely.
+      let scope: string | undefined;
+      let sinceParam: string | undefined;
+      try {
+        scope = singleStringParam(req.query.scope, "scope");
+        sinceParam = singleStringParam(req.query.since, "since");
+      } catch (error) {
+        res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
+        return;
+      }
+
       if (!scope) {
         res.status(400).json({ error: "scope is required (slug or guid)" });
         return;
@@ -101,8 +109,15 @@ export async function startHttpServer(
       // Validate before it can reach SQL: an unparseable limit would otherwise arrive as
       // NaN in the LIMIT parameter and surface as a 500 for what is caller error.
       let limit: number | undefined;
-      if (typeof req.query.limit === "string") {
-        limit = Number(req.query.limit);
+      let limitParam: string | undefined;
+      try {
+        limitParam = singleStringParam(req.query.limit, "limit");
+      } catch (error) {
+        res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
+        return;
+      }
+      if (limitParam !== undefined) {
+        limit = Number(limitParam);
         if (!Number.isInteger(limit) || limit <= 0) {
           res.status(400).json({ error: "limit must be a positive integer" });
           return;
@@ -112,7 +127,7 @@ export async function startHttpServer(
       try {
         const changes = await knowledgeDb.listScopeChangesForOwner({
           scope,
-          since: typeof req.query.since === "string" ? req.query.since : undefined,
+          since: sinceParam,
           limit,
         });
         res.json({ scope, changes });
@@ -130,6 +145,10 @@ export async function startHttpServer(
     })();
   });
 
+  // Minimal "backend indicator" (design doc UI capability list): whether the database
+  // backend is configured, and if so which schema and migration version answered. The full
+  // routes/scope browser surface lands with later PRs; this is only enough to make a
+  // missing tool diagnosable rather than mysterious.
   app.get("/api/db/status", auth, (_req: Request, res: Response) => {
     res.json(
       runtime.knowledgeDb
@@ -243,6 +262,21 @@ export async function startHttpServer(
     ]);
   });
   return server;
+}
+
+/**
+ * Read a query parameter that must appear at most once. Express represents a repeated key
+ * as an array; accepting the first or last value would silently pick a winner among
+ * contradictory inputs, so an ambiguous parameter is rejected instead.
+ */
+function singleStringParam(value: unknown, name: string): string | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (typeof value === "string") {
+    return value;
+  }
+  throw new Error(`${name} must be given at most once`);
 }
 
 export function buildAllowedHosts(configuredHosts: string[] | undefined): string[] | undefined {
