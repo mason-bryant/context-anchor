@@ -290,3 +290,35 @@ describe("normalizePathForStorage", () => {
     expect(normalizePathForStorage("/")).toBe("");
   });
 });
+
+describe("scopes key preservation", () => {
+  // writeProjectMappings persists the OUTPUT of parseProjectMappings, so a key this parser
+  // does not carry is deleted from the file on the next UI or MCP write. Before this, one
+  // edit to a repo mapping silently erased an entire scope model, and the next import fell
+  // back to legacy derivation looking like it had worked.
+  it("carries an unmodeled scopes key through the write round-trip", () => {
+    const scopes = [{ scope: "security", title: "Security", kind: "practice", locators: [] }];
+
+    const parsed = parseProjectMappings({
+      projects: [{ project: "p", repos: [{ repo: "r", paths: [] }] }],
+      claimSourceTypes: [{ id: "url", label: "URL" }],
+      scopes,
+    });
+
+    expect(parsed.scopes).toEqual(scopes);
+  });
+
+  it("does not invent a scopes key when the file has none", () => {
+    const parsed = parseProjectMappings({ projects: [] });
+
+    expect("scopes" in parsed).toBe(false);
+  });
+
+  it("preserves scopes verbatim rather than normalizing it", () => {
+    // Validation belongs to the importer, where a malformed declaration is actionable.
+    // Dropping or rewriting it here would lose data the UI never intended to touch.
+    const odd = { anything: [1, 2, 3] };
+
+    expect(parseProjectMappings({ projects: [], scopes: odd }).scopes).toEqual(odd);
+  });
+});

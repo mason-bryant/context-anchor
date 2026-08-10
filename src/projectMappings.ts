@@ -32,6 +32,11 @@ export function parseProjectMappings(raw: unknown): ProjectMappings {
     projects: parseProjectsArray(obj.projects),
     claimSourceTypes: parseClaimSourceTypes(obj.claimSourceTypes),
     ...(externalLinkTemplates ? { externalLinkTemplates } : {}),
+    // Preserved, not parsed. writeProjectMappings persists the output of this function, so
+    // any key dropped here is deleted from the file on the next UI or MCP write — which
+    // would erase a whole scope model the first time somebody edited a repo mapping.
+    // Validation lives in the database importer, where the error is actionable.
+    ...(obj.scopes === undefined ? {} : { scopes: obj.scopes }),
   };
 }
 
