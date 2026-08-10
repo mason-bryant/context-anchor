@@ -31,9 +31,15 @@ describe.runIf(await isTestDatabaseReachable())("createKnowledgeDatabase startup
     ).rejects.toThrow(MigrationsPendingError);
   });
 
-  it("the failure message names a command this repo actually exposes (npm run db:migrate)", async () => {
+  // Deliberately not `npm run db:migrate`: that is a script of this repository, and the
+  // first thing an installed-package user hits is this error. It has to name a command
+  // that ships with the binary they actually have.
+  it("the failure message names a command that ships with the package", async () => {
     await expect(createKnowledgeDatabase(TEST_DATABASE_URL, { poolSize: 2, schemaName })).rejects.toThrow(
-      /npm run db:migrate/,
+      /anchor-mcp db migrate/,
+    );
+    await expect(createKnowledgeDatabase(TEST_DATABASE_URL, { poolSize: 2, schemaName })).rejects.not.toThrow(
+      /npm run/,
     );
   });
 

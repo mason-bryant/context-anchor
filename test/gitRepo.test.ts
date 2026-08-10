@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, utimes, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, stat, utimes, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
@@ -249,3 +249,23 @@ function batchedHistoryWalkCalls(spy: { mock: { calls: unknown[][] } }): unknown
     return Array.isArray(args) && args.includes("log") && args.includes("--name-status");
   });
 }
+
+describe("AnchorRepository bootstrap", () => {
+  it("creates a repo directory that does not exist yet and initializes it", async () => {
+    // ensureReady always intended to bootstrap a fresh repo, but simple-git refuses to
+    // construct against a missing directory, so construction threw first with an error
+    // naming neither the path nor the fix.
+    const parent = await mkdtemp(path.join(os.tmpdir(), "anchor-bootstrap-"));
+    const fresh = path.join(parent, "nested", "agent-context");
+
+    try {
+      const repo = new AnchorRepository({ repoPath: fresh });
+      await repo.ensureReady();
+
+      await expect(stat(path.join(fresh, ".git"))).resolves.toBeDefined();
+      await expect(repo.listAnchors()).resolves.toEqual([]);
+    } finally {
+      await removeTempDir(parent);
+    }
+  });
+});
