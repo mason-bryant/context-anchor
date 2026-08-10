@@ -82,7 +82,7 @@ describe("listScopeChanges tool registration", () => {
         },
         importDocumentsAsOwner: async () => SAMPLE_REPORT,
         planRoutedBundleAsOwner: async () => SAMPLE_PLAN,
-        reportRecordUseAsOwner: async () => ({ recorded: 0 }),
+        reportRecordUseAsOwner: async () => ({ recorded: 0, rejected: [] }),
       },
     }) as unknown as AdvertisedServer;
 
@@ -102,7 +102,7 @@ describe("listScopeChanges tool registration", () => {
         listScopeChangesForOwner: async () => [],
         importDocumentsAsOwner: async () => SAMPLE_REPORT,
         planRoutedBundleAsOwner: async () => SAMPLE_PLAN,
-        reportRecordUseAsOwner: async () => ({ recorded: 0 }),
+        reportRecordUseAsOwner: async () => ({ recorded: 0, rejected: [] }),
       },
     }) as unknown as AdvertisedServer;
 
@@ -135,7 +135,7 @@ describe("listScopes tool registration", () => {
       listScopeChangesForOwner: async () => [],
       importDocumentsAsOwner: async () => SAMPLE_REPORT,
       planRoutedBundleAsOwner: async () => SAMPLE_PLAN,
-      reportRecordUseAsOwner: async () => ({ recorded: 0 }),
+      reportRecordUseAsOwner: async () => ({ recorded: 0, rejected: [] }),
     };
 
     const server = createAnchorMcpServer({} as AnchorService, {
@@ -171,7 +171,7 @@ describe("importDocuments tool registration", () => {
           return SAMPLE_REPORT;
         },
         planRoutedBundleAsOwner: async () => SAMPLE_PLAN,
-        reportRecordUseAsOwner: async () => ({ recorded: 0 }),
+        reportRecordUseAsOwner: async () => ({ recorded: 0, rejected: [] }),
       },
     }) as unknown as AdvertisedServer;
 
@@ -196,7 +196,7 @@ describe("importDocuments tool registration", () => {
           return SAMPLE_REPORT;
         },
         planRoutedBundleAsOwner: async () => SAMPLE_PLAN,
-        reportRecordUseAsOwner: async () => ({ recorded: 0 }),
+        reportRecordUseAsOwner: async () => ({ recorded: 0, rejected: [] }),
       },
     }) as unknown as AdvertisedServer;
 
@@ -220,7 +220,7 @@ describe("importDocuments tool registration", () => {
         listScopeChangesForOwner: async () => [],
         importDocumentsAsOwner: async () => SAMPLE_REPORT,
         planRoutedBundleAsOwner: async () => SAMPLE_PLAN,
-        reportRecordUseAsOwner: async () => ({ recorded: 0 }),
+        reportRecordUseAsOwner: async () => ({ recorded: 0, rejected: [] }),
       },
     }) as unknown as AdvertisedServer;
 
@@ -243,7 +243,7 @@ describe("importDocuments tool registration", () => {
         listScopeChangesForOwner: async () => [],
         importDocumentsAsOwner: async () => SAMPLE_REPORT,
         planRoutedBundleAsOwner: async () => SAMPLE_PLAN,
-        reportRecordUseAsOwner: async () => ({ recorded: 0 }),
+        reportRecordUseAsOwner: async () => ({ recorded: 0, rejected: [] }),
       },
     }) as unknown as AdvertisedServer;
 
@@ -265,7 +265,7 @@ describe("importDocuments tool registration", () => {
         listScopeChangesForOwner: async () => [],
         importDocumentsAsOwner: async () => SAMPLE_REPORT,
         planRoutedBundleAsOwner: async () => SAMPLE_PLAN,
-        reportRecordUseAsOwner: async () => ({ recorded: 0 }),
+        reportRecordUseAsOwner: async () => ({ recorded: 0, rejected: [] }),
       },
     }) as unknown as AdvertisedServer;
 

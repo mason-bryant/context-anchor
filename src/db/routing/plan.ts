@@ -291,6 +291,9 @@ export type UsedRef = (
   routeKey: string;
 };
 
+/** Refusals are part of the contract: a use that could not be attributed is not a use. */
+export type RecordUseResult = { recorded: number; rejected: Array<{ routeKey: string; reason: string }> };
+
 export type RecordUse = {
   requestId: string;
   refs: UsedRef[];
@@ -306,14 +309,14 @@ export async function reportRecordUse(
   pool: Pool,
   telemetrySchemaName: string,
   use: RecordUse,
-): Promise<{ recorded: number; rejected: Array<{ routeKey: string; reason: string }> }> {
+): Promise<RecordUseResult> {
   let recorded = 0;
   const rejected: Array<{ routeKey: string; reason: string }> = [];
 
-  // Checked once, up front, because a missing request and an unofferred route are different
+  // Checked once, up front, because a missing request and an unoffered route are different
   // answers that a per-ref rowCount cannot tell apart. An unknown request is ignored — the
   // caller is reporting against something that never happened — whereas a known request
-  // with an unofferred route is a rejection worth naming. Conflating them would return a
+  // with an unoffered route is a rejection worth naming. Conflating them would return a
   // rejection per ref, each blaming a route that may well have been fine.
   const known = await pool.query(
     `SELECT 1 FROM "${telemetrySchemaName}".retrieval_requests WHERE request_guid = $1`,

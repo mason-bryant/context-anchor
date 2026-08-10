@@ -464,7 +464,7 @@ describe.runIf(await isTestDatabaseReachable())("planRoutedBundle (real Postgres
       expect(recorded).toBe(0);
     });
 
-    // An unknown request and an unofferred route are different answers. Reporting the
+    // An unknown request and an unoffered route are different answers. Reporting the
     // former as "route was not offered" blames a route that may have been perfectly valid,
     // and would return one such rejection per ref.
     it("ignores an unknown request without inventing route rejections", async () => {

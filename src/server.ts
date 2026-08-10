@@ -4,7 +4,7 @@ import * as z from "zod/v4";
 
 import type { AnchorService } from "./anchorService.js";
 import { anchorSectionGuidance } from "./anchorStructure.js";
-import type { PlanInput, PlanOptions, PlanResult, RecordUse } from "./db/routing/plan.js";
+import type { PlanInput, PlanOptions, PlanResult, RecordUse, RecordUseResult } from "./db/routing/plan.js";
 import type { ScopeSummary } from "./db/knowledgeDb.js";
 import type { ImportReport } from "./db/importDocuments.js";
 import type { ScopeChange } from "./db/scopeChanges.js";
@@ -170,7 +170,7 @@ const SharedWriteOptsSchema = z.object({
 export type KnowledgeDatabaseTool = {
   listScopesForOwner(): Promise<ScopeSummary[]>;
   planRoutedBundleAsOwner(input: Omit<PlanInput, "workspaceGuid">, options?: PlanOptions): Promise<PlanResult>;
-  reportRecordUseAsOwner(use: RecordUse): Promise<{ recorded: number }>;
+  reportRecordUseAsOwner(use: RecordUse): Promise<RecordUseResult>;
   listScopeChangesForOwner(input: { scope: string; since?: string; limit?: number }): Promise<ScopeChange[]>;
   importDocumentsAsOwner(input: {
     repository: string;
