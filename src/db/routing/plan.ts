@@ -291,6 +291,9 @@ export type UsedRef = (
   routeKey: string;
 };
 
+/** Refusals are part of the contract: a use that could not be attributed is not a use. */
+export type RecordUseResult = { recorded: number; rejected: Array<{ routeKey: string; reason: string }> };
+
 export type RecordUse = {
   requestId: string;
   refs: UsedRef[];
@@ -306,20 +309,43 @@ export async function reportRecordUse(
   pool: Pool,
   telemetrySchemaName: string,
   use: RecordUse,
-): Promise<{ recorded: number }> {
+): Promise<RecordUseResult> {
   let recorded = 0;
+  const rejected: Array<{ routeKey: string; reason: string }> = [];
+
+  // Checked once, up front, because a missing request and an unoffered route are different
+  // answers that a per-ref rowCount cannot tell apart. An unknown request is ignored — the
+  // caller is reporting against something that never happened — whereas a known request
+  // with an unoffered route is a rejection worth naming. Conflating them would return a
+  // rejection per ref, each blaming a route that may well have been fine.
+  const known = await pool.query(
+    `SELECT 1 FROM "${telemetrySchemaName}".retrieval_requests WHERE request_guid = $1`,
+    [use.requestId],
+  );
+  if (known.rowCount === 0) {
+    return { recorded: 0, rejected: [] };
+  }
+
   for (const ref of use.refs) {
-    // The impression is resolved here rather than trusted from the caller, and only the
-    // live one: a use is evidence about what the caller actually saw, and a shadow ordering
-    // was never shown to anybody.
+    // The impression is resolved here rather than trusted from the caller, and narrowed to
+    // the ranker that actually produced the answer by joining the request's own ranker id
+    // and version. Live rows for one route are not unique on their own — several
+    // non-shadow rankers per request is what the ranking boundary is designed to allow, and
+    // the uniqueness key permits it — so an unqualified scalar subquery throws "more than
+    // one row returned by a subquery" the moment a second live ordering exists.
     const result = await pool.query(
       `INSERT INTO "${telemetrySchemaName}".retrieval_record_uses
          (use_guid, request_guid, impression_guid, record_type, record_guid, stable_key, use_kind)
-       SELECT $1, $2,
-              (SELECT impression_guid FROM "${telemetrySchemaName}".retrieval_route_impressions
-                WHERE request_guid = $2 AND route_key = $7 AND is_shadow = false),
-              $3, $4, $5, $6
-        WHERE EXISTS (SELECT 1 FROM "${telemetrySchemaName}".retrieval_requests WHERE request_guid = $2)`,
+       SELECT $1, r.request_guid, i.impression_guid, $3, $4, $5, $6
+         FROM "${telemetrySchemaName}".retrieval_requests r
+         JOIN "${telemetrySchemaName}".retrieval_route_impressions i
+           ON i.request_guid = r.request_guid
+          AND i.ranker_id = r.ranker_id
+          AND i.ranker_version = r.ranker_version
+          AND i.is_shadow = false
+          AND i.route_key = $7
+        WHERE r.request_guid = $2
+        LIMIT 1`,
       [
         randomUUID(),
         use.requestId,
@@ -330,7 +356,16 @@ export async function reportRecordUse(
         ref.routeKey,
       ],
     );
-    recorded += result.rowCount ?? 0;
+
+    if (result.rowCount && result.rowCount > 0) {
+      recorded += result.rowCount;
+    } else {
+      // Refused rather than stored unattributed. A row whose impression is null cannot
+      // answer the one question uses are recorded to answer, and reporting it as recorded
+      // would tell the caller their signal landed when it did not.
+      rejected.push({ routeKey: ref.routeKey, reason: "route was not offered on this request" });
+    }
   }
-  return { recorded };
+
+  return { recorded, rejected };
 }

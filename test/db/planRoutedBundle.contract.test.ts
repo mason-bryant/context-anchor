@@ -380,6 +380,79 @@ describe.runIf(await isTestDatabaseReachable())("planRoutedBundle (real Postgres
       expect(attributed.rows[0]).toMatchObject({ route_key: usedRoute.routeKey, is_shadow: false });
     });
 
+    // "recorded: 1" that means "recorded, but unattributable" is the quiet wrongness this
+    // whole mechanism exists to avoid: the row is useless for the one question uses are
+    // recorded to answer, and the caller is told it succeeded.
+    it("refuses a use whose routeKey was never offered, rather than storing it unattributed", async () => {
+      const result = await plan("anchor mcp", { budget: { expanded: 5, listed: 10 } });
+      const usedRoute = result.routes.find((route) => (route.records?.length ?? 0) > 0)!;
+      const record = usedRoute.records![0]!;
+      if (record.ref.type !== "section") {
+        throw new Error("expected a section record");
+      }
+
+      const outcome = await reportRecordUse(pool, telemetrySchema, {
+        requestId: result.requestId,
+        refs: [
+          {
+            type: "section",
+            guid: record.ref.guid,
+            stableKey: record.ref.stableKey,
+            routeKey: "scope:domain:never-offered",
+          },
+        ],
+        useKind: "cited",
+      });
+
+      expect(outcome.recorded).toBe(0);
+      expect(outcome.rejected).toEqual([
+        { routeKey: "scope:domain:never-offered", reason: "route was not offered on this request" },
+      ]);
+      const stored = await pool.query(
+        `SELECT 1 FROM "${telemetrySchema}".retrieval_record_uses WHERE request_guid = $1`,
+        [result.requestId],
+      );
+      expect(stored.rowCount).toBe(0);
+    });
+
+    // Two live rankers on one request is what A3 is designed to allow, and the uniqueness
+    // key permits it. An unguarded scalar subquery would throw "more than one row returned
+    // by a subquery" at that point — in a telemetry path, at runtime.
+    it("attributes to the authoritative ranker when several live orderings exist", async () => {
+      const result = await plan("anchor mcp", { budget: { expanded: 5, listed: 10 } });
+      const usedRoute = result.routes.find((route) => (route.records?.length ?? 0) > 0)!;
+      const record = usedRoute.records![0]!;
+      if (record.ref.type !== "section") {
+        throw new Error("expected a section record");
+      }
+
+      // A second non-shadow impression for the same route, as a different ranker.
+      await pool.query(
+        `INSERT INTO "${telemetrySchema}".retrieval_route_impressions
+           (impression_guid, request_guid, ranker_id, ranker_version, is_shadow, route_key,
+            subject_type, offered_position, record_count)
+         VALUES (gen_random_uuid(), $1, 'other', '1.0.0', false, $2, 'scope', 0, 0)`,
+        [result.requestId, usedRoute.routeKey],
+      );
+
+      const outcome = await reportRecordUse(pool, telemetrySchema, {
+        requestId: result.requestId,
+        refs: [
+          { type: "section", guid: record.ref.guid, stableKey: record.ref.stableKey, routeKey: usedRoute.routeKey },
+        ],
+        useKind: "cited",
+      });
+
+      expect(outcome.recorded).toBe(1);
+      const attributed = await pool.query<{ ranker_id: string }>(
+        `SELECT i.ranker_id FROM "${telemetrySchema}".retrieval_record_uses u
+           JOIN "${telemetrySchema}".retrieval_route_impressions i ON i.impression_guid = u.impression_guid
+          WHERE u.request_guid = $1`,
+        [result.requestId],
+      );
+      expect(attributed.rows[0]?.ranker_id).toBe("precedence");
+    });
+
     // A use for a request that never happened is a caller mistake, not a row worth keeping.
     it("ignores a record use for an unknown request", async () => {
       const { recorded } = await reportRecordUse(pool, telemetrySchema, {
@@ -389,6 +462,22 @@ describe.runIf(await isTestDatabaseReachable())("planRoutedBundle (real Postgres
       });
 
       expect(recorded).toBe(0);
+    });
+
+    // An unknown request and an unoffered route are different answers. Reporting the
+    // former as "route was not offered" blames a route that may have been perfectly valid,
+    // and would return one such rejection per ref.
+    it("ignores an unknown request without inventing route rejections", async () => {
+      const outcome = await reportRecordUse(pool, telemetrySchema, {
+        requestId: randomUUID(),
+        refs: [
+          { type: "section", guid: randomUUID(), stableKey: "doc#a", routeKey: "scope:domain:anchor-mcp" },
+          { type: "section", guid: randomUUID(), stableKey: "doc#b", routeKey: "scope:domain:anchor-mcp" },
+        ],
+        useKind: "cited",
+      });
+
+      expect(outcome).toEqual({ recorded: 0, rejected: [] });
     });
   });
 });

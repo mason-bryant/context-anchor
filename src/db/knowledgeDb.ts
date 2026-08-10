@@ -14,6 +14,7 @@ import {
   type PlanOptions,
   type PlanResult,
   type RecordUse,
+  type RecordUseResult,
 } from "./routing/plan.js";
 import {
   importDocuments,
@@ -103,7 +104,7 @@ export class KnowledgeDatabase {
     );
   }
 
-  async reportRecordUseAsOwner(use: RecordUse): Promise<{ recorded: number }> {
+  async reportRecordUseAsOwner(use: RecordUse): Promise<RecordUseResult> {
     return reportRecordUse(this.pool, this.telemetrySchemaName, use);
   }
 
