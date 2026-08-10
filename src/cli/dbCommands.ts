@@ -8,6 +8,7 @@ import pg from "pg";
 
 import { assertComposeManagedTarget, COMPOSE_MANAGED_DATABASE_URL, type DbCliArgs } from "../db/cliArgs.js";
 import { createKnowledgeDatabase } from "../db/knowledgeDb.js";
+import { CliUsageError } from "./errors.js";
 import { collectRepositorySnapshot } from "./repositorySnapshot.js";
 import { redactDatabaseUrl } from "../db/config.js";
 import { getMigrationStatus, runMigrations } from "../db/migrate.js";
@@ -38,7 +39,7 @@ function requireComposeFile(command: string): void {
   }
   // An installed package ships migrations/ but not docker-compose.yml, so these commands
   // have no container to act on. Say that, rather than failing inside `docker compose`.
-  throw new Error(
+  throw new CliUsageError(
     `"db ${command}" manages the Postgres container declared in this repository's docker-compose.yml, ` +
       `which is not part of the installed package. Point DATABASE_URL at your own Postgres and use ` +
       `"anchor-mcp db migrate" and "anchor-mcp db status" instead.`,
@@ -128,7 +129,9 @@ async function printStatus(context: DbCommandContext): Promise<void> {
 async function importRepository(allowDirty: boolean, context: DbCommandContext): Promise<void> {
   const log = context.log ?? console.log;
   if (!context.repoPath) {
-    throw new Error("No anchor repository resolved to import from; set repo in the config file or pass --repo.");
+    throw new CliUsageError(
+      "No anchor repository resolved to import from; set repo in the config file or pass --repo.",
+    );
   }
 
   const snapshot = await collectRepositorySnapshot(context.repoPath, { allowDirty });

@@ -5,6 +5,7 @@ import path from "node:path";
 
 import { beforeAll, describe, expect, it } from "vitest";
 
+import { CliUsageError } from "../../src/cli/errors.js";
 import { collectRepositorySnapshot, DirtyWorkingTreeError } from "../../src/cli/repositorySnapshot.js";
 
 function git(repo: string, ...args: string[]): string {
@@ -182,6 +183,21 @@ describe("repository snapshot", () => {
 
     expect(snapshot.projectMappings).toBeUndefined();
     expect(snapshot.people).toBeUndefined();
+  });
+
+  // Every one of these is something the operator can fix, so they must print as a single
+  // message rather than a stack trace. Asserting the type keeps that from regressing the
+  // next time an error is added here.
+  it("raises operator-actionable failures as CliUsageError, not bare Error", async () => {
+    const notGit = await mkdtemp(path.join(os.tmpdir(), "anchor-notgit-"));
+    const noMarkdown = await makeRepo({ "readme.txt": "nothing" });
+    const badJson = await makeRepo({ "a.md": "# A\n", "people-registry.json": "{ not json" });
+    const dirty = await makeRepo({ "a.md": "# A\n" });
+    await writeFile(path.join(dirty, "a.md"), "# changed\n", "utf8");
+
+    for (const repoPath of [notGit, noMarkdown, badJson, dirty]) {
+      await expect(collectRepositorySnapshot(repoPath), repoPath).rejects.toBeInstanceOf(CliUsageError);
+    }
   });
 
   it("refuses a path that is not a git repository", async () => {

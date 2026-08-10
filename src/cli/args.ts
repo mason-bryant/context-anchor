@@ -30,7 +30,7 @@ Database commands
   db reset --yes                Destroy the local database and recreate it
 
 \`db import\` refuses a dirty working tree: the import is pinned to a commit, so importing
-uncommitted content would record a sha that does not describe it. --allow-dirty overrides
+uncommitted content would record a sha that does not describe it. \`--allow-dirty\` overrides
 this and warns. Re-importing the same commit writes nothing.
 
 \`db start\`, \`db stop\`, \`db psql\`, and \`db reset\` manage the container declared in this

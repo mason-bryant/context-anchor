@@ -82,7 +82,9 @@ async function readJsonFile(repoPath: string, fileName: string): Promise<unknown
     return JSON.parse(await readFile(file, "utf8"));
   } catch (error) {
     // Name the file: a bare "Unexpected token" from deep inside an import is not actionable.
-    throw new Error(`Could not parse ${fileName}: ${error instanceof Error ? error.message : String(error)}`);
+    throw new CliUsageError(
+      `Could not parse ${fileName}: ${error instanceof Error ? error.message : String(error)}`,
+    );
   }
 }
 
@@ -203,7 +205,7 @@ export async function collectRepositorySnapshot(
   options: { allowDirty?: boolean; repository?: string } = {},
 ): Promise<RepositorySnapshot> {
   if (!existsSync(path.join(repoPath, ".git"))) {
-    throw new Error(`${repoPath} is not a git repository, so there is no commit to pin the import to.`);
+    throw new CliUsageError(`${repoPath} is not a git repository, so there is no commit to pin the import to.`);
   }
 
   // `XY path`, where XY is the two-column staged/unstaged state; renames read as
@@ -216,7 +218,7 @@ export async function collectRepositorySnapshot(
   const commitSha = (await git(repoPath, ["rev-parse", "HEAD"])).toLowerCase();
   const files = await collectMarkdown(repoPath);
   if (files.length === 0) {
-    throw new Error(`${repoPath} contains no markdown files; there is nothing to import.`);
+    throw new CliUsageError(`${repoPath} contains no markdown files; there is nothing to import.`);
   }
 
   const projectMappings = flattenProjectMappings(await readJsonFile(repoPath, PROJECT_MAPPINGS_FILE));
