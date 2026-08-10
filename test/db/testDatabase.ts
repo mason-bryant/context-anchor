@@ -1,10 +1,9 @@
 import path from "node:path";
 import { runMigrations } from "../../src/db/migrate.js";
-import { telemetrySchemaNameFor } from "../../src/db/config.js";
 import type { Pool } from "pg";
 import pg from "pg";
 
-import { redactDatabaseUrl } from "../../src/db/config.js";
+import { redactDatabaseUrl, telemetrySchemaNameFor } from "../../src/db/config.js";
 
 export const TEST_DATABASE_URL =
   process.env.TEST_DATABASE_URL ?? "postgres://anchor:anchor@127.0.0.1:55432/anchor_mcp";

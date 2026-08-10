@@ -24,7 +24,10 @@ CREATE TABLE retrieval_requests (
   ranker_version text NOT NULL,
   ranker_deterministic boolean NOT NULL,
   consumer text,
-  route_budget integer,
+  -- The whole budget, not one number: expanded, listed, and recordsPerRoute each change
+  -- what an impression means, and storing only one leaves later analysis unable to tell
+  -- which response-size cap was in effect.
+  route_budget jsonb,
   created_at timestamptz NOT NULL DEFAULT now()
 );
 

@@ -152,7 +152,7 @@ export async function planRoutedBundle(
     outcome,
     now,
   });
-  await recordImpressions(pool, telemetrySchemaName, requestId, outcome.ranker, offered, routes, false);
+  await recordImpressions(pool, telemetrySchemaName, requestId, outcome.ranker, offered, routes, false, now);
 
   // Shadow orderings are recorded after the answer is formed and can never change it. A
   // failure here must not fail a query the caller has already been served.
@@ -167,6 +167,7 @@ export async function planRoutedBundle(
         shadowOutcome.routes.slice(0, Math.max(budget.listed, budget.expanded)),
         routes,
         true,
+        now,
       );
     } catch {
       // Intentionally swallowed: shadow ranking is diagnostics, not the answer.
@@ -217,7 +218,7 @@ async function recordRequest(
       outcome.ranker.version,
       outcome.ranker.deterministic,
       input.consumer ?? null,
-      budget.expanded,
+      JSON.stringify(budget),
       now,
     ],
   );
@@ -231,6 +232,9 @@ async function recordImpressions(
   ordered: RankedRoute[],
   planned: PlannedRoute[],
   isShadow: boolean,
+  // The request's clock, not a fresh one: every timestamp for a single request should agree,
+  // and a fresh Date here defeats a fixed clock in tests.
+  now: Date,
 ): Promise<void> {
   if (ordered.length === 0) {
     return;
@@ -257,7 +261,7 @@ async function recordImpressions(
         route.recordCount,
         // A shadow ordering never expanded anything; recording otherwise would make it look
         // like the caller saw it.
-        !isShadow && expandedKeys.has(route.routeKey) ? new Date() : null,
+        !isShadow && expandedKeys.has(route.routeKey) ? now : null,
       ],
     );
   }

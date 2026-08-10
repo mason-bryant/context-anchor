@@ -1944,7 +1944,10 @@ the index when your workflow checks in that file.`,
           storeTaskText: z.boolean().optional(),
           consumer: z.string().trim().min(1).optional(),
         }),
-        annotations: { readOnlyHint: true },
+        // Deliberately not readOnlyHint: this writes a retrieval request and one impression
+        // per offered route on every call. It mutates no knowledge, but a client relying on
+        // the hint to auto-approve side-effect-free tools would be misled.
+        annotations: {},
       },
       async ({ traceId, task, referencedPaths, routeKeys, budget, storeTaskText, consumer }) =>
         jsonResult(

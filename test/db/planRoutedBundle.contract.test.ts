@@ -202,6 +202,44 @@ describe.runIf(await isTestDatabaseReachable())("planRoutedBundle (real Postgres
       expect(impressions.rows.map((row) => row.route_key)).toEqual(result.routes.map((route) => route.routeKey));
     });
 
+    // Storing only `expanded` left later analysis unable to say which response-size cap was
+    // in effect, which is exactly what an impression has to be interpreted against.
+    it("stores the whole budget, not just the expanded count", async () => {
+      const result = await plan("anchor mcp", { budget: { expanded: 3, listed: 7, recordsPerRoute: 4 } });
+
+      const stored = await pool.query<{ route_budget: unknown }>(
+        `SELECT route_budget FROM "${telemetrySchema}".retrieval_requests WHERE request_guid = $1`,
+        [result.requestId],
+      );
+      expect(stored.rows[0]?.route_budget).toEqual({ expanded: 3, listed: 7, recordsPerRoute: 4 });
+    });
+
+    // Every timestamp for one request should agree; a fresh Date inside the impression write
+    // also defeats a fixed clock in tests.
+    it("timestamps impressions with the request's clock", async () => {
+      const fixed = new Date("2026-01-02T03:04:05.000Z");
+      const result = await planRoutedBundle(
+        pool,
+        schemaName,
+        telemetrySchema,
+        { workspaceGuid: bootstrap.workspaceGuid, task: "anchor mcp" },
+        { now: () => fixed },
+      );
+
+      const rows = await pool.query<{ created_at: Date; expanded_at: Date | null }>(
+        `SELECT r.created_at, i.expanded_at
+           FROM "${telemetrySchema}".retrieval_requests r
+           JOIN "${telemetrySchema}".retrieval_route_impressions i ON i.request_guid = r.request_guid
+          WHERE r.request_guid = $1 AND i.expanded_at IS NOT NULL`,
+        [result.requestId],
+      );
+      expect(rows.rowCount).toBeGreaterThan(0);
+      for (const row of rows.rows) {
+        expect(row.created_at.toISOString()).toBe(fixed.toISOString());
+        expect(row.expanded_at?.toISOString()).toBe(fixed.toISOString());
+      }
+    });
+
     it("stores the task text only when asked", async () => {
       const result = await plan("add rate limiting", { storeTaskText: true });
 
