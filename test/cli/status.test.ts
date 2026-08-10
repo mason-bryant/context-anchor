@@ -5,6 +5,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { parseCliArgs } from "../../src/cli/args.js";
+import { runtimePaths, writePidFile } from "../../src/cli/lifecycle.js";
 import { statusReport } from "../../src/cli/status.js";
 
 const SECRET = "s3cret-token-value-do-not-print";
@@ -93,6 +94,34 @@ describe("status", () => {
 
     expect(report).toMatch(/2 pending/);
     expect(report).toMatch(/anchor-mcp db migrate/);
+  });
+
+  // The contradiction Copilot caught: status said "running detached" for a recycled pid
+  // that `stop` would refuse to signal, so the two commands disagreed about the same state.
+  it("does not report a foreign pid as a running server", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "anchor-mcp-home-"));
+    const options = await optionsWith({ port: 4700 });
+    await writePidFile(runtimePaths(options.host, 4700, root).pidFile, {
+      pid: 4242,
+      host: options.host,
+      port: 4700,
+    });
+
+    const report = (
+      await statusReport(options, {
+        home: root,
+        probe: {
+          isAlive: () => true,
+          commandLine: () => "/usr/bin/postgres -D /var/lib/pg",
+          signal: () => {
+            throw new Error("status must never signal anything");
+          },
+        },
+      })
+    ).join("\n");
+
+    expect(report).not.toMatch(/running detached/);
+    expect(report).toMatch(/recycled pid|not anchor-mcp/);
   });
 
   it("reports an unreachable database without throwing", async () => {

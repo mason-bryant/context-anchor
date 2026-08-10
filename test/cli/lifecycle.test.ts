@@ -7,7 +7,15 @@ import { describe, expect, it } from "vitest";
 
 import net from "node:net";
 
-import { runtimePaths, startServer, stopServer, writePidFile, type ProcessProbe } from "../../src/cli/lifecycle.js";
+import {
+  inspectServer,
+  isPortListening,
+  runtimePaths,
+  startServer,
+  stopServer,
+  writePidFile,
+  type ProcessProbe,
+} from "../../src/cli/lifecycle.js";
 
 async function home(): Promise<string> {
   return mkdtemp(path.join(os.tmpdir(), "anchor-mcp-home-"));
@@ -57,6 +65,80 @@ describe("runtime paths", () => {
 
     expect(path.basename(paths.pidFile)).not.toContain(path.sep);
     expect(path.basename(paths.pidFile)).toMatch(/3333/);
+  });
+});
+
+describe("port probing", () => {
+  // net.Socket.connect wants an unbracketed address: "[::1]" resolves as a hostname and
+  // fails ENOTFOUND, which would make every probe report "nothing listening" and break
+  // start/restart/status for an IPv6 bind.
+  it("probes a bracketed IPv6 host", async () => {
+    const server = net.createServer();
+    const port = await new Promise<number>((resolve) => {
+      server.listen(0, "::1", () => {
+        resolve((server.address() as net.AddressInfo).port);
+      });
+    });
+
+    try {
+      expect(await isPortListening("[::1]", port)).toBe(true);
+      expect(await isPortListening("::1", port)).toBe(true);
+    } finally {
+      await new Promise((resolve) => server.close(resolve));
+    }
+  });
+
+  it("probes a 0.0.0.0 bind through loopback", async () => {
+    const server = net.createServer();
+    const port = await new Promise<number>((resolve) => {
+      server.listen(0, "0.0.0.0", () => {
+        resolve((server.address() as net.AddressInfo).port);
+      });
+    });
+
+    try {
+      expect(await isPortListening("0.0.0.0", port)).toBe(true);
+    } finally {
+      await new Promise((resolve) => server.close(resolve));
+    }
+  });
+
+  it("reports nothing listening on a free port", async () => {
+    expect(await isPortListening("127.0.0.1", 1)).toBe(false);
+  });
+});
+
+describe("server state", () => {
+  // status and stop must agree: reporting "running detached" for a pid that stop will
+  // refuse to signal sends the user in a circle.
+  it("classifies a live foreign pid as foreign, not running", async () => {
+    const root = await home();
+    const paths = runtimePaths("127.0.0.1", 4600, root);
+    await writePidFile(paths.pidFile, { pid: 4242, host: "127.0.0.1", port: 4600 });
+
+    const state = await inspectServer({
+      host: "127.0.0.1",
+      port: 4600,
+      home: root,
+      probe: probe({ isAlive: () => true, commandLine: () => "/usr/bin/postgres -D /var/lib/pg" }),
+    });
+
+    expect(state.kind).toBe("foreign");
+  });
+
+  it("classifies a live anchor-mcp pid as running", async () => {
+    const root = await home();
+    const paths = runtimePaths("127.0.0.1", 4601, root);
+    await writePidFile(paths.pidFile, { pid: 4242, host: "127.0.0.1", port: 4601 });
+
+    const state = await inspectServer({
+      host: "127.0.0.1",
+      port: 4601,
+      home: root,
+      probe: probe({ isAlive: () => true, commandLine: () => "node /usr/local/bin/anchor-mcp serve" }),
+    });
+
+    expect(state.kind).toBe("running");
   });
 });
 

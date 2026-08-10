@@ -101,6 +101,40 @@ function isAnchorMcpProcess(commandLine: string | undefined): boolean {
   return commandLine !== undefined && /anchor-mcp/.test(commandLine);
 }
 
+export type ServerState =
+  | { kind: "none" }
+  | { kind: "stale"; pid?: number; pidFile: string }
+  | { kind: "foreign"; pid: number; pidFile: string }
+  | { kind: "running"; pid: number; record: PidFileContents; pidFile: string };
+
+/**
+ * The single classification of "is our server up", shared by `stop` and `status`. They
+ * previously each decided for themselves, and `status` checked only liveness — so a
+ * recycled pid was reported as "running detached" while `stop` refused to touch it,
+ * leaving the user with two commands that contradicted each other.
+ */
+export async function inspectServer(options: {
+  host: string;
+  port: number;
+  home?: string;
+  probe?: ProcessProbe;
+}): Promise<ServerState> {
+  const probe = options.probe ?? defaultProcessProbe;
+  const { pidFile } = runtimePaths(options.host, options.port, options.home);
+  const record = await readPidFile(pidFile);
+
+  if (!record) {
+    return existsSync(pidFile) ? { kind: "stale", pidFile } : { kind: "none" };
+  }
+  if (!probe.isAlive(record.pid)) {
+    return { kind: "stale", pid: record.pid, pidFile };
+  }
+  if (!isAnchorMcpProcess(probe.commandLine(record.pid))) {
+    return { kind: "foreign", pid: record.pid, pidFile };
+  }
+  return { kind: "running", pid: record.pid, record, pidFile };
+}
+
 export async function stopServer(options: {
   host: string;
   port: number;
@@ -109,53 +143,52 @@ export async function stopServer(options: {
   signal?: NodeJS.Signals;
 }): Promise<StopResult> {
   const probe = options.probe ?? defaultProcessProbe;
-  const { pidFile } = runtimePaths(options.host, options.port, options.home);
-  const record = await readPidFile(pidFile);
+  const state = await inspectServer(options);
 
-  if (!record) {
-    // Distinguish "no detached server" from "no server at all": the caller very likely has
-    // a stdio server running under their editor right now, and a bare "nothing to stop"
-    // reads as a bug.
-    if (existsSync(pidFile)) {
-      await rm(pidFile, { force: true });
-      return { stopped: false, reason: "stale", message: `Removed an unreadable pidfile at ${pidFile}.` };
+  switch (state.kind) {
+    case "none":
+      // Distinguish "no detached server" from "no server at all": the caller very likely
+      // has a stdio server running under their editor right now, and a bare "nothing to
+      // stop" reads as a bug.
+      return {
+        stopped: false,
+        reason: "not-running",
+        message:
+          `No detached anchor-mcp server is running on ${options.host}:${String(options.port)}. ` +
+          `stdio servers are started and stopped by the MCP client that launched them.`,
+      };
+
+    case "stale": {
+      await rm(state.pidFile, { force: true });
+      return {
+        stopped: false,
+        reason: "stale",
+        message:
+          state.pid === undefined
+            ? `Removed an unreadable pidfile at ${state.pidFile}.`
+            : `No process ${String(state.pid)} is running; removed the stale pidfile at ${state.pidFile}.`,
+      };
     }
-    return {
-      stopped: false,
-      reason: "not-running",
-      message:
-        `No detached anchor-mcp server is running on ${options.host}:${String(options.port)}. ` +
-        `stdio servers are started and stopped by the MCP client that launched them.`,
-    };
-  }
 
-  if (!probe.isAlive(record.pid)) {
-    await rm(pidFile, { force: true });
-    return {
-      stopped: false,
-      reason: "stale",
-      message: `No process ${String(record.pid)} is running; removed the stale pidfile at ${pidFile}.`,
-    };
-  }
+    case "foreign":
+      // Pids are recycled. Deleting the file here would also be wrong: the operator needs
+      // to see that something is inconsistent rather than have it quietly cleaned up.
+      return {
+        stopped: false,
+        reason: "foreign-process",
+        message:
+          `Refusing to stop process ${String(state.pid)} from ${state.pidFile}: it is not an anchor-mcp process. ` +
+          `The pid was likely reused. Remove the pidfile if that process is unrelated.`,
+      };
 
-  if (!isAnchorMcpProcess(probe.commandLine(record.pid))) {
-    // Pids are recycled. Deleting the file here would also be wrong: the operator needs to
-    // see that something is inconsistent rather than have it quietly cleaned up.
-    return {
-      stopped: false,
-      reason: "foreign-process",
-      message:
-        `Refusing to stop process ${String(record.pid)} from ${pidFile}: it is not an anchor-mcp process. ` +
-        `The pid was likely reused. Remove the pidfile if that process is unrelated.`,
-    };
+    case "running":
+      probe.signal(state.pid, options.signal ?? "SIGTERM");
+      await rm(state.pidFile, { force: true });
+      return {
+        stopped: true,
+        message: `Stopped anchor-mcp (pid ${String(state.pid)}) on ${options.host}:${String(options.port)}.`,
+      };
   }
-
-  probe.signal(record.pid, options.signal ?? "SIGTERM");
-  await rm(pidFile, { force: true });
-  return {
-    stopped: true,
-    message: `Stopped anchor-mcp (pid ${String(record.pid)}) on ${options.host}:${String(options.port)}.`,
-  };
 }
 
 export type StartResult = { started: boolean; pid?: number; logFile: string; message: string };
@@ -275,6 +308,23 @@ export async function waitForPortFree(
   return false;
 }
 
+/**
+ * Bind addresses are not always connect addresses. `net.Socket.connect` takes a bare
+ * address, so the bracketed IPv6 form the rest of the CLI accepts (`[::1]`, matching the
+ * Host-header handling in src/http/server.ts) resolves as a hostname and fails ENOTFOUND —
+ * every probe would report "nothing listening". The wildcard binds are probed via loopback.
+ */
+function connectHost(host: string): string {
+  const bare = host.startsWith("[") && host.endsWith("]") ? host.slice(1, -1) : host;
+  if (bare === "0.0.0.0") {
+    return "127.0.0.1";
+  }
+  if (bare === "::" || bare === "::0") {
+    return "::1";
+  }
+  return bare;
+}
+
 export async function isPortListening(host: string, port: number, timeoutMs = 500): Promise<boolean> {
   return new Promise((resolve) => {
     const socket = new net.Socket();
@@ -292,7 +342,6 @@ export async function isPortListening(host: string, port: number, timeoutMs = 50
     socket.once("error", () => {
       done(false);
     });
-    // 0.0.0.0 is a bind address, not a connect address.
-    socket.connect(port, host === "0.0.0.0" ? "127.0.0.1" : host);
+    socket.connect(port, connectHost(host));
   });
 }

@@ -4,7 +4,7 @@ import path from "node:path";
 import pg from "pg";
 
 import type { CliOptions } from "./args.js";
-import { isPortListening, readPidFile, runtimePaths, type ProcessProbe, defaultProcessProbe } from "./lifecycle.js";
+import { inspectServer, isPortListening, runtimePaths, type ProcessProbe } from "./lifecycle.js";
 import { MIGRATIONS_DIR } from "./dbCommands.js";
 import { getMigrationStatus } from "../db/migrate.js";
 import { DEFAULT_DATABASE_SCHEMA_NAME, redactDatabaseUrl } from "../db/config.js";
@@ -74,7 +74,7 @@ function describeRepo(repoPath: string): string {
  */
 export async function statusReport(options: CliOptions, statusOptions: StatusOptions = {}): Promise<string[]> {
   const lines: string[] = [];
-  const { pidFile, logFile } = runtimePaths(options.host, options.port, statusOptions.home);
+  const { logFile } = runtimePaths(options.host, options.port, statusOptions.home);
 
   lines.push(`config     ${options.configPath ?? "none found (using flags, environment, and defaults)"}`);
   lines.push(`repo       ${options.config.repoPath}${describeRepo(options.config.repoPath)}`);
@@ -103,15 +103,25 @@ export async function statusReport(options: CliOptions, statusOptions: StatusOpt
     }
   }
 
-  const record = await readPidFile(pidFile);
+  // Same classification `stop` uses, so the two cannot contradict each other.
+  const state = await inspectServer({
+    host: options.host,
+    port: options.port,
+    home: statusOptions.home,
+    probe: statusOptions.probe,
+  });
   const listening = await isPortListening(options.host, options.port);
-  const probe = statusOptions.probe ?? defaultProcessProbe;
 
-  if (record && probe.isAlive(record.pid)) {
-    lines.push(`server     running detached (pid ${String(record.pid)}) on ${options.host}:${String(options.port)}`);
+  if (state.kind === "running") {
+    lines.push(`server     running detached (pid ${String(state.pid)}) on ${options.host}:${String(options.port)}`);
     lines.push(`log        ${logFile}`);
-  } else if (record) {
-    lines.push(`server     stale pidfile at ${pidFile} (process ${String(record.pid)} is gone)`);
+  } else if (state.kind === "foreign") {
+    lines.push(
+      `server     pidfile at ${state.pidFile} points at process ${String(state.pid)}, which is not anchor-mcp ` +
+        `(recycled pid); \`stop\` will refuse it`,
+    );
+  } else if (state.kind === "stale") {
+    lines.push(`server     stale pidfile at ${state.pidFile}`);
   } else if (listening) {
     // Someone else's process, or a foreground `serve` — either way we did not start it.
     lines.push(`server     something is listening on ${options.host}:${String(options.port)}, not started by \`start\``);
