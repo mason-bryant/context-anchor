@@ -5,6 +5,7 @@ import path from "node:path";
 import { promisify } from "node:util";
 
 import type { ImportFile, Person, ProjectMapping } from "../db/importDocuments.js";
+import { parseScopeDeclarations, type ScopeDeclaration } from "../db/scopeRegistry.js";
 import { CliUsageError } from "./errors.js";
 
 const run = promisify(execFile);
@@ -32,6 +33,8 @@ export type RepositorySnapshot = {
   commitSha: string;
   files: ImportFile[];
   projectMappings?: ProjectMapping[];
+  /** Scope-first declarations, when project-mappings.json carries a `scopes` key (A1). */
+  scopes?: ScopeDeclaration[];
   people?: Person[];
   /** True when --allow-dirty was used, meaning file content does not match commitSha. */
   dirty: boolean;
@@ -268,7 +271,11 @@ export async function collectRepositorySnapshot(
     throw new CliUsageError(`${repoPath} contains no markdown files; there is nothing to import.`);
   }
 
-  const projectMappings = flattenProjectMappings(await readJsonFile(repoPath, PROJECT_MAPPINGS_FILE));
+  const registry = await readJsonFile(repoPath, PROJECT_MAPPINGS_FILE);
+  // Declared scopes win over derived ones; the project-first shape is only parsed when the
+  // file has no `scopes` key, so a file carrying both does not import two competing models.
+  const scopes = parseScopeDeclarations(registry);
+  const projectMappings = scopes ? undefined : flattenProjectMappings(registry);
   const people = mapPeople(await readJsonFile(repoPath, PEOPLE_REGISTRY_FILE));
 
   return {
@@ -278,6 +285,7 @@ export async function collectRepositorySnapshot(
     commitSha,
     files,
     ...(projectMappings ? { projectMappings } : {}),
+    ...(scopes ? { scopes } : {}),
     ...(people ? { people } : {}),
     dirty: dirtyEntries.length > 0,
   };

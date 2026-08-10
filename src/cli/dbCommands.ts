@@ -148,6 +148,7 @@ async function importRepository(allowDirty: boolean, context: DbCommandContext):
       commitSha: snapshot.commitSha,
       files: snapshot.files,
       projectMappings: snapshot.projectMappings,
+      scopes: snapshot.scopes,
       people: snapshot.people,
     });
 
@@ -155,6 +156,9 @@ async function importRepository(allowDirty: boolean, context: DbCommandContext):
     log(`documents: ${String(report.documentsImported)}  revisions: ${String(report.revisionsCreated)}`);
     log(`sections: ${String(report.sectionsCreated)}  blocks: ${String(report.blocksCreated)}`);
     log(`scopes: ${String(report.scopesCreated)}  relations: ${String(report.relationsCreated)}`);
+    if (snapshot.scopes) {
+      log(`  (${String(snapshot.scopes.length)} declared in project-mappings.json)`);
+    }
     log(`associations: ${String(report.associationsDerived)}`);
     log(`mappings: ${String(report.mappingsImported)} imported, ${String(report.mappingsUpdated)} updated`);
     log(`people: ${String(report.peopleImported)}`);
