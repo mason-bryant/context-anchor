@@ -29,9 +29,9 @@ export const DEFAULT_ROUTE_BUDGET: RouteBudget = { expanded: 2, listed: 10, reco
 
 export type PlanInput = {
   workspaceGuid: string;
-  /** Whose permissions apply to route selection. */
+  /** Whose permissions apply to route selection. Supplied by the facade, never by the caller — see PlanRequest. */
   principalGuid: string;
-  /** Declared by the caller, as listScopes does: an owner needs no grant, a member needs a live one. */
+  /** Resolved with principalGuid from the authenticated session, not caller-supplied. */
   role: WorkspaceRole;
   task: string;
   referencedPaths?: string[];

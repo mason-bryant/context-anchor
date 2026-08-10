@@ -103,9 +103,10 @@ export class KnowledgeDatabase {
         ...input,
         workspaceGuid: this.bootstrap.workspaceGuid,
         principalGuid: this.bootstrap.ownerPrincipalGuid,
-        // Single-operator release: the caller is the workspace owner, who is entitled to
-        // every scope without a grant row. The filtering exists so that stops being an
-        // assumption baked into the query the moment a second principal appears.
+        // Single-operator release: the authenticated caller is the workspace owner, who is
+        // entitled to every scope without a grant row. Decided here rather than accepted
+        // from the caller — PlanRequest omits it — so that when a second principal exists
+        // this becomes a resolution step rather than an assumption baked into the query.
         role: "owner",
       },
       options,

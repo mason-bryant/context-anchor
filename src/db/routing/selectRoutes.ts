@@ -116,9 +116,15 @@ export function pathMatch(
 
 export type SelectionInput = {
   workspaceGuid: string;
-  /** Whose permissions apply. Routing reads records, so an unreadable scope must not become a route. */
+  /**
+   * Whose permissions apply. Routing reads records, so an unreadable scope must not become
+   * a route.
+   *
+   * Supplied by the facade from the authenticated session, never by the caller: `PlanRequest`
+   * omits this field precisely so no caller can name the principal whose permissions apply.
+   */
   principalGuid: string;
-  /** Declared by the caller, matching listScopes: an owner needs no grant row, a member needs a live one. */
+  /** Resolved alongside principalGuid, not caller-supplied. An owner needs no grant row; a member needs a live one. */
   role: WorkspaceRole;
   task: string;
   referencedPaths?: string[];
