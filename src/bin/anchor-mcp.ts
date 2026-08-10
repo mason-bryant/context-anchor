@@ -5,6 +5,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/server";
 
 import { HELP_TEXT, parseCliArgs, type CliOptions } from "../cli/args.js";
 import { runDbCommand } from "../cli/dbCommands.js";
+import { CliUsageError, isCliUsageError } from "../cli/errors.js";
 import { runtimePaths, startServer, stopServer, waitForPortFree } from "../cli/lifecycle.js";
 import { statusReport } from "../cli/status.js";
 import { COMPOSE_MANAGED_DATABASE_URL } from "../db/cliArgs.js";
@@ -16,14 +17,6 @@ import { createAnchorRuntime } from "../runtime.js";
 let activeLogger: AppLogger | undefined;
 
 const THIS_SCRIPT = fileURLToPath(import.meta.url);
-
-/** A mistake in how the command was invoked. Printed as a message, not a stack trace — a stack reads as a crash in the tool rather than as "you typed the wrong thing". */
-class CliUsageError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "CliUsageError";
-  }
-}
 
 async function main(): Promise<void> {
   const options = parseCliArgs(process.argv.slice(2));
@@ -66,6 +59,7 @@ async function db(options: CliOptions): Promise<void> {
     // this repo; anywhere else DATABASE_URL is required and supplies the real target.
     databaseUrl: options.databaseUrl ?? COMPOSE_MANAGED_DATABASE_URL,
     schemaName: options.config.database?.schemaName ?? DEFAULT_DATABASE_SCHEMA_NAME,
+    repoPath: options.config.repoPath,
   });
 }
 
@@ -183,7 +177,7 @@ async function serve(options: CliOptions): Promise<void> {
 main().catch(async (error: unknown) => {
   activeLogger?.error("anchor-mcp fatal error", { error: errorMetadata(error) });
   await activeLogger?.close();
-  if (error instanceof CliUsageError) {
+  if (isCliUsageError(error)) {
     console.error(error.message);
   } else {
     console.error(error instanceof Error ? error.stack ?? error.message : String(error));

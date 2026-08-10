@@ -25,8 +25,13 @@ Database commands
   db stop                       Stop the local Postgres container (data is preserved)
   db status                     Show schema, applied and pending migrations
   db migrate                    Apply pending migrations only
+  db import [--allow-dirty]     Import the anchor repository at its current commit
   db psql                       Open a psql shell in the container
   db reset --yes                Destroy the local database and recreate it
+
+\`db import\` refuses a dirty working tree: the import is pinned to a commit, so importing
+uncommitted content would record a sha that does not describe it. \`--allow-dirty\` overrides
+this and warns. Re-importing the same commit writes nothing.
 
 \`db start\`, \`db stop\`, \`db psql\`, and \`db reset\` manage the container declared in this
 repository's docker-compose.yml and are unavailable from an installed package; \`db migrate\`
@@ -399,7 +404,11 @@ function assertNoStraySubcommand(positionals: string[]): void {
  * anything it does not recognize, which is what keeps `reset --dry-run` from reading as safe.
  */
 function dbArgv(positionals: string[], flags: Map<string, string | boolean>): string[] {
-  return [...positionals, ...(booleanFlag(flags, "yes") ? ["--yes"] : [])];
+  return [
+    ...positionals,
+    ...(booleanFlag(flags, "yes") ? ["--yes"] : []),
+    ...(booleanFlag(flags, "allow-dirty") ? ["--allow-dirty"] : []),
+  ];
 }
 
 /**

@@ -7,6 +7,9 @@ import { fileURLToPath } from "node:url";
 import pg from "pg";
 
 import { assertComposeManagedTarget, COMPOSE_MANAGED_DATABASE_URL, type DbCliArgs } from "../db/cliArgs.js";
+import { createKnowledgeDatabase } from "../db/knowledgeDb.js";
+import { CliUsageError } from "./errors.js";
+import { collectRepositorySnapshot } from "./repositorySnapshot.js";
 import { redactDatabaseUrl } from "../db/config.js";
 import { getMigrationStatus, runMigrations } from "../db/migrate.js";
 
@@ -25,6 +28,8 @@ const COMPOSE_COMMANDS = new Set<DbCliArgs["command"]>(["up", "down", "psql", "r
 export type DbCommandContext = {
   databaseUrl: string;
   schemaName: string;
+  /** Anchor repository to import from; only `db import` reads it. */
+  repoPath?: string;
   log?: (message: string) => void;
 };
 
@@ -34,7 +39,7 @@ function requireComposeFile(command: string): void {
   }
   // An installed package ships migrations/ but not docker-compose.yml, so these commands
   // have no container to act on. Say that, rather than failing inside `docker compose`.
-  throw new Error(
+  throw new CliUsageError(
     `"db ${command}" manages the Postgres container declared in this repository's docker-compose.yml, ` +
       `which is not part of the installed package. Point DATABASE_URL at your own Postgres and use ` +
       `"anchor-mcp db migrate" and "anchor-mcp db status" instead.`,
@@ -116,6 +121,57 @@ async function printStatus(context: DbCommandContext): Promise<void> {
   }
 }
 
+/**
+ * Drives T2 bootstrap import over a whole anchor repository. `importDocuments` takes an
+ * assembled `files` payload, which is fine for a caller that already has the content and
+ * useless from a shell; this reads the repository, pins the commit, and reports what landed.
+ */
+async function importRepository(allowDirty: boolean, context: DbCommandContext): Promise<void> {
+  const log = context.log ?? console.log;
+  if (!context.repoPath) {
+    throw new CliUsageError(
+      "No anchor repository resolved to import from; set repo in the config file or pass --repo.",
+    );
+  }
+
+  const snapshot = await collectRepositorySnapshot(context.repoPath, { allowDirty });
+  log(`Importing ${String(snapshot.files.length)} file(s) from ${snapshot.repository} at ${snapshot.commitSha}`);
+  if (snapshot.dirty) {
+    // Loud, because the recorded provenance is now knowingly inaccurate.
+    log(`WARNING: the working tree is dirty, so the imported content does not match ${snapshot.commitSha}.`);
+  }
+
+  const db = await createKnowledgeDatabase(context.databaseUrl, { schemaName: context.schemaName });
+  try {
+    const report = await db.importDocumentsAsOwner({
+      repository: snapshot.repository,
+      commitSha: snapshot.commitSha,
+      files: snapshot.files,
+      projectMappings: snapshot.projectMappings,
+      people: snapshot.people,
+    });
+
+    log(`batch: ${report.batchGuid}`);
+    log(`documents: ${String(report.documentsImported)}  revisions: ${String(report.revisionsCreated)}`);
+    log(`sections: ${String(report.sectionsCreated)}  blocks: ${String(report.blocksCreated)}`);
+    log(`scopes: ${String(report.scopesCreated)}  relations: ${String(report.relationsCreated)}`);
+    log(`associations: ${String(report.associationsDerived)}`);
+    log(`mappings: ${String(report.mappingsImported)} imported, ${String(report.mappingsUpdated)} updated`);
+    log(`people: ${String(report.peopleImported)}`);
+    log(`unchanged: ${String(report.unchanged.length)} file(s)`);
+
+    // An all-zero report is the expected result of re-importing a commit, but it is
+    // indistinguishable from an import that found nothing — and `unchanged` does not
+    // disambiguate it, because the idempotency key short-circuits each command before
+    // any content is compared. Say which one it was.
+    if (report.documentsImported === 0 && report.unchanged.length === 0) {
+      log(`Nothing was written: commit ${snapshot.commitSha} has already been imported into this schema.`);
+    }
+  } finally {
+    await db.close();
+  }
+}
+
 export async function runDbCommand(args: DbCliArgs, context: DbCommandContext): Promise<void> {
   const log = context.log ?? console.log;
 
@@ -147,6 +203,10 @@ export async function runDbCommand(args: DbCliArgs, context: DbCommandContext): 
     }
     case "psql": {
       dockerCompose(["exec", "postgres", "psql", "-U", "anchor", "-d", "anchor_mcp"]);
+      break;
+    }
+    case "import": {
+      await importRepository(args.allowDirty, context);
       break;
     }
     case "reset": {
