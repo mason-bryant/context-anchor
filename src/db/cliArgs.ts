@@ -2,9 +2,9 @@ import { readFileSync } from "node:fs";
 
 import { assertValidSchemaName, DEFAULT_DATABASE_SCHEMA_NAME, redactDatabaseUrl } from "./config.js";
 
-export type DbCliCommand = "up" | "down" | "status" | "migrate" | "psql" | "reset";
+export type DbCliCommand = "up" | "down" | "status" | "migrate" | "psql" | "reset" | "import";
 
-const KNOWN_COMMANDS: readonly DbCliCommand[] = ["up", "down", "status", "migrate", "psql", "reset"];
+const KNOWN_COMMANDS: readonly DbCliCommand[] = ["up", "down", "status", "migrate", "psql", "reset", "import"];
 
 /**
  * `db start`/`db stop` mirror the server's own start/stop, which is how the unified CLI
@@ -13,8 +13,9 @@ const KNOWN_COMMANDS: readonly DbCliCommand[] = ["up", "down", "status", "migrat
 const COMMAND_ALIASES: Readonly<Record<string, DbCliCommand>> = { start: "up", stop: "down" };
 
 export type DbCliArgs =
-  | { command: Exclude<DbCliCommand, "reset"> }
-  | { command: "reset"; yes: true };
+  | { command: Exclude<DbCliCommand, "reset" | "import"> }
+  | { command: "reset"; yes: true }
+  | { command: "import"; allowDirty: boolean };
 
 export function parseDbCliArgs(argv: string[]): DbCliArgs {
   const [rawCommand, ...rest] = argv;
@@ -32,19 +33,24 @@ export function parseDbCliArgs(argv: string[]): DbCliArgs {
   }
 
   const hasYes = rest.includes("--yes");
+  const hasAllowDirty = rest.includes("--allow-dirty");
 
   if (command !== "reset" && hasYes) {
     throw new Error(`--yes is only accepted with the "reset" command`);
   }
 
+  if (command !== "import" && hasAllowDirty) {
+    throw new Error(`--allow-dirty is only accepted with the "import" command`);
+  }
+
   // Reject anything else outright. Silently ignoring an unrecognized argument is worst
   // next to a destructive command: `reset --yes --dry-run` would read as though a safety
   // flag had been honored while the data was deleted anyway.
-  const unknown = rest.filter((arg) => arg !== "--yes");
+  const unknown = rest.filter((arg) => arg !== "--yes" && arg !== "--allow-dirty");
   if (unknown.length > 0) {
     throw new Error(
       `Unexpected argument(s) for "${command}": ${unknown.join(", ")}. ` +
-        `Supported: \`reset --yes\`, or a bare command with no arguments.`,
+        `Supported: \`reset --yes\`, \`import [--allow-dirty]\`, or a bare command with no arguments.`,
     );
   }
 
@@ -55,7 +61,11 @@ export function parseDbCliArgs(argv: string[]): DbCliArgs {
     return { command: "reset", yes: true };
   }
 
-  return { command: command as Exclude<DbCliCommand, "reset"> };
+  if (command === "import") {
+    return { command: "import", allowDirty: hasAllowDirty };
+  }
+
+  return { command: command as Exclude<DbCliCommand, "reset" | "import"> };
 }
 
 /** Must match docker-compose.yml's postgres service exactly. */

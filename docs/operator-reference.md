@@ -691,6 +691,7 @@ Local lifecycle (Docker required):
 anchor-mcp db start          # start Postgres, wait for readiness, apply pending migrations
 anchor-mcp db status         # schema version and pending migration count
 anchor-mcp db migrate        # apply pending migrations only
+anchor-mcp db import         # import the anchor repository at its current commit
 anchor-mcp db psql           # interactive shell against the running database
 anchor-mcp db stop           # stop the container, leaving data in place
 anchor-mcp db reset --yes    # drop and recreate from migrations (destructive; --yes required)
@@ -710,6 +711,31 @@ hits.
 The server and every `db` command resolve `--config` / `ANCHOR_MCP_CONFIG` /
 `./anchor-mcp.config.json` through the same code path, so `db migrate` cannot apply
 migrations to one schema while the server refuses to start against another.
+
+### Importing an anchor repository
+
+`db import` reads the repository named by `repo`, pins the import to its `HEAD` commit,
+and sends every Markdown file plus `project-mappings.json` and `people-registry.json`
+to the T2 bootstrap importer.
+
+It **refuses a dirty working tree**. An import is defined against a pinned commit, so
+importing uncommitted content would record a sha that does not describe what was
+imported, making "what was in this import" unanswerable later. `--allow-dirty` overrides
+this and warns loudly; the recorded provenance is then knowingly inaccurate.
+
+Re-importing the same commit writes nothing at all — the idempotency key short-circuits
+each command before content is compared, so the report is entirely zeros and the command
+says explicitly that the commit was already imported.
+
+`project-mappings.json` is stored project-first (`{ projects: [...] }`, or a bare array)
+while the importer wants one row per `(repository, pathPrefix)`, because that pair is
+what routing matches on. The flattening names each component scope `${project}-${name}`,
+where `name` is the repo name when it declares no path prefixes and `${repo}-${prefix}`
+when it does. A registry that exists but yields no mappings is an error rather than a
+silent zero, since routing scopes would otherwise be quietly missing.
+
+Measured on a 47-file anchor repository: 47 documents, 894 sections, 1279 blocks, 26
+scopes, 909 associations, in under a second.
 
 `docker-compose.yml` pins the Postgres major version, sets `PGDATA` explicitly, and
 bind-mounts data to the gitignored `.data/postgres/` directory. It publishes port

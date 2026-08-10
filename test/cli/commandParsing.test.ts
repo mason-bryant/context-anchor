@@ -69,6 +69,15 @@ describe("subcommand dispatch", () => {
     expect(parseCliArgs(["db", "down"], {}).db).toEqual({ command: "down" });
   });
 
+  it("parses db import and defaults to refusing a dirty tree", () => {
+    expect(parseCliArgs(["db", "import"], {}).db).toEqual({ command: "import", allowDirty: false });
+    expect(parseCliArgs(["db", "import", "--allow-dirty"], {}).db).toEqual({ command: "import", allowDirty: true });
+  });
+
+  it("rejects --allow-dirty on commands other than import", () => {
+    expect(() => parseCliArgs(["db", "migrate", "--allow-dirty"], {})).toThrow(/--allow-dirty/);
+  });
+
   it("rejects db reset without --yes", () => {
     expect(() => parseCliArgs(["db", "reset"], {})).toThrow(/--yes/);
   });

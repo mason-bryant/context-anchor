@@ -20,6 +20,7 @@ async function main(): Promise<void> {
   await runDbCommand(options.db, {
     databaseUrl: options.databaseUrl ?? COMPOSE_MANAGED_DATABASE_URL,
     schemaName: options.config.database?.schemaName ?? DEFAULT_DATABASE_SCHEMA_NAME,
+    repoPath: options.config.repoPath,
   });
 }
 
