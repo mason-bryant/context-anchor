@@ -1,3 +1,7 @@
+import path from "node:path";
+import { runMigrations } from "../../src/db/migrate.js";
+import { telemetrySchemaNameFor } from "../../src/db/config.js";
+import type { Pool } from "pg";
 import pg from "pg";
 
 import { redactDatabaseUrl } from "../../src/db/config.js";
@@ -63,4 +67,36 @@ export async function isTestDatabaseReachable(): Promise<boolean> {
       `${lastError instanceof Error ? lastError.message : String(lastError)}`,
   );
   return false;
+}
+
+/**
+ * Applies both migration sets. Telemetry lives in its own schema for retention reasons, but
+ * `createKnowledgeDatabase` refuses to start unless both are current — so any test that
+ * boots the database has to migrate both, and doing it in one place keeps the next contract
+ * test from rediscovering that as a MigrationsPendingError.
+ */
+export async function migrateAllSchemas(pool: Pool, schemaName: string): Promise<void> {
+  const root = path.resolve(import.meta.dirname, "../..");
+  await runMigrations(pool, {
+    schemaName,
+    migrationsDir: path.join(root, "migrations", "knowledge"),
+  });
+  await runMigrations(pool, {
+    schemaName: telemetrySchemaNameFor(schemaName),
+    migrationsDir: path.join(root, "migrations", "telemetry"),
+  });
+}
+
+/** Drops both schemas a test created, so a leftover telemetry schema cannot accumulate. */
+export async function dropAllSchemas(pool: Pool, schemaName: string): Promise<void> {
+  await pool.query(`DROP SCHEMA IF EXISTS "${schemaName}" CASCADE`);
+  await pool.query(`DROP SCHEMA IF EXISTS "${telemetrySchemaNameFor(schemaName)}" CASCADE`);
+}
+
+/** Telemetry only, for tests that assert on the knowledge migration result itself. */
+export async function migrateTelemetrySchema(pool: Pool, schemaName: string): Promise<void> {
+  await runMigrations(pool, {
+    schemaName: telemetrySchemaNameFor(schemaName),
+    migrationsDir: path.resolve(import.meta.dirname, "../../migrations/telemetry"),
+  });
 }

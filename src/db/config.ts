@@ -7,6 +7,15 @@ export const DEFAULT_DATABASE_POOL_SIZE = 10;
 export const DEFAULT_DATABASE_SCHEMA_NAME = "knowledge";
 
 /**
+ * Telemetry lives in its own schema so retention can thin it without ever holding write
+ * access to the knowledge records themselves. Derived from the knowledge schema name rather
+ * than fixed, so per-test schemas and side-by-side deployments stay isolated in both.
+ */
+export function telemetrySchemaNameFor(schemaName: string): string {
+  return `${schemaName}_telemetry`;
+}
+
+/**
  * Schema names are interpolated directly into DDL (`CREATE SCHEMA "<name>"`,
  * `SET LOCAL search_path TO "<name>"`) because Postgres has no parameterized-identifier
  * placeholder. This is the only thing standing between a config value and SQL injection

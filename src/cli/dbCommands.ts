@@ -10,7 +10,7 @@ import { assertComposeManagedTarget, COMPOSE_MANAGED_DATABASE_URL, type DbCliArg
 import { createKnowledgeDatabase } from "../db/knowledgeDb.js";
 import { CliUsageError } from "./errors.js";
 import { collectRepositorySnapshot } from "./repositorySnapshot.js";
-import { redactDatabaseUrl } from "../db/config.js";
+import { redactDatabaseUrl, telemetrySchemaNameFor } from "../db/config.js";
 import { getMigrationStatus, runMigrations } from "../db/migrate.js";
 
 /**
@@ -19,6 +19,7 @@ import { getMigrationStatus, runMigrations } from "../db/migrate.js";
  */
 const PACKAGE_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const MIGRATIONS_DIR = path.join(PACKAGE_ROOT, "migrations", "knowledge");
+const TELEMETRY_MIGRATIONS_DIR = path.join(PACKAGE_ROOT, "migrations", "telemetry");
 const DATA_DIR = path.join(PACKAGE_ROOT, ".data", "postgres");
 const COMPOSE_FILE = path.join(PACKAGE_ROOT, "docker-compose.yml");
 
@@ -85,16 +86,24 @@ async function migrate(context: DbCommandContext): Promise<void> {
   const log = context.log ?? console.log;
   const pool = new pg.Pool({ connectionString: context.databaseUrl, max: 2 });
   try {
-    const { applied } = await runMigrations(pool, {
-      schemaName: context.schemaName,
-      migrationsDir: MIGRATIONS_DIR,
-    });
-    if (applied.length === 0) {
-      log("No pending migrations.");
-    } else {
+    // Two schemas, migrated together: telemetry is separated for retention, not because it
+    // has an independent lifecycle, and letting them drift apart would mean the server
+    // could start against a knowledge schema whose telemetry tables do not exist yet.
+    const targets = [
+      { schemaName: context.schemaName, migrationsDir: MIGRATIONS_DIR },
+      { schemaName: telemetrySchemaNameFor(context.schemaName), migrationsDir: TELEMETRY_MIGRATIONS_DIR },
+    ];
+
+    let total = 0;
+    for (const target of targets) {
+      const { applied } = await runMigrations(pool, target);
+      total += applied.length;
       for (const file of applied) {
-        log(`Applied ${file.filename}`);
+        log(`Applied ${target.schemaName}/${file.filename}`);
       }
+    }
+    if (total === 0) {
+      log("No pending migrations.");
     }
   } finally {
     await pool.end();
@@ -105,16 +114,16 @@ async function printStatus(context: DbCommandContext): Promise<void> {
   const log = context.log ?? console.log;
   const pool = new pg.Pool({ connectionString: context.databaseUrl, max: 2 });
   try {
-    const status = await getMigrationStatus(pool, {
-      schemaName: context.schemaName,
-      migrationsDir: MIGRATIONS_DIR,
-    });
-    log(`schema: ${status.schemaName}`);
-    log(`applied: ${String(status.appliedCount)}`);
-    log(`pending: ${String(status.pendingCount)}`);
-    log(`current version: ${status.currentVersion ?? "none"}`);
-    for (const file of status.pending) {
-      log(`  pending: ${file.filename}`);
+    for (const target of [
+      { schemaName: context.schemaName, migrationsDir: MIGRATIONS_DIR },
+      { schemaName: telemetrySchemaNameFor(context.schemaName), migrationsDir: TELEMETRY_MIGRATIONS_DIR },
+    ]) {
+      const status = await getMigrationStatus(pool, target);
+      log(`schema: ${status.schemaName}`);
+      log(`  applied: ${String(status.appliedCount)}  pending: ${String(status.pendingCount)}  version: ${status.currentVersion ?? "none"}`);
+      for (const file of status.pending) {
+        log(`  pending: ${file.filename}`);
+      }
     }
   } finally {
     await pool.end();
