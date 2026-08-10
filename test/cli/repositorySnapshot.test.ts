@@ -176,6 +176,18 @@ describe("repository snapshot", () => {
     await expect(collectRepositorySnapshot(broken)).rejects.toThrow(/people-registry\.json/);
   });
 
+  // `null` is valid JSON and typeof "object", so a bare property read on it throws a
+  // TypeError from the one function whose job is to explain what is wrong with the file.
+  it.each(["null", "123", '"a string"', "true"])(
+    "explains a registry whose JSON is %s instead of crashing",
+    async (raw) => {
+      const odd = await makeRepo({ "a.md": "# A\n", "project-mappings.json": raw });
+
+      await expect(collectRepositorySnapshot(odd)).rejects.toBeInstanceOf(CliUsageError);
+      await expect(collectRepositorySnapshot(odd)).rejects.toThrow(/project-mappings\.json/);
+    },
+  );
+
   it("omits registries that are absent", async () => {
     const bare = await makeRepo({ "a.md": "# A\n" });
 

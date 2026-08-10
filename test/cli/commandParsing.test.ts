@@ -5,6 +5,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { HELP_TEXT, THREE_SOURCE_KEYS, parseCliArgs } from "../../src/cli/args.js";
+import { CliUsageError } from "../../src/cli/errors.js";
 
 async function configDir(contents: unknown): Promise<string> {
   const dir = await mkdtemp(path.join(os.tmpdir(), "anchor-mcp-cmd-"));
@@ -76,6 +77,18 @@ describe("subcommand dispatch", () => {
 
   it("rejects --allow-dirty on commands other than import", () => {
     expect(() => parseCliArgs(["db", "migrate", "--allow-dirty"], {})).toThrow(/--allow-dirty/);
+  });
+
+  // Flag misuse is something the caller can fix, so it must print as a message. These are
+  // raised from src/db/cliArgs.ts, which the earlier CliUsageError pass missed entirely.
+  it.each([
+    [["db"], /Missing command/],
+    [["db", "bogus"], /Unknown command/],
+    [["db", "migrate", "--allow-dirty"], /--allow-dirty/],
+    [["db", "reset"], /--yes/],
+  ] as const)("raises db usage error %j as CliUsageError", (argv, pattern) => {
+    expect(() => parseCliArgs([...argv], {})).toThrow(CliUsageError);
+    expect(() => parseCliArgs([...argv], {})).toThrow(pattern);
   });
 
   it("rejects db reset without --yes", () => {

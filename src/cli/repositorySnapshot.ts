@@ -110,7 +110,13 @@ export function flattenProjectMappings(parsed: unknown): ProjectMapping[] | unde
   // On disk the registry is `{ projects: [...] }` with sibling keys such as
   // `claimSourceTypes`; a bare array is also accepted because it is the shape the type
   // suggests and costs nothing to support.
-  const entries = Array.isArray(parsed) ? parsed : (parsed as { projects?: unknown }).projects;
+  // `null` is valid JSON and typeof "object", so a bare property read on it throws a
+  // TypeError — a crash, from the one function whose job is to explain this file.
+  const entries = Array.isArray(parsed)
+    ? parsed
+    : typeof parsed === "object" && parsed !== null
+      ? (parsed as { projects?: unknown }).projects
+      : undefined;
   if (!Array.isArray(entries)) {
     throw new CliUsageError(
       `${PROJECT_MAPPINGS_FILE} has no usable project mappings: expected an array of projects, ` +

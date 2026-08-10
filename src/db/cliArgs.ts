@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 
+import { CliUsageError } from "../cli/errors.js";
 import { assertValidSchemaName, DEFAULT_DATABASE_SCHEMA_NAME, redactDatabaseUrl } from "./config.js";
 
 export type DbCliCommand = "up" | "down" | "status" | "migrate" | "psql" | "reset" | "import";
@@ -21,13 +22,13 @@ export function parseDbCliArgs(argv: string[]): DbCliArgs {
   const [rawCommand, ...rest] = argv;
 
   if (!rawCommand) {
-    throw new Error(`Missing command. Expected one of: ${KNOWN_COMMANDS.join(", ")}`);
+    throw new CliUsageError(`Missing command. Expected one of: ${KNOWN_COMMANDS.join(", ")}`);
   }
 
   const command = COMMAND_ALIASES[rawCommand] ?? rawCommand;
 
   if (!(KNOWN_COMMANDS as readonly string[]).includes(command)) {
-    throw new Error(
+    throw new CliUsageError(
       `Unknown command "${rawCommand}". Expected one of: ${[...KNOWN_COMMANDS, ...Object.keys(COMMAND_ALIASES)].join(", ")}`,
     );
   }
@@ -36,11 +37,11 @@ export function parseDbCliArgs(argv: string[]): DbCliArgs {
   const hasAllowDirty = rest.includes("--allow-dirty");
 
   if (command !== "reset" && hasYes) {
-    throw new Error(`--yes is only accepted with the "reset" command`);
+    throw new CliUsageError(`--yes is only accepted with the "reset" command`);
   }
 
   if (command !== "import" && hasAllowDirty) {
-    throw new Error(`--allow-dirty is only accepted with the "import" command`);
+    throw new CliUsageError(`--allow-dirty is only accepted with the "import" command`);
   }
 
   // Reject anything else outright. Silently ignoring an unrecognized argument is worst
@@ -48,7 +49,7 @@ export function parseDbCliArgs(argv: string[]): DbCliArgs {
   // flag had been honored while the data was deleted anyway.
   const unknown = rest.filter((arg) => arg !== "--yes" && arg !== "--allow-dirty");
   if (unknown.length > 0) {
-    throw new Error(
+    throw new CliUsageError(
       `Unexpected argument(s) for "${command}": ${unknown.join(", ")}. ` +
         `Supported: \`reset --yes\`, \`import [--allow-dirty]\`, or a bare command with no arguments.`,
     );
@@ -56,7 +57,7 @@ export function parseDbCliArgs(argv: string[]): DbCliArgs {
 
   if (command === "reset") {
     if (!hasYes) {
-      throw new Error(`"reset" is destructive and requires an explicit --yes flag`);
+      throw new CliUsageError(`"reset" is destructive and requires an explicit --yes flag`);
     }
     return { command: "reset", yes: true };
   }
