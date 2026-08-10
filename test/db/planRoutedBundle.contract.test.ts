@@ -70,12 +70,14 @@ describe.runIf(await isTestDatabaseReachable())("planRoutedBundle (real Postgres
   });
 
   const plan = (task: string, extra: Record<string, unknown> = {}) =>
+    // Identity last, so a stray key in `extra` cannot quietly change who is planning; the
+    // helper's whole claim is "as the owner".
     planRoutedBundle(pool, schemaName, telemetrySchema, {
+      ...extra,
       workspaceGuid: bootstrap.workspaceGuid,
       principalGuid: bootstrap.ownerPrincipalGuid,
       role: "owner",
       task,
-      ...extra,
     });
 
   it("routes lexically and explains why", async () => {

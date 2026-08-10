@@ -103,13 +103,16 @@ describe.runIf(await isTestDatabaseReachable())("routed retrieval access control
     );
   };
 
+  // `extra` is spread first, deliberately: identity is the thing under test here, and a
+  // stray key in `extra` overriding principalGuid or role would silently exercise a
+  // different caller while still passing.
   const planAs = (role: "owner" | "member", principalGuid: string, extra: Record<string, unknown> = {}) =>
     planRoutedBundle(pool, schemaName, telemetrySchema, {
+      task: "anchor mcp http transport",
+      ...extra,
       workspaceGuid: bootstrap.workspaceGuid,
       principalGuid,
       role,
-      task: "anchor mcp http transport",
-      ...extra,
     });
 
   const keys = (result: Awaited<ReturnType<typeof planRoutedBundle>>) => result.routes.map((r) => r.routeKey).sort();
