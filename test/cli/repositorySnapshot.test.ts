@@ -1,4 +1,5 @@
 import { execFileSync } from "node:child_process";
+import { symlink } from "node:fs/promises";
 import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -64,6 +65,21 @@ describe("repository snapshot", () => {
     expect(snapshot.files.find((f) => f.path === "CONTEXT-ROOT.md")?.content).toBe("# Root\n");
   });
 
+  // An anchor repository can be cloned from anywhere. A .md symlink pointing outside it
+  // would otherwise be read and imported into Postgres, where routed retrieval would serve
+  // it back — an arbitrary-file-read that escapes the repository boundary.
+  it("never follows a symlink out of the repository", async () => {
+    const outside = await mkdtemp(path.join(os.tmpdir(), "anchor-outside-"));
+    await writeFile(path.join(outside, "secret.md"), "SECRET-OUTSIDE-REPO\n", "utf8");
+    const withLink = await makeRepo({ "real.md": "# real\n" });
+    await symlink(path.join(outside, "secret.md"), path.join(withLink, "leaked.md"));
+
+    const snapshot = await collectRepositorySnapshot(withLink, { allowDirty: true });
+
+    expect(snapshot.files.map((file) => file.path)).toEqual(["real.md"]);
+    expect(snapshot.files.map((file) => file.content).join()).not.toContain("SECRET");
+  });
+
   it("never includes anything from .git", async () => {
     const snapshot = await collectRepositorySnapshot(repo);
 
@@ -104,6 +120,29 @@ describe("repository snapshot", () => {
       },
       { repository: "rippling-main", pathPrefix: "app", project: "anchor-mcp", name: "rippling-main-app" },
       { repository: "rippling-main", pathPrefix: "lib", project: "anchor-mcp", name: "rippling-main-lib" },
+    ]);
+  });
+
+  // "" and "  " would otherwise produce pathPrefix "" with the name `repo-`, colliding
+  // with the no-prefix row on the (repository, path_prefix) unique index while carrying a
+  // different scope name. Backslash prefixes must match the posix paths documents use.
+  it("normalizes path prefixes and drops empty ones", async () => {
+    const odd = await makeRepo({
+      "a.md": "# A\n",
+      "project-mappings.json": JSON.stringify({
+        projects: [
+          { project: "p", repos: [{ repo: "empty", paths: ["", "   "] }] },
+          { project: "p", repos: [{ repo: "win", paths: ["app\\sub", "/lib/"] }] },
+        ],
+      }),
+    });
+
+    const snapshot = await collectRepositorySnapshot(odd);
+
+    expect(snapshot.projectMappings).toEqual([
+      { repository: "empty", pathPrefix: "", project: "p", name: "empty" },
+      { repository: "win", pathPrefix: "app/sub", project: "p", name: "win-app-sub" },
+      { repository: "win", pathPrefix: "lib", project: "p", name: "win-lib" },
     ]);
   });
 

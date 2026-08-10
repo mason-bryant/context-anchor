@@ -52,16 +52,27 @@ async function gitLines(repoPath: string, args: string[]): Promise<string[]> {
   return stdout.split("\n").filter((line) => line.length > 0);
 }
 
-/** Markdown only, and never inside a dot-directory — `.git` above all, but also editor and tooling state. */
+/**
+ * Markdown only, and never inside a dot-directory — `.git` above all, but also editor and
+ * tooling state.
+ *
+ * Symlinks are skipped entirely. An anchor repository can be cloned from anywhere, and a
+ * `.md` symlink pointing outside it would otherwise be read and imported into Postgres,
+ * where routed retrieval would happily serve it back — an arbitrary-file-read that leaves
+ * the repository boundary. Verified before fixing: a `leaked.md -> ../outside.md` symlink
+ * was collected with the target's contents. `isFile()` is false for symlinks because
+ * readdir uses lstat semantics, so the check below excludes them; the explicit test makes
+ * the intent visible rather than incidental.
+ */
 async function collectMarkdown(root: string, dir = root, out: ImportFile[] = []): Promise<ImportFile[]> {
   for (const entry of await readdir(dir, { withFileTypes: true })) {
-    if (entry.name.startsWith(".") || entry.name === "node_modules") {
+    if (entry.name.startsWith(".") || entry.name === "node_modules" || entry.isSymbolicLink()) {
       continue;
     }
     const absolute = path.join(dir, entry.name);
     if (entry.isDirectory()) {
       await collectMarkdown(root, absolute, out);
-    } else if (entry.name.endsWith(".md")) {
+    } else if (entry.isFile() && entry.name.endsWith(".md")) {
       out.push({
         // Posix separators: the path is the document's identity in the database, and must not
         // differ between an import run on Windows and one on macOS.
@@ -135,7 +146,17 @@ export function flattenProjectMappings(parsed: unknown): ProjectMapping[] | unde
       if (!repository) {
         continue;
       }
-      const paths = Array.isArray(repoEntry.paths) ? repoEntry.paths.filter((p): p is string => typeof p === "string") : [];
+      // Normalize before deciding between the "no prefixes" and "per-prefix" shapes. An
+      // empty or whitespace-only entry would otherwise yield pathPrefix "" with the name
+      // `repo-`, colliding with the no-prefix row on the (repository, path_prefix) unique
+      // index while carrying a different scope name. Backslashes are folded so a prefix
+      // written on Windows matches the posix paths documents are keyed by.
+      const paths = Array.isArray(repoEntry.paths)
+        ? repoEntry.paths
+            .filter((entryPath): entryPath is string => typeof entryPath === "string")
+            .map((entryPath) => entryPath.trim().replace(/\\/g, "/").replace(/^\/+|\/+$/g, ""))
+            .filter((entryPath) => entryPath.length > 0)
+        : [];
       const webConfig = repoEntry.web && typeof repoEntry.web === "object" ? (repoEntry.web as Record<string, unknown>) : undefined;
       if (paths.length === 0) {
         mappings.push({
