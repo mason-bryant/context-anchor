@@ -51,6 +51,23 @@ describe("default ranker ordering", () => {
     expect(await rank([many, candidate("path", ["path-mapping"])])).toEqual(["path", "many"]);
   });
 
+  // The discriminating case for the design's open question, and the only one where the two
+  // tiers disagree: two weak signals versus one strong one. Without this, swapping tier 1
+  // and tier 2 leaves the whole suite green — which it did until this test existed.
+  //
+  // Documented behaviour is count-first, so the lexical + relation-hop scope outranks the
+  // one the caller is demonstrably working in. That is deliberately unsettled, and T8 is
+  // meant to settle it; this test pins today's answer so a change to it is a decision
+  // rather than a regression.
+  it("puts two weak signals above one strong one, per the documented ordering", async () => {
+    expect(
+      await rank([
+        candidate("path-only", ["path-mapping"]),
+        candidate("lex-and-hop", ["lexical", "relation-hop"]),
+      ]),
+    ).toEqual(["lex-and-hop", "path-only"]);
+  });
+
   it("breaks a count tie on the strongest signal", async () => {
     expect(
       await rank([candidate("lex", ["lexical"]), candidate("path", ["path-mapping"])]),
