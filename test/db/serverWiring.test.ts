@@ -30,6 +30,15 @@ const SAMPLE_REPORT = {
   unchanged: [],
 };
 
+const SAMPLE_PLAN = {
+  requestId: "00000000-0000-4000-8000-000000000000",
+  plannerVersion: "routing-1.0.0",
+  recomputedAt: "2026-08-10T00:00:00.000Z",
+  budget: { expanded: 2, listed: 10, recordsPerRoute: 25 },
+  ranker: { id: "precedence", version: "1.0.0", deterministic: true, fellBack: false },
+  routes: [],
+};
+
 const SAMPLE_SCOPES: ScopeSummary[] = [
   {
     scopeGuid: "11111111-1111-1111-1111-111111111111",
@@ -72,6 +81,8 @@ describe("listScopeChanges tool registration", () => {
           return [entry];
         },
         importDocumentsAsOwner: async () => SAMPLE_REPORT,
+        planRoutedBundleAsOwner: async () => SAMPLE_PLAN,
+        reportRecordUseAsOwner: async () => ({ recorded: 0 }),
       },
     }) as unknown as AdvertisedServer;
 
@@ -90,6 +101,8 @@ describe("listScopeChanges tool registration", () => {
         listScopesForOwner: async () => SAMPLE_SCOPES,
         listScopeChangesForOwner: async () => [],
         importDocumentsAsOwner: async () => SAMPLE_REPORT,
+        planRoutedBundleAsOwner: async () => SAMPLE_PLAN,
+        reportRecordUseAsOwner: async () => ({ recorded: 0 }),
       },
     }) as unknown as AdvertisedServer;
 
@@ -110,6 +123,10 @@ describe("listScopes tool registration", () => {
   it("is not registered when no database backend is configured", () => {
     const server = createAnchorMcpServer({} as AnchorService) as unknown as AdvertisedServer;
     expect(server._registeredTools.listScopes).toBeUndefined();
+    // An agent must not be offered a tool that cannot work: routed retrieval reads and
+    // writes the database on every call.
+    expect(server._registeredTools.planRoutedBundle).toBeUndefined();
+    expect(server._registeredTools.reportRecordUse).toBeUndefined();
   });
 
   it("is registered and returns scopes when a database backend is configured", async () => {
@@ -117,6 +134,8 @@ describe("listScopes tool registration", () => {
       listScopesForOwner: async () => SAMPLE_SCOPES,
       listScopeChangesForOwner: async () => [],
       importDocumentsAsOwner: async () => SAMPLE_REPORT,
+      planRoutedBundleAsOwner: async () => SAMPLE_PLAN,
+      reportRecordUseAsOwner: async () => ({ recorded: 0 }),
     };
 
     const server = createAnchorMcpServer({} as AnchorService, {
@@ -124,6 +143,10 @@ describe("listScopes tool registration", () => {
     }) as unknown as AdvertisedServer;
 
     expect(server._registeredTools.listScopes).toBeDefined();
+    // Registered together with the rest of the database surface, and absent entirely when no
+    // database is configured — an agent must not see a tool that cannot work.
+    expect(server._registeredTools.planRoutedBundle).toBeDefined();
+    expect(server._registeredTools.reportRecordUse).toBeDefined();
 
     const result = (await server._registeredTools.listScopes!.handler({ traceId: undefined })) as {
       structuredContent: { scopes: ScopeSummary[] };
@@ -147,6 +170,8 @@ describe("importDocuments tool registration", () => {
           expect(input.files).toHaveLength(1);
           return SAMPLE_REPORT;
         },
+        planRoutedBundleAsOwner: async () => SAMPLE_PLAN,
+        reportRecordUseAsOwner: async () => ({ recorded: 0 }),
       },
     }) as unknown as AdvertisedServer;
 
@@ -170,6 +195,8 @@ describe("importDocuments tool registration", () => {
           received = input;
           return SAMPLE_REPORT;
         },
+        planRoutedBundleAsOwner: async () => SAMPLE_PLAN,
+        reportRecordUseAsOwner: async () => ({ recorded: 0 }),
       },
     }) as unknown as AdvertisedServer;
 
@@ -192,6 +219,8 @@ describe("importDocuments tool registration", () => {
         listScopesForOwner: async () => SAMPLE_SCOPES,
         listScopeChangesForOwner: async () => [],
         importDocumentsAsOwner: async () => SAMPLE_REPORT,
+        planRoutedBundleAsOwner: async () => SAMPLE_PLAN,
+        reportRecordUseAsOwner: async () => ({ recorded: 0 }),
       },
     }) as unknown as AdvertisedServer;
 
@@ -213,6 +242,8 @@ describe("importDocuments tool registration", () => {
         listScopesForOwner: async () => SAMPLE_SCOPES,
         listScopeChangesForOwner: async () => [],
         importDocumentsAsOwner: async () => SAMPLE_REPORT,
+        planRoutedBundleAsOwner: async () => SAMPLE_PLAN,
+        reportRecordUseAsOwner: async () => ({ recorded: 0 }),
       },
     }) as unknown as AdvertisedServer;
 
@@ -233,6 +264,8 @@ describe("importDocuments tool registration", () => {
         listScopesForOwner: async () => SAMPLE_SCOPES,
         listScopeChangesForOwner: async () => [],
         importDocumentsAsOwner: async () => SAMPLE_REPORT,
+        planRoutedBundleAsOwner: async () => SAMPLE_PLAN,
+        reportRecordUseAsOwner: async () => ({ recorded: 0 }),
       },
     }) as unknown as AdvertisedServer;
 

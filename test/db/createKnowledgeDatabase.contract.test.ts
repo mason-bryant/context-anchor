@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { createKnowledgeDatabase, MigrationsPendingError } from "../../src/db/knowledgeDb.js";
 import { runMigrations } from "../../src/db/migrate.js";
-import { isTestDatabaseReachable, TEST_DATABASE_URL } from "./testDatabase.js";
+import { isTestDatabaseReachable, TEST_DATABASE_URL, migrateTelemetrySchema } from "./testDatabase.js";
 
 const REAL_MIGRATIONS_DIR = path.resolve(import.meta.dirname, "../../migrations/knowledge");
 
@@ -49,6 +49,8 @@ describe.runIf(await isTestDatabaseReachable())("createKnowledgeDatabase startup
       schemaName: readySchema,
       migrationsDir: REAL_MIGRATIONS_DIR,
     });
+    // Startup checks telemetry too, so a schema migrated for knowledge alone cannot boot.
+    await migrateTelemetrySchema(adminPool, readySchema);
 
     const db = await createKnowledgeDatabase(TEST_DATABASE_URL, { poolSize: 2, schemaName: readySchema });
     try {

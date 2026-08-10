@@ -4,6 +4,7 @@ import * as z from "zod/v4";
 
 import type { AnchorService } from "./anchorService.js";
 import { anchorSectionGuidance } from "./anchorStructure.js";
+import type { PlanInput, PlanOptions, PlanResult, RecordUse } from "./db/routing/plan.js";
 import type { ScopeSummary } from "./db/knowledgeDb.js";
 import type { ImportReport } from "./db/importDocuments.js";
 import type { ScopeChange } from "./db/scopeChanges.js";
@@ -168,6 +169,8 @@ const SharedWriteOptsSchema = z.object({
 /** Structural, not the concrete class, so tests can pass a plain fake without a real pool. */
 export type KnowledgeDatabaseTool = {
   listScopesForOwner(): Promise<ScopeSummary[]>;
+  planRoutedBundleAsOwner(input: Omit<PlanInput, "workspaceGuid">, options?: PlanOptions): Promise<PlanResult>;
+  reportRecordUseAsOwner(use: RecordUse): Promise<{ recorded: number }>;
   listScopeChangesForOwner(input: { scope: string; since?: string; limit?: number }): Promise<ScopeChange[]>;
   importDocumentsAsOwner(input: {
     repository: string;
@@ -1910,6 +1913,92 @@ the index when your workflow checks in that file.`,
         annotations: { readOnlyHint: true },
       },
       async () => jsonResult({ scopes: await knowledgeDb.listScopesForOwner() }),
+    );
+
+    server.registerTool(
+      "planRoutedBundle",
+      {
+        title: "Plan Routed Bundle",
+        description:
+          "Routed retrieval (T1): resolves routes before records. Three signals select routes — task terms against " +
+          "scope slug, title, and aliases; referenced paths against repository mappings; and one hop to the scope a " +
+          "matched scope is part of. Routes are ordered by how they matched, and every route carries its reasons, a " +
+          "record count, and a content fingerprint so a caller holding an earlier response can see which routes " +
+          "moved. Expansion is stateless: pass the task again with routeKeys to expand a route the budget listed. " +
+          "Requires the database backend.",
+        inputSchema: z.object({
+          traceId: TraceIdSchema,
+          task: z.string().trim().min(1),
+          referencedPaths: z.array(z.string().trim().min(1)).optional(),
+          routeKeys: z.array(z.string().trim().min(1)).optional(),
+          budget: z
+            .object({
+              expanded: z.number().int().min(0),
+              listed: z.number().int().min(1),
+              recordsPerRoute: z.number().int().min(1),
+            })
+            .partial()
+            .optional(),
+          // Off by default: nothing on the server reads the task back, so retaining it is a
+          // diagnostics choice rather than a requirement.
+          storeTaskText: z.boolean().optional(),
+          consumer: z.string().trim().min(1).optional(),
+        }),
+        // Deliberately not readOnlyHint: this writes a retrieval request and one impression
+        // per offered route on every call. It mutates no knowledge, but a client relying on
+        // the hint to auto-approve side-effect-free tools would be misled.
+        annotations: {},
+      },
+      async ({ traceId, task, referencedPaths, routeKeys, budget, storeTaskText, consumer }) =>
+        jsonResult(
+          await knowledgeDb.planRoutedBundleAsOwner({
+            task,
+            referencedPaths,
+            routeKeys,
+            budget,
+            storeTaskText,
+            consumer,
+            traceId,
+          }),
+        ),
+    );
+
+    server.registerTool(
+      "reportRecordUse",
+      {
+        title: "Report Record Use",
+        description:
+          "Report which served records were actually used, correlated by requestId. This is the outcome signal a " +
+          "search engine never gets, and it is what lets ranking questions be answered from real traffic rather " +
+          "than argued. A use for an unknown request is ignored. Requires the database backend.",
+        inputSchema: z.object({
+          traceId: TraceIdSchema,
+          requestId: z.string().uuid(),
+          refs: z
+            .array(
+              z.discriminatedUnion("type", [
+                z.object({
+                  type: z.literal("assertion"),
+                  guid: z.string().uuid(),
+                  // Which offered route served it: a record can belong to several scopes, so
+                  // without this a use cannot be attributed to an impression.
+                  routeKey: z.string().trim().min(1),
+                }),
+                z.object({
+                  type: z.literal("section"),
+                  guid: z.string().uuid(),
+                  // Section guids are revision-scoped; diagnostics aggregate on the stable key.
+                  stableKey: z.string().trim().min(1),
+                  routeKey: z.string().trim().min(1),
+                }),
+              ]),
+            )
+            .min(1),
+          useKind: z.string().trim().min(1),
+        }),
+      },
+      async ({ requestId, refs, useKind }) =>
+        jsonResult(await knowledgeDb.reportRecordUseAsOwner({ requestId, refs, useKind })),
     );
 
     server.registerTool(

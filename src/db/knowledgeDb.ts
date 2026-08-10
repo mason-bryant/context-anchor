@@ -8,6 +8,14 @@ import { parseChangeWindow } from "./changeWindow.js";
 import { CommandHandler } from "./commandHandler.js";
 import type { ScopeDeclaration } from "./scopeRegistry.js";
 import {
+  planRoutedBundle,
+  reportRecordUse,
+  type PlanInput,
+  type PlanOptions,
+  type PlanResult,
+  type RecordUse,
+} from "./routing/plan.js";
+import {
   importDocuments,
   type ImportFile,
   type ImportReport,
@@ -15,7 +23,7 @@ import {
   type ProjectMapping,
 } from "./importDocuments.js";
 import { listScopeChanges, type ScopeChange } from "./scopeChanges.js";
-import { resolveDatabaseConfig, type PartialDatabaseConfig } from "./config.js";
+import { resolveDatabaseConfig, type PartialDatabaseConfig, telemetrySchemaNameFor } from "./config.js";
 import { type BootstrapResult, ensureBootstrap } from "./bootstrap.js";
 import { getMigrationStatus } from "./migrate.js";
 import { createDatabasePool } from "./pool.js";
@@ -60,6 +68,8 @@ export class KnowledgeDatabase {
      * stopped/serving-nothing schema, so this cannot drift while the process is up.
      */
     public readonly schemaVersion: number | undefined = undefined,
+    /** Sibling schema holding retrieval telemetry; separated for retention, migrated in lockstep. */
+    public readonly telemetrySchemaName: string = telemetrySchemaNameFor(schemaName),
   ) {}
 
   async listScopes(input: { workspaceGuid: string; principalGuid: string; role: WorkspaceRole }): Promise<ScopeSummary[]> {
@@ -79,6 +89,24 @@ export class KnowledgeDatabase {
   }
 
   /** T2's write, as the bootstrapped owner. Returns the report the UI renders. */
+  /** Routed retrieval (T1), always as the workspace owner in this single-operator release. */
+  async planRoutedBundleAsOwner(
+    input: Omit<PlanInput, "workspaceGuid">,
+    options?: PlanOptions,
+  ): Promise<PlanResult> {
+    return planRoutedBundle(
+      this.pool,
+      this.schemaName,
+      this.telemetrySchemaName,
+      { ...input, workspaceGuid: this.bootstrap.workspaceGuid, principalGuid: this.bootstrap.ownerPrincipalGuid },
+      options,
+    );
+  }
+
+  async reportRecordUseAsOwner(use: RecordUse): Promise<{ recorded: number }> {
+    return reportRecordUse(this.pool, this.telemetrySchemaName, use);
+  }
+
   async importDocumentsAsOwner(input: {
     repository: string;
     commitSha: string;
@@ -214,6 +242,7 @@ function toScopeSummary(row: ScopeRow): ScopeSummary {
 }
 
 const KNOWLEDGE_MIGRATIONS_DIR = path.resolve(import.meta.dirname, "../../migrations/knowledge");
+const TELEMETRY_MIGRATIONS_DIR = path.resolve(import.meta.dirname, "../../migrations/telemetry");
 
 export async function createKnowledgeDatabase(
   databaseUrl: string,
@@ -232,6 +261,18 @@ export async function createKnowledgeDatabase(
       throw new MigrationsPendingError(resolvedConfig.schemaName, status.pendingCount);
     }
 
+    // Checked with the same refusal as knowledge: retrieval writes telemetry on every
+    // request, so starting against a schema whose telemetry tables are missing would fail
+    // at the first query rather than at startup, where it is diagnosable.
+    const telemetrySchemaName = telemetrySchemaNameFor(resolvedConfig.schemaName);
+    const telemetryStatus = await getMigrationStatus(pool, {
+      schemaName: telemetrySchemaName,
+      migrationsDir: TELEMETRY_MIGRATIONS_DIR,
+    });
+    if (telemetryStatus.pendingCount > 0) {
+      throw new MigrationsPendingError(telemetrySchemaName, telemetryStatus.pendingCount);
+    }
+
     const bootstrap = await ensureBootstrap(pool, { schemaName: resolvedConfig.schemaName });
     logger?.info("knowledge database ready", {
       schemaName: resolvedConfig.schemaName,
@@ -239,7 +280,7 @@ export async function createKnowledgeDatabase(
       workspaceGuid: bootstrap.workspaceGuid,
     });
 
-    return new KnowledgeDatabase(pool, resolvedConfig.schemaName, bootstrap, status.currentVersion);
+    return new KnowledgeDatabase(pool, resolvedConfig.schemaName, bootstrap, status.currentVersion, telemetrySchemaName);
   } catch (error) {
     await pool.end().catch(() => {});
     throw error;

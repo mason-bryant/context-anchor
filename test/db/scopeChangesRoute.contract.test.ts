@@ -10,13 +10,11 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { ensureBootstrap, type BootstrapResult } from "../../src/db/bootstrap.js";
 import { CommandHandler } from "../../src/db/commandHandler.js";
-import { runMigrations } from "../../src/db/migrate.js";
 import { AnchorRepository } from "../../src/git/repo.js";
 import { startHttpServer } from "../../src/http/server.js";
-import { isTestDatabaseReachable, TEST_DATABASE_URL } from "./testDatabase.js";
+import { isTestDatabaseReachable, TEST_DATABASE_URL, migrateAllSchemas } from "./testDatabase.js";
 import { removeTempDir } from "../tempDir.js";
 
-const REAL_MIGRATIONS_DIR = path.resolve(import.meta.dirname, "../../migrations/knowledge");
 const TOKEN = "test-token";
 
 describe.runIf(await isTestDatabaseReachable())("GET /api/db/scope-changes (real Postgres)", () => {
@@ -30,7 +28,7 @@ describe.runIf(await isTestDatabaseReachable())("GET /api/db/scope-changes (real
   beforeEach(async () => {
     adminPool = new pg.Pool({ connectionString: TEST_DATABASE_URL, max: 3 });
     schemaName = `knowledge_test_${randomUUID().replace(/-/g, "").slice(0, 12)}`;
-    await runMigrations(adminPool, { schemaName, migrationsDir: REAL_MIGRATIONS_DIR });
+    await migrateAllSchemas(adminPool, schemaName);
     bootstrap = await ensureBootstrap(adminPool, { schemaName });
 
     const handler = new CommandHandler(adminPool, schemaName);
