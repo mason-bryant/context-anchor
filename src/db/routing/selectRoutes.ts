@@ -173,7 +173,15 @@ export async function selectRouteCandidates(
   const readable = [...byGuid.values()];
 
   const signals = new Map<string, MatchSignal[]>();
+  // Readability is enforced here, once, rather than at each producer. An unreadable scope
+  // reaching this map would otherwise survive as far as recordCounts — a database query for
+  // a scope that can never be returned — and would make the work done depend on scopes the
+  // caller cannot see. The relation hop is the producer that makes this reachable, since it
+  // adds scopes by traversal rather than by matching.
   const add = (scopeGuid: string, signal: MatchSignal) => {
+    if (!byGuid.has(scopeGuid)) {
+      return;
+    }
     const existing = signals.get(scopeGuid);
     if (existing) {
       existing.push(signal);
@@ -199,10 +207,8 @@ export async function selectRouteCandidates(
     );
     for (const [scopeGuid, signal] of pathMatch(input.referencedPaths, mappings.rows)) {
       // A mapping can point at a scope this caller cannot read; the path is evidence about
-      // the caller's work, not an entitlement to the scope it maps to.
-      if (byGuid.has(scopeGuid)) {
-        add(scopeGuid, signal);
-      }
+      // the caller's work, not an entitlement to the scope it maps to. `add` enforces that.
+      add(scopeGuid, signal);
     }
   }
 
