@@ -165,6 +165,56 @@ describe.runIf(await isTestDatabaseReachable())("scope declarations (real Postgr
     await expect(runImport([])).rejects.toThrow(/provided but empty/);
   });
 
+  // The declaration allows exactly one parent, so a changed or removed partOf has to
+  // retire the edge it replaced — otherwise the scope accumulates parents the model
+  // cannot express but the table can hold.
+  it("retires a declared part_of when the parent changes", async () => {
+    await runImport([
+      { scope: "one", title: "One", kind: "domain", locators: [] },
+      { scope: "two", title: "Two", kind: "domain", locators: [] },
+      { scope: "child", title: "Child", kind: "practice", partOf: "one", locators: [] },
+    ]);
+
+    await runImport(
+      [
+        { scope: "one", title: "One", kind: "domain", locators: [] },
+        { scope: "two", title: "Two", kind: "domain", locators: [] },
+        { scope: "child", title: "Child", kind: "practice", partOf: "two", locators: [] },
+      ],
+      "b".repeat(40),
+    );
+
+    const live = await pool.query<{ scope_slug: string }>(
+      `SELECT t.scope_slug FROM "${schemaName}".scope_relations r
+         JOIN "${schemaName}".scopes f ON f.scope_guid = r.from_scope_guid
+         JOIN "${schemaName}".scopes t ON t.scope_guid = r.to_scope_guid
+        WHERE f.scope_slug = 'child' AND r.relation_type = 'part_of' AND r.retired_at IS NULL`,
+    );
+    expect(live.rows.map((row) => row.scope_slug)).toEqual(["two"]);
+  });
+
+  it("retires a declared part_of when the parent is removed entirely", async () => {
+    await runImport([
+      { scope: "one", title: "One", kind: "domain", locators: [] },
+      { scope: "child", title: "Child", kind: "practice", partOf: "one", locators: [] },
+    ]);
+
+    await runImport(
+      [
+        { scope: "one", title: "One", kind: "domain", locators: [] },
+        { scope: "child", title: "Child", kind: "practice", locators: [] },
+      ],
+      "b".repeat(40),
+    );
+
+    const live = await pool.query(
+      `SELECT 1 FROM "${schemaName}".scope_relations r
+         JOIN "${schemaName}".scopes f ON f.scope_guid = r.from_scope_guid
+        WHERE f.scope_slug = 'child' AND r.relation_type = 'part_of' AND r.retired_at IS NULL`,
+    );
+    expect(live.rowCount).toBe(0);
+  });
+
   it("re-importing the same commit writes nothing", async () => {
     const declarations: ScopeDeclaration[] = [
       { scope: "anchor-mcp", title: "Anchor MCP", kind: "domain", locators: [{ repository: "r", pathPrefix: "" }] },
@@ -185,11 +235,11 @@ describe.runIf(await isTestDatabaseReachable())("scope declarations (real Postgr
       { scope: "first", title: "First", kind: "component", locators: [{ repository: "r", pathPrefix: "app" }] },
     ]);
 
+    // `first` is omitted rather than declared with no locators: parseScopeDeclarations
+    // rejects a component without one, so declaring that here would exercise a state the
+    // real pipeline cannot produce and quietly overstate coverage.
     const second = await runImport(
-      [
-        { scope: "first", title: "First", kind: "component", locators: [] },
-        { scope: "second", title: "Second", kind: "component", locators: [{ repository: "r", pathPrefix: "app" }] },
-      ],
+      [{ scope: "second", title: "Second", kind: "component", locators: [{ repository: "r", pathPrefix: "app" }] }],
       "b".repeat(40),
     );
 

@@ -748,21 +748,36 @@ async function importScopeDeclarations(args: {
           continue;
         }
 
-        if (declaration.partOf !== undefined) {
-          const parentGuid = guidBySlug.get(declaration.partOf);
-          // The registry parser already proved this resolves, so a miss here means the
-          // parent exists only in the database — not something to invent a relation for.
-          if (parentGuid !== undefined && parentGuid !== scopeGuid) {
-            const related = await tx.query(
-              `INSERT INTO "${schema}".scope_relations
-                 (workspace_guid, relation_guid, from_scope_guid, to_scope_guid, relation_type, derived_from_signal)
-               VALUES ($1, $2, $3, $4, 'part_of', 'declared:project-mappings.json')
-               ON CONFLICT DO NOTHING`,
-              [input.workspaceGuid, randomUUID(), scopeGuid, parentGuid],
-            );
-            if (related.rowCount && related.rowCount > 0) {
-              report.relationsCreated += 1;
-            }
+        const parentGuid =
+          declaration.partOf === undefined ? undefined : guidBySlug.get(declaration.partOf);
+
+        // The declaration is authoritative and allows exactly one parent, so a `partOf`
+        // that changed or was removed must retire the edge it replaced. Without this the
+        // old edge stays live and the scope ends up with two parents — a state the
+        // declaration model cannot express but the table can hold.
+        //
+        // Scoped to relations this code owns: a `derived:slug-prefix` edge comes from a
+        // different mechanism and is not ours to retire.
+        await tx.query(
+          `UPDATE "${schema}".scope_relations SET retired_at = now()
+           WHERE workspace_guid = $1 AND from_scope_guid = $2 AND relation_type = 'part_of'
+             AND derived_from_signal = 'declared:project-mappings.json' AND retired_at IS NULL
+             AND ($3::uuid IS NULL OR to_scope_guid <> $3)`,
+          [input.workspaceGuid, scopeGuid, parentGuid ?? null],
+        );
+
+        // The registry parser already proved this resolves, so a miss here means the
+        // parent exists only in the database — not something to invent a relation for.
+        if (parentGuid !== undefined && parentGuid !== scopeGuid) {
+          const related = await tx.query(
+            `INSERT INTO "${schema}".scope_relations
+               (workspace_guid, relation_guid, from_scope_guid, to_scope_guid, relation_type, derived_from_signal)
+             VALUES ($1, $2, $3, $4, 'part_of', 'declared:project-mappings.json')
+             ON CONFLICT DO NOTHING`,
+            [input.workspaceGuid, randomUUID(), scopeGuid, parentGuid],
+          );
+          if (related.rowCount && related.rowCount > 0) {
+            report.relationsCreated += 1;
           }
         }
 
