@@ -310,6 +310,19 @@ export async function reportRecordUse(
   let recorded = 0;
   const rejected: Array<{ routeKey: string; reason: string }> = [];
 
+  // Checked once, up front, because a missing request and an unofferred route are different
+  // answers that a per-ref rowCount cannot tell apart. An unknown request is ignored — the
+  // caller is reporting against something that never happened — whereas a known request
+  // with an unofferred route is a rejection worth naming. Conflating them would return a
+  // rejection per ref, each blaming a route that may well have been fine.
+  const known = await pool.query(
+    `SELECT 1 FROM "${telemetrySchemaName}".retrieval_requests WHERE request_guid = $1`,
+    [use.requestId],
+  );
+  if (known.rowCount === 0) {
+    return { recorded: 0, rejected: [] };
+  }
+
   for (const ref of use.refs) {
     // The impression is resolved here rather than trusted from the caller, and narrowed to
     // the ranker that actually produced the answer by joining the request's own ranker id

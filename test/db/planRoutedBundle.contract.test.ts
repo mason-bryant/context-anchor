@@ -463,5 +463,21 @@ describe.runIf(await isTestDatabaseReachable())("planRoutedBundle (real Postgres
 
       expect(recorded).toBe(0);
     });
+
+    // An unknown request and an unofferred route are different answers. Reporting the
+    // former as "route was not offered" blames a route that may have been perfectly valid,
+    // and would return one such rejection per ref.
+    it("ignores an unknown request without inventing route rejections", async () => {
+      const outcome = await reportRecordUse(pool, telemetrySchema, {
+        requestId: randomUUID(),
+        refs: [
+          { type: "section", guid: randomUUID(), stableKey: "doc#a", routeKey: "scope:domain:anchor-mcp" },
+          { type: "section", guid: randomUUID(), stableKey: "doc#b", routeKey: "scope:domain:anchor-mcp" },
+        ],
+        useKind: "cited",
+      });
+
+      expect(outcome).toEqual({ recorded: 0, rejected: [] });
+    });
   });
 });
