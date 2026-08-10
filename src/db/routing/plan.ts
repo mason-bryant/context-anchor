@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 
 import type { Pool } from "pg";
 
+import type { WorkspaceRole } from "../access.js";
 import { defaultRanker, rankWithFallback, type RankedRoute, type Ranker } from "./ranker.js";
 import {
   contentFingerprint,
@@ -28,17 +29,23 @@ export const DEFAULT_ROUTE_BUDGET: RouteBudget = { expanded: 2, listed: 10, reco
 
 export type PlanInput = {
   workspaceGuid: string;
+  /** Whose permissions apply to route selection. Supplied by the facade, never by the caller — see PlanRequest. */
+  principalGuid: string;
+  /** Resolved with principalGuid from the authenticated session, not caller-supplied. */
+  role: WorkspaceRole;
   task: string;
   referencedPaths?: string[];
   /** Route keys the caller wants expanded regardless of position — the expandRoutes path. */
   routeKeys?: string[];
   budget?: Partial<RouteBudget>;
-  principalGuid?: string;
   traceId?: string;
   consumer?: string;
   /** Opt-in: expansion is stateless and the server never reads the task back. */
   storeTaskText?: boolean;
 };
+
+/** What a caller supplies; identity and role are the facade's to decide, never the caller's. */
+export type PlanRequest = Omit<PlanInput, "workspaceGuid" | "principalGuid" | "role">;
 
 export type PlannedRoute = {
   routeKey: string;
@@ -218,7 +225,7 @@ async function recordRequest(
     [
       requestId,
       input.workspaceGuid,
-      input.principalGuid ?? null,
+      input.principalGuid,
       input.traceId ?? null,
       // Opt-in, because nothing on the server ever needs to read it back.
       input.storeTaskText === true ? input.task : null,
