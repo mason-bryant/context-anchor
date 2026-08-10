@@ -10,7 +10,7 @@ import type { ScopeDeclaration } from "./scopeRegistry.js";
 import {
   planRoutedBundle,
   reportRecordUse,
-  type PlanInput,
+  type PlanRequest,
   type PlanOptions,
   type PlanResult,
   type RecordUse,
@@ -92,14 +92,22 @@ export class KnowledgeDatabase {
   /** T2's write, as the bootstrapped owner. Returns the report the UI renders. */
   /** Routed retrieval (T1), always as the workspace owner in this single-operator release. */
   async planRoutedBundleAsOwner(
-    input: Omit<PlanInput, "workspaceGuid">,
+    input: PlanRequest,
     options?: PlanOptions,
   ): Promise<PlanResult> {
     return planRoutedBundle(
       this.pool,
       this.schemaName,
       this.telemetrySchemaName,
-      { ...input, workspaceGuid: this.bootstrap.workspaceGuid, principalGuid: this.bootstrap.ownerPrincipalGuid },
+      {
+        ...input,
+        workspaceGuid: this.bootstrap.workspaceGuid,
+        principalGuid: this.bootstrap.ownerPrincipalGuid,
+        // Single-operator release: the caller is the workspace owner, who is entitled to
+        // every scope without a grant row. The filtering exists so that stops being an
+        // assumption baked into the query the moment a second principal appears.
+        role: "owner",
+      },
       options,
     );
   }

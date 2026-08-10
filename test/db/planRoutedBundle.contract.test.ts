@@ -72,6 +72,8 @@ describe.runIf(await isTestDatabaseReachable())("planRoutedBundle (real Postgres
   const plan = (task: string, extra: Record<string, unknown> = {}) =>
     planRoutedBundle(pool, schemaName, telemetrySchema, {
       workspaceGuid: bootstrap.workspaceGuid,
+      principalGuid: bootstrap.ownerPrincipalGuid,
+      role: "owner",
       task,
       ...extra,
     });
@@ -234,7 +236,7 @@ describe.runIf(await isTestDatabaseReachable())("planRoutedBundle (real Postgres
         pool,
         schemaName,
         telemetrySchema,
-        { workspaceGuid: bootstrap.workspaceGuid, task: "anchor mcp" },
+        { workspaceGuid: bootstrap.workspaceGuid, principalGuid: bootstrap.ownerPrincipalGuid, role: "owner", task: "anchor mcp" },
         { now: () => fixed },
       );
 
@@ -264,20 +266,33 @@ describe.runIf(await isTestDatabaseReachable())("planRoutedBundle (real Postgres
 
     // The mechanism that turns the count-versus-strength question into a measurement.
     it("records a shadow ranker's ordering without letting it change the answer", async () => {
-      const reversed: Ranker = {
-        id: "reversed",
+      // Sorted by slug descending rather than "reverse the input": a ranker sees candidates,
+      // not the live ranked order, so reversing the input only coincidentally differs from
+      // the live ordering — and that coincidence made this test depend on candidate
+      // insertion order, which is not part of anything's contract.
+      const bySlugDescending: Ranker = {
+        id: "slug-desc",
         version: "9.9.9",
         deterministic: true,
         rank: (candidates) =>
-          Promise.resolve([...candidates].reverse().map((c, index) => ({ ...c, offeredPosition: index }))),
+          Promise.resolve(
+            [...candidates]
+              .sort((left, right) => right.scopeSlug.localeCompare(left.scopeSlug))
+              .map((c, index) => ({ ...c, offeredPosition: index })),
+          ),
       };
 
       const result = await planRoutedBundle(
         pool,
         schemaName,
         telemetrySchema,
-        { workspaceGuid: bootstrap.workspaceGuid, task: "anchor mcp http transport rate limiting" },
-        { ranker: defaultRanker, shadowRankers: [reversed] },
+        {
+          workspaceGuid: bootstrap.workspaceGuid,
+          principalGuid: bootstrap.ownerPrincipalGuid,
+          role: "owner",
+          task: "anchor mcp http transport rate limiting",
+        },
+        { ranker: defaultRanker, shadowRankers: [bySlugDescending] },
       );
 
       const live = await pool.query<{ route_key: string }>(
@@ -292,7 +307,17 @@ describe.runIf(await isTestDatabaseReachable())("planRoutedBundle (real Postgres
       );
 
       expect(live.rows.map((r) => r.route_key)).toEqual(result.routes.map((r) => r.routeKey));
-      expect(shadow.rows.map((r) => r.route_key)).toEqual([...live.rows.map((r) => r.route_key)].reverse());
+      // The same routes, ordered by the shadow ranker's own rule — recorded separately from
+      // what the caller saw, which is the whole point of a shadow ordering.
+      const shadowKeys = shadow.rows.map((r) => r.route_key);
+      expect([...shadowKeys].sort()).toEqual([...live.rows.map((r) => r.route_key)].sort());
+      // Ordered by slug, which is the shadow ranker's rule — not by route key, which embeds
+      // the scope kind and therefore sorts differently.
+      const slugOf = (routeKey: string) => routeKey.slice(routeKey.lastIndexOf(":") + 1);
+      expect(shadowKeys).toEqual(
+        [...shadowKeys].sort((left, right) => slugOf(right).localeCompare(slugOf(left))),
+      );
+      expect(shadowKeys).not.toEqual(live.rows.map((r) => r.route_key));
       // A shadow ordering expanded nothing; recording otherwise would make it look like the
       // caller saw it.
       expect(shadow.rows.every((row) => row.expanded_at === null)).toBe(true);
@@ -314,7 +339,12 @@ describe.runIf(await isTestDatabaseReachable())("planRoutedBundle (real Postgres
         pool,
         schemaName,
         telemetrySchema,
-        { workspaceGuid: bootstrap.workspaceGuid, task: "anchor mcp http transport rate limiting" },
+        {
+          workspaceGuid: bootstrap.workspaceGuid,
+          principalGuid: bootstrap.ownerPrincipalGuid,
+          role: "owner",
+          task: "anchor mcp http transport rate limiting",
+        },
         { ranker: defaultRanker, shadowRankers: [failing] },
       );
 

@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 
 import type { Pool } from "pg";
 
+import { resolveScopeAccess, type WorkspaceRole } from "../access.js";
 import type { MatchSignal, RouteCandidate } from "./ranker.js";
 
 /**
@@ -115,6 +116,10 @@ export function pathMatch(
 
 export type SelectionInput = {
   workspaceGuid: string;
+  /** Whose permissions apply. Routing reads records, so an unreadable scope must not become a route. */
+  principalGuid: string;
+  /** Declared by the caller, matching listScopes: an owner needs no grant row, a member needs a live one. */
+  role: WorkspaceRole;
   task: string;
   referencedPaths?: string[];
 };
@@ -127,13 +132,39 @@ export async function selectRouteCandidates(
   // Every live scope, matched in application code rather than SQL. A workspace holds tens
   // of scopes, not millions, and keeping the rule here makes it testable without a database
   // and explainable in `matchReasons` — which is what T8's reader disagrees with.
-  const scopes = await pool.query<ScopeRow>(
-    `SELECT scope_guid, scope_slug, scope_kind, title, aliases
-       FROM "${schemaName}".scopes
-      WHERE workspace_guid = $1 AND retired_at IS NULL`,
-    [input.workspaceGuid],
+  const scopes = await pool.query<ScopeRow & { grant_permission: "read" | "write" | null; grant_retired_at: Date | null }>(
+    // LEFT JOIN, not JOIN: an owner is entitled to every scope with no grant row at all, so
+    // an inner join would silently return nothing for the role that should see everything.
+    // Retired grants are excluded here rather than only in application code, so the query
+    // scales with live grants instead of with every grant ever issued.
+    `SELECT s.scope_guid, s.scope_slug, s.scope_kind, s.title, s.aliases,
+            g.permission AS grant_permission, g.retired_at AS grant_retired_at
+       FROM "${schemaName}".scopes s
+       LEFT JOIN "${schemaName}".scope_grants g
+         ON g.workspace_guid = s.workspace_guid
+        AND g.scope_guid = s.scope_guid
+        AND g.principal_guid = $2
+        AND g.retired_at IS NULL
+      WHERE s.workspace_guid = $1 AND s.retired_at IS NULL`,
+    [input.workspaceGuid, input.principalGuid],
   );
-  const byGuid = new Map(scopes.rows.map((row) => [row.scope_guid, row]));
+
+  // Filtered once, here, so every later stage inherits it. The relation hop resolves its
+  // target through this map and drops anything absent, which is what stops a hop from
+  // offering a parent the caller may not read — a leak that filtering only the lexical and
+  // path stages would leave open.
+  const byGuid = new Map(
+    scopes.rows
+      .filter((row) =>
+        resolveScopeAccess({
+          role: input.role,
+          grant: row.grant_permission ? { permission: row.grant_permission, retiredAt: row.grant_retired_at } : null,
+          permission: "read",
+        }),
+      )
+      .map((row) => [row.scope_guid, row]),
+  );
+  const readable = [...byGuid.values()];
 
   const signals = new Map<string, MatchSignal[]>();
   const add = (scopeGuid: string, signal: MatchSignal) => {
@@ -146,7 +177,7 @@ export async function selectRouteCandidates(
   };
 
   const terms = new Set(taskTerms(input.task));
-  for (const scope of scopes.rows) {
+  for (const scope of readable) {
     const lexical = lexicalMatch(scope, terms);
     if (lexical) {
       add(scope.scope_guid, lexical);
@@ -161,7 +192,11 @@ export async function selectRouteCandidates(
       [input.workspaceGuid],
     );
     for (const [scopeGuid, signal] of pathMatch(input.referencedPaths, mappings.rows)) {
-      add(scopeGuid, signal);
+      // A mapping can point at a scope this caller cannot read; the path is evidence about
+      // the caller's work, not an entitlement to the scope it maps to.
+      if (byGuid.has(scopeGuid)) {
+        add(scopeGuid, signal);
+      }
     }
   }
 
