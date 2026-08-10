@@ -171,6 +171,18 @@ describe.runIf(await isTestDatabaseReachable())("planRoutedBundle (real Postgres
     expect(clipped.routes.map((r) => r.contentFingerprint)).toEqual(full.routes.map((r) => r.contentFingerprint));
   });
 
+  // expanded greater than listed would offer more routes than the response and the stored
+  // budget claim were offered, so a later reading of an impression disagrees with the
+  // budget recorded beside it.
+  it("normalizes a budget whose expanded exceeds listed", async () => {
+    const result = await plan("anchor mcp http transport rate limiting", {
+      budget: { expanded: 5, listed: 1, recordsPerRoute: 5 },
+    });
+
+    expect(result.budget.listed).toBeGreaterThanOrEqual(result.budget.expanded);
+    expect(result.routes.length).toBeLessThanOrEqual(result.budget.listed);
+  });
+
   it("is recomputed rather than cached, so two identical calls agree", async () => {
     const a = await plan("add rate limiting");
     const b = await plan("add rate limiting");
@@ -316,14 +328,17 @@ describe.runIf(await isTestDatabaseReachable())("planRoutedBundle (real Postgres
 
     it("records record uses against the request", async () => {
       const result = await plan("anchor mcp", { budget: { expanded: 5, listed: 10 } });
-      const record = result.routes.flatMap((route) => route.records ?? [])[0]!;
+      const usedRoute = result.routes.find((route) => (route.records?.length ?? 0) > 0)!;
+      const record = usedRoute.records![0]!;
       if (record.ref.type !== "section") {
         throw new Error("expected a section record");
       }
 
       const { recorded } = await reportRecordUse(pool, telemetrySchema, {
         requestId: result.requestId,
-        refs: [{ type: "section", guid: record.ref.guid, stableKey: record.ref.stableKey }],
+        refs: [
+          { type: "section", guid: record.ref.guid, stableKey: record.ref.stableKey, routeKey: usedRoute.routeKey },
+        ],
         useKind: "cited",
       });
 
@@ -335,11 +350,41 @@ describe.runIf(await isTestDatabaseReachable())("planRoutedBundle (real Postgres
       expect(uses.rows[0]).toMatchObject({ stable_key: record.ref.stableKey, use_kind: "cited" });
     });
 
+    // Without an impression, a use cannot be attributed to the route that served it — and
+    // a record can belong to several offered routes at once, so the attribution is not
+    // recoverable afterwards. This is what makes "where would another ranker have placed
+    // the records the caller used" answerable at all.
+    it("attributes a record use to the live impression that served it", async () => {
+      const result = await plan("anchor mcp", { budget: { expanded: 5, listed: 10 } });
+      const usedRoute = result.routes.find((route) => (route.records?.length ?? 0) > 0)!;
+      const record = usedRoute.records![0]!;
+      if (record.ref.type !== "section") {
+        throw new Error("expected a section record");
+      }
+
+      await reportRecordUse(pool, telemetrySchema, {
+        requestId: result.requestId,
+        refs: [
+          { type: "section", guid: record.ref.guid, stableKey: record.ref.stableKey, routeKey: usedRoute.routeKey },
+        ],
+        useKind: "cited",
+      });
+
+      const attributed = await pool.query<{ route_key: string; is_shadow: boolean }>(
+        `SELECT i.route_key, i.is_shadow
+           FROM "${telemetrySchema}".retrieval_record_uses u
+           JOIN "${telemetrySchema}".retrieval_route_impressions i ON i.impression_guid = u.impression_guid
+          WHERE u.request_guid = $1`,
+        [result.requestId],
+      );
+      expect(attributed.rows[0]).toMatchObject({ route_key: usedRoute.routeKey, is_shadow: false });
+    });
+
     // A use for a request that never happened is a caller mistake, not a row worth keeping.
     it("ignores a record use for an unknown request", async () => {
       const { recorded } = await reportRecordUse(pool, telemetrySchema, {
         requestId: randomUUID(),
-        refs: [{ type: "section", guid: randomUUID(), stableKey: "doc#x" }],
+        refs: [{ type: "section", guid: randomUUID(), stableKey: "doc#x", routeKey: "scope:domain:anchor-mcp" }],
         useKind: "cited",
       });
 

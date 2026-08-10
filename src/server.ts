@@ -1977,12 +1977,19 @@ the index when your workflow checks in that file.`,
           refs: z
             .array(
               z.discriminatedUnion("type", [
-                z.object({ type: z.literal("assertion"), guid: z.string().uuid() }),
+                z.object({
+                  type: z.literal("assertion"),
+                  guid: z.string().uuid(),
+                  // Which offered route served it: a record can belong to several scopes, so
+                  // without this a use cannot be attributed to an impression.
+                  routeKey: z.string().trim().min(1),
+                }),
                 z.object({
                   type: z.literal("section"),
                   guid: z.string().uuid(),
                   // Section guids are revision-scoped; diagnostics aggregate on the stable key.
                   stableKey: z.string().trim().min(1),
+                  routeKey: z.string().trim().min(1),
                 }),
               ]),
             )

@@ -94,11 +94,15 @@ export async function planRoutedBundle(
   options: PlanOptions = {},
 ): Promise<PlanResult> {
   const now = options.now?.() ?? new Date();
-  const budget: RouteBudget = { ...DEFAULT_ROUTE_BUDGET, ...input.budget };
+  // Normalized rather than merged as given: `expanded` greater than `listed` would offer
+  // more routes than the response and the telemetry claim were offered, so a later reading
+  // of an impression would disagree with the budget stored beside it.
+  const merged = { ...DEFAULT_ROUTE_BUDGET, ...input.budget };
+  const budget: RouteBudget = { ...merged, listed: Math.max(merged.listed, merged.expanded) };
   const candidates = await selectRouteCandidates(pool, schemaName, input);
 
   const outcome = await rankWithFallback(candidates, options.ranker ?? defaultRanker);
-  const offered = outcome.routes.slice(0, Math.max(budget.listed, budget.expanded));
+  const offered = outcome.routes.slice(0, budget.listed);
 
   // Records are loaded for every offered route, not only expanded ones, because every route
   // carries a fingerprint and a fingerprint is a statement about content. Expansion decides
@@ -170,7 +174,7 @@ export async function planRoutedBundle(
         telemetrySchemaName,
         requestId,
         shadowOutcome.ranker,
-        shadowOutcome.routes.slice(0, Math.max(budget.listed, budget.expanded)),
+        shadowOutcome.routes.slice(0, budget.listed),
         routes,
         true,
         now,
@@ -273,11 +277,23 @@ async function recordImpressions(
   }
 }
 
+export type UsedRef = (
+  | { type: "assertion"; guid: string }
+  | { type: "section"; guid: string; stableKey: string }
+) & {
+  /**
+   * Which offered route served this record. Required, because `record_scopes` is
+   * many-to-many — a section can belong to several scopes, and several of them can be
+   * offered at once — so a use recorded without its route cannot be attributed to an
+   * impression, and "where would another ranker have placed the records the caller used"
+   * becomes unanswerable. That question is the entire point of recording uses.
+   */
+  routeKey: string;
+};
+
 export type RecordUse = {
   requestId: string;
-  refs: Array<
-    { type: "assertion"; guid: string } | { type: "section"; guid: string; stableKey: string }
-  >;
+  refs: UsedRef[];
   useKind: string;
 };
 
@@ -293,10 +309,16 @@ export async function reportRecordUse(
 ): Promise<{ recorded: number }> {
   let recorded = 0;
   for (const ref of use.refs) {
+    // The impression is resolved here rather than trusted from the caller, and only the
+    // live one: a use is evidence about what the caller actually saw, and a shadow ordering
+    // was never shown to anybody.
     const result = await pool.query(
       `INSERT INTO "${telemetrySchemaName}".retrieval_record_uses
-         (use_guid, request_guid, record_type, record_guid, stable_key, use_kind)
-       SELECT $1, $2, $3, $4, $5, $6
+         (use_guid, request_guid, impression_guid, record_type, record_guid, stable_key, use_kind)
+       SELECT $1, $2,
+              (SELECT impression_guid FROM "${telemetrySchemaName}".retrieval_route_impressions
+                WHERE request_guid = $2 AND route_key = $7 AND is_shadow = false),
+              $3, $4, $5, $6
         WHERE EXISTS (SELECT 1 FROM "${telemetrySchemaName}".retrieval_requests WHERE request_guid = $2)`,
       [
         randomUUID(),
@@ -305,6 +327,7 @@ export async function reportRecordUse(
         ref.guid,
         ref.type === "section" ? ref.stableKey : null,
         use.useKind,
+        ref.routeKey,
       ],
     );
     recorded += result.rowCount ?? 0;
