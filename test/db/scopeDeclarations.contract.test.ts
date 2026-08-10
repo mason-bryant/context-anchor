@@ -137,6 +137,34 @@ describe.runIf(await isTestDatabaseReachable())("scope declarations (real Postgr
     });
   });
 
+  // deriveAllScopes runs first and creates `anchor-mcp` from the file path with its own
+  // derived title, and ensureScope returns early for a slug that already exists. Without an
+  // explicit write, every hand-written title is discarded for exactly the scopes derivation
+  // also produces — which is most of them.
+  it("lets a declared title override one derivation already created", async () => {
+    await runImport([{ scope: "anchor-mcp", title: "Anchor MCP", kind: "domain", locators: [] }]);
+
+    expect((await scopeRow("anchor-mcp"))?.title).toBe("Anchor MCP");
+  });
+
+  // The registry is authoritative, so removing an alias from it has to remove it here.
+  it("clears aliases when the declaration no longer lists any", async () => {
+    await runImport([
+      { scope: "anchor-mcp", title: "Anchor MCP", kind: "domain", aliases: ["context-conductor"], locators: [] },
+    ]);
+    expect((await scopeRow("anchor-mcp"))?.aliases).toEqual(["context-conductor"]);
+
+    await runImport([{ scope: "anchor-mcp", title: "Anchor MCP", kind: "domain", locators: [] }], "b".repeat(40));
+
+    expect((await scopeRow("anchor-mcp"))?.aliases).toEqual([]);
+  });
+
+  // An empty array means "the scope model is nothing", which is a mistake worth reporting
+  // rather than quietly falling back to deriving scopes from paths.
+  it("refuses an explicitly empty scopes array instead of falling back", async () => {
+    await expect(runImport([])).rejects.toThrow(/provided but empty/);
+  });
+
   it("re-importing the same commit writes nothing", async () => {
     const declarations: ScopeDeclaration[] = [
       { scope: "anchor-mcp", title: "Anchor MCP", kind: "domain", locators: [{ repository: "r", pathPrefix: "" }] },

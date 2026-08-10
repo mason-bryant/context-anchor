@@ -120,7 +120,13 @@ export async function importDocuments(input: ImportInput): Promise<ImportReport>
   // Scope-first declarations replace deriving scopes from project mappings (A1). Both
   // shapes are accepted while the Git-backed server still reads the same file (T-36), and
   // the declared shape wins when a file carries both.
-  if (input.scopes?.length) {
+  if (input.scopes !== undefined) {
+    // Presence, not length. An empty array means "the scope model is nothing", which is
+    // almost certainly a mistake — and falling back to legacy derivation would hide it,
+    // exactly the silent fallback parseScopeDeclarations refuses for an empty `scopes` key.
+    if (input.scopes.length === 0) {
+      throw new Error("scopes was provided but empty; omit it to derive scopes, or declare at least one.");
+    }
     await importScopeDeclarations({ input, batchGuid, report, ensureScope });
   } else if (input.projectMappings?.length) {
     await importProjectMappings({ input, batchGuid, report, ensureScope });
@@ -718,15 +724,21 @@ async function importScopeDeclarations(args: {
         });
         guidBySlug.set(declaration.scope, scopeGuid);
 
-        if (declaration.aliases?.length) {
-          // Declared aliases are how one subject spelled several ways stays one scope; the
-          // column is authoritative, so a removed alias must actually disappear.
-          await tx.query(
-            `UPDATE "${schema}".scopes SET aliases = $3 WHERE workspace_guid = $1 AND scope_guid = $2
-             AND aliases IS DISTINCT FROM $3`,
-            [input.workspaceGuid, scopeGuid, declaration.aliases],
-          );
-        }
+        // ensureScope only writes title on insert and returns early for a slug that already
+        // exists — including one deriveAllScopes created moments ago in this same import,
+        // which runs first. Without this, a declared title is silently discarded for every
+        // scope derivation also produces, and the derived slug-ish title wins.
+        //
+        // Aliases are set here for the same reason and unconditionally: the declaration is
+        // authoritative, so an alias removed from the registry has to disappear, which a
+        // `length` guard would prevent. IS DISTINCT FROM keeps an unchanged declaration
+        // from rewriting the row, so re-import stays a genuine no-op.
+        await tx.query(
+          `UPDATE "${schema}".scopes SET title = $3, aliases = $4
+           WHERE workspace_guid = $1 AND scope_guid = $2
+             AND (title IS DISTINCT FROM $3 OR aliases IS DISTINCT FROM $4)`,
+          [input.workspaceGuid, scopeGuid, declaration.title, declaration.aliases ?? []],
+        );
       }
 
       // Pass two: relations and locators.
