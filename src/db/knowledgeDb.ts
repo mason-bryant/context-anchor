@@ -6,6 +6,7 @@ import type { AppLogger } from "../logger.js";
 import { resolveScopeAccess, type WorkspaceRole } from "./access.js";
 import { parseChangeWindow } from "./changeWindow.js";
 import { CommandHandler } from "./commandHandler.js";
+import type { ScopeDeclaration } from "./scopeRegistry.js";
 import {
   importDocuments,
   type ImportFile,
@@ -83,6 +84,7 @@ export class KnowledgeDatabase {
     commitSha: string;
     files: ImportFile[];
     projectMappings?: ProjectMapping[];
+    scopes?: ScopeDeclaration[];
     people?: Person[];
   }): Promise<ImportReport> {
     return importDocuments({

@@ -6,6 +6,7 @@ import type { CommandHandler, CommandTransaction } from "./commandHandler.js";
 import { assertValidSchemaName } from "./config.js";
 import { parseMarkdownStructure } from "./markdownStructure.js";
 import { deriveScopeForPath, type DerivedScope } from "./scopeDerivation.js";
+import type { ScopeDeclaration } from "./scopeRegistry.js";
 
 export type ImportFile = {
   /** Repo-relative path; also the document's name within its scope. */
@@ -55,6 +56,8 @@ export type ImportInput = {
   commitSha: string;
   files: ImportFile[];
   projectMappings?: ProjectMapping[];
+  /** Scope-first declarations (A1). When present these replace deriving scopes from projectMappings. */
+  scopes?: ScopeDeclaration[];
   people?: Person[];
 };
 
@@ -114,7 +117,18 @@ export async function importDocuments(input: ImportInput): Promise<ImportReport>
     await importOneFile({ input, file, batchGuid, report, ensureScope, goalReferences, scopeCache });
   }
 
-  if (input.projectMappings?.length) {
+  // Scope-first declarations replace deriving scopes from project mappings (A1). Both
+  // shapes are accepted while the Git-backed server still reads the same file (T-36), and
+  // the declared shape wins when a file carries both.
+  if (input.scopes !== undefined) {
+    // Presence, not length. An empty array means "the scope model is nothing", which is
+    // almost certainly a mistake — and falling back to legacy derivation would hide it,
+    // exactly the silent fallback parseScopeDeclarations refuses for an empty `scopes` key.
+    if (input.scopes.length === 0) {
+      throw new Error("scopes was provided but empty; omit it to derive scopes, or declare at least one.");
+    }
+    await importScopeDeclarations({ input, batchGuid, report, ensureScope });
+  } else if (input.projectMappings?.length) {
     await importProjectMappings({ input, batchGuid, report, ensureScope });
   }
 
@@ -668,6 +682,140 @@ function collectGoalReferences(files: ImportFile[]): Map<string, Set<string>> {
   }
 
   return references;
+}
+
+/**
+ * Imports scope-first declarations: the scope name is the identity, and repositories and
+ * path prefixes are locators pointing at it, many-to-one. Runs in two passes so a `partOf`
+ * can name a scope declared later in the file.
+ */
+async function importScopeDeclarations(args: {
+  input: ImportInput;
+  batchGuid: string;
+  report: ImportReport;
+  ensureScope: (tx: CommandTransaction, derived: DerivedScope) => Promise<string>;
+}): Promise<void> {
+  const { input, batchGuid, report, ensureScope } = args;
+  const schema = input.schemaName;
+  const declarations = input.scopes ?? [];
+
+  await input.handler.execute({
+    workspaceGuid: input.workspaceGuid,
+    actorPrincipalGuid: input.actorPrincipalGuid,
+    commandType: "scopes.import",
+    origin: "mcp",
+    // Distinct from `scopes.derive`, which already uses `import:scopes:...`. Two command
+    // types sharing an idempotency key is indistinguishable from a duplicate submission, so
+    // the second one silently no-ops — which is exactly what happened here first time.
+    idempotencyKey: `import:scope-declarations:${input.repository}:${input.commitSha}`,
+    batchGuid,
+    reason: "import project-mappings.json scopes",
+    entity: { entityType: "scopes", entityGuid: randomUUID() },
+    apply: async (tx) => {
+      const guidBySlug = new Map<string, string>();
+
+      // Pass one: every scope exists before any relation names one.
+      for (const declaration of declarations) {
+        const scopeGuid = await ensureScope(tx, {
+          scopeKind: declaration.kind,
+          scopeSlug: declaration.scope,
+          title: declaration.title,
+          derivedFromSignal: "project-mappings.json:scopes",
+        });
+        guidBySlug.set(declaration.scope, scopeGuid);
+
+        // ensureScope only writes title on insert and returns early for a slug that already
+        // exists — including one deriveAllScopes created moments ago in this same import,
+        // which runs first. Without this, a declared title is silently discarded for every
+        // scope derivation also produces, and the derived slug-ish title wins.
+        //
+        // Aliases are set here for the same reason and unconditionally: the declaration is
+        // authoritative, so an alias removed from the registry has to disappear, which a
+        // `length` guard would prevent. IS DISTINCT FROM keeps an unchanged declaration
+        // from rewriting the row, so re-import stays a genuine no-op.
+        await tx.query(
+          `UPDATE "${schema}".scopes SET title = $3, aliases = $4
+           WHERE workspace_guid = $1 AND scope_guid = $2
+             AND (title IS DISTINCT FROM $3 OR aliases IS DISTINCT FROM $4)`,
+          [input.workspaceGuid, scopeGuid, declaration.title, declaration.aliases ?? []],
+        );
+      }
+
+      // Pass two: relations and locators.
+      for (const declaration of declarations) {
+        const scopeGuid = guidBySlug.get(declaration.scope);
+        if (scopeGuid === undefined) {
+          continue;
+        }
+
+        const parentGuid =
+          declaration.partOf === undefined ? undefined : guidBySlug.get(declaration.partOf);
+
+        // The declaration is authoritative and allows exactly one parent, so a `partOf`
+        // that changed or was removed must retire the edge it replaced. Without this the
+        // old edge stays live and the scope ends up with two parents — a state the
+        // declaration model cannot express but the table can hold.
+        //
+        // Scoped to relations this code owns: a `derived:slug-prefix` edge comes from a
+        // different mechanism and is not ours to retire.
+        await tx.query(
+          `UPDATE "${schema}".scope_relations SET retired_at = now()
+           WHERE workspace_guid = $1 AND from_scope_guid = $2 AND relation_type = 'part_of'
+             AND derived_from_signal = 'declared:project-mappings.json' AND retired_at IS NULL
+             AND ($3::uuid IS NULL OR to_scope_guid <> $3)`,
+          [input.workspaceGuid, scopeGuid, parentGuid ?? null],
+        );
+
+        // The registry parser already proved this resolves, so a miss here means the
+        // parent exists only in the database — not something to invent a relation for.
+        if (parentGuid !== undefined && parentGuid !== scopeGuid) {
+          const related = await tx.query(
+            `INSERT INTO "${schema}".scope_relations
+               (workspace_guid, relation_guid, from_scope_guid, to_scope_guid, relation_type, derived_from_signal)
+             VALUES ($1, $2, $3, $4, 'part_of', 'declared:project-mappings.json')
+             ON CONFLICT DO NOTHING`,
+            [input.workspaceGuid, randomUUID(), scopeGuid, parentGuid],
+          );
+          if (related.rowCount && related.rowCount > 0) {
+            report.relationsCreated += 1;
+          }
+        }
+
+        for (const locator of declaration.locators) {
+          const inserted = await tx.query<{ inserted: boolean }>(
+            `INSERT INTO "${schema}".repository_mappings
+               (workspace_guid, mapping_guid, scope_guid, repository, path_prefix, web_config)
+             VALUES ($1, $2, $3, $4, $5, $6)
+             ON CONFLICT (workspace_guid, repository, path_prefix) WHERE retired_at IS NULL
+             DO UPDATE SET scope_guid = EXCLUDED.scope_guid, web_config = EXCLUDED.web_config
+             WHERE repository_mappings.scope_guid IS DISTINCT FROM EXCLUDED.scope_guid
+                OR repository_mappings.web_config IS DISTINCT FROM EXCLUDED.web_config
+             RETURNING (xmax = 0) AS inserted`,
+            [
+              input.workspaceGuid,
+              randomUUID(),
+              scopeGuid,
+              locator.repository,
+              locator.pathPrefix,
+              locator.webConfig ? JSON.stringify(locator.webConfig) : null,
+            ],
+          );
+          const row = inserted.rows[0];
+          if (row?.inserted === true) {
+            report.mappingsImported += 1;
+          } else if (row?.inserted === false) {
+            report.mappingsUpdated += 1;
+          }
+        }
+      }
+
+      return {
+        resultingValue: { scopes: declarations.length },
+        entryType: "scopes.imported",
+        ownerScopeGuid: await defaultWorkspaceScopeGuid(tx, input),
+      };
+    },
+  });
 }
 
 async function importProjectMappings(args: {

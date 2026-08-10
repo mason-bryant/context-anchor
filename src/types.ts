@@ -704,6 +704,14 @@ export type ProjectMappings = {
   claimSourceTypes: ClaimSourceType[];
   /** Optional tenant-specific templates for external references in anchor prose. */
   externalLinkTemplates?: ExternalLinkTemplates;
+  /**
+   * Scope-first declarations consumed by the database importer (A1). Carried verbatim
+   * rather than normalized: this file round-trips through parseProjectMappings on every
+   * UI write, and a key this parser does not model is a key it silently deletes. The
+   * database import validates the contents, which is where a malformed declaration is
+   * actionable; this side only has to not lose it.
+   */
+  scopes?: unknown;
 };
 
 export type ExternalLinkTemplates = {
