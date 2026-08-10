@@ -229,6 +229,56 @@ describe("fallback", () => {
     }
   });
 
+  // Handing the live array to an untrusted ranker let it mutate a candidate and return it:
+  // the contract then compared the mutated objects to themselves and passed. Reproduced
+  // before fixing — the answer came back carrying routeKey "scope:domain:INJECTED" and
+  // recordCount 999 with fellBack false.
+  it("cannot be defeated by a ranker that mutates its input", async () => {
+    const mutating = brokenRanker((candidates) => {
+      candidates[0]!.routeKey = "scope:domain:INJECTED";
+      candidates[0]!.recordCount = 999;
+      return Promise.resolve(candidates.map((c, index) => ({ ...c, offeredPosition: index })));
+    });
+
+    const outcome = await rankWithFallback(input, mutating);
+
+    expect(outcome.fellBack).toBe(true);
+    expect(outcome.routes.map((route) => route.routeKey)).not.toContain("scope:domain:INJECTED");
+    expect(outcome.routes.every((route) => route.recordCount !== 999)).toBe(true);
+  });
+
+  it("leaves the caller's candidates untouched", async () => {
+    const mutating = brokenRanker((candidates) => {
+      candidates.forEach((candidate) => {
+        candidate.recordCount = 999;
+      });
+      return Promise.resolve(candidates.map((c, index) => ({ ...c, offeredPosition: index })));
+    });
+
+    await rankWithFallback(input, mutating);
+
+    expect(input.every((candidate) => candidate.recordCount !== 999)).toBe(true);
+  });
+
+  // Even a well-behaved ranker's returned objects are not trusted verbatim: the answer is
+  // rebuilt from the baseline, so its influence is limited to order and membership.
+  it("rebuilds routes from the baseline rather than from what the ranker returned", async () => {
+    const tamperer: Ranker = {
+      id: "tamperer",
+      version: "1.0.0",
+      deterministic: true,
+      rank: (candidates) =>
+        Promise.resolve(
+          candidates.map((c, index) => ({ ...c, title: "REWRITTEN", offeredPosition: index })),
+        ),
+    };
+
+    const outcome = await rankWithFallback(input, tamperer);
+
+    expect(outcome.fellBack).toBe(false);
+    expect(outcome.routes.every((route) => route.title !== "REWRITTEN")).toBe(true);
+  });
+
   it("reports the ranker that actually produced the order", async () => {
     const good: Ranker = {
       id: "reverse",

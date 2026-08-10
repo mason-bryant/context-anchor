@@ -174,9 +174,23 @@ export async function rankWithFallback(
     return { routes, ranker: describe(defaultRanker), fellBack: false };
   }
 
+  // A ranker receives its own copy, and the contract is checked against a baseline it
+  // cannot reach. Handing over the live array let a ranker mutate a candidate and then
+  // return it: the check compared the mutated objects to themselves and passed, so a
+  // ranker could rewrite a route key or a record count while appearing to only reorder.
+  const baseline = candidates.map((candidate) => structuredClone(candidate));
+  const forRanker = candidates.map((candidate) => structuredClone(candidate));
+
   try {
-    const routes = await withTimeout(ranker.rank(candidates), options.timeoutMs ?? 5_000, ranker.id);
-    assertRankerContract(candidates, routes);
+    const proposed = await withTimeout(ranker.rank(forRanker), options.timeoutMs ?? 5_000, ranker.id);
+    assertRankerContract(baseline, proposed);
+    // Rebuilt from the baseline rather than from what came back, so a ranker's influence is
+    // limited to order and membership even if it edited the objects it was given.
+    const byKey = new Map(baseline.map((candidate) => [candidate.routeKey, candidate]));
+    const routes = proposed.flatMap((route, index) => {
+      const source = byKey.get(route.routeKey);
+      return source ? [{ ...source, offeredPosition: index }] : [];
+    });
     return { routes, ranker: describe(ranker), fellBack: false };
   } catch (error) {
     const routes = await defaultRanker.rank(candidates);

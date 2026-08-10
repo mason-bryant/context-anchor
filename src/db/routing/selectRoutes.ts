@@ -329,9 +329,9 @@ export function contentFingerprint(records: RouteRecord[]): string {
     fingerprintKey(left).localeCompare(fingerprintKey(right)),
   )) {
     hash.update(fingerprintKey(record));
-    hash.update(" ");
+    hash.update("\0");
     hash.update(createHash("sha256").update(record.content).digest("hex"));
-    hash.update(" ");
+    hash.update("\0");
   }
   return hash.digest("hex").slice(0, 32);
 }
