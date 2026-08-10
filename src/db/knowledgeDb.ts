@@ -8,6 +8,14 @@ import { parseChangeWindow } from "./changeWindow.js";
 import { CommandHandler } from "./commandHandler.js";
 import type { ScopeDeclaration } from "./scopeRegistry.js";
 import {
+  planRoutedBundle,
+  reportRecordUse,
+  type PlanInput,
+  type PlanOptions,
+  type PlanResult,
+  type RecordUse,
+} from "./routing/plan.js";
+import {
   importDocuments,
   type ImportFile,
   type ImportReport,
@@ -81,6 +89,24 @@ export class KnowledgeDatabase {
   }
 
   /** T2's write, as the bootstrapped owner. Returns the report the UI renders. */
+  /** Routed retrieval (T1), always as the workspace owner in this single-operator release. */
+  async planRoutedBundleAsOwner(
+    input: Omit<PlanInput, "workspaceGuid">,
+    options?: PlanOptions,
+  ): Promise<PlanResult> {
+    return planRoutedBundle(
+      this.pool,
+      this.schemaName,
+      this.telemetrySchemaName,
+      { ...input, workspaceGuid: this.bootstrap.workspaceGuid, principalGuid: this.bootstrap.ownerPrincipalGuid },
+      options,
+    );
+  }
+
+  async reportRecordUseAsOwner(use: RecordUse): Promise<{ recorded: number }> {
+    return reportRecordUse(this.pool, this.telemetrySchemaName, use);
+  }
+
   async importDocumentsAsOwner(input: {
     repository: string;
     commitSha: string;
