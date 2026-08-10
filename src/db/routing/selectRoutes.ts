@@ -159,6 +159,12 @@ export async function selectRouteCandidates(
   // target through this map and drops anything absent, which is what stops a hop from
   // offering a parent the caller may not read — a leak that filtering only the lexical and
   // path stages would leave open.
+  // `grant_retired_at` is always null here, because the join already excluded retired
+  // grants — and it is passed anyway, deliberately. resolveScopeAccess is the single tested
+  // source of truth for deny-by-default and "write implies read", and it stays complete on
+  // its own rather than depending on its caller's WHERE clause: a future caller that forgets
+  // the predicate must still be denied. listGrantedScopes made the same choice for the same
+  // reason. The SQL predicate is a performance narrowing, not the policy.
   const byGuid = new Map(
     scopes.rows
       .filter((row) =>
