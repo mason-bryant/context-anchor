@@ -103,10 +103,16 @@ export async function planRoutedBundle(
   // Records are loaded for every offered route, not only expanded ones, because every route
   // carries a fingerprint and a fingerprint is a statement about content. Expansion decides
   // what is *returned*, not what is read.
-  const recordsByRoute = new Map<string, RouteRecord[]>();
-  for (const route of offered) {
-    recordsByRoute.set(route.routeKey, await loadRouteRecords(pool, schemaName, input.workspaceGuid, route.scopeGuid));
-  }
+  // Loaded concurrently: each route's records are independent, and awaiting them in turn
+  // made latency scale with the number of offered routes when nothing required ordering.
+  const recordsByRoute = new Map<string, RouteRecord[]>(
+    await Promise.all(
+      offered.map(
+        async (route) =>
+          [route.routeKey, await loadRouteRecords(pool, schemaName, input.workspaceGuid, route.scopeGuid)] as const,
+      ),
+    ),
+  );
 
   const requested = new Set(input.routeKeys ?? []);
   const routes: PlannedRoute[] = offered.map((route, index) => {
@@ -247,7 +253,7 @@ async function recordImpressions(
          (impression_guid, request_guid, ranker_id, ranker_version, is_shadow, route_key,
           subject_type, subject_guid, offered_position, match_reasons, record_count, expanded_at)
        VALUES ($1,$2,$3,$4,$5,$6,'scope',$7,$8,$9::jsonb,$10,$11)
-       ON CONFLICT (request_guid, ranker_id, ranker_version, route_key) DO NOTHING`,
+       ON CONFLICT (request_guid, ranker_id, ranker_version, is_shadow, route_key) DO NOTHING`,
       [
         randomUUID(),
         requestId,

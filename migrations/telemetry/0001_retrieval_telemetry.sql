@@ -58,10 +58,14 @@ CREATE TABLE retrieval_route_impressions (
   expanded_at timestamptz
 );
 
--- One position per route per ranker per request: a route offered twice at different
--- positions is a bug in ordering, not a fact worth storing.
+-- One position per route per ranker per request, live and shadow counted separately: a
+-- route offered twice at the same position by the same ranker is a bug in ordering, not a
+-- fact worth storing. is_shadow belongs in the key because a shadow ranker that falls back
+-- reports the default ranker's id and version, so without it a failed shadow ordering
+-- collides with the live rows and is dropped — losing the telemetry exactly when the
+-- shadow ranker misbehaved.
 CREATE UNIQUE INDEX retrieval_route_impressions_unique_idx
-  ON retrieval_route_impressions (request_guid, ranker_id, ranker_version, route_key);
+  ON retrieval_route_impressions (request_guid, ranker_id, ranker_version, is_shadow, route_key);
 
 CREATE INDEX retrieval_route_impressions_request_idx
   ON retrieval_route_impressions (request_guid, is_shadow, offered_position);

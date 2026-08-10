@@ -286,6 +286,34 @@ describe.runIf(await isTestDatabaseReachable())("planRoutedBundle (real Postgres
       expect(shadow.rows.every((row) => row.expanded_at === null)).toBe(true);
     });
 
+    // A shadow ranker that fails falls back to the default, so it reports the *same*
+    // ranker id and version as the live ordering. Without is_shadow in the uniqueness key
+    // those rows collide with the live ones and vanish — losing shadow telemetry precisely
+    // when a shadow ranker misbehaved, which is when it is most worth having.
+    it("records a shadow ordering even when the shadow ranker fell back to the default", async () => {
+      const failing: Ranker = {
+        id: "flaky",
+        version: "1.0.0",
+        deterministic: false,
+        rank: () => Promise.reject(new Error("model unavailable")),
+      };
+
+      const result = await planRoutedBundle(
+        pool,
+        schemaName,
+        telemetrySchema,
+        { workspaceGuid: bootstrap.workspaceGuid, task: "anchor mcp http transport rate limiting" },
+        { ranker: defaultRanker, shadowRankers: [failing] },
+      );
+
+      const shadow = await pool.query(
+        `SELECT 1 FROM "${telemetrySchema}".retrieval_route_impressions
+          WHERE request_guid = $1 AND is_shadow = true`,
+        [result.requestId],
+      );
+      expect(shadow.rowCount).toBeGreaterThan(0);
+    });
+
     it("records record uses against the request", async () => {
       const result = await plan("anchor mcp", { budget: { expanded: 5, listed: 10 } });
       const record = result.routes.flatMap((route) => route.records ?? [])[0]!;
