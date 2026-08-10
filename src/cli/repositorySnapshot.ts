@@ -180,6 +180,26 @@ export function flattenProjectMappings(parsed: unknown): ProjectMapping[] | unde
     }
   }
 
+  // Two prefixes can normalize to one name (`a-b` and `a_b` both collapse to `a-b`),
+  // which yields duplicate `${project}-${name}` scope slugs. That violates
+  // UNIQUE(workspace_guid, scope_slug) and surfaces as a raw constraint failure from
+  // deep inside the import — so catch it here, where the file and the colliding
+  // prefixes can be named.
+  const byScopeSlug = new Map<string, ProjectMapping>();
+  for (const mapping of mappings) {
+    const scopeSlug = `${mapping.project}-${mapping.name}`;
+    const clash = byScopeSlug.get(scopeSlug);
+    if (clash) {
+      throw new CliUsageError(
+        `${PROJECT_MAPPINGS_FILE} produces the scope "${scopeSlug}" twice: ` +
+          `${clash.repository}:${clash.pathPrefix || "(no prefix)"} and ` +
+          `${mapping.repository}:${mapping.pathPrefix || "(no prefix)"} normalize to the same name. ` +
+          `Rename one path prefix so the two scopes stay distinct.`,
+      );
+    }
+    byScopeSlug.set(scopeSlug, mapping);
+  }
+
   if (mappings.length === 0) {
     throw new CliUsageError(
       `${PROJECT_MAPPINGS_FILE} produced no mappings; every entry was missing a project or repo name. ` +

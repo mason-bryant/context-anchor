@@ -146,6 +146,22 @@ describe("repository snapshot", () => {
     ]);
   });
 
+  // `a-b` and `a_b` both collapse to `a-b`, so the derived scope slugs collide. Without
+  // this check that surfaces as a raw UNIQUE(workspace_guid, scope_slug) failure from
+  // inside the import rather than something naming the file that caused it.
+  it("refuses path prefixes whose names collide into one scope slug", async () => {
+    const colliding = await makeRepo({
+      "a.md": "# A\n",
+      "project-mappings.json": JSON.stringify({
+        projects: [{ project: "p", repos: [{ repo: "r", paths: ["a-b", "a_b"] }] }],
+      }),
+    });
+
+    await expect(collectRepositorySnapshot(colliding)).rejects.toBeInstanceOf(CliUsageError);
+    await expect(collectRepositorySnapshot(colliding)).rejects.toThrow(/p-r-a-b/);
+    await expect(collectRepositorySnapshot(colliding)).rejects.toThrow(/project-mappings\.json/);
+  });
+
   it("also accepts a bare array of projects", async () => {
     const legacy = await makeRepo({
       "a.md": "# A\n",
