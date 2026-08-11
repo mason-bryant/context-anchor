@@ -93,8 +93,16 @@ export async function startHttpServer(
       let referencedPaths: string[] = [];
       try {
         task = singleStringParam(req.query.task, "task");
-        const paths = req.query.paths;
-        referencedPaths = typeof paths === "string" && paths.length > 0 ? paths.split(",").map((p) => p.trim()) : [];
+        // Parsed like every other query param on this surface rather than by hand: a repeated
+        // `paths` key arrives as an array, and the hand-rolled check treated that as "no paths
+        // at all" — silently discarding the strongest signal the caller supplied, on the one
+        // endpoint whose entire purpose is a fair comparison. Blank entries are dropped for the
+        // same reason: "a,,b" must not offer the planners an empty path to resolve.
+        const paths = singleStringParam(req.query.paths, "paths");
+        referencedPaths = (paths ?? "")
+          .split(",")
+          .map((path) => path.trim())
+          .filter((path) => path.length > 0);
       } catch (error) {
         res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
         return;
@@ -105,11 +113,15 @@ export async function startHttpServer(
       }
 
       try {
-        // Run both paths for the same task. The legacy planner is the baseline the gate
-        // judges against, so it is asked exactly what an ordinary caller would ask it.
+        // Both planners are asked the same question with the same evidence. Withholding the
+        // caller's paths from the baseline would rig the gate in the routed side's favour:
+        // path mapping is the strongest routed signal, so routed would win on evidence the
+        // baseline was never given, and the comparison would measure the handicap rather than
+        // the retrieval. A reader cannot see that from the two answers, which is what makes it
+        // worth stating here.
         const [routed, legacy] = await Promise.all([
           knowledgeDb.planRoutedBundleAsOwner({ task, referencedPaths, consumer: "comparison-gate" }),
-          runtime.service.planContextBundle({ task }),
+          runtime.service.planContextBundle({ task, filePaths: referencedPaths }),
         ]);
         res.json({ task, routed, legacy });
       } catch (error) {
