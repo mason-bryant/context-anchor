@@ -140,6 +140,7 @@ export const UI_HTML = `<!doctype html>
             <button class="tab" data-tab="review" type="button"><span class="icon-label"><svg class="icon" aria-hidden="true"><use href="#icon-save"></use></svg><span>Review</span></span></button>
             <button class="tab" data-tab="traces" type="button"><span class="icon-label"><svg class="icon" aria-hidden="true"><use href="#icon-plan"></use></svg><span>Traces</span></span></button>
             <button class="tab" data-tab="coverage" type="button"><span class="icon-label"><svg class="icon" aria-hidden="true"><use href="#icon-object-graph"></use></svg><span>Coverage</span></span></button>
+            <button class="tab" data-tab="compare" type="button"><span class="icon-label"><svg class="icon" aria-hidden="true"><use href="#icon-object-graph"></use></svg><span>Compare</span></span></button>
             <button class="tab" data-tab="graph" type="button"><span class="icon-label"><svg class="icon" aria-hidden="true"><use href="#icon-object-graph"></use></svg><span>Graph</span></span></button>
             <button class="tab" data-tab="detail" type="button" disabled><span class="icon-label"><svg class="icon" aria-hidden="true"><use href="#icon-anchor"></use></svg><span>Selected Anchor</span></span></button>
           </nav>
@@ -519,6 +520,40 @@ export const UI_HTML = `<!doctype html>
             </div>
           </section>
 
+          <section id="compare-view" class="view">
+            <div class="view-header">
+              <div>
+                <h2>Compare</h2>
+                <p id="compare-summary">One real task, both answers side by side. Routed retrieval from the database, and what the legacy planner returns from the Git-backed store. Judge whether the routed answer surfaced the right things, whether its conditions read correctly, and whether it wasted less of the budget.</p>
+              </div>
+            </div>
+            <div class="compare-controls">
+              <label for="compare-task">Task</label>
+              <input id="compare-task" type="text" placeholder="e.g. add rate limiting to the HTTP transport" aria-label="Task to compare">
+              <label for="compare-paths">Referenced paths</label>
+              <input id="compare-paths" type="text" placeholder="comma separated, optional" aria-label="Referenced paths">
+              <button id="compare-run" type="button">Compare</button>
+            </div>
+            <div id="compare-error" class="compare-error" role="alert" aria-live="assertive" hidden></div>
+            <div class="compare-panes">
+              <div class="compare-pane">
+                <h3>Routed <span id="compare-routed-meta" class="compare-meta"></span></h3>
+                <div id="compare-routed"></div>
+              </div>
+              <div class="compare-pane">
+                <h3>Legacy planner <span id="compare-legacy-meta" class="compare-meta"></span></h3>
+                <div id="compare-legacy"></div>
+              </div>
+            </div>
+            <div class="view-header">
+              <div>
+                <h3>Routing diagnostics</h3>
+                <p>Offered but never expanded, expansion by position, and records never used — so a condition that reads wrong or a scope nobody wants is visible rather than inferred.</p>
+              </div>
+              <div class="view-actions"><button id="compare-diagnostics-refresh" type="button">Refresh</button></div>
+            </div>
+            <div id="compare-diagnostics" aria-live="polite"></div>
+          </section>
           <section id="coverage-view" class="view">
             <div class="view-header">
               <div>
@@ -3746,7 +3781,7 @@ export const UI_JS = `(function () {
   }
 
   function validTab(value) {
-    return value === "root" || value === "planner" || value === "tasks" || value === "traces" || value === "coverage" || value === "graph" || value === "people" || value === "teams" || value === "mappings" || value === "review" || value === "detail" ? value : null;
+    return value === "root" || value === "planner" || value === "tasks" || value === "traces" || value === "coverage" || value === "compare" || value === "graph" || value === "people" || value === "teams" || value === "mappings" || value === "review" || value === "detail" ? value : null;
   }
 
   function validRootMode(value) {
@@ -5862,6 +5897,18 @@ export const UI_JS = `(function () {
     } else {
       renderCoverage();
     }
+  }
+
+  // Deliberately loads nothing on entry, unlike its sibling views: a comparison is meaningless
+  // without a task the reader supplies, and the gate exists to be read side by side and shared,
+  // so the view has to survive a reload and a pasted link like every other tab.
+  function showCompareView(options) {
+    var opts = options || {};
+    if (!opts.skipLocationUpdate) {
+      updateLocationFromState({ anchor: null, view: "compare", history: "push" });
+    }
+    state.pendingAnchor = null;
+    showTab("compare");
   }
 
   function showGraphView(options) {
@@ -11647,6 +11694,8 @@ export const UI_JS = `(function () {
       showTasksView({ skipLocationUpdate: true });
     } else if (state.activeTab === "coverage") {
       showCoverageView({ skipLocationUpdate: true });
+    } else if (state.activeTab === "compare") {
+      showCompareView({ skipLocationUpdate: true });
     } else if (state.activeTab === "graph") {
       showGraphView({ skipLocationUpdate: true });
     } else if (state.activeTab === "people") {
@@ -11906,6 +11955,10 @@ export const UI_JS = `(function () {
           showCoverageView();
           return;
         }
+        if (button.dataset.tab === "compare") {
+          showCompareView();
+          return;
+        }
         if (button.dataset.tab === "graph") {
           showGraphView();
           return;
@@ -11970,6 +12023,126 @@ export const UI_JS = `(function () {
       state.dryQueries = null;
       loadDryQueries();
     });
+    // T8, the comparison gate. Deliberately UI-only: an agent cannot judge whether its own
+    // context was well chosen, because it never sees what it was not given.
+    function renderRoutedAnswer(result) {
+      if (!result.routes.length) {
+        return "<p class=\\"empty\\">No routes matched this task.</p>";
+      }
+      return result.routes
+        .map(function (route) {
+          var records = (route.records || [])
+            .map(function (record) {
+              var label = record.ref.type === "assertion" ? record.kind || "assertion" : record.heading || "section";
+              return "<li><strong>" + escapeHtml(label) + "</strong> " + escapeHtml((record.content || "").slice(0, 240)) + "</li>";
+            })
+            .join("");
+          return (
+            "<article class=\\"compare-route\\">" +
+            "<h4>" + escapeHtml(route.routeKey) + (route.expanded ? " <em>expanded</em>" : " <em>listed</em>") + "</h4>" +
+            "<p class=\\"compare-applies\\">" + escapeHtml(route.appliesWhen) + "</p>" +
+            "<ul class=\\"compare-reasons\\">" +
+            route.matchReasons.map(function (reason) { return "<li>" + escapeHtml(reason) + "</li>"; }).join("") +
+            "</ul>" +
+            "<p class=\\"compare-count\\">" + route.recordCount + " record(s)" + (route.recordsTruncated ? ", truncated" : "") + "</p>" +
+            (records ? "<ul class=\\"compare-records\\">" + records + "</ul>" : "") +
+            "</article>"
+          );
+        })
+        .join("");
+    }
+
+    function renderLegacyAnswer(bundle) {
+      var included = (bundle && bundle.plan && bundle.plan.included) || bundle.included || [];
+      if (!included.length) {
+        return "<p class=\\"empty\\">The planner included nothing for this task.</p>";
+      }
+      return (
+        "<ul class=\\"compare-records\\">" +
+        included
+          .map(function (entry) {
+            return "<li><strong>" + escapeHtml(entry.name || "") + "</strong> " + escapeHtml(entry.reason || "") + "</li>";
+          })
+          .join("") +
+        "</ul>"
+      );
+    }
+
+    function renderDiagnostics(diag) {
+      var positions = diag.expansionByPosition
+        .map(function (row) {
+          return "<li>position " + row.position + ": " + row.expanded + " of " + row.offered +
+                 " (" + Math.round(row.rate * 100) + "%)</li>";
+        })
+        .join("");
+      var never = diag.neverExpanded
+        .map(function (row) { return "<li>" + escapeHtml(row.routeKey) + " — offered " + row.offered + "x, never expanded</li>"; })
+        .join("");
+      var unused = diag.neverUsed
+        .map(function (row) { return "<li>" + escapeHtml(row.routeKey) + " — expanded " + row.expanded + "x, never used</li>"; })
+        .join("");
+      return (
+        "<p class=\\"compare-count\\">" + diag.totals.requests + " request(s), " + diag.totals.routesOffered +
+        " route(s) offered, " + diag.totals.routesExpanded + " expanded, " + diag.totals.recordUses + " use(s) reported</p>" +
+        "<h4>Expansion by offered position</h4><ul>" + (positions || "<li>No impressions yet.</li>") + "</ul>" +
+        "<h4>Offered but never expanded</h4><ul>" + (never || "<li>None.</li>") + "</ul>" +
+        "<h4>Expanded but never used</h4><ul>" + (unused || "<li>None.</li>") + "</ul>"
+      );
+    }
+
+    async function loadDiagnostics() {
+      try {
+        el("compare-diagnostics").innerHTML = renderDiagnostics(await api("/api/db/routing-diagnostics"));
+      } catch (error) {
+        el("compare-diagnostics").innerHTML = "<p class=\\"empty\\">" + escapeHtml(error.message) + "</p>";
+      }
+    }
+
+    // Every surface the last run wrote, cleared together. A stale answer pane or meta line
+    // sitting beside a fresh error reads as a successful comparison, and a reader judging
+    // routing against the baseline cannot tell that the numbers in front of them are old.
+    function clearComparisonOutput() {
+      el("compare-routed").innerHTML = "";
+      el("compare-legacy").innerHTML = "";
+      el("compare-routed-meta").textContent = "";
+      el("compare-legacy-meta").textContent = "";
+      el("compare-diagnostics").innerHTML = "";
+    }
+
+    async function runComparison() {
+      var task = el("compare-task").value.trim();
+      var errorBox = el("compare-error");
+      errorBox.hidden = true;
+      if (!task) {
+        errorBox.textContent = "Enter a task to compare.";
+        errorBox.hidden = false;
+        clearComparisonOutput();
+        return;
+      }
+      var paths = el("compare-paths").value.trim();
+      var query = "/api/db/comparison?task=" + encodeURIComponent(task) + (paths ? "&paths=" + encodeURIComponent(paths) : "");
+      el("compare-routed").innerHTML = "<p class=\\"empty\\">Running…</p>";
+      el("compare-legacy").innerHTML = "<p class=\\"empty\\">Running…</p>";
+      try {
+        var result = await api(query);
+        el("compare-routed").innerHTML = renderRoutedAnswer(result.routed);
+        el("compare-routed-meta").textContent = result.routed.plannerVersion + " · " + result.routed.ranker.id;
+        el("compare-legacy").innerHTML = renderLegacyAnswer(result.legacy);
+        el("compare-legacy-meta").textContent = "git-backed planner";
+        await loadDiagnostics();
+      } catch (error) {
+        errorBox.textContent = error.message;
+        errorBox.hidden = false;
+        clearComparisonOutput();
+      }
+    }
+
+    el("compare-run").addEventListener("click", function () { void runComparison(); });
+    el("compare-task").addEventListener("keydown", function (event) {
+      if (event.key === "Enter") { void runComparison(); }
+    });
+    el("compare-diagnostics-refresh").addEventListener("click", function () { void loadDiagnostics(); });
+
     el("coverage-refresh").addEventListener("click", function () {
       state.coverage = null;
       state.coverageRecords = [];

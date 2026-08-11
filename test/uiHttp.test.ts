@@ -110,6 +110,49 @@ describe("UI HTTP routes", () => {
     expect(js).toContain("/api/ui/graph-coverage");
   });
 
+  // The gate is meant to be read side by side and shared, so a Compare view that cannot be
+  // linked to or survive a reload is a view nobody can point at. Without all three pieces
+  // `?view=compare` silently falls back to Root.
+  it("makes the Compare tab deep-linkable like every other tab", async () => {
+    const response = await fetch(`${baseUrl}/ui/app.js`);
+    const js = await response.text();
+
+    expect(response.status).toBe(200);
+    expect(js).toContain("/api/db/comparison");
+    // Recognised as a URL view, restorable on back/forward and reload, and pushed on click.
+    expect(js).toContain('value === "compare"');
+    expect(js).toContain("function showCompareView");
+    expect(js).toContain('state.activeTab === "compare"');
+  });
+
+  // A stale answer pane beside a fresh error reads as a successful comparison, and a reader
+  // judging routing against the baseline cannot tell the numbers in front of them are old.
+  it("clears every comparison surface when a run fails or is refused", async () => {
+    const response = await fetch(`${baseUrl}/ui/app.js`);
+    const js = await response.text();
+
+    expect(response.status).toBe(200);
+    expect(js).toContain("function clearComparisonOutput");
+    // Both failure paths reset, not just the request one: a blank task returns early.
+    const clears = js.match(/clearComparisonOutput\(\);/g) ?? [];
+    expect(clears.length).toBeGreaterThanOrEqual(2);
+    // The meta lines and diagnostics are reset too, not only the two answer panes.
+    expect(js).toContain('el("compare-routed-meta").textContent = "";');
+    expect(js).toContain('el("compare-diagnostics").innerHTML = "";');
+  });
+
+  // Both surfaces are written asynchronously and are the only report a failed or refreshed run
+  // makes, so without a live region a screen-reader user gets silence where sighted users get
+  // an error.
+  it("announces the Compare error and diagnostics surfaces to assistive technology", async () => {
+    const response = await fetch(`${baseUrl}/ui`);
+    const html = await response.text();
+
+    expect(response.status).toBe(200);
+    expect(html).toContain('id="compare-error" class="compare-error" role="alert" aria-live="assertive"');
+    expect(html).toContain('id="compare-diagnostics" aria-live="polite"');
+  });
+
   it("wires the Coverage tab to the migration preview/apply flow (slice 3a)", async () => {
     const htmlResponse = await fetch(`${baseUrl}/ui`);
     const html = await htmlResponse.text();

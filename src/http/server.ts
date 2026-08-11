@@ -78,6 +78,95 @@ export async function startHttpServer(
     traceRatings: runtime.traceRatings,
   });
 
+  // T8's surface: the comparison gate. Deliberately UI-only — an agent cannot judge whether
+  // its own context was well chosen, because it never sees what it was not given. Both
+  // answers to one real task, side by side, for a person to read.
+  app.get("/api/db/comparison", auth, (req: Request, res: Response) => {
+    void (async () => {
+      const knowledgeDb = runtime.knowledgeDb;
+      if (!knowledgeDb) {
+        res.status(503).json({ error: "Database backend is not configured" });
+        return;
+      }
+
+      let task: string | undefined;
+      let referencedPaths: string[] = [];
+      try {
+        task = singleStringParam(req.query.task, "task");
+        // Parsed like every other query param on this surface rather than by hand: a repeated
+        // `paths` key arrives as an array, and the hand-rolled check treated that as "no paths
+        // at all" — silently discarding the strongest signal the caller supplied, on the one
+        // endpoint whose entire purpose is a fair comparison. Blank entries are dropped for the
+        // same reason: "a,,b" must not offer the planners an empty path to resolve.
+        const paths = singleStringParam(req.query.paths, "paths");
+        referencedPaths = (paths ?? "")
+          .split(",")
+          .map((path) => path.trim())
+          .filter((path) => path.length > 0);
+      } catch (error) {
+        res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
+        return;
+      }
+      if (!task) {
+        res.status(400).json({ error: "task is required" });
+        return;
+      }
+
+      try {
+        // Both planners are asked the same question with the same evidence. Withholding the
+        // caller's paths from the baseline would rig the gate in the routed side's favour:
+        // path mapping is the strongest routed signal, so routed would win on evidence the
+        // baseline was never given, and the comparison would measure the handicap rather than
+        // the retrieval. A reader cannot see that from the two answers, which is what makes it
+        // worth stating here.
+        const [routed, legacy] = await Promise.all([
+          knowledgeDb.planRoutedBundleAsOwner({ task, referencedPaths, consumer: "comparison-gate" }),
+          runtime.service.planContextBundle({ task, filePaths: referencedPaths }),
+        ]);
+        res.json({ task, routed, legacy });
+      } catch (error) {
+        runtime.logger.error("comparison request failed", { error: errorMetadata(error) });
+        res.status(500).json({ error: error instanceof Error ? error.message : String(error) });
+      }
+    })();
+  });
+
+  app.get("/api/db/routing-diagnostics", auth, (req: Request, res: Response) => {
+    void (async () => {
+      const knowledgeDb = runtime.knowledgeDb;
+      if (!knowledgeDb) {
+        res.status(503).json({ error: "Database backend is not configured" });
+        return;
+      }
+      let sinceDays: number | undefined;
+      try {
+        // Same parser as every other query param here: a repeated `days` key is ambiguous, and
+        // reading it as "not supplied" would silently serve the default window to a reader who
+        // asked for a different one — on the endpoint whose entire job is to report honestly.
+        const daysParam = singleStringParam(req.query.days, "days");
+        if (daysParam !== undefined) {
+          // Number rather than parseInt, which accepts a numeric prefix: parseInt("10abc") is
+          // 10, so a malformed window would be honoured instead of refused.
+          sinceDays = Number(daysParam);
+          if (!Number.isInteger(sinceDays) || sinceDays <= 0) {
+            res.status(400).json({ error: "days must be a positive integer" });
+            return;
+          }
+        }
+      } catch (error) {
+        res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
+        return;
+      }
+
+      try {
+        res.json(await knowledgeDb.routingDiagnosticsAsOwner({ sinceDays }));
+      } catch (error) {
+        runtime.logger.error("routing diagnostics request failed", { error: errorMetadata(error) });
+        res.status(500).json({ error: error instanceof Error ? error.message : String(error) });
+      }
+    })();
+  });
+
   // T4's surface: the per-scope history view. The thread ships with its UI rather than
   // waiting for a batched UI phase (M12 decision).
   app.get("/api/db/scope-changes", auth, (req: Request, res: Response) => {
