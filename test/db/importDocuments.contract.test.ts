@@ -94,7 +94,7 @@ describe.runIf(await isTestDatabaseReachable())("importDocuments (real Postgres)
     return result.rows[0]!.n;
   }
 
-  function runImport(input: { files?: ImportFile[]; commit?: string } = {}) {
+  function runImport(input: { files?: ImportFile[]; commit?: string; retireAbsentUnder?: string[] } = {}) {
     return importDocuments({
       pool,
       schemaName,
@@ -104,6 +104,7 @@ describe.runIf(await isTestDatabaseReachable())("importDocuments (real Postgres)
       repository: "context-anchor",
       commitSha: input.commit ?? "a".repeat(40),
       files: input.files ?? files(),
+      ...(input.retireAbsentUnder ? { retireAbsentUnder: input.retireAbsentUnder } : {}),
     });
   }
 
@@ -620,6 +621,173 @@ describe.runIf(await isTestDatabaseReachable())("importDocuments (real Postgres)
   // created it. That was a proxy for the real invariant, and the proxy expired while the
   // invariant did not: extraction is authoring's job, and an import that quietly minted
   // claims would be inventing knowledge nobody wrote.
+  // Import was additive only, so a document deleted from the repository kept routing and
+  // the workspace became the union of every commit ever imported rather than the pinned one.
+  describe("retiring documents the commit no longer contains", () => {
+    const doomed = {
+      path: "projects/anchor-mcp/doomed.md",
+      content: "---\nproject: anchor-mcp\ntype: context-anchor\n---\n\n# Doomed\n\n## Current State\n\n- Content later deleted.\n",
+    };
+
+    const liveDocuments = async () =>
+      (
+        await pool.query<{ name: string }>(
+          `SELECT name FROM "${schemaName}".source_documents WHERE workspace_guid = $1 AND retired_at IS NULL ORDER BY name`,
+          [bootstrap.workspaceGuid],
+        )
+      ).rows.map((row) => row.name);
+
+    it("retires an absent document when the import claims to cover it", async () => {
+      await runImport({ files: [...files(), doomed] });
+      expect(await liveDocuments()).toContain(doomed.path);
+
+      const report = await runImport({ commit: "b".repeat(40), retireAbsentUnder: [""] });
+
+      expect(report.documentsRetired).toBe(1);
+      expect(await liveDocuments()).not.toContain(doomed.path);
+
+      // Attributable on its own terms: the tombstone names the command that made it, not
+      // only the batch it happened to share with the rest of the import.
+      const tombstone = await pool.query<{ retirement_command_guid: string | null; retirement_reason: string }>(
+        `SELECT retirement_command_guid, retirement_reason FROM "${schemaName}".source_documents
+          WHERE workspace_guid = $1 AND name = $2`,
+        [bootstrap.workspaceGuid, doomed.path],
+      );
+      expect(tombstone.rows[0]?.retirement_command_guid).not.toBeNull();
+      expect(tombstone.rows[0]?.retirement_reason).toContain("b".repeat(40));
+
+      const command = await pool.query(
+        `SELECT 1 FROM "${schemaName}".commands
+          WHERE workspace_guid = $1 AND command_guid = $2 AND command_type = 'documents.retire_absent'`,
+        [bootstrap.workspaceGuid, tombstone.rows[0]!.retirement_command_guid],
+      );
+      expect(command.rowCount).toBe(1);
+    });
+
+    // The safe default: a caller assembling a subset of files must not retire everything
+    // else merely by not mentioning it.
+    it("retires nothing when the import claims no coverage", async () => {
+      await runImport({ files: [...files(), doomed] });
+
+      const report = await runImport({ commit: "b".repeat(40) });
+
+      expect(report.documentsRetired).toBe(0);
+      expect(await liveDocuments()).toContain(doomed.path);
+    });
+
+    // A claimed prefix is data, not a pattern. "projects%" must retire nothing under
+    // projects/, or a stray wildcard silently widens a destructive operation.
+    it("treats a claimed prefix as a literal, not a LIKE pattern", async () => {
+      await runImport({ files: [...files(), doomed] });
+
+      const report = await runImport({ commit: "b".repeat(40), retireAbsentUnder: ["projects%"] });
+
+      expect(report.documentsRetired).toBe(0);
+    });
+
+    // Re-running the same commit with wider coverage must actually widen it, rather than
+    // replaying the narrower run and reporting success while retiring nothing.
+    it("does not replay a narrower run when coverage is expanded", async () => {
+      await runImport({ files: [...files(), doomed] });
+
+      const narrow = await runImport({ commit: "b".repeat(40), retireAbsentUnder: ["agent-rules"] });
+      expect(narrow.documentsRetired).toBe(0);
+
+      const wide = await runImport({ commit: "b".repeat(40), retireAbsentUnder: [""] });
+      expect(wide.documentsRetired).toBe(1);
+    });
+
+    // "projects/" means the same coverage as "projects"; the prefix test appends its own
+    // separator, so the trailing form would otherwise match nothing and silently retire
+    // nothing.
+    it("treats a trailing slash on a claimed prefix as the same coverage", async () => {
+      await runImport({ files: [...files(), doomed] });
+
+      const report = await runImport({ commit: "b".repeat(40), retireAbsentUnder: ["projects/"] });
+
+      expect(report.documentsRetired).toBe(1);
+    });
+
+    // The worst thing normalization could do: silently promote a narrowing claim into
+    // "retire everything". "/" and whitespace all reduce to the empty string, which is the
+    // whole-repository claim, so they are refused rather than interpreted.
+    it.each(["/", " ", "  ", "///", " projects"])(
+      "refuses the claimed prefix %j rather than widening it",
+      async (prefix) => {
+        await runImport({ files: [...files(), doomed] });
+
+        await expect(runImport({ commit: "b".repeat(40), retireAbsentUnder: [prefix] })).rejects.toThrow(
+          /whole repository|whitespace/,
+        );
+        expect(await liveDocuments()).toContain(doomed.path);
+      },
+    );
+
+    it("still accepts an explicit empty string as the whole repository", async () => {
+      await runImport({ files: [...files(), doomed] });
+
+      const report = await runImport({ commit: "b".repeat(40), retireAbsentUnder: [""] });
+
+      expect(report.documentsRetired).toBe(1);
+    });
+
+    // Retirement made deletion mean something; without reinstatement it made deletion
+    // permanent, so a file deleted once could never come back and would stay unroutable
+    // while visibly present in the repository.
+    it("reinstates a document a later commit brings back", async () => {
+      await runImport({ files: [...files(), doomed] });
+      await runImport({ commit: "b".repeat(40), files: files(), retireAbsentUnder: [""] });
+      expect(await liveDocuments()).not.toContain(doomed.path);
+
+      const report = await runImport({
+        commit: "c".repeat(40),
+        files: [...files(), doomed],
+        retireAbsentUnder: [""],
+      });
+
+      expect(report.documentsReinstated).toBe(1);
+      expect(await liveDocuments()).toContain(doomed.path);
+    });
+
+    it("reinstates the associations of a document that comes back", async () => {
+      await runImport({ files: [...files(), doomed] });
+      await runImport({ commit: "b".repeat(40), files: files(), retireAbsentUnder: [""] });
+      await runImport({ commit: "c".repeat(40), files: [...files(), doomed], retireAbsentUnder: [""] });
+
+      const live = await pool.query(
+        `SELECT 1 FROM "${schemaName}".record_scopes
+          WHERE workspace_guid = $1 AND retired_at IS NULL AND strpos(stable_key, $2) = 1`,
+        [bootstrap.workspaceGuid, doomed.path],
+      );
+      expect(live.rowCount).toBeGreaterThan(0);
+    });
+
+    it("retires only within the prefixes the import claims", async () => {
+      await runImport({ files: [...files(), doomed] });
+
+      const report = await runImport({ commit: "b".repeat(40), retireAbsentUnder: ["agent-rules"] });
+
+      expect(report.documentsRetired).toBe(0);
+      expect(await liveDocuments()).toContain(doomed.path);
+    });
+
+    // A live association pointing at a retired document would keep the content routing,
+    // which is the whole behaviour being fixed.
+    it("retires the associations of a retired document", async () => {
+      await runImport({ files: [...files(), doomed] });
+      await runImport({ commit: "b".repeat(40), retireAbsentUnder: [""] });
+
+      // strpos rather than LIKE: a path containing % or _ would otherwise be treated as a
+      // pattern and match unrelated rows.
+      const live = await pool.query(
+        `SELECT 1 FROM "${schemaName}".record_scopes
+          WHERE workspace_guid = $1 AND retired_at IS NULL AND strpos(stable_key, $2) = 1`,
+        [bootstrap.workspaceGuid, doomed.path],
+      );
+      expect(live.rowCount).toBe(0);
+    });
+  });
+
   it("extracts nothing into assertions", async () => {
     await runImport();
 

@@ -39,6 +39,10 @@ export type ImportReport = {
   /** Existing mappings repointed because the imported commit changed them. */
   mappingsUpdated: number;
   peopleImported: number;
+  /** Documents retired because the pinned commit no longer contains them. */
+  documentsRetired: number;
+  /** Documents a later commit brought back, which retirement would otherwise have made permanent. */
+  documentsReinstated: number;
   /** Files whose content matched the latest revision, so nothing was written. */
   unchanged: string[];
 };
@@ -58,6 +62,16 @@ export type ImportInput = {
   projectMappings?: ProjectMapping[];
   /** Scope-first declarations (A1). When present these replace deriving scopes from projectMappings. */
   scopes?: ScopeDeclaration[];
+  /**
+   * Path prefixes this import claims to cover completely. Documents under them that are
+   * absent from `files` are retired, because the import is of a pinned commit and a
+   * document the commit no longer contains is not part of the workspace it describes.
+   *
+   * Omitted means the import claims nothing and retires nothing — the safe default, since
+   * a caller assembling a subset of files must not be able to retire everything else by
+   * saying nothing. `[""]` claims the whole repository, which is what `db import` sends.
+   */
+  retireAbsentUnder?: string[];
   people?: Person[];
 };
 
@@ -97,6 +111,8 @@ export async function importDocuments(input: ImportInput): Promise<ImportReport>
     mappingsImported: 0,
     mappingsUpdated: 0,
     peopleImported: 0,
+    documentsRetired: 0,
+    documentsReinstated: 0,
     unchanged: [],
   };
 
@@ -130,6 +146,10 @@ export async function importDocuments(input: ImportInput): Promise<ImportReport>
     await importScopeDeclarations({ input, batchGuid, report, ensureScope });
   } else if (input.projectMappings?.length) {
     await importProjectMappings({ input, batchGuid, report, ensureScope });
+  }
+
+  if (input.retireAbsentUnder?.length) {
+    await retireAbsentDocuments({ input, batchGuid, report });
   }
 
   if (input.people?.length) {
@@ -384,11 +404,42 @@ async function upsertDocument(
   report: ImportReport,
 ): Promise<string> {
   const schema = input.schemaName;
-  const existing = await tx.query<{ document_guid: string }>(
-    `SELECT document_guid FROM "${schema}".source_documents
+  const existing = await tx.query<{ document_guid: string; retired_at: Date | null }>(
+    `SELECT document_guid, retired_at FROM "${schema}".source_documents
      WHERE workspace_guid = $1 AND owner_scope_guid = $2 AND name = $3`,
     [input.workspaceGuid, scopeGuid, file.path],
   );
+
+  // A document the commit contains again is not retired, whatever a previous commit said.
+  // Retirement made deletion mean something; without this it made it permanent, so a file
+  // deleted once could never be restored and would stay unroutable while visibly present in
+  // the repository. Its associations are reinstated with it, since they were retired
+  // together.
+  const reinstated = existing.rows[0];
+  if (reinstated?.retired_at) {
+    await tx.query(
+      `UPDATE "${schema}".source_documents SET
+         retired_at = NULL, retired_by_principal_guid = NULL, retirement_reason = NULL,
+         retirement_command_guid = NULL, retirement_batch_guid = NULL
+       WHERE workspace_guid = $1 AND document_guid = $2`,
+      [input.workspaceGuid, reinstated.document_guid],
+    );
+    await tx.query(
+      `UPDATE "${schema}".record_scopes rs SET retired_at = NULL
+        WHERE rs.workspace_guid = $1 AND rs.retired_at IS NOT NULL AND rs.record_type = 'section'
+          AND EXISTS (
+            SELECT 1
+              FROM "${schema}".source_sections ss
+              JOIN "${schema}".document_revisions dr
+                ON dr.workspace_guid = ss.workspace_guid AND dr.revision_guid = ss.revision_guid
+             WHERE ss.workspace_guid = rs.workspace_guid
+               AND ss.stable_key = rs.stable_key
+               AND dr.document_guid = $2
+          )`,
+      [input.workspaceGuid, reinstated.document_guid],
+    );
+    report.documentsReinstated += 1;
+  }
   if (existing.rows[0]) {
     return existing.rows[0].document_guid;
   }
@@ -885,6 +936,143 @@ async function importProjectMappings(args: {
       return {
         resultingValue: { mappings: input.projectMappings?.length ?? 0 },
         entryType: "repository_mappings.imported",
+        ownerScopeGuid: await defaultWorkspaceScopeGuid(tx, input),
+      };
+    },
+  });
+}
+
+/**
+ * Normalizes claimed coverage, and refuses anything that only accidentally means
+ * "everything".
+ *
+ * A trailing slash is the same claim without one, but the prefix test appends its own
+ * separator, so "agent-rules/" would match nothing and retire nothing while reporting
+ * success. Distinct spellings would also hash to distinct idempotency keys for identical
+ * coverage.
+ *
+ * The whole-repository claim is spelled `""` and nothing else. "/", " ", and "///" all
+ * reduce to the empty string, and silently promoting any of them to "retire everything
+ * absent" is the worst thing this function could do — a caller narrowing a destructive
+ * operation would instead widen it to the entire workspace. Those are rejected rather
+ * than interpreted.
+ */
+export function normalizeClaimedPrefixes(claimed: string[]): string[] {
+  const normalized = claimed.map((raw) => {
+    if (raw === "") {
+      return "";
+    }
+    if (raw !== raw.trim()) {
+      throw new Error(
+        `Claimed prefix ${JSON.stringify(raw)} has surrounding whitespace. Retirement is destructive, ` +
+          `so a prefix is taken literally rather than repaired.`,
+      );
+    }
+    const stripped = raw.replace(/\/+$/, "");
+    if (stripped === "") {
+      throw new Error(
+        `Claimed prefix ${JSON.stringify(raw)} reduces to the whole repository. If that is intended, ` +
+          `pass "" explicitly; it is not inferred from a value that merely collapses to it.`,
+      );
+    }
+    return stripped;
+  });
+
+  return [...new Set(normalized)];
+}
+
+/**
+ * Retires documents the pinned commit no longer contains.
+ *
+ * Import was additive only, so a document deleted from the repository kept routing forever
+ * and the workspace became the union of every commit ever imported rather than the one it
+ * names. Retirement is scoped to the prefixes the caller claims to cover, so a partial
+ * import cannot retire what it never looked at.
+ */
+async function retireAbsentDocuments(args: {
+  input: ImportInput;
+  batchGuid: string;
+  report: ImportReport;
+}): Promise<void> {
+  const { input, batchGuid, report } = args;
+  const schema = input.schemaName;
+  const prefixes = normalizeClaimedPrefixes(input.retireAbsentUnder ?? []);
+  const present = input.files.map((file) => file.path);
+
+  await input.handler.execute({
+    workspaceGuid: input.workspaceGuid,
+    actorPrincipalGuid: input.actorPrincipalGuid,
+    commandType: "documents.retire_absent",
+    origin: "mcp",
+    // The claimed coverage is part of what this command does, so it belongs in the key.
+    // Without it, re-running the same commit with wider coverage replays the narrower run
+    // and silently retires nothing — the same silent no-op an idempotency-key collision
+    // produced once already in this importer.
+    idempotencyKey: `import:retire:${input.repository}:${input.commitSha}:${createHash("sha256")
+      .update([...prefixes].sort().join("\u0000"))
+      .digest("hex")
+      .slice(0, 16)}`,
+    batchGuid,
+    reason: `retire documents absent from ${input.commitSha}`,
+    entity: { entityType: "source_documents", entityGuid: randomUUID() },
+    apply: async (tx, commandGuid) => {
+      // Retired in the same batch as the rest of the import, so a mistaken import is undone
+      // as one unit rather than leaving retirements behind.
+      const retired = await tx.query<{ document_guid: string; name: string }>(
+        `UPDATE "${schema}".source_documents SET
+           retired_at = now(),
+           retired_by_principal_guid = $2,
+           retirement_reason = $5,
+           retirement_batch_guid = $6,
+           -- Names the command that retired it, so a tombstone is traceable without
+           -- joining through the batch it happened to share.
+           retirement_command_guid = $7
+         WHERE workspace_guid = $1
+           AND retired_at IS NULL
+           AND NOT (name = ANY($3::text[]))
+           AND EXISTS (
+             -- strpos, not LIKE: % and _ are wildcards there, and a claimed prefix
+             -- containing either would retire documents outside the directory it named.
+             -- Deciding what to retire is the last place to accept pattern semantics by
+             -- accident.
+             SELECT 1 FROM unnest($4::text[]) AS prefix
+              WHERE prefix = '' OR name = prefix OR strpos(name, prefix || '/') = 1
+           )
+         RETURNING document_guid, name`,
+        [
+          input.workspaceGuid,
+          input.actorPrincipalGuid,
+          present,
+          prefixes,
+          `absent from ${input.repository}@${input.commitSha}`,
+          batchGuid,
+          commandGuid,
+        ],
+      );
+      report.documentsRetired += retired.rowCount ?? 0;
+
+      // Associations go with them: a live association pointing at a retired document would
+      // keep the content routing, which is the behaviour being fixed.
+      if (retired.rowCount && retired.rowCount > 0) {
+        await tx.query(
+          `UPDATE "${schema}".record_scopes rs SET retired_at = now()
+            WHERE rs.workspace_guid = $1 AND rs.retired_at IS NULL AND rs.record_type = 'section'
+              AND EXISTS (
+                SELECT 1
+                  FROM "${schema}".source_sections ss
+                  JOIN "${schema}".document_revisions dr
+                    ON dr.workspace_guid = ss.workspace_guid AND dr.revision_guid = ss.revision_guid
+                 WHERE ss.workspace_guid = rs.workspace_guid
+                   AND ss.stable_key = rs.stable_key
+                   AND dr.document_guid = ANY($2::uuid[])
+              )`,
+          [input.workspaceGuid, retired.rows.map((row) => row.document_guid)],
+        );
+      }
+
+      return {
+        resultingValue: { retired: retired.rows.map((row) => row.name) },
+        entryType: "documents.retired",
         ownerScopeGuid: await defaultWorkspaceScopeGuid(tx, input),
       };
     },

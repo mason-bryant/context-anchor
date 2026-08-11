@@ -27,6 +27,8 @@ const SAMPLE_REPORT = {
   mappingsImported: 0,
   mappingsUpdated: 0,
   peopleImported: 0,
+  documentsRetired: 0,
+  documentsReinstated: 0,
   unchanged: [],
 };
 
@@ -146,6 +148,16 @@ describe("listScopes tool registration", () => {
     // Registered together with the rest of the database surface, and absent entirely when no
     // database is configured — an agent must not see a tool that cannot work.
     expect(server._registeredTools.planRoutedBundle).toBeDefined();
+    // The MCP import path must be able to claim coverage too, or deletions linger for the
+    // primary agent-facing importer while the CLI handles them.
+    expect(
+      server._registeredTools.importDocuments!.inputSchema!.parse({
+        repository: "r",
+        commitSha: "a".repeat(40),
+        files: [{ path: "x.md", content: "# x" }],
+        retireAbsentUnder: [""],
+      }),
+    ).toMatchObject({ retireAbsentUnder: [""] });
     expect(server._registeredTools.reportRecordUse).toBeDefined();
 
     const result = (await server._registeredTools.listScopes!.handler({ traceId: undefined })) as {

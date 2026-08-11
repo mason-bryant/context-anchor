@@ -38,7 +38,8 @@ export type CommandInput = {
   entity: CommandEntity;
   /** Current version the caller believes it is editing. Omit to skip the check. */
   expectedVersion?: number;
-  apply: (tx: CommandTransaction) => Promise<ApplyResult>;
+  /** Receives the accepted command's guid so a command can record its own attribution inline. */
+  apply: (tx: CommandTransaction, commandGuid: string) => Promise<ApplyResult>;
   /** Test seam: runs after the replay lookup, so a test can force two commands to interleave. */
   onReplayCheckComplete?: () => Promise<void>;
 };
@@ -153,7 +154,10 @@ export class CommandHandler {
         return { ...winner, replayed: true };
       }
 
-      const applied = await input.apply(client);
+      // The command guid is passed in so a command can record its own attribution inline —
+      // a tombstone that names the command which created it is traceable without joining
+      // through the batch, and goal 3 asks for every mutation to be attributable.
+      const applied = await input.apply(client, commandGuid);
       const version = priorVersion + 1;
 
       try {

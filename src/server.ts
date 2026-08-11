@@ -184,6 +184,7 @@ export type KnowledgeDatabaseTool = {
       webConfig?: Record<string, unknown>;
     }>;
     people?: Array<{ id: string; displayName: string; identities: Array<{ kind: string; value: string }> }>;
+    retireAbsentUnder?: string[];
   }): Promise<ImportReport>;
 };
 
@@ -2065,6 +2066,27 @@ the index when your workflow checks in that file.`,
               }),
             )
             .optional(),
+          // Which paths this import claims to cover completely. Documents under them that
+          // are absent from `files` are retired, because an import is of a pinned commit and
+          // a document the commit no longer contains is not part of the workspace it
+          // describes. Omitted claims nothing and retires nothing: a caller assembling a
+          // subset of files must not retire everything it did not mention by staying silent.
+          // Pass [""] only when `files` really is the whole repository at that commit.
+          // Validated here as well as in the importer, so a caller gets a structured error
+          // at the boundary rather than an exception from the database layer. "" is the
+          // whole-repository claim; anything that merely collapses to it is refused, because
+          // widening a destructive operation by accident is the failure that matters.
+          retireAbsentUnder: z
+            .array(
+              z
+                .string()
+                .refine((value) => value === value.trim(), "must not have surrounding whitespace")
+                .refine(
+                  (value) => value === "" || value.replace(/\/+$/, "") !== "",
+                  'reduces to the whole repository; pass "" explicitly if that is intended',
+                ),
+            )
+            .optional(),
           // The people registry. Nothing reads it yet; it is carried across because
           // reconstructing identity history later costs far more than importing it now.
           people: z
@@ -2086,7 +2108,7 @@ the index when your workflow checks in that file.`,
             .optional(),
         }),
       },
-      async ({ repository, commitSha, files, projectMappings, people }) =>
+      async ({ repository, commitSha, files, projectMappings, people, retireAbsentUnder }) =>
         jsonResult({
           report: await knowledgeDb.importDocumentsAsOwner({
             repository,
@@ -2094,6 +2116,7 @@ the index when your workflow checks in that file.`,
             files,
             projectMappings,
             people,
+            retireAbsentUnder,
           }),
         }),
     );

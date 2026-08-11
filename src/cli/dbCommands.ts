@@ -159,6 +159,9 @@ async function importRepository(allowDirty: boolean, context: DbCommandContext):
       projectMappings: snapshot.projectMappings,
       scopes: snapshot.scopes,
       people: snapshot.people,
+      // db import always reads the whole repository at one commit, so it can honestly claim
+      // to cover all of it — which is what lets a deleted file actually disappear.
+      retireAbsentUnder: [""],
     });
 
     log(`batch: ${report.batchGuid}`);
@@ -171,6 +174,9 @@ async function importRepository(allowDirty: boolean, context: DbCommandContext):
     log(`associations: ${String(report.associationsDerived)}`);
     log(`mappings: ${String(report.mappingsImported)} imported, ${String(report.mappingsUpdated)} updated`);
     log(`people: ${String(report.peopleImported)}`);
+    if (report.documentsRetired > 0) {
+      log(`retired: ${String(report.documentsRetired)} document(s) no longer in the commit`);
+    }
     log(`unchanged: ${String(report.unchanged.length)} file(s)`);
 
     // An all-zero report is the expected result of re-importing a commit, but it is

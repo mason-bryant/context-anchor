@@ -317,7 +317,11 @@ export async function loadRouteRecords(
        JOIN "${schemaName}".document_revisions dr
          ON dr.workspace_guid = ss.workspace_guid AND dr.revision_guid = ss.revision_guid
        JOIN "${schemaName}".source_documents sd
-         ON sd.workspace_guid = dr.workspace_guid AND sd.document_guid = dr.document_guid
+         ON sd.workspace_guid = dr.workspace_guid AND dr.document_guid = sd.document_guid
+        -- Defence in depth: retirement also retires the associations, but a section whose
+        -- document is retired must not route even if an association survives by some other
+        -- path. Serving content from a document the commit no longer contains is the bug.
+        AND sd.retired_at IS NULL
       WHERE rs.workspace_guid = $1 AND rs.scope_guid = $2
         AND rs.retired_at IS NULL AND rs.record_type = 'section'
       ORDER BY ss.stable_key, dr.revision_number DESC`,
