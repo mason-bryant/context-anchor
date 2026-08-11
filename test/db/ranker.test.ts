@@ -23,7 +23,6 @@ function candidate(
     scopeKind: "domain",
     title: slug,
     signals: signals.map((kind) => ({ kind, reason: `${kind} matched` })),
-    recordCount: 1,
     ...overrides,
   };
 }
@@ -150,11 +149,14 @@ describe("ranker contract", () => {
     expect(() => assertRankerContract([only], dup)).toThrow(/more than once/);
   });
 
-  it("rejects a route whose content was altered rather than reordered", () => {
+  // A ranker may reorder and drop; it may not edit. Identity is what the contract protects,
+  // now that the record count is derived from the records themselves rather than carried on
+  // the candidate.
+  it("rejects a route whose identity was altered rather than reordered", () => {
     const only = candidate("a", ["lexical"]);
 
     expect(() =>
-      assertRankerContract([only], [{ ...only, recordCount: 99, offeredPosition: 0 }]),
+      assertRankerContract([only], [{ ...only, scopeSlug: "something-else", offeredPosition: 0 }]),
     ).toThrow(/altered, not just reordered/);
   });
 
@@ -231,12 +233,13 @@ describe("fallback", () => {
 
   // Handing the live array to an untrusted ranker let it mutate a candidate and return it:
   // the contract then compared the mutated objects to themselves and passed. Reproduced
-  // before fixing — the answer came back carrying routeKey "scope:domain:INJECTED" and
-  // recordCount 999 with fellBack false.
+  // before fixing — the answer came back carrying routeKey "scope:domain:INJECTED" with
+  // fellBack false. The mutated fields here are identity ones, since a candidate no longer
+  // carries a record count.
   it("cannot be defeated by a ranker that mutates its input", async () => {
     const mutating = brokenRanker((candidates) => {
       candidates[0]!.routeKey = "scope:domain:INJECTED";
-      candidates[0]!.recordCount = 999;
+      candidates[0]!.scopeSlug = "INJECTED";
       return Promise.resolve(candidates.map((c, index) => ({ ...c, offeredPosition: index })));
     });
 
@@ -244,20 +247,20 @@ describe("fallback", () => {
 
     expect(outcome.fellBack).toBe(true);
     expect(outcome.routes.map((route) => route.routeKey)).not.toContain("scope:domain:INJECTED");
-    expect(outcome.routes.every((route) => route.recordCount !== 999)).toBe(true);
+    expect(outcome.routes.every((route) => route.scopeSlug !== "INJECTED")).toBe(true);
   });
 
   it("leaves the caller's candidates untouched", async () => {
     const mutating = brokenRanker((candidates) => {
       candidates.forEach((candidate) => {
-        candidate.recordCount = 999;
+        candidate.scopeSlug = "MUTATED";
       });
       return Promise.resolve(candidates.map((c, index) => ({ ...c, offeredPosition: index })));
     });
 
     await rankWithFallback(input, mutating);
 
-    expect(input.every((candidate) => candidate.recordCount !== 999)).toBe(true);
+    expect(input.every((candidate) => candidate.scopeSlug !== "MUTATED")).toBe(true);
   });
 
   // Even a well-behaved ranker's returned objects are not trusted verbatim: the answer is

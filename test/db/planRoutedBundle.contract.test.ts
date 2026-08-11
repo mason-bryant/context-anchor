@@ -220,6 +220,54 @@ describe.runIf(await isTestDatabaseReachable())("planRoutedBundle (real Postgres
 
     // Storing only `expanded` left later analysis unable to say which response-size cap was
     // in effect, which is exactly what an impression has to be interpreted against.
+    // "Unknown" and "empty" are different answers, and only one of them means the other
+    // ranker found nothing worth offering.
+    it("records an unknown record count as null for a shadow-only route", async () => {
+      // Sorted by slug rather than reversing the input: reversing makes the shadow-only
+      // route depend on candidate iteration order, which is not part of anything's
+      // contract and has already produced one order-dependent test in this suite.
+      const reversed: Ranker = {
+        id: "reverser",
+        version: "1.0.0",
+        deterministic: true,
+        rank: (candidates) =>
+          Promise.resolve(
+            [...candidates]
+              .sort((left, right) => right.scopeSlug.localeCompare(left.scopeSlug))
+              .map((c, index) => ({ ...c, offeredPosition: index })),
+          ),
+      };
+
+      const result = await planRoutedBundle(
+        pool,
+        schemaName,
+        telemetrySchema,
+        {
+          workspaceGuid: bootstrap.workspaceGuid,
+          principalGuid: bootstrap.ownerPrincipalGuid,
+          role: "owner",
+          task: "anchor mcp http transport rate limiting",
+          budget: { expanded: 1, listed: 1, recordsPerRoute: 5 },
+        },
+        { ranker: defaultRanker, shadowRankers: [reversed] },
+      );
+
+      const offered = new Set(result.routes.map((route) => route.routeKey));
+      const shadow = await pool.query<{ route_key: string; record_count: number | null }>(
+        `SELECT route_key, record_count FROM "${telemetrySchema}".retrieval_route_impressions
+          WHERE request_guid = $1 AND is_shadow = true`,
+        [result.requestId],
+      );
+
+      for (const row of shadow.rows) {
+        if (offered.has(row.route_key)) {
+          expect(row.record_count).not.toBeNull();
+        } else {
+          expect(row.record_count).toBeNull();
+        }
+      }
+    });
+
     it("stores the whole budget, not just the expanded count", async () => {
       const result = await plan("anchor mcp", { budget: { expanded: 3, listed: 7, recordsPerRoute: 4 } });
 

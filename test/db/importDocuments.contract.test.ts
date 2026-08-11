@@ -616,13 +616,30 @@ describe.runIf(await isTestDatabaseReachable())("importDocuments (real Postgres)
     expect(await goalAssociationCount("goal-g-041", "anchor-mcp-tasky")).toBe(0);
   });
 
+  // Originally asserted that the assertions table did not exist, which was true until T3
+  // created it. That was a proxy for the real invariant, and the proxy expired while the
+  // invariant did not: extraction is authoring's job, and an import that quietly minted
+  // claims would be inventing knowledge nobody wrote.
   it("extracts nothing into assertions", async () => {
     await runImport();
-    const tables = await pool.query<{ table_name: string }>(
-      `SELECT table_name FROM information_schema.tables WHERE table_schema = $1`,
-      [schemaName],
+
+    // Scoped to this workspace: the schema can hold several, so an unscoped count could
+    // fail on unrelated rows or pass while this workspace has some.
+    const assertions = await pool.query(`SELECT 1 FROM "${schemaName}".assertions WHERE workspace_guid = $1`, [
+      bootstrap.workspaceGuid,
+    ]);
+    const citations = await pool.query(
+      `SELECT 1 FROM "${schemaName}".source_citations WHERE workspace_guid = $1`,
+      [bootstrap.workspaceGuid],
     );
-    // Assertions do not exist yet at all; import must not be what introduces them.
-    expect(tables.rows.map((r) => r.table_name)).not.toContain("assertions");
+    expect(assertions.rowCount).toBe(0);
+    expect(citations.rowCount).toBe(0);
+
+    // Every association an import produces is section-level, for the same reason.
+    const assertionAssociations = await pool.query(
+      `SELECT 1 FROM "${schemaName}".record_scopes WHERE workspace_guid = $1 AND record_type = 'assertion'`,
+      [bootstrap.workspaceGuid],
+    );
+    expect(assertionAssociations.rowCount).toBe(0);
   });
 });

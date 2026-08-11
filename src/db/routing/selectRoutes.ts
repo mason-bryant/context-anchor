@@ -180,7 +180,7 @@ export async function selectRouteCandidates(
 
   const signals = new Map<string, MatchSignal[]>();
   // Readability is enforced here, once, rather than at each producer. An unreadable scope
-  // reaching this map would otherwise survive as far as recordCounts — a database query for
+  // reaching this map would otherwise survive as far as record loading — a database read for
   // a scope that can never be returned — and would make the work done depend on scopes the
   // caller cannot see. The relation hop is the producer that makes this reachable, since it
   // adds scopes by traversal rather than by matching.
@@ -245,8 +245,6 @@ export async function selectRouteCandidates(
     return [];
   }
 
-  const counts = await recordCounts(pool, schemaName, input.workspaceGuid, [...signals.keys()]);
-
   return [...signals.entries()].flatMap(([scopeGuid, matched]) => {
     const scope = byGuid.get(scopeGuid);
     // A relation hop can name a retired or otherwise absent parent; a route that cannot be
@@ -262,27 +260,9 @@ export async function selectRouteCandidates(
         scopeKind: scope.scope_kind,
         title: scope.title,
         signals: matched,
-        recordCount: counts.get(scopeGuid) ?? 0,
       },
     ];
   });
-}
-
-/** Membership: what a route contains, resolved after selection and never adding a route. */
-async function recordCounts(
-  pool: Pool,
-  schemaName: string,
-  workspaceGuid: string,
-  scopeGuids: string[],
-): Promise<Map<string, number>> {
-  const result = await pool.query<{ scope_guid: string; count: string }>(
-    `SELECT scope_guid, count(DISTINCT coalesce(stable_key, record_guid::text)) AS count
-       FROM "${schemaName}".record_scopes
-      WHERE workspace_guid = $1 AND retired_at IS NULL AND scope_guid = ANY($2::uuid[])
-      GROUP BY scope_guid`,
-    [workspaceGuid, scopeGuids],
-  );
-  return new Map(result.rows.map((row) => [row.scope_guid, Number(row.count)]));
 }
 
 export type RouteRecord = {
@@ -293,6 +273,11 @@ export type RouteRecord = {
   heading?: string;
   headingLevel?: number;
   content: string;
+  /** Assertions only: what sort of claim it is and what standing it has, both of which travel into every response. */
+  kind?: string;
+  status?: string;
+  /** Assertions only: the exact source text the claim was drawn from. */
+  citations?: Array<{ quote: string; blockGuid: string; relation: string }>;
 };
 
 /**
@@ -339,8 +324,12 @@ export async function loadRouteRecords(
     [workspaceGuid, scopeGuid],
   );
 
+  const assertionRecords = await loadAssertionRecords(pool, schemaName, workspaceGuid, scopeGuid);
+
+  // Not an early return on sections alone: a scope may hold only assertions, and returning
+  // nothing there would hide every authored claim in a scope that has no documents.
   if (sections.rowCount === 0) {
-    return [];
+    return assertionRecords;
   }
 
   const revisionGuids = [...new Set(sections.rows.map((row) => row.revision_guid))];
@@ -351,7 +340,9 @@ export async function loadRouteRecords(
   );
   const contentByRevision = new Map(revisions.rows.map((row) => [row.revision_guid, row.content]));
 
-  return sections.rows
+  return [
+    ...assertionRecords,
+    ...sections.rows
     .map((row) => ({
       ref: {
         type: "section" as const,
@@ -365,7 +356,75 @@ export async function loadRouteRecords(
       headingLevel: row.heading_level,
       content: (contentByRevision.get(row.revision_guid) ?? "").slice(row.start_offset, row.end_offset),
     }))
-    .sort((left, right) => left.ref.stableKey.localeCompare(right.ref.stableKey));
+    .sort((left, right) => left.ref.stableKey.localeCompare(right.ref.stableKey)),
+  ];
+}
+
+/**
+ * Assertions a route contains, with their citations.
+ *
+ * Non-active claims are excluded: serving a retracted claim as though it were live is the
+ * failure the standing model exists to prevent, and a disputed or superseded one reaching a
+ * default route unmarked would be the same mistake in a quieter form. They remain
+ * addressable by direct reference — excluded from routes is not deleted.
+ */
+async function loadAssertionRecords(
+  pool: Pool,
+  schemaName: string,
+  workspaceGuid: string,
+  scopeGuid: string,
+): Promise<RouteRecord[]> {
+  const rows = await pool.query<{
+    assertion_guid: string;
+    kind: string;
+    status: string;
+    title: string;
+    content: string;
+    citations: Array<{ quote: string; blockGuid: string; relation: string }> | null;
+  }>(
+    // Associations are deduped before the citation join. record_scopes permits several live
+    // rows for one assertion in one scope — one per association_type — and joining citations
+    // through them would repeat every citation once per association. Only `owning-scope` is
+    // created today, so this is latent; setRecordScopes is what makes it reachable.
+    `WITH scoped AS (
+       SELECT DISTINCT rs.record_guid
+         FROM "${schemaName}".record_scopes rs
+        WHERE rs.workspace_guid = $1 AND rs.scope_guid = $2
+          AND rs.retired_at IS NULL AND rs.record_type = 'assertion'
+     )
+     SELECT a.assertion_guid, a.kind, a.status, a.title, a.content,
+            coalesce(
+              jsonb_agg(
+                jsonb_build_object('quote', c.exact_quote, 'blockGuid', c.block_guid, 'relation', c.relation)
+                -- created_at alone is not a total order: now() is constant within a
+                -- transaction, so citations written together share a timestamp and their
+                -- aggregate order could vary between reads. The guid breaks the tie.
+                ORDER BY c.created_at, c.citation_guid
+              ) FILTER (WHERE c.citation_guid IS NOT NULL),
+              '[]'::jsonb
+            ) AS citations
+       FROM scoped
+       JOIN "${schemaName}".assertions a
+         ON a.workspace_guid = $1 AND a.assertion_guid = scoped.record_guid
+       LEFT JOIN "${schemaName}".source_citations c
+         ON c.workspace_guid = a.workspace_guid AND c.assertion_guid = a.assertion_guid
+      WHERE a.retired_at IS NULL AND a.status = 'active'
+      GROUP BY a.assertion_guid, a.kind, a.status, a.title, a.content
+      -- Title is not unique, so it is not a total order either. Same defect as the citation
+      -- aggregate above, one line apart: two claims sharing a title would come back in a
+      -- different order between reads.
+      ORDER BY a.title, a.assertion_guid`,
+    [workspaceGuid, scopeGuid],
+  );
+
+  return rows.rows.map((row) => ({
+    ref: { type: "assertion" as const, guid: row.assertion_guid },
+    heading: row.title,
+    content: row.content,
+    kind: row.kind,
+    status: row.status,
+    citations: row.citations ?? [],
+  }));
 }
 
 /**
@@ -390,5 +449,8 @@ export function contentFingerprint(records: RouteRecord[]): string {
 }
 
 function fingerprintKey(record: RouteRecord): string {
+  // An assertion is keyed by GUID because that identity is durable, unlike a section GUID,
+  // which is revision-scoped. Authoring a claim therefore moves its route's fingerprint,
+  // which is what tells a caller holding an earlier response that the route changed.
   return record.ref.type === "assertion" ? `assertion:${record.ref.guid}` : `section:${record.ref.stableKey}`;
 }
