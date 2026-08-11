@@ -275,11 +275,21 @@ async function recordCounts(
   workspaceGuid: string,
   scopeGuids: string[],
 ): Promise<Map<string, number>> {
+  // Counted the same way expansion selects, or the two disagree the moment assertions
+  // exist: a route advertising records that expansion cannot produce reads as missing data
+  // rather than as two different questions being asked (T-38). Non-active assertions are
+  // excluded here for the same reason they are excluded from expansion — a retracted claim
+  // is not something the route contains.
   const result = await pool.query<{ scope_guid: string; count: string }>(
-    `SELECT scope_guid, count(DISTINCT coalesce(stable_key, record_guid::text)) AS count
-       FROM "${schemaName}".record_scopes
-      WHERE workspace_guid = $1 AND retired_at IS NULL AND scope_guid = ANY($2::uuid[])
-      GROUP BY scope_guid`,
+    `SELECT rs.scope_guid, count(DISTINCT coalesce(rs.stable_key, rs.record_guid::text)) AS count
+       FROM "${schemaName}".record_scopes rs
+       LEFT JOIN "${schemaName}".assertions a
+         ON rs.record_type = 'assertion'
+        AND a.workspace_guid = rs.workspace_guid
+        AND a.assertion_guid = rs.record_guid
+      WHERE rs.workspace_guid = $1 AND rs.retired_at IS NULL AND rs.scope_guid = ANY($2::uuid[])
+        AND (rs.record_type <> 'assertion' OR (a.retired_at IS NULL AND a.status = 'active'))
+      GROUP BY rs.scope_guid`,
     [workspaceGuid, scopeGuids],
   );
   return new Map(result.rows.map((row) => [row.scope_guid, Number(row.count)]));
@@ -293,6 +303,11 @@ export type RouteRecord = {
   heading?: string;
   headingLevel?: number;
   content: string;
+  /** Assertions only: what sort of claim it is and what standing it has, both of which travel into every response. */
+  kind?: string;
+  status?: string;
+  /** Assertions only: the exact source text the claim was drawn from. */
+  citations?: Array<{ quote: string; blockGuid: string; relation: string }>;
 };
 
 /**
@@ -351,7 +366,11 @@ export async function loadRouteRecords(
   );
   const contentByRevision = new Map(revisions.rows.map((row) => [row.revision_guid, row.content]));
 
-  return sections.rows
+  const assertions = await loadAssertionRecords(pool, schemaName, workspaceGuid, scopeGuid);
+
+  return [
+    ...assertions,
+    ...sections.rows
     .map((row) => ({
       ref: {
         type: "section" as const,
@@ -365,7 +384,61 @@ export async function loadRouteRecords(
       headingLevel: row.heading_level,
       content: (contentByRevision.get(row.revision_guid) ?? "").slice(row.start_offset, row.end_offset),
     }))
-    .sort((left, right) => left.ref.stableKey.localeCompare(right.ref.stableKey));
+    .sort((left, right) => left.ref.stableKey.localeCompare(right.ref.stableKey)),
+  ];
+}
+
+/**
+ * Assertions a route contains, with their citations.
+ *
+ * Non-active claims are excluded: serving a retracted claim as though it were live is the
+ * failure the standing model exists to prevent, and a disputed or superseded one reaching a
+ * default route unmarked would be the same mistake in a quieter form. They remain
+ * addressable by direct reference — excluded from routes is not deleted.
+ */
+async function loadAssertionRecords(
+  pool: Pool,
+  schemaName: string,
+  workspaceGuid: string,
+  scopeGuid: string,
+): Promise<RouteRecord[]> {
+  const rows = await pool.query<{
+    assertion_guid: string;
+    kind: string;
+    status: string;
+    title: string;
+    content: string;
+    citations: Array<{ quote: string; blockGuid: string; relation: string }> | null;
+  }>(
+    `SELECT a.assertion_guid, a.kind, a.status, a.title, a.content,
+            coalesce(
+              jsonb_agg(
+                jsonb_build_object('quote', c.exact_quote, 'blockGuid', c.block_guid, 'relation', c.relation)
+                ORDER BY c.created_at
+              ) FILTER (WHERE c.citation_guid IS NOT NULL),
+              '[]'::jsonb
+            ) AS citations
+       FROM "${schemaName}".record_scopes rs
+       JOIN "${schemaName}".assertions a
+         ON a.workspace_guid = rs.workspace_guid AND a.assertion_guid = rs.record_guid
+       LEFT JOIN "${schemaName}".source_citations c
+         ON c.workspace_guid = a.workspace_guid AND c.assertion_guid = a.assertion_guid
+      WHERE rs.workspace_guid = $1 AND rs.scope_guid = $2 AND rs.retired_at IS NULL
+        AND rs.record_type = 'assertion'
+        AND a.retired_at IS NULL AND a.status = 'active'
+      GROUP BY a.assertion_guid, a.kind, a.status, a.title, a.content
+      ORDER BY a.title`,
+    [workspaceGuid, scopeGuid],
+  );
+
+  return rows.rows.map((row) => ({
+    ref: { type: "assertion" as const, guid: row.assertion_guid },
+    heading: row.title,
+    content: row.content,
+    kind: row.kind,
+    status: row.status,
+    citations: row.citations ?? [],
+  }));
 }
 
 /**
@@ -390,5 +463,8 @@ export function contentFingerprint(records: RouteRecord[]): string {
 }
 
 function fingerprintKey(record: RouteRecord): string {
+  // An assertion is keyed by GUID because that identity is durable, unlike a section GUID,
+  // which is revision-scoped. Authoring a claim therefore moves its route's fingerprint,
+  // which is what tells a caller holding an earlier response that the route changed.
   return record.ref.type === "assertion" ? `assertion:${record.ref.guid}` : `section:${record.ref.stableKey}`;
 }
