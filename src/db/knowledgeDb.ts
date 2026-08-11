@@ -124,6 +124,7 @@ export class KnowledgeDatabase {
     projectMappings?: ProjectMapping[];
     scopes?: ScopeDeclaration[];
     people?: Person[];
+    retireAbsentUnder?: string[];
   }): Promise<ImportReport> {
     return importDocuments({
       pool: this.pool,

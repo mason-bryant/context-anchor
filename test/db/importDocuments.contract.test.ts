@@ -94,7 +94,7 @@ describe.runIf(await isTestDatabaseReachable())("importDocuments (real Postgres)
     return result.rows[0]!.n;
   }
 
-  function runImport(input: { files?: ImportFile[]; commit?: string } = {}) {
+  function runImport(input: { files?: ImportFile[]; commit?: string; retireAbsentUnder?: string[] } = {}) {
     return importDocuments({
       pool,
       schemaName,
@@ -104,6 +104,7 @@ describe.runIf(await isTestDatabaseReachable())("importDocuments (real Postgres)
       repository: "context-anchor",
       commitSha: input.commit ?? "a".repeat(40),
       files: input.files ?? files(),
+      ...(input.retireAbsentUnder ? { retireAbsentUnder: input.retireAbsentUnder } : {}),
     });
   }
 
@@ -620,6 +621,67 @@ describe.runIf(await isTestDatabaseReachable())("importDocuments (real Postgres)
   // created it. That was a proxy for the real invariant, and the proxy expired while the
   // invariant did not: extraction is authoring's job, and an import that quietly minted
   // claims would be inventing knowledge nobody wrote.
+  // Import was additive only, so a document deleted from the repository kept routing and
+  // the workspace became the union of every commit ever imported rather than the pinned one.
+  describe("retiring documents the commit no longer contains", () => {
+    const doomed = {
+      path: "projects/anchor-mcp/doomed.md",
+      content: "---\nproject: anchor-mcp\ntype: context-anchor\n---\n\n# Doomed\n\n## Current State\n\n- Content later deleted.\n",
+    };
+
+    const liveDocuments = async () =>
+      (
+        await pool.query<{ name: string }>(
+          `SELECT name FROM "${schemaName}".source_documents WHERE workspace_guid = $1 AND retired_at IS NULL ORDER BY name`,
+          [bootstrap.workspaceGuid],
+        )
+      ).rows.map((row) => row.name);
+
+    it("retires an absent document when the import claims to cover it", async () => {
+      await runImport({ files: [...files(), doomed] });
+      expect(await liveDocuments()).toContain(doomed.path);
+
+      const report = await runImport({ commit: "b".repeat(40), retireAbsentUnder: [""] });
+
+      expect(report.documentsRetired).toBe(1);
+      expect(await liveDocuments()).not.toContain(doomed.path);
+    });
+
+    // The safe default: a caller assembling a subset of files must not retire everything
+    // else merely by not mentioning it.
+    it("retires nothing when the import claims no coverage", async () => {
+      await runImport({ files: [...files(), doomed] });
+
+      const report = await runImport({ commit: "b".repeat(40) });
+
+      expect(report.documentsRetired).toBe(0);
+      expect(await liveDocuments()).toContain(doomed.path);
+    });
+
+    it("retires only within the prefixes the import claims", async () => {
+      await runImport({ files: [...files(), doomed] });
+
+      const report = await runImport({ commit: "b".repeat(40), retireAbsentUnder: ["agent-rules"] });
+
+      expect(report.documentsRetired).toBe(0);
+      expect(await liveDocuments()).toContain(doomed.path);
+    });
+
+    // A live association pointing at a retired document would keep the content routing,
+    // which is the whole behaviour being fixed.
+    it("retires the associations of a retired document", async () => {
+      await runImport({ files: [...files(), doomed] });
+      await runImport({ commit: "b".repeat(40), retireAbsentUnder: [""] });
+
+      const live = await pool.query(
+        `SELECT 1 FROM "${schemaName}".record_scopes
+          WHERE workspace_guid = $1 AND retired_at IS NULL AND stable_key LIKE $2`,
+        [bootstrap.workspaceGuid, `${doomed.path}%`],
+      );
+      expect(live.rowCount).toBe(0);
+    });
+  });
+
   it("extracts nothing into assertions", async () => {
     await runImport();
 
