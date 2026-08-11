@@ -133,8 +133,9 @@ export function assertRankerContract(input: RouteCandidate[], output: RankedRout
     if (seen.has(route.routeKey)) {
       throw new RankerContractError(`route ${JSON.stringify(route.routeKey)} appears more than once`);
     }
-    // Only order may change. A ranker rewriting a record count or a scope guid would be
-    // editing the answer while appearing to rank it.
+    // Only order may change. A ranker rewriting a scope guid or slug would be editing the
+    // answer while appearing to rank it — the record count is no longer carried here at all,
+    // because it is derived from the records a route actually produced.
     if (source.scopeGuid !== route.scopeGuid || source.scopeSlug !== route.scopeSlug) {
       throw new RankerContractError(`route ${JSON.stringify(route.routeKey)} was altered, not just reordered`);
     }
