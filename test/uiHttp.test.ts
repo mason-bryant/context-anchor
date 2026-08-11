@@ -110,6 +110,21 @@ describe("UI HTTP routes", () => {
     expect(js).toContain("/api/ui/graph-coverage");
   });
 
+  // The gate is meant to be read side by side and shared, so a Compare view that cannot be
+  // linked to or survive a reload is a view nobody can point at. Without all three pieces
+  // `?view=compare` silently falls back to Root.
+  it("makes the Compare tab deep-linkable like every other tab", async () => {
+    const response = await fetch(`${baseUrl}/ui/app.js`);
+    const js = await response.text();
+
+    expect(response.status).toBe(200);
+    expect(js).toContain("/api/db/comparison");
+    // Recognised as a URL view, restorable on back/forward and reload, and pushed on click.
+    expect(js).toContain('value === "compare"');
+    expect(js).toContain("function showCompareView");
+    expect(js).toContain('state.activeTab === "compare"');
+  });
+
   it("wires the Coverage tab to the migration preview/apply flow (slice 3a)", async () => {
     const htmlResponse = await fetch(`${baseUrl}/ui`);
     const html = await htmlResponse.text();

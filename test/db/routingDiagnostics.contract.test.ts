@@ -188,6 +188,14 @@ describe.runIf(await isTestDatabaseReachable())("routing diagnostics (real Postg
     ).rejects.toThrow(/positive integer/);
   });
 
+  // JSON.stringify renders NaN as "null", so the likeliest bad input would have been reported
+  // as the one value it is not — and "received null" sends a reader looking for a missing field.
+  it("names NaN as NaN when refusing a window", async () => {
+    await expect(
+      routingDiagnostics(pool, telemetrySchema, bootstrap.workspaceGuid, { sinceDays: Number.NaN }),
+    ).rejects.toThrow(/received NaN/);
+  });
+
   it("excludes activity outside the window", async () => {
     await plan("anchor mcp", { budget: { expanded: 1, listed: 10, recordsPerRoute: 5 } });
     await pool.query(`UPDATE "${telemetrySchema}".retrieval_requests SET created_at = now() - interval '90 days'`);

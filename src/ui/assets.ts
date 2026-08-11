@@ -3781,7 +3781,7 @@ export const UI_JS = `(function () {
   }
 
   function validTab(value) {
-    return value === "root" || value === "planner" || value === "tasks" || value === "traces" || value === "coverage" || value === "graph" || value === "people" || value === "teams" || value === "mappings" || value === "review" || value === "detail" ? value : null;
+    return value === "root" || value === "planner" || value === "tasks" || value === "traces" || value === "coverage" || value === "compare" || value === "graph" || value === "people" || value === "teams" || value === "mappings" || value === "review" || value === "detail" ? value : null;
   }
 
   function validRootMode(value) {
@@ -5897,6 +5897,18 @@ export const UI_JS = `(function () {
     } else {
       renderCoverage();
     }
+  }
+
+  // Deliberately loads nothing on entry, unlike its sibling views: a comparison is meaningless
+  // without a task the reader supplies, and the gate exists to be read side by side and shared,
+  // so the view has to survive a reload and a pasted link like every other tab.
+  function showCompareView(options) {
+    var opts = options || {};
+    if (!opts.skipLocationUpdate) {
+      updateLocationFromState({ anchor: null, view: "compare", history: "push" });
+    }
+    state.pendingAnchor = null;
+    showTab("compare");
   }
 
   function showGraphView(options) {
@@ -11682,6 +11694,8 @@ export const UI_JS = `(function () {
       showTasksView({ skipLocationUpdate: true });
     } else if (state.activeTab === "coverage") {
       showCoverageView({ skipLocationUpdate: true });
+    } else if (state.activeTab === "compare") {
+      showCompareView({ skipLocationUpdate: true });
     } else if (state.activeTab === "graph") {
       showGraphView({ skipLocationUpdate: true });
     } else if (state.activeTab === "people") {
@@ -11939,6 +11953,10 @@ export const UI_JS = `(function () {
         }
         if (button.dataset.tab === "coverage") {
           showCoverageView();
+          return;
+        }
+        if (button.dataset.tab === "compare") {
+          showCompareView();
           return;
         }
         if (button.dataset.tab === "graph") {

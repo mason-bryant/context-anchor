@@ -35,7 +35,9 @@ export async function routingDiagnostics(
   // reads as "nothing was retrieved" — the same answer a healthy-but-unused workspace gives.
   // Failing loudly is the only way that stays distinguishable.
   if (!Number.isInteger(since) || since <= 0) {
-    throw new Error(`sinceDays must be a positive integer, received ${JSON.stringify(options.sinceDays)}`);
+    // String rather than JSON.stringify, which renders NaN as "null" — the one input most
+    // likely to arrive here would have been reported as the one value it is not.
+    throw new Error(`sinceDays must be a positive integer, received ${String(options.sinceDays)}`);
   }
 
   const totals = await pool.query<{
