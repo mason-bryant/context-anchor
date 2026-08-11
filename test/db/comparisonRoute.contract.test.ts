@@ -16,7 +16,7 @@ import { removeTempDir } from "../tempDir.js";
 
 const TOKEN = "test-token";
 
-describe.runIf(await isTestDatabaseReachable())("GET /api/db/comparison (real Postgres)", () => {
+describe.runIf(await isTestDatabaseReachable())("the comparison gate's HTTP routes (real Postgres)", () => {
   let adminPool: Pool;
   let schemaName: string;
   let tmpDir: string;
@@ -101,6 +101,30 @@ describe.runIf(await isTestDatabaseReachable())("GET /api/db/comparison (real Po
     expect(response.status).toBe(400);
     const body = (await response.json()) as Body;
     expect(body.error).toMatch(/paths/);
+  });
+
+  function getDiagnostics(query: string) {
+    return fetch(`${baseUrl}/api/db/routing-diagnostics${query}`, {
+      headers: { Authorization: `Bearer ${TOKEN}` },
+    });
+  }
+
+  // Same ambiguity as a repeated `paths`, on the endpoint whose job is to report honestly:
+  // serving the default window to someone who asked for a different one is a wrong answer
+  // delivered as a successful one.
+  it("refuses a repeated days parameter instead of defaulting the window", async () => {
+    const response = await getDiagnostics("?days=7&days=90");
+
+    expect(response.status).toBe(400);
+    expect(((await response.json()) as Body).error).toMatch(/days/);
+  });
+
+  // parseInt stops at the first non-digit, so "10abc" would have been honoured as 10.
+  it("refuses a partially numeric days value", async () => {
+    const response = await getDiagnostics("?days=10abc");
+
+    expect(response.status).toBe(400);
+    expect(((await response.json()) as Body).error).toMatch(/days/);
   });
 
   // Behaviour-pinning rather than falsifying: the legacy planner already ignores blank entries,

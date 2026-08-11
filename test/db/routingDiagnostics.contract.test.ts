@@ -176,6 +176,18 @@ describe.runIf(await isTestDatabaseReachable())("routing diagnostics (real Postg
     expect(after.neverUsed.map((row) => row.routeKey)).not.toContain(route.routeKey);
   });
 
+  // A negative window makes `now() - interval` reach into the future, so the report comes back
+  // empty — indistinguishable from a workspace where nothing was ever retrieved. The HTTP route
+  // validates today, but this is the function every future caller reaches for.
+  it("refuses a window that is not a positive integer", async () => {
+    await expect(
+      routingDiagnostics(pool, telemetrySchema, bootstrap.workspaceGuid, { sinceDays: -5 }),
+    ).rejects.toThrow(/positive integer/);
+    await expect(
+      routingDiagnostics(pool, telemetrySchema, bootstrap.workspaceGuid, { sinceDays: 1.5 }),
+    ).rejects.toThrow(/positive integer/);
+  });
+
   it("excludes activity outside the window", async () => {
     await plan("anchor mcp", { budget: { expanded: 1, listed: 10, recordsPerRoute: 5 } });
     await pool.query(`UPDATE "${telemetrySchema}".retrieval_requests SET created_at = now() - interval '90 days'`);

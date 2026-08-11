@@ -138,12 +138,27 @@ export async function startHttpServer(
         res.status(503).json({ error: "Database backend is not configured" });
         return;
       }
+      let sinceDays: number | undefined;
       try {
-        const sinceDays = typeof req.query.days === "string" ? Number.parseInt(req.query.days, 10) : undefined;
-        if (sinceDays !== undefined && (!Number.isFinite(sinceDays) || sinceDays <= 0)) {
-          res.status(400).json({ error: "days must be a positive integer" });
-          return;
+        // Same parser as every other query param here: a repeated `days` key is ambiguous, and
+        // reading it as "not supplied" would silently serve the default window to a reader who
+        // asked for a different one — on the endpoint whose entire job is to report honestly.
+        const daysParam = singleStringParam(req.query.days, "days");
+        if (daysParam !== undefined) {
+          // Number rather than parseInt, which accepts a numeric prefix: parseInt("10abc") is
+          // 10, so a malformed window would be honoured instead of refused.
+          sinceDays = Number(daysParam);
+          if (!Number.isInteger(sinceDays) || sinceDays <= 0) {
+            res.status(400).json({ error: "days must be a positive integer" });
+            return;
+          }
         }
+      } catch (error) {
+        res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
+        return;
+      }
+
+      try {
         res.json(await knowledgeDb.routingDiagnosticsAsOwner({ sinceDays }));
       } catch (error) {
         runtime.logger.error("routing diagnostics request failed", { error: errorMetadata(error) });

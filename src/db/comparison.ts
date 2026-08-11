@@ -30,6 +30,13 @@ export async function routingDiagnostics(
   options: { sinceDays?: number } = {},
 ): Promise<RoutingDiagnostics> {
   const since = options.sinceDays ?? 30;
+  // Validated here rather than trusting the one caller that happens to check today. A negative
+  // value would make `now() - interval` reach into the future and return an empty report, which
+  // reads as "nothing was retrieved" — the same answer a healthy-but-unused workspace gives.
+  // Failing loudly is the only way that stays distinguishable.
+  if (!Number.isInteger(since) || since <= 0) {
+    throw new Error(`sinceDays must be a positive integer, received ${JSON.stringify(options.sinceDays)}`);
+  }
 
   const totals = await pool.query<{
     requests: string;
