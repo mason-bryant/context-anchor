@@ -300,6 +300,24 @@ describe.runIf(await isTestDatabaseReachable())("createAssertion (real Postgres)
       expect(route.recordCount).toBe(route.records!.length);
     });
 
+    // Neither title nor created_at is unique, so neither is a total order. Two claims
+    // sharing a title must still come back in the same order every time.
+    it("orders assertions stably when two share a title", async () => {
+      await author({ title: "Same title", content: "First claim." });
+      await author({ title: "Same title", content: "Second claim." });
+
+      const reads = await Promise.all([plan(), plan(), plan()]);
+      const orders = reads.map((result) =>
+        (result.routes.find((r) => r.routeKey === "scope:domain:anchor-mcp")?.records ?? [])
+          .filter((record) => record.ref.type === "assertion")
+          .map((record) => record.ref.guid)
+          .join(","),
+      );
+
+      expect(orders[0]).toContain(",");
+      expect(new Set(orders).size).toBe(1);
+    });
+
     it("moves the route fingerprint when a claim is authored", async () => {
       const before = (await plan()).routes.find((r) => r.routeKey === "scope:domain:anchor-mcp")!.contentFingerprint;
 

@@ -441,7 +441,10 @@ async function loadAssertionRecords(
          ON c.workspace_guid = a.workspace_guid AND c.assertion_guid = a.assertion_guid
       WHERE a.retired_at IS NULL AND a.status = 'active'
       GROUP BY a.assertion_guid, a.kind, a.status, a.title, a.content
-      ORDER BY a.title`,
+      -- Title is not unique, so it is not a total order either. Same defect as the citation
+      -- aggregate above, one line apart: two claims sharing a title would come back in a
+      -- different order between reads.
+      ORDER BY a.title, a.assertion_guid`,
     [workspaceGuid, scopeGuid],
   );
 
