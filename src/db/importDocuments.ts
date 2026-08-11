@@ -41,6 +41,8 @@ export type ImportReport = {
   peopleImported: number;
   /** Documents retired because the pinned commit no longer contains them. */
   documentsRetired: number;
+  /** Documents a later commit brought back, which retirement would otherwise have made permanent. */
+  documentsReinstated: number;
   /** Files whose content matched the latest revision, so nothing was written. */
   unchanged: string[];
 };
@@ -110,6 +112,7 @@ export async function importDocuments(input: ImportInput): Promise<ImportReport>
     mappingsUpdated: 0,
     peopleImported: 0,
     documentsRetired: 0,
+    documentsReinstated: 0,
     unchanged: [],
   };
 
@@ -401,11 +404,42 @@ async function upsertDocument(
   report: ImportReport,
 ): Promise<string> {
   const schema = input.schemaName;
-  const existing = await tx.query<{ document_guid: string }>(
-    `SELECT document_guid FROM "${schema}".source_documents
+  const existing = await tx.query<{ document_guid: string; retired_at: Date | null }>(
+    `SELECT document_guid, retired_at FROM "${schema}".source_documents
      WHERE workspace_guid = $1 AND owner_scope_guid = $2 AND name = $3`,
     [input.workspaceGuid, scopeGuid, file.path],
   );
+
+  // A document the commit contains again is not retired, whatever a previous commit said.
+  // Retirement made deletion mean something; without this it made it permanent, so a file
+  // deleted once could never be restored and would stay unroutable while visibly present in
+  // the repository. Its associations are reinstated with it, since they were retired
+  // together.
+  const reinstated = existing.rows[0];
+  if (reinstated?.retired_at) {
+    await tx.query(
+      `UPDATE "${schema}".source_documents SET
+         retired_at = NULL, retired_by_principal_guid = NULL, retirement_reason = NULL,
+         retirement_command_guid = NULL, retirement_batch_guid = NULL
+       WHERE workspace_guid = $1 AND document_guid = $2`,
+      [input.workspaceGuid, reinstated.document_guid],
+    );
+    await tx.query(
+      `UPDATE "${schema}".record_scopes rs SET retired_at = NULL
+        WHERE rs.workspace_guid = $1 AND rs.retired_at IS NOT NULL AND rs.record_type = 'section'
+          AND EXISTS (
+            SELECT 1
+              FROM "${schema}".source_sections ss
+              JOIN "${schema}".document_revisions dr
+                ON dr.workspace_guid = ss.workspace_guid AND dr.revision_guid = ss.revision_guid
+             WHERE ss.workspace_guid = rs.workspace_guid
+               AND ss.stable_key = rs.stable_key
+               AND dr.document_guid = $2
+          )`,
+      [input.workspaceGuid, reinstated.document_guid],
+    );
+    report.documentsReinstated += 1;
+  }
   if (existing.rows[0]) {
     return existing.rows[0].document_guid;
   }

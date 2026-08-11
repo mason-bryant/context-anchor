@@ -731,6 +731,37 @@ describe.runIf(await isTestDatabaseReachable())("importDocuments (real Postgres)
       expect(report.documentsRetired).toBe(1);
     });
 
+    // Retirement made deletion mean something; without reinstatement it made deletion
+    // permanent, so a file deleted once could never come back and would stay unroutable
+    // while visibly present in the repository.
+    it("reinstates a document a later commit brings back", async () => {
+      await runImport({ files: [...files(), doomed] });
+      await runImport({ commit: "b".repeat(40), files: files(), retireAbsentUnder: [""] });
+      expect(await liveDocuments()).not.toContain(doomed.path);
+
+      const report = await runImport({
+        commit: "c".repeat(40),
+        files: [...files(), doomed],
+        retireAbsentUnder: [""],
+      });
+
+      expect(report.documentsReinstated).toBe(1);
+      expect(await liveDocuments()).toContain(doomed.path);
+    });
+
+    it("reinstates the associations of a document that comes back", async () => {
+      await runImport({ files: [...files(), doomed] });
+      await runImport({ commit: "b".repeat(40), files: files(), retireAbsentUnder: [""] });
+      await runImport({ commit: "c".repeat(40), files: [...files(), doomed], retireAbsentUnder: [""] });
+
+      const live = await pool.query(
+        `SELECT 1 FROM "${schemaName}".record_scopes
+          WHERE workspace_guid = $1 AND retired_at IS NULL AND strpos(stable_key, $2) = 1`,
+        [bootstrap.workspaceGuid, doomed.path],
+      );
+      expect(live.rowCount).toBeGreaterThan(0);
+    });
+
     it("retires only within the prefixes the import claims", async () => {
       await runImport({ files: [...files(), doomed] });
 

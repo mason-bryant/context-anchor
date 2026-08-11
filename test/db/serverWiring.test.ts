@@ -28,6 +28,7 @@ const SAMPLE_REPORT = {
   mappingsUpdated: 0,
   peopleImported: 0,
   documentsRetired: 0,
+  documentsReinstated: 0,
   unchanged: [],
 };
 
