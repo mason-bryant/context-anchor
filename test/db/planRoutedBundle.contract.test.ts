@@ -223,12 +223,19 @@ describe.runIf(await isTestDatabaseReachable())("planRoutedBundle (real Postgres
     // "Unknown" and "empty" are different answers, and only one of them means the other
     // ranker found nothing worth offering.
     it("records an unknown record count as null for a shadow-only route", async () => {
+      // Sorted by slug rather than reversing the input: reversing makes the shadow-only
+      // route depend on candidate iteration order, which is not part of anything's
+      // contract and has already produced one order-dependent test in this suite.
       const reversed: Ranker = {
         id: "reverser",
         version: "1.0.0",
         deterministic: true,
         rank: (candidates) =>
-          Promise.resolve([...candidates].reverse().map((c, index) => ({ ...c, offeredPosition: index }))),
+          Promise.resolve(
+            [...candidates]
+              .sort((left, right) => right.scopeSlug.localeCompare(left.scopeSlug))
+              .map((c, index) => ({ ...c, offeredPosition: index })),
+          ),
       };
 
       const result = await planRoutedBundle(

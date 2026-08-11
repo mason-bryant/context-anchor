@@ -233,8 +233,9 @@ describe("fallback", () => {
 
   // Handing the live array to an untrusted ranker let it mutate a candidate and return it:
   // the contract then compared the mutated objects to themselves and passed. Reproduced
-  // before fixing — the answer came back carrying routeKey "scope:domain:INJECTED" and
-  // recordCount 999 with fellBack false.
+  // before fixing — the answer came back carrying routeKey "scope:domain:INJECTED" with
+  // fellBack false. The mutated fields here are identity ones, since a candidate no longer
+  // carries a record count.
   it("cannot be defeated by a ranker that mutates its input", async () => {
     const mutating = brokenRanker((candidates) => {
       candidates[0]!.routeKey = "scope:domain:INJECTED";
