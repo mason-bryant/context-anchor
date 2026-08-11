@@ -923,7 +923,14 @@ async function retireAbsentDocuments(args: {
 }): Promise<void> {
   const { input, batchGuid, report } = args;
   const schema = input.schemaName;
-  const prefixes = input.retireAbsentUnder ?? [];
+  // Normalized before both the SQL and the key. A caller writing "agent-rules/" means the
+  // same coverage as "agent-rules", but the prefix test appends its own separator, so the
+  // trailing form would match nothing and retire nothing while reporting success — the third
+  // silent no-op this importer has produced. Distinct spellings would also hash to distinct
+  // idempotency keys for identical coverage.
+  const prefixes = [
+    ...new Set((input.retireAbsentUnder ?? []).map((prefix) => prefix.trim().replace(/\/+$/, ""))),
+  ];
   const present = input.files.map((file) => file.path);
 
   await input.handler.execute({

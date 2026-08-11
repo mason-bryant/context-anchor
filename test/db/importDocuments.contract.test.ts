@@ -697,6 +697,17 @@ describe.runIf(await isTestDatabaseReachable())("importDocuments (real Postgres)
       expect(wide.documentsRetired).toBe(1);
     });
 
+    // "projects/" means the same coverage as "projects"; the prefix test appends its own
+    // separator, so the trailing form would otherwise match nothing and silently retire
+    // nothing.
+    it("treats a trailing slash on a claimed prefix as the same coverage", async () => {
+      await runImport({ files: [...files(), doomed] });
+
+      const report = await runImport({ commit: "b".repeat(40), retireAbsentUnder: ["projects/"] });
+
+      expect(report.documentsRetired).toBe(1);
+    });
+
     it("retires only within the prefixes the import claims", async () => {
       await runImport({ files: [...files(), doomed] });
 
