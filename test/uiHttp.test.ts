@@ -125,6 +125,22 @@ describe("UI HTTP routes", () => {
     expect(js).toContain('state.activeTab === "compare"');
   });
 
+  // A stale answer pane beside a fresh error reads as a successful comparison, and a reader
+  // judging routing against the baseline cannot tell the numbers in front of them are old.
+  it("clears every comparison surface when a run fails or is refused", async () => {
+    const response = await fetch(`${baseUrl}/ui/app.js`);
+    const js = await response.text();
+
+    expect(response.status).toBe(200);
+    expect(js).toContain("function clearComparisonOutput");
+    // Both failure paths reset, not just the request one: a blank task returns early.
+    const clears = js.match(/clearComparisonOutput\(\);/g) ?? [];
+    expect(clears.length).toBeGreaterThanOrEqual(2);
+    // The meta lines and diagnostics are reset too, not only the two answer panes.
+    expect(js).toContain('el("compare-routed-meta").textContent = "";');
+    expect(js).toContain('el("compare-diagnostics").innerHTML = "";');
+  });
+
   it("wires the Coverage tab to the migration preview/apply flow (slice 3a)", async () => {
     const htmlResponse = await fetch(`${baseUrl}/ui`);
     const html = await htmlResponse.text();

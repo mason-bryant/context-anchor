@@ -11,7 +11,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ensureBootstrap } from "../../src/db/bootstrap.js";
 import { AnchorRepository } from "../../src/git/repo.js";
 import { startHttpServer } from "../../src/http/server.js";
-import { isTestDatabaseReachable, migrateAllSchemas, TEST_DATABASE_URL } from "./testDatabase.js";
+import { dropAllSchemas, isTestDatabaseReachable, migrateAllSchemas, TEST_DATABASE_URL } from "./testDatabase.js";
 import { removeTempDir } from "../tempDir.js";
 
 const TOKEN = "test-token";
@@ -68,7 +68,9 @@ describe.runIf(await isTestDatabaseReachable())("the comparison gate's HTTP rout
       await new Promise<void>((resolve, reject) => server!.close((e) => (e ? reject(e) : resolve())));
       server = undefined;
     }
-    await adminPool.query(`DROP SCHEMA IF EXISTS "${schemaName}" CASCADE`);
+    // dropAllSchemas, not a bare DROP: migrateAllSchemas also creates a separate telemetry
+    // schema, and dropping only the knowledge one leaves it behind to accumulate across runs.
+    await dropAllSchemas(adminPool, schemaName);
     await adminPool.end();
     await removeTempDir(tmpDir);
   });

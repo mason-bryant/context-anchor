@@ -12098,6 +12098,17 @@ export const UI_JS = `(function () {
       }
     }
 
+    // Every surface the last run wrote, cleared together. A stale answer pane or meta line
+    // sitting beside a fresh error reads as a successful comparison, and a reader judging
+    // routing against the baseline cannot tell that the numbers in front of them are old.
+    function clearComparisonOutput() {
+      el("compare-routed").innerHTML = "";
+      el("compare-legacy").innerHTML = "";
+      el("compare-routed-meta").textContent = "";
+      el("compare-legacy-meta").textContent = "";
+      el("compare-diagnostics").innerHTML = "";
+    }
+
     async function runComparison() {
       var task = el("compare-task").value.trim();
       var errorBox = el("compare-error");
@@ -12105,6 +12116,7 @@ export const UI_JS = `(function () {
       if (!task) {
         errorBox.textContent = "Enter a task to compare.";
         errorBox.hidden = false;
+        clearComparisonOutput();
         return;
       }
       var paths = el("compare-paths").value.trim();
@@ -12121,8 +12133,7 @@ export const UI_JS = `(function () {
       } catch (error) {
         errorBox.textContent = error.message;
         errorBox.hidden = false;
-        el("compare-routed").innerHTML = "";
-        el("compare-legacy").innerHTML = "";
+        clearComparisonOutput();
       }
     }
 
