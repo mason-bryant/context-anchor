@@ -942,7 +942,7 @@ async function retireAbsentDocuments(args: {
     batchGuid,
     reason: `retire documents absent from ${input.commitSha}`,
     entity: { entityType: "source_documents", entityGuid: randomUUID() },
-    apply: async (tx) => {
+    apply: async (tx, commandGuid) => {
       // Retired in the same batch as the rest of the import, so a mistaken import is undone
       // as one unit rather than leaving retirements behind.
       const retired = await tx.query<{ document_guid: string; name: string }>(
@@ -950,7 +950,10 @@ async function retireAbsentDocuments(args: {
            retired_at = now(),
            retired_by_principal_guid = $2,
            retirement_reason = $5,
-           retirement_batch_guid = $6
+           retirement_batch_guid = $6,
+           -- Names the command that retired it, so a tombstone is traceable without
+           -- joining through the batch it happened to share.
+           retirement_command_guid = $7
          WHERE workspace_guid = $1
            AND retired_at IS NULL
            AND NOT (name = ANY($3::text[]))
@@ -970,6 +973,7 @@ async function retireAbsentDocuments(args: {
           prefixes,
           `absent from ${input.repository}@${input.commitSha}`,
           batchGuid,
+          commandGuid,
         ],
       );
       report.documentsRetired += retired.rowCount ?? 0;

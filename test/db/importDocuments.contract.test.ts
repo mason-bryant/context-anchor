@@ -645,6 +645,23 @@ describe.runIf(await isTestDatabaseReachable())("importDocuments (real Postgres)
 
       expect(report.documentsRetired).toBe(1);
       expect(await liveDocuments()).not.toContain(doomed.path);
+
+      // Attributable on its own terms: the tombstone names the command that made it, not
+      // only the batch it happened to share with the rest of the import.
+      const tombstone = await pool.query<{ retirement_command_guid: string | null; retirement_reason: string }>(
+        `SELECT retirement_command_guid, retirement_reason FROM "${schemaName}".source_documents
+          WHERE workspace_guid = $1 AND name = $2`,
+        [bootstrap.workspaceGuid, doomed.path],
+      );
+      expect(tombstone.rows[0]?.retirement_command_guid).not.toBeNull();
+      expect(tombstone.rows[0]?.retirement_reason).toContain("b".repeat(40));
+
+      const command = await pool.query(
+        `SELECT 1 FROM "${schemaName}".commands
+          WHERE workspace_guid = $1 AND command_guid = $2 AND command_type = 'documents.retire_absent'`,
+        [bootstrap.workspaceGuid, tombstone.rows[0]!.retirement_command_guid],
+      );
+      expect(command.rowCount).toBe(1);
     });
 
     // The safe default: a caller assembling a subset of files must not retire everything
