@@ -78,6 +78,68 @@ export async function startHttpServer(
     traceRatings: runtime.traceRatings,
   });
 
+  // T8's surface: the comparison gate. Deliberately UI-only — an agent cannot judge whether
+  // its own context was well chosen, because it never sees what it was not given. Both
+  // answers to one real task, side by side, for a person to read.
+  app.get("/api/db/comparison", auth, (req: Request, res: Response) => {
+    void (async () => {
+      const knowledgeDb = runtime.knowledgeDb;
+      if (!knowledgeDb) {
+        res.status(503).json({ error: "Database backend is not configured" });
+        return;
+      }
+
+      let task: string | undefined;
+      let referencedPaths: string[] = [];
+      try {
+        task = singleStringParam(req.query.task, "task");
+        const paths = req.query.paths;
+        referencedPaths = typeof paths === "string" && paths.length > 0 ? paths.split(",").map((p) => p.trim()) : [];
+      } catch (error) {
+        res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
+        return;
+      }
+      if (!task) {
+        res.status(400).json({ error: "task is required" });
+        return;
+      }
+
+      try {
+        // Run both paths for the same task. The legacy planner is the baseline the gate
+        // judges against, so it is asked exactly what an ordinary caller would ask it.
+        const [routed, legacy] = await Promise.all([
+          knowledgeDb.planRoutedBundleAsOwner({ task, referencedPaths, consumer: "comparison-gate" }),
+          runtime.service.planContextBundle({ task }),
+        ]);
+        res.json({ task, routed, legacy });
+      } catch (error) {
+        runtime.logger.error("comparison request failed", { error: errorMetadata(error) });
+        res.status(500).json({ error: error instanceof Error ? error.message : String(error) });
+      }
+    })();
+  });
+
+  app.get("/api/db/routing-diagnostics", auth, (req: Request, res: Response) => {
+    void (async () => {
+      const knowledgeDb = runtime.knowledgeDb;
+      if (!knowledgeDb) {
+        res.status(503).json({ error: "Database backend is not configured" });
+        return;
+      }
+      try {
+        const sinceDays = typeof req.query.days === "string" ? Number.parseInt(req.query.days, 10) : undefined;
+        if (sinceDays !== undefined && (!Number.isFinite(sinceDays) || sinceDays <= 0)) {
+          res.status(400).json({ error: "days must be a positive integer" });
+          return;
+        }
+        res.json(await knowledgeDb.routingDiagnosticsAsOwner({ sinceDays }));
+      } catch (error) {
+        runtime.logger.error("routing diagnostics request failed", { error: errorMetadata(error) });
+        res.status(500).json({ error: error instanceof Error ? error.message : String(error) });
+      }
+    })();
+  });
+
   // T4's surface: the per-scope history view. The thread ships with its UI rather than
   // waiting for a batched UI phase (M12 decision).
   app.get("/api/db/scope-changes", auth, (req: Request, res: Response) => {

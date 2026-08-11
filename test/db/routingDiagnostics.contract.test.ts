@@ -1,0 +1,189 @@
+import { randomUUID } from "node:crypto";
+
+import type { Pool } from "pg";
+import pg from "pg";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+
+import { ensureBootstrap, type BootstrapResult } from "../../src/db/bootstrap.js";
+import { CommandHandler } from "../../src/db/commandHandler.js";
+import { routingDiagnostics } from "../../src/db/comparison.js";
+import { telemetrySchemaNameFor } from "../../src/db/config.js";
+import { importDocuments } from "../../src/db/importDocuments.js";
+import { planRoutedBundle, reportRecordUse } from "../../src/db/routing/plan.js";
+import { defaultRanker, type Ranker } from "../../src/db/routing/ranker.js";
+import { dropAllSchemas, isTestDatabaseReachable, migrateAllSchemas, TEST_DATABASE_URL } from "./testDatabase.js";
+
+const DOC = `---
+project: anchor-mcp
+type: context-anchor
+---
+
+# Anchor MCP
+
+## Current State
+
+- The HTTP transport requires a bearer token.
+
+## Decisions
+
+- Rate limiting belongs in the transport.
+`;
+
+describe.runIf(await isTestDatabaseReachable())("routing diagnostics (real Postgres)", () => {
+  let pool: Pool;
+  let schemaName: string;
+  let telemetrySchema: string;
+  let bootstrap: BootstrapResult;
+
+  beforeEach(async () => {
+    pool = new pg.Pool({ connectionString: TEST_DATABASE_URL, max: 4 });
+    schemaName = `diag_test_${randomUUID().replace(/-/g, "").slice(0, 12)}`;
+    telemetrySchema = telemetrySchemaNameFor(schemaName);
+    await migrateAllSchemas(pool, schemaName);
+    bootstrap = await ensureBootstrap(pool, { schemaName });
+
+    await importDocuments({
+      pool,
+      schemaName,
+      handler: new CommandHandler(pool, schemaName),
+      workspaceGuid: bootstrap.workspaceGuid,
+      actorPrincipalGuid: bootstrap.ownerPrincipalGuid,
+      repository: "agent-context",
+      commitSha: "a".repeat(40),
+      files: [{ path: "projects/anchor-mcp/anchor-mcp-project-context.md", content: DOC }],
+      scopes: [
+        { scope: "anchor-mcp", title: "Anchor MCP", kind: "domain", locators: [] },
+        { scope: "rate-limiting", title: "Rate Limiting", kind: "practice", locators: [] },
+      ],
+    });
+  });
+
+  afterEach(async () => {
+    await dropAllSchemas(pool, schemaName);
+    await pool.end();
+  });
+
+  const plan = (task: string, extra: Record<string, unknown> = {}, options = {}) =>
+    planRoutedBundle(
+      pool,
+      schemaName,
+      telemetrySchema,
+      {
+        task,
+        ...extra,
+        workspaceGuid: bootstrap.workspaceGuid,
+        principalGuid: bootstrap.ownerPrincipalGuid,
+        role: "owner",
+      },
+      options,
+    );
+
+  const diagnostics = () => routingDiagnostics(pool, telemetrySchema, bootstrap.workspaceGuid);
+
+  it("reports nothing rather than failing on an empty workspace", async () => {
+    const result = await diagnostics();
+
+    expect(result.totals).toEqual({ requests: 0, routesOffered: 0, routesExpanded: 0, recordUses: 0 });
+    expect(result.neverExpanded).toEqual([]);
+    expect(result.expansionByPosition).toEqual([]);
+  });
+
+  it("counts requests, offers, and expansions", async () => {
+    await plan("anchor mcp rate limiting", { budget: { expanded: 1, listed: 10, recordsPerRoute: 5 } });
+
+    const result = await diagnostics();
+
+    expect(result.totals.requests).toBe(1);
+    expect(result.totals.routesOffered).toBeGreaterThan(1);
+    expect(result.totals.routesExpanded).toBe(1);
+  });
+
+  // A condition nobody ever acts on is a condition that reads wrong, which is exactly what
+  // the gate is meant to make visible rather than leave to be inferred.
+  it("names routes offered but never expanded", async () => {
+    await plan("anchor mcp rate limiting", { budget: { expanded: 1, listed: 10, recordsPerRoute: 5 } });
+
+    const result = await diagnostics();
+
+    expect(result.neverExpanded.length).toBeGreaterThan(0);
+    expect(result.neverExpanded.every((row) => row.offered > 0)).toBe(true);
+    expect(result.neverExpanded[0]?.lastOfferedAt).not.toBeNull();
+  });
+
+  it("reports expansion rate by offered position", async () => {
+    await plan("anchor mcp rate limiting", { budget: { expanded: 1, listed: 10, recordsPerRoute: 5 } });
+
+    const result = await diagnostics();
+
+    const first = result.expansionByPosition.find((row) => row.position === 0);
+    expect(first?.expanded).toBe(1);
+    expect(first?.rate).toBe(1);
+    const second = result.expansionByPosition.find((row) => row.position === 1);
+    expect(second?.expanded).toBe(0);
+    expect(second?.rate).toBe(0);
+  });
+
+  // A shadow ordering was never shown to anyone, so counting it as offered-and-not-expanded
+  // would blame a route for a choice no caller ever saw.
+  it("ignores shadow orderings entirely", async () => {
+    const shadow: Ranker = {
+      id: "shadow",
+      version: "1.0.0",
+      deterministic: true,
+      rank: (candidates) =>
+        Promise.resolve(
+          [...candidates]
+            .sort((left, right) => right.scopeSlug.localeCompare(left.scopeSlug))
+            .map((c, index) => ({ ...c, offeredPosition: index })),
+        ),
+    };
+
+    await plan(
+      "anchor mcp rate limiting",
+      { budget: { expanded: 1, listed: 10, recordsPerRoute: 5 } },
+      { ranker: defaultRanker, shadowRankers: [shadow] },
+    );
+
+    const withShadow = await diagnostics();
+    const live = await pool.query<{ count: string }>(
+      `SELECT count(*) FROM "${telemetrySchema}".retrieval_route_impressions WHERE is_shadow = false`,
+    );
+
+    expect(withShadow.totals.routesOffered).toBe(Number(live.rows[0]!.count));
+  });
+
+  // A route whose records are served and never used is dead weight in every bundle it
+  // appears in, which is the second thing a reader needs the gate to surface.
+  it("names expanded routes whose records were never used, and drops them once used", async () => {
+    const first = await plan("anchor mcp", { budget: { expanded: 5, listed: 10, recordsPerRoute: 5 } });
+
+    expect((await diagnostics()).neverUsed.length).toBeGreaterThan(0);
+
+    const route = first.routes.find((r) => (r.records?.length ?? 0) > 0)!;
+    const record = route.records![0]!;
+    await reportRecordUse(pool, telemetrySchema, {
+      requestId: first.requestId,
+      refs: [
+        record.ref.type === "section"
+          ? { type: "section", guid: record.ref.guid, stableKey: record.ref.stableKey, routeKey: route.routeKey }
+          : { type: "assertion", guid: record.ref.guid, routeKey: route.routeKey },
+      ],
+      useKind: "cited",
+    });
+
+    const after = await diagnostics();
+    expect(after.totals.recordUses).toBe(1);
+    expect(after.neverUsed.map((row) => row.routeKey)).not.toContain(route.routeKey);
+  });
+
+  it("excludes activity outside the window", async () => {
+    await plan("anchor mcp", { budget: { expanded: 1, listed: 10, recordsPerRoute: 5 } });
+    await pool.query(`UPDATE "${telemetrySchema}".retrieval_requests SET created_at = now() - interval '90 days'`);
+
+    const recent = await routingDiagnostics(pool, telemetrySchema, bootstrap.workspaceGuid, { sinceDays: 30 });
+    const wide = await routingDiagnostics(pool, telemetrySchema, bootstrap.workspaceGuid, { sinceDays: 365 });
+
+    expect(recent.totals.requests).toBe(0);
+    expect(wide.totals.requests).toBe(1);
+  });
+});

@@ -7,6 +7,7 @@ import { resolveScopeAccess, type WorkspaceRole } from "./access.js";
 import { parseChangeWindow } from "./changeWindow.js";
 import { CommandHandler } from "./commandHandler.js";
 import type { ScopeDeclaration } from "./scopeRegistry.js";
+import { routingDiagnostics, type RoutingDiagnostics } from "./comparison.js";
 import {
   planRoutedBundle,
   reportRecordUse,
@@ -111,6 +112,11 @@ export class KnowledgeDatabase {
       },
       options,
     );
+  }
+
+  /** T8 diagnostics: what callers were actually offered, read from telemetry rather than replayed. */
+  async routingDiagnosticsAsOwner(options?: { sinceDays?: number }): Promise<RoutingDiagnostics> {
+    return routingDiagnostics(this.pool, this.telemetrySchemaName, this.bootstrap.workspaceGuid, options ?? {});
   }
 
   async reportRecordUseAsOwner(use: RecordUse): Promise<RecordUseResult> {
