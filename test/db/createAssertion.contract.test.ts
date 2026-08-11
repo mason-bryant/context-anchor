@@ -88,16 +88,19 @@ describe.runIf(await isTestDatabaseReachable())("createAssertion (real Postgres)
     const result = await author();
 
     const assertion = await pool.query<{ kind: string; status: string; version: number }>(
-      `SELECT kind, status, version FROM "${schemaName}".assertions WHERE assertion_guid = $1`,
-      [result.assertionGuid],
+      `SELECT kind, status, version FROM "${schemaName}".assertions
+        WHERE workspace_guid = $1 AND assertion_guid = $2`,
+      [bootstrap.workspaceGuid, result.assertionGuid],
     );
     expect(assertion.rows[0]).toMatchObject({ kind: "decision", status: "active", version: 1 });
 
     const citation = await pool.query<{ exact_quote: string; start_offset: number; selected_content_hash: string }>(
       `SELECT exact_quote, start_offset, selected_content_hash FROM "${schemaName}".source_citations
-        WHERE assertion_guid = $1`,
-      [result.assertionGuid],
+        WHERE workspace_guid = $1 AND assertion_guid = $2`,
+      [bootstrap.workspaceGuid, result.assertionGuid],
     );
+    // Exactly one: asserting only on the first row would ignore a duplicate-citation bug.
+    expect(citation.rowCount).toBe(1);
     expect(citation.rows[0]?.exact_quote).toBe("requires a bearer token");
     // Offsets are captured, not typed: they locate the quote cheaply while the quote itself
     // re-finds it after the source moves.
@@ -106,8 +109,8 @@ describe.runIf(await isTestDatabaseReachable())("createAssertion (real Postgres)
 
     const association = await pool.query(
       `SELECT 1 FROM "${schemaName}".record_scopes
-        WHERE record_type = 'assertion' AND record_guid = $1 AND retired_at IS NULL`,
-      [result.assertionGuid],
+        WHERE workspace_guid = $1 AND record_type = 'assertion' AND record_guid = $2 AND retired_at IS NULL`,
+      [bootstrap.workspaceGuid, result.assertionGuid],
     );
     expect(association.rowCount).toBe(1);
   });

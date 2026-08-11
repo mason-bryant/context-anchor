@@ -623,14 +623,22 @@ describe.runIf(await isTestDatabaseReachable())("importDocuments (real Postgres)
   it("extracts nothing into assertions", async () => {
     await runImport();
 
-    const assertions = await pool.query(`SELECT 1 FROM "${schemaName}".assertions`);
-    const citations = await pool.query(`SELECT 1 FROM "${schemaName}".source_citations`);
+    // Scoped to this workspace: the schema can hold several, so an unscoped count could
+    // fail on unrelated rows or pass while this workspace has some.
+    const assertions = await pool.query(`SELECT 1 FROM "${schemaName}".assertions WHERE workspace_guid = $1`, [
+      bootstrap.workspaceGuid,
+    ]);
+    const citations = await pool.query(
+      `SELECT 1 FROM "${schemaName}".source_citations WHERE workspace_guid = $1`,
+      [bootstrap.workspaceGuid],
+    );
     expect(assertions.rowCount).toBe(0);
     expect(citations.rowCount).toBe(0);
 
     // Every association an import produces is section-level, for the same reason.
     const assertionAssociations = await pool.query(
-      `SELECT 1 FROM "${schemaName}".record_scopes WHERE record_type = 'assertion'`,
+      `SELECT 1 FROM "${schemaName}".record_scopes WHERE workspace_guid = $1 AND record_type = 'assertion'`,
+      [bootstrap.workspaceGuid],
     );
     expect(assertionAssociations.rowCount).toBe(0);
   });

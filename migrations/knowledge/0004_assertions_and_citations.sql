@@ -63,6 +63,13 @@ CREATE TABLE source_citations (
   reanchored_from_citation_guid uuid,
   created_at timestamptz NOT NULL DEFAULT now(),
   PRIMARY KEY (workspace_guid, citation_guid),
+  -- The position selector is a pair or it is nothing: one offset without the other locates
+  -- no range, and would let a half-captured selector look like a present one.
+  CONSTRAINT source_citation_offsets_paired
+    CHECK ((start_offset IS NULL) = (end_offset IS NULL)),
+  -- An empty or inverted range cannot select the quote it claims to.
+  CONSTRAINT source_citation_offsets_ordered
+    CHECK (start_offset IS NULL OR end_offset > start_offset),
   FOREIGN KEY (workspace_guid, assertion_guid) REFERENCES assertions (workspace_guid, assertion_guid),
   FOREIGN KEY (workspace_guid, block_guid) REFERENCES content_blocks (workspace_guid, block_guid),
   FOREIGN KEY (workspace_guid, reanchored_from_citation_guid) REFERENCES source_citations (workspace_guid, citation_guid)
