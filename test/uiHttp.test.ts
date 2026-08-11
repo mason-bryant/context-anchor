@@ -141,6 +141,18 @@ describe("UI HTTP routes", () => {
     expect(js).toContain('el("compare-diagnostics").innerHTML = "";');
   });
 
+  // Both surfaces are written asynchronously and are the only report a failed or refreshed run
+  // makes, so without a live region a screen-reader user gets silence where sighted users get
+  // an error.
+  it("announces the Compare error and diagnostics surfaces to assistive technology", async () => {
+    const response = await fetch(`${baseUrl}/ui`);
+    const html = await response.text();
+
+    expect(response.status).toBe(200);
+    expect(html).toContain('id="compare-error" class="compare-error" role="alert" aria-live="assertive"');
+    expect(html).toContain('id="compare-diagnostics" aria-live="polite"');
+  });
+
   it("wires the Coverage tab to the migration preview/apply flow (slice 3a)", async () => {
     const htmlResponse = await fetch(`${baseUrl}/ui`);
     const html = await htmlResponse.text();

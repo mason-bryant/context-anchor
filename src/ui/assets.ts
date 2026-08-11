@@ -534,7 +534,7 @@ export const UI_HTML = `<!doctype html>
               <input id="compare-paths" type="text" placeholder="comma separated, optional" aria-label="Referenced paths">
               <button id="compare-run" type="button">Compare</button>
             </div>
-            <div id="compare-error" class="compare-error" hidden></div>
+            <div id="compare-error" class="compare-error" role="alert" aria-live="assertive" hidden></div>
             <div class="compare-panes">
               <div class="compare-pane">
                 <h3>Routed <span id="compare-routed-meta" class="compare-meta"></span></h3>
@@ -552,7 +552,7 @@ export const UI_HTML = `<!doctype html>
               </div>
               <div class="view-actions"><button id="compare-diagnostics-refresh" type="button">Refresh</button></div>
             </div>
-            <div id="compare-diagnostics"></div>
+            <div id="compare-diagnostics" aria-live="polite"></div>
           </section>
           <section id="coverage-view" class="view">
             <div class="view-header">
@@ -12079,7 +12079,7 @@ export const UI_JS = `(function () {
         .map(function (row) { return "<li>" + escapeHtml(row.routeKey) + " — offered " + row.offered + "x, never expanded</li>"; })
         .join("");
       var unused = diag.neverUsed
-        .map(function (row) { return "<li>" + escapeHtml(row.routeKey) + " — expanded " + row.offered + "x, never used</li>"; })
+        .map(function (row) { return "<li>" + escapeHtml(row.routeKey) + " — expanded " + row.expanded + "x, never used</li>"; })
         .join("");
       return (
         "<p class=\\"compare-count\\">" + diag.totals.requests + " request(s), " + diag.totals.routesOffered +

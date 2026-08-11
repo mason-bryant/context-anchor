@@ -157,7 +157,11 @@ describe.runIf(await isTestDatabaseReachable())("routing diagnostics (real Postg
   it("names expanded routes whose records were never used, and drops them once used", async () => {
     const first = await plan("anchor mcp", { budget: { expanded: 5, listed: 10, recordsPerRoute: 5 } });
 
-    expect((await diagnostics()).neverUsed.length).toBeGreaterThan(0);
+    const before = await diagnostics();
+    expect(before.neverUsed.length).toBeGreaterThan(0);
+    // Counted over expansions, not offers: a route that was never expanded served no records,
+    // so calling it "unused" would blame it for records it never had the chance to supply.
+    expect(before.neverUsed.every((row) => row.expanded > 0)).toBe(true);
 
     const route = first.routes.find((r) => (r.records?.length ?? 0) > 0)!;
     const record = route.records![0]!;
