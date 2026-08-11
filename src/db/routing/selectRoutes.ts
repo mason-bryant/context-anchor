@@ -413,7 +413,17 @@ async function loadAssertionRecords(
     content: string;
     citations: Array<{ quote: string; blockGuid: string; relation: string }> | null;
   }>(
-    `SELECT a.assertion_guid, a.kind, a.status, a.title, a.content,
+    // Associations are deduped before the citation join. record_scopes permits several live
+    // rows for one assertion in one scope — one per association_type — and joining citations
+    // through them would repeat every citation once per association. Only `owning-scope` is
+    // created today, so this is latent; setRecordScopes is what makes it reachable.
+    `WITH scoped AS (
+       SELECT DISTINCT rs.record_guid
+         FROM "${schemaName}".record_scopes rs
+        WHERE rs.workspace_guid = $1 AND rs.scope_guid = $2
+          AND rs.retired_at IS NULL AND rs.record_type = 'assertion'
+     )
+     SELECT a.assertion_guid, a.kind, a.status, a.title, a.content,
             coalesce(
               jsonb_agg(
                 jsonb_build_object('quote', c.exact_quote, 'blockGuid', c.block_guid, 'relation', c.relation)
@@ -421,14 +431,12 @@ async function loadAssertionRecords(
               ) FILTER (WHERE c.citation_guid IS NOT NULL),
               '[]'::jsonb
             ) AS citations
-       FROM "${schemaName}".record_scopes rs
+       FROM scoped
        JOIN "${schemaName}".assertions a
-         ON a.workspace_guid = rs.workspace_guid AND a.assertion_guid = rs.record_guid
+         ON a.workspace_guid = $1 AND a.assertion_guid = scoped.record_guid
        LEFT JOIN "${schemaName}".source_citations c
          ON c.workspace_guid = a.workspace_guid AND c.assertion_guid = a.assertion_guid
-      WHERE rs.workspace_guid = $1 AND rs.scope_guid = $2 AND rs.retired_at IS NULL
-        AND rs.record_type = 'assertion'
-        AND a.retired_at IS NULL AND a.status = 'active'
+      WHERE a.retired_at IS NULL AND a.status = 'active'
       GROUP BY a.assertion_guid, a.kind, a.status, a.title, a.content
       ORDER BY a.title`,
     [workspaceGuid, scopeGuid],

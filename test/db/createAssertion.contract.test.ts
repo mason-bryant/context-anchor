@@ -57,11 +57,16 @@ describe.runIf(await isTestDatabaseReachable())("createAssertion (real Postgres)
       scopes: [{ scope: "anchor-mcp", title: "Anchor MCP", kind: "domain", locators: [] }],
     });
 
-    blockGuid = (
-      await pool.query<{ block_guid: string }>(
-        `SELECT block_guid FROM "${schemaName}".content_blocks WHERE raw_content LIKE '%bearer token%' LIMIT 1`,
-      )
-    ).rows[0]!.block_guid;
+    // Asserted rather than non-null-asserted: if fixture text or block parsing ever changes,
+    // "no block matched" is a far more useful failure than "cannot read property of undefined"
+    // in every test in the file.
+    const blocks = await pool.query<{ block_guid: string }>(
+      `SELECT block_guid FROM "${schemaName}".content_blocks
+        WHERE workspace_guid = $1 AND raw_content LIKE '%bearer token%'`,
+      [bootstrap.workspaceGuid],
+    );
+    expect(blocks.rowCount, "fixture should produce exactly one block containing the quote").toBe(1);
+    blockGuid = blocks.rows[0]!.block_guid;
   });
 
   afterEach(async () => {
@@ -256,6 +261,27 @@ describe.runIf(await isTestDatabaseReachable())("createAssertion (real Postgres)
       expect(route).toBeDefined();
       expect(route?.records?.length).toBe(1);
       expect(route?.recordCount).toBe(route?.records?.length);
+    });
+
+    // record_scopes permits one live row per association_type, so an assertion associated
+    // twice to the same scope would repeat its citations once per association if the join
+    // ran through them. Not reachable through createAssertion today — setRecordScopes is
+    // what makes it so — which is exactly why it is worth pinning now.
+    it("does not duplicate an assertion or its citations when associated more than once", async () => {
+      const result = await author();
+      await pool.query(
+        `INSERT INTO "${schemaName}".record_scopes
+           (workspace_guid, association_guid, record_type, record_guid, scope_guid, association_type, derived_from_signal)
+         VALUES ($1, gen_random_uuid(), 'assertion', $2, $3, 'referenced-goal', 'curated')`,
+        [bootstrap.workspaceGuid, result.assertionGuid, result.scopeGuid],
+      );
+
+      const route = (await plan()).routes.find((r) => r.routeKey === "scope:domain:anchor-mcp")!;
+      const assertions = (route.records ?? []).filter((record) => record.ref.type === "assertion");
+
+      expect(assertions).toHaveLength(1);
+      expect(assertions[0]?.citations).toHaveLength(1);
+      expect(route.recordCount).toBe(route.records!.length);
     });
 
     it("moves the route fingerprint when a claim is authored", async () => {
