@@ -931,7 +931,14 @@ async function retireAbsentDocuments(args: {
     actorPrincipalGuid: input.actorPrincipalGuid,
     commandType: "documents.retire_absent",
     origin: "mcp",
-    idempotencyKey: `import:retire:${input.repository}:${input.commitSha}`,
+    // The claimed coverage is part of what this command does, so it belongs in the key.
+    // Without it, re-running the same commit with wider coverage replays the narrower run
+    // and silently retires nothing — the same silent no-op an idempotency-key collision
+    // produced once already in this importer.
+    idempotencyKey: `import:retire:${input.repository}:${input.commitSha}:${createHash("sha256")
+      .update([...prefixes].sort().join("\u0000"))
+      .digest("hex")
+      .slice(0, 16)}`,
     batchGuid,
     reason: `retire documents absent from ${input.commitSha}`,
     entity: { entityType: "source_documents", entityGuid: randomUUID() },
@@ -948,8 +955,12 @@ async function retireAbsentDocuments(args: {
            AND retired_at IS NULL
            AND NOT (name = ANY($3::text[]))
            AND EXISTS (
+             -- strpos, not LIKE: % and _ are wildcards there, and a claimed prefix
+             -- containing either would retire documents outside the directory it named.
+             -- Deciding what to retire is the last place to accept pattern semantics by
+             -- accident.
              SELECT 1 FROM unnest($4::text[]) AS prefix
-              WHERE prefix = '' OR name = prefix OR name LIKE prefix || '/%'
+              WHERE prefix = '' OR name = prefix OR strpos(name, prefix || '/') = 1
            )
          RETURNING document_guid, name`,
         [

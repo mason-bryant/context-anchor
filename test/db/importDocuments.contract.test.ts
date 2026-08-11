@@ -658,6 +658,28 @@ describe.runIf(await isTestDatabaseReachable())("importDocuments (real Postgres)
       expect(await liveDocuments()).toContain(doomed.path);
     });
 
+    // A claimed prefix is data, not a pattern. "projects%" must retire nothing under
+    // projects/, or a stray wildcard silently widens a destructive operation.
+    it("treats a claimed prefix as a literal, not a LIKE pattern", async () => {
+      await runImport({ files: [...files(), doomed] });
+
+      const report = await runImport({ commit: "b".repeat(40), retireAbsentUnder: ["projects%"] });
+
+      expect(report.documentsRetired).toBe(0);
+    });
+
+    // Re-running the same commit with wider coverage must actually widen it, rather than
+    // replaying the narrower run and reporting success while retiring nothing.
+    it("does not replay a narrower run when coverage is expanded", async () => {
+      await runImport({ files: [...files(), doomed] });
+
+      const narrow = await runImport({ commit: "b".repeat(40), retireAbsentUnder: ["agent-rules"] });
+      expect(narrow.documentsRetired).toBe(0);
+
+      const wide = await runImport({ commit: "b".repeat(40), retireAbsentUnder: [""] });
+      expect(wide.documentsRetired).toBe(1);
+    });
+
     it("retires only within the prefixes the import claims", async () => {
       await runImport({ files: [...files(), doomed] });
 
@@ -673,10 +695,12 @@ describe.runIf(await isTestDatabaseReachable())("importDocuments (real Postgres)
       await runImport({ files: [...files(), doomed] });
       await runImport({ commit: "b".repeat(40), retireAbsentUnder: [""] });
 
+      // strpos rather than LIKE: a path containing % or _ would otherwise be treated as a
+      // pattern and match unrelated rows.
       const live = await pool.query(
         `SELECT 1 FROM "${schemaName}".record_scopes
-          WHERE workspace_guid = $1 AND retired_at IS NULL AND stable_key LIKE $2`,
-        [bootstrap.workspaceGuid, `${doomed.path}%`],
+          WHERE workspace_guid = $1 AND retired_at IS NULL AND strpos(stable_key, $2) = 1`,
+        [bootstrap.workspaceGuid, doomed.path],
       );
       expect(live.rowCount).toBe(0);
     });
