@@ -427,7 +427,10 @@ async function loadAssertionRecords(
             coalesce(
               jsonb_agg(
                 jsonb_build_object('quote', c.exact_quote, 'blockGuid', c.block_guid, 'relation', c.relation)
-                ORDER BY c.created_at
+                -- created_at alone is not a total order: now() is constant within a
+                -- transaction, so citations written together share a timestamp and their
+                -- aggregate order could vary between reads. The guid breaks the tie.
+                ORDER BY c.created_at, c.citation_guid
               ) FILTER (WHERE c.citation_guid IS NOT NULL),
               '[]'::jsonb
             ) AS citations
