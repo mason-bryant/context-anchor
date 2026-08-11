@@ -180,7 +180,7 @@ export async function selectRouteCandidates(
 
   const signals = new Map<string, MatchSignal[]>();
   // Readability is enforced here, once, rather than at each producer. An unreadable scope
-  // reaching this map would otherwise survive as far as recordCounts — a database query for
+  // reaching this map would otherwise survive as far as record loading — a database read for
   // a scope that can never be returned — and would make the work done depend on scopes the
   // caller cannot see. The relation hop is the producer that makes this reachable, since it
   // adds scopes by traversal rather than by matching.
@@ -245,8 +245,6 @@ export async function selectRouteCandidates(
     return [];
   }
 
-  const counts = await recordCounts(pool, schemaName, input.workspaceGuid, [...signals.keys()]);
-
   return [...signals.entries()].flatMap(([scopeGuid, matched]) => {
     const scope = byGuid.get(scopeGuid);
     // A relation hop can name a retired or otherwise absent parent; a route that cannot be
@@ -262,37 +260,9 @@ export async function selectRouteCandidates(
         scopeKind: scope.scope_kind,
         title: scope.title,
         signals: matched,
-        recordCount: counts.get(scopeGuid) ?? 0,
       },
     ];
   });
-}
-
-/** Membership: what a route contains, resolved after selection and never adding a route. */
-async function recordCounts(
-  pool: Pool,
-  schemaName: string,
-  workspaceGuid: string,
-  scopeGuids: string[],
-): Promise<Map<string, number>> {
-  // Counted the same way expansion selects, or the two disagree the moment assertions
-  // exist: a route advertising records that expansion cannot produce reads as missing data
-  // rather than as two different questions being asked (T-38). Non-active assertions are
-  // excluded here for the same reason they are excluded from expansion — a retracted claim
-  // is not something the route contains.
-  const result = await pool.query<{ scope_guid: string; count: string }>(
-    `SELECT rs.scope_guid, count(DISTINCT coalesce(rs.stable_key, rs.record_guid::text)) AS count
-       FROM "${schemaName}".record_scopes rs
-       LEFT JOIN "${schemaName}".assertions a
-         ON rs.record_type = 'assertion'
-        AND a.workspace_guid = rs.workspace_guid
-        AND a.assertion_guid = rs.record_guid
-      WHERE rs.workspace_guid = $1 AND rs.retired_at IS NULL AND rs.scope_guid = ANY($2::uuid[])
-        AND (rs.record_type <> 'assertion' OR (a.retired_at IS NULL AND a.status = 'active'))
-      GROUP BY rs.scope_guid`,
-    [workspaceGuid, scopeGuids],
-  );
-  return new Map(result.rows.map((row) => [row.scope_guid, Number(row.count)]));
 }
 
 export type RouteRecord = {
@@ -357,8 +327,7 @@ export async function loadRouteRecords(
   const assertionRecords = await loadAssertionRecords(pool, schemaName, workspaceGuid, scopeGuid);
 
   // Not an early return on sections alone: a scope may hold only assertions, and returning
-  // nothing there would hide every authored claim while recordCount still counted them —
-  // reintroducing exactly the divergence this slice closed.
+  // nothing there would hide every authored claim in a scope that has no documents.
   if (sections.rowCount === 0) {
     return assertionRecords;
   }

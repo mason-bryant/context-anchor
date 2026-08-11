@@ -318,6 +318,28 @@ describe.runIf(await isTestDatabaseReachable())("createAssertion (real Postgres)
       expect(new Set(orders).size).toBe(1);
     });
 
+    // The case that motivated deriving the count from the records: the design keeps an
+    // association whose stable_key no longer resolves — "a heading rename changes stable_key
+    // and orphans the association ... retained and reported as orphaned rather than retired"
+    // — so a separately computed count counted it while expansion could not produce it.
+    it("counts what expansion returns when an association is orphaned by a rename", async () => {
+      const before = (await plan()).routes.find((r) => r.routeKey === "scope:domain:anchor-mcp")!;
+      expect(before.recordCount).toBe(before.records!.length);
+
+      await pool.query(
+        `UPDATE "${schemaName}".record_scopes SET stable_key = stable_key || '-renamed'
+          WHERE workspace_guid = $1 AND record_type = 'section'`,
+        [bootstrap.workspaceGuid],
+      );
+
+      const after = (await plan()).routes.find((r) => r.routeKey === "scope:domain:anchor-mcp");
+      // Every section association is orphaned, so the route holds nothing and is not offered
+      // at all — but if it is, its count must still equal what it returned.
+      if (after) {
+        expect(after.recordCount).toBe(after.records?.length ?? 0);
+      }
+    });
+
     it("moves the route fingerprint when a claim is authored", async () => {
       const before = (await plan()).routes.find((r) => r.routeKey === "scope:domain:anchor-mcp")!.contentFingerprint;
 

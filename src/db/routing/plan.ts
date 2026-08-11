@@ -139,7 +139,11 @@ export async function planRoutedBundle(
       appliesWhen: appliesWhen(route),
       matchReasons: route.signals.map((signal) => signal.reason),
       contentFingerprint: contentFingerprint(records),
-      recordCount: route.recordCount,
+      // The count IS the records, not a separately computed number that agrees with them by
+      // luck. Three divergences (assertions vs sections, assertion-only scopes, associations
+      // orphaned by a heading rename) all came from asking the same question with two
+      // queries, so there is now only one.
+      recordCount: records.length,
       expanded,
       ...(expanded ? { records: returned, recordsTruncated: records.length > returned.length } : {}),
     };
@@ -169,7 +173,8 @@ export async function planRoutedBundle(
     outcome,
     now,
   });
-  await recordImpressions(pool, telemetrySchemaName, requestId, outcome.ranker, offered, routes, false, now);
+  const recordCountByRoute = new Map(routes.map((route) => [route.routeKey, route.recordCount]));
+  await recordImpressions(pool, telemetrySchemaName, requestId, outcome.ranker, offered, routes, false, now, recordCountByRoute);
 
   // Shadow orderings are recorded after the answer is formed and can never change it. A
   // failure here must not fail a query the caller has already been served.
@@ -185,6 +190,7 @@ export async function planRoutedBundle(
         routes,
         true,
         now,
+        recordCountByRoute,
       );
     } catch {
       // Intentionally swallowed: shadow ranking is diagnostics, not the answer.
@@ -252,6 +258,9 @@ async function recordImpressions(
   // The request's clock, not a fresh one: every timestamp for a single request should agree,
   // and a fresh Date here defeats a fixed clock in tests.
   now: Date,
+  // The counts as reported, so an impression cannot claim a route held a different number of
+  // records than the response said it did.
+  recordCountByRoute: Map<string, number>,
 ): Promise<void> {
   if (ordered.length === 0) {
     return;
@@ -275,7 +284,7 @@ async function recordImpressions(
         route.scopeGuid,
         route.offeredPosition,
         JSON.stringify(route.signals.map((signal) => signal.reason)),
-        route.recordCount,
+        recordCountByRoute.get(route.routeKey) ?? 0,
         // A shadow ordering never expanded anything; recording otherwise would make it look
         // like the caller saw it.
         !isShadow && expandedKeys.has(route.routeKey) ? now : null,

@@ -39,7 +39,6 @@ export type RouteCandidate = {
   title: string;
   /** Every distinct way this scope matched. Never empty — a candidate with no signal is not a candidate. */
   signals: MatchSignal[];
-  recordCount: number;
   /** Caller-supplied, opaque to the default ranker. Carried from the start so the interface does not change when a later ranker uses it. */
   hints?: Record<string, unknown>;
 };
@@ -136,7 +135,7 @@ export function assertRankerContract(input: RouteCandidate[], output: RankedRout
     }
     // Only order may change. A ranker rewriting a record count or a scope guid would be
     // editing the answer while appearing to rank it.
-    if (source.scopeGuid !== route.scopeGuid || source.recordCount !== route.recordCount) {
+    if (source.scopeGuid !== route.scopeGuid || source.scopeSlug !== route.scopeSlug) {
       throw new RankerContractError(`route ${JSON.stringify(route.routeKey)} was altered, not just reordered`);
     }
     seen.add(route.routeKey);
