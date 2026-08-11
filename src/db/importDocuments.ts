@@ -909,14 +909,6 @@ async function importProjectMappings(args: {
 }
 
 /**
- * Retires documents the pinned commit no longer contains.
- *
- * Import was additive only, so a document deleted from the repository kept routing forever
- * and the workspace became the union of every commit ever imported rather than the one it
- * names. Retirement is scoped to the prefixes the caller claims to cover, so a partial
- * import cannot retire what it never looked at.
- */
-/**
  * Normalizes claimed coverage, and refuses anything that only accidentally means
  * "everything".
  *
@@ -955,6 +947,14 @@ export function normalizeClaimedPrefixes(claimed: string[]): string[] {
   return [...new Set(normalized)];
 }
 
+/**
+ * Retires documents the pinned commit no longer contains.
+ *
+ * Import was additive only, so a document deleted from the repository kept routing forever
+ * and the workspace became the union of every commit ever imported rather than the one it
+ * names. Retirement is scoped to the prefixes the caller claims to cover, so a partial
+ * import cannot retire what it never looked at.
+ */
 async function retireAbsentDocuments(args: {
   input: ImportInput;
   batchGuid: string;
