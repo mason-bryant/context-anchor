@@ -916,6 +916,45 @@ async function importProjectMappings(args: {
  * names. Retirement is scoped to the prefixes the caller claims to cover, so a partial
  * import cannot retire what it never looked at.
  */
+/**
+ * Normalizes claimed coverage, and refuses anything that only accidentally means
+ * "everything".
+ *
+ * A trailing slash is the same claim without one, but the prefix test appends its own
+ * separator, so "agent-rules/" would match nothing and retire nothing while reporting
+ * success. Distinct spellings would also hash to distinct idempotency keys for identical
+ * coverage.
+ *
+ * The whole-repository claim is spelled `""` and nothing else. "/", " ", and "///" all
+ * reduce to the empty string, and silently promoting any of them to "retire everything
+ * absent" is the worst thing this function could do — a caller narrowing a destructive
+ * operation would instead widen it to the entire workspace. Those are rejected rather
+ * than interpreted.
+ */
+export function normalizeClaimedPrefixes(claimed: string[]): string[] {
+  const normalized = claimed.map((raw) => {
+    if (raw === "") {
+      return "";
+    }
+    if (raw !== raw.trim()) {
+      throw new Error(
+        `Claimed prefix ${JSON.stringify(raw)} has surrounding whitespace. Retirement is destructive, ` +
+          `so a prefix is taken literally rather than repaired.`,
+      );
+    }
+    const stripped = raw.replace(/\/+$/, "");
+    if (stripped === "") {
+      throw new Error(
+        `Claimed prefix ${JSON.stringify(raw)} reduces to the whole repository. If that is intended, ` +
+          `pass "" explicitly; it is not inferred from a value that merely collapses to it.`,
+      );
+    }
+    return stripped;
+  });
+
+  return [...new Set(normalized)];
+}
+
 async function retireAbsentDocuments(args: {
   input: ImportInput;
   batchGuid: string;
@@ -923,14 +962,7 @@ async function retireAbsentDocuments(args: {
 }): Promise<void> {
   const { input, batchGuid, report } = args;
   const schema = input.schemaName;
-  // Normalized before both the SQL and the key. A caller writing "agent-rules/" means the
-  // same coverage as "agent-rules", but the prefix test appends its own separator, so the
-  // trailing form would match nothing and retire nothing while reporting success — the third
-  // silent no-op this importer has produced. Distinct spellings would also hash to distinct
-  // idempotency keys for identical coverage.
-  const prefixes = [
-    ...new Set((input.retireAbsentUnder ?? []).map((prefix) => prefix.trim().replace(/\/+$/, ""))),
-  ];
+  const prefixes = normalizeClaimedPrefixes(input.retireAbsentUnder ?? []);
   const present = input.files.map((file) => file.path);
 
   await input.handler.execute({

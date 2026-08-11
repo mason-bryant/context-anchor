@@ -708,6 +708,29 @@ describe.runIf(await isTestDatabaseReachable())("importDocuments (real Postgres)
       expect(report.documentsRetired).toBe(1);
     });
 
+    // The worst thing normalization could do: silently promote a narrowing claim into
+    // "retire everything". "/" and whitespace all reduce to the empty string, which is the
+    // whole-repository claim, so they are refused rather than interpreted.
+    it.each(["/", " ", "  ", "///", " projects"])(
+      "refuses the claimed prefix %j rather than widening it",
+      async (prefix) => {
+        await runImport({ files: [...files(), doomed] });
+
+        await expect(runImport({ commit: "b".repeat(40), retireAbsentUnder: [prefix] })).rejects.toThrow(
+          /whole repository|whitespace/,
+        );
+        expect(await liveDocuments()).toContain(doomed.path);
+      },
+    );
+
+    it("still accepts an explicit empty string as the whole repository", async () => {
+      await runImport({ files: [...files(), doomed] });
+
+      const report = await runImport({ commit: "b".repeat(40), retireAbsentUnder: [""] });
+
+      expect(report.documentsRetired).toBe(1);
+    });
+
     it("retires only within the prefixes the import claims", async () => {
       await runImport({ files: [...files(), doomed] });
 
