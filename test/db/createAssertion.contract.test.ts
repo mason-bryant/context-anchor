@@ -151,13 +151,28 @@ describe.runIf(await isTestDatabaseReachable())("createAssertion (real Postgres)
     expect((await pool.query(`SELECT 1 FROM "${schemaName}".assertions`)).rowCount).toBe(0);
   });
 
-  // Authoring the same claim citing the same text twice is a retry, not two claims.
-  it("is idempotent on the same claim and citation", async () => {
+  // Authoring the same claim citing the same text twice is a retry, not two claims — and a
+  // retry must hand back the assertion that exists. Asserting only that nothing new was
+  // written would pass while the caller received a GUID for a record that was never
+  // created: success-shaped, and broken the moment anything tried to use it.
+  it("returns the original assertion on a retry rather than a fresh identifier", async () => {
     const first = await author();
     const second = await author();
 
-    expect(second.assertionGuid).not.toBe(first.assertionGuid);
+    expect(second.replayed).toBe(true);
+    expect(second.assertionGuid).toBe(first.assertionGuid);
+    expect(second.citationGuid).toBe(first.citationGuid);
+    expect(second.scopeGuid).toBe(first.scopeGuid);
     expect((await pool.query(`SELECT 1 FROM "${schemaName}".assertions`)).rowCount).toBe(1);
+
+    // The identifier handed back must resolve to a real row, which is the property the
+    // previous non-equality assertion could not establish.
+    const exists = await pool.query(
+      `SELECT 1 FROM "${schemaName}".assertions WHERE assertion_guid = $1`,
+      [second.assertionGuid],
+    );
+    expect(exists.rowCount).toBe(1);
+    expect(first.replayed).toBe(false);
   });
 
   describe("routing", () => {
@@ -213,6 +228,31 @@ describe.runIf(await isTestDatabaseReachable())("createAssertion (real Postgres)
       const afterRoute = after.routes.find((r) => r.routeKey === "scope:domain:anchor-mcp")!;
       expect(afterRoute.recordCount).toBe(afterRoute.records!.length);
       expect(afterRoute.recordCount).toBe(beforeRoute.recordCount);
+    });
+
+    // loadRouteRecords used to return early when a scope had no section associations, so a
+    // scope holding only assertions returned nothing while recordCount still counted them —
+    // the exact divergence this slice closed, reintroduced from the other side.
+    it("returns assertions from a scope that has no sections at all", async () => {
+      await pool.query(
+        `INSERT INTO "${schemaName}".scopes (workspace_guid, scope_guid, scope_slug, scope_kind, title)
+         VALUES ($1, gen_random_uuid(), 'claims-only', 'practice', 'Claims Only')`,
+        [bootstrap.workspaceGuid],
+      );
+      await author({ scopeSlug: "claims-only", title: "A claim with no document behind it" });
+
+      const result = await planRoutedBundle(pool, schemaName, telemetrySchema, {
+        workspaceGuid: bootstrap.workspaceGuid,
+        principalGuid: bootstrap.ownerPrincipalGuid,
+        role: "owner",
+        task: "claims only",
+        budget: { expanded: 5, listed: 10, recordsPerRoute: 50 },
+      });
+
+      const route = result.routes.find((r) => r.routeKey === "scope:practice:claims-only");
+      expect(route).toBeDefined();
+      expect(route?.records?.length).toBe(1);
+      expect(route?.recordCount).toBe(route?.records?.length);
     });
 
     it("moves the route fingerprint when a claim is authored", async () => {

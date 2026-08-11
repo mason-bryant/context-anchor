@@ -354,8 +354,13 @@ export async function loadRouteRecords(
     [workspaceGuid, scopeGuid],
   );
 
+  const assertionRecords = await loadAssertionRecords(pool, schemaName, workspaceGuid, scopeGuid);
+
+  // Not an early return on sections alone: a scope may hold only assertions, and returning
+  // nothing there would hide every authored claim while recordCount still counted them —
+  // reintroducing exactly the divergence this slice closed.
   if (sections.rowCount === 0) {
-    return [];
+    return assertionRecords;
   }
 
   const revisionGuids = [...new Set(sections.rows.map((row) => row.revision_guid))];
@@ -366,10 +371,8 @@ export async function loadRouteRecords(
   );
   const contentByRevision = new Map(revisions.rows.map((row) => [row.revision_guid, row.content]));
 
-  const assertions = await loadAssertionRecords(pool, schemaName, workspaceGuid, scopeGuid);
-
   return [
-    ...assertions,
+    ...assertionRecords,
     ...sections.rows
     .map((row) => ({
       ref: {
