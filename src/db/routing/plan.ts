@@ -284,7 +284,10 @@ async function recordImpressions(
         route.scopeGuid,
         route.offeredPosition,
         JSON.stringify(route.signals.map((signal) => signal.reason)),
-        recordCountByRoute.get(route.routeKey) ?? 0,
+        // Null, not zero, when this route was never in the answer: a shadow ordering can
+        // offer a route the authoritative response did not, and nothing was loaded for it.
+        // Zero would read as "the route was empty", which is the opposite conclusion.
+        recordCountByRoute.get(route.routeKey) ?? null,
         // A shadow ordering never expanded anything; recording otherwise would make it look
         // like the caller saw it.
         !isShadow && expandedKeys.has(route.routeKey) ? now : null,
