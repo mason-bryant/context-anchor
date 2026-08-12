@@ -425,8 +425,12 @@ async function upsertDocument(
       [input.workspaceGuid, reinstated.document_guid],
     );
     await tx.query(
+      // `NOT retired_by_correction`: reinstating a document undoes the retirement import
+      // performed, never one a human performed. Without the qualifier, bringing a file back
+      // resurrects associations somebody had deliberately removed.
       `UPDATE "${schema}".record_scopes rs SET retired_at = NULL
         WHERE rs.workspace_guid = $1 AND rs.retired_at IS NOT NULL AND rs.record_type = 'section'
+          AND NOT rs.retired_by_correction
           AND EXISTS (
             SELECT 1
               FROM "${schema}".source_sections ss
@@ -677,7 +681,16 @@ async function associate(
     `INSERT INTO "${input.schemaName}".record_scopes
        (workspace_guid, association_guid, record_type, record_guid, stable_key, scope_guid, association_type,
         derived_from_signal)
-     VALUES ($1, $2, 'section', $3, $4, $5, $6, $7)
+     SELECT $1, $2, 'section', $3, $4, $5, $6, $7
+      WHERE NOT EXISTS (
+        -- A human has already said this section does not belong to this scope. Re-deriving it
+        -- would undo that judgement on the next import, and silently: the live-uniqueness index
+        -- is partial on retired_at, so the retired row does not conflict and ON CONFLICT DO
+        -- NOTHING never fires.
+        SELECT 1 FROM "${input.schemaName}".record_scopes
+         WHERE workspace_guid = $1 AND stable_key = $4 AND scope_guid = $5
+           AND retired_by_correction
+      )
      ON CONFLICT DO NOTHING`,
     // record_guid is the section row this association was made against — provenance, not a
     // live pointer. Resolution goes through stable_key, since section guids are

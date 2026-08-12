@@ -108,6 +108,87 @@ describe.runIf(await isTestDatabaseReachable())("importDocuments (real Postgres)
     });
   }
 
+  /**
+   * A human correcting an association is making a judgement the derivation could not: "this
+   * section is not really about that scope". Re-importing the same repository must not quietly
+   * undo it, or the correction lasts only until the next import and the operator is never told.
+   */
+  describe("manual corrections survive a re-import", () => {
+    async function liveAssociation(stableKeyFragment: string, scopeSlug: string): Promise<number> {
+      const result = await pool.query<{ n: number }>(
+        `SELECT count(*)::int AS n
+         FROM "${schemaName}".record_scopes a
+         JOIN "${schemaName}".scopes s ON s.scope_guid = a.scope_guid
+         WHERE a.workspace_guid = $1 AND a.retired_at IS NULL
+           AND a.stable_key LIKE '%' || $2 || '%'
+           AND s.scope_slug = $3`,
+        [bootstrap.workspaceGuid, stableKeyFragment, scopeSlug],
+      );
+      return result.rows[0]!.n;
+    }
+
+    /** Retires every live association for a section, the way setRecordScopes does. */
+    async function retireAssociations(stableKeyFragment: string, scopeSlug: string): Promise<void> {
+      await pool.query(
+        `UPDATE "${schemaName}".record_scopes a SET retired_at = now(), retired_by_correction = true
+          FROM "${schemaName}".scopes s
+         WHERE s.scope_guid = a.scope_guid
+           AND a.workspace_guid = $1 AND a.retired_at IS NULL
+           AND a.stable_key LIKE '%' || $2 || '%' AND s.scope_slug = $3`,
+        [bootstrap.workspaceGuid, stableKeyFragment, scopeSlug],
+      );
+    }
+
+    it("does not re-derive an association a correction retired", async () => {
+      await runImport();
+      expect(await liveAssociation("db-backed", "anchor-mcp-db-backed")).toBeGreaterThan(0);
+
+      await retireAssociations("db-backed", "anchor-mcp-db-backed");
+      expect(await liveAssociation("db-backed", "anchor-mcp-db-backed")).toBe(0);
+
+      // Same commit, same content: nothing about the repository changed, so nothing should
+      // resurrect. The live-uniqueness index is partial on retired_at, so the retired row does
+      // not block a fresh insert — the correction was undone by ON CONFLICT DO NOTHING never
+      // firing.
+      await runImport({ commit: "b".repeat(40) });
+      expect(await liveAssociation("db-backed", "anchor-mcp-db-backed")).toBe(0);
+    });
+
+    it("lets import derive again once the correction is withdrawn", async () => {
+      await runImport();
+      await retireAssociations("db-backed", "anchor-mcp-db-backed");
+      await runImport({ commit: "b".repeat(40) });
+      expect(await liveAssociation("db-backed", "anchor-mcp-db-backed")).toBe(0);
+
+      // The mark records what the operator currently wants, not everything they have ever
+      // wanted. Clearing it is what setRecordScopes does when a scope is added back, and without
+      // this the suppression would outlive the intent behind it — import forbidden from ever
+      // deriving the association again, with nothing saying why.
+      await pool.query(
+        `UPDATE "${schemaName}".record_scopes SET retired_by_correction = false
+          WHERE workspace_guid = $1 AND retired_by_correction`,
+        [bootstrap.workspaceGuid],
+      );
+
+      await runImport({ commit: "c".repeat(40) });
+      expect(await liveAssociation("db-backed", "anchor-mcp-db-backed")).toBeGreaterThan(0);
+    });
+
+    it("does not resurrect a corrected association when a document is reinstated", async () => {
+      await runImport();
+      await retireAssociations("db-backed", "anchor-mcp-db-backed");
+
+      // Drop the file, then bring it back. Reinstatement clears retired_at across the document's
+      // associations, which is right for the ones import retired and wrong for the one a human
+      // did.
+      const remaining = files().filter((f) => !f.path.includes("db-backed"));
+      await runImport({ files: remaining, commit: "c".repeat(40), retireAbsentUnder: ["projects/"] });
+      await runImport({ commit: "d".repeat(40), retireAbsentUnder: ["projects/"] });
+
+      expect(await liveAssociation("db-backed", "anchor-mcp-db-backed")).toBe(0);
+    });
+  });
+
   it("imports each file as a document with a revision, sections, and blocks", async () => {
     const report = await runImport();
 
