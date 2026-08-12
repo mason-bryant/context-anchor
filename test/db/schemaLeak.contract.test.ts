@@ -163,4 +163,23 @@ describe("test schema names stay recognisable to the leak tooling", () => {
     expect(source).toMatch(/import \{ TEST_SCHEMA_PATTERN \} from "\.\.\/test\/db\/testDatabase\.js";/);
     expect(source).not.toMatch(/(const|let|var)\s+TEST_SCHEMA_PATTERN\s*=/);
   });
+
+  it("only tells operators to run npm scripts that exist", async () => {
+    // The guard's warning names a command to run next. Renaming the cleanup script left that
+    // message pointing at `node scripts/drop-orphan-test-schemas.mjs`, a path that no longer
+    // existed — advice that fails when followed is worse than no advice, and nothing would have
+    // caught it. Checking the whole file rather than the one known message, so the next command
+    // added to an operator-facing string is covered too.
+    const root = path.resolve(import.meta.dirname, "../..");
+    const source = await readFile(path.join(root, "test/db/schemaLeakGuard.ts"), "utf8");
+    const manifest = JSON.parse(await readFile(path.join(root, "package.json"), "utf8")) as {
+      scripts: Record<string, string>;
+    };
+
+    const referenced = [...source.matchAll(/npm run ([a-z0-9:_-]+)/g)].map((m) => m[1]);
+    expect(referenced.length).toBeGreaterThan(0);
+    for (const script of referenced) {
+      expect(Object.keys(manifest.scripts)).toContain(script);
+    }
+  });
 });

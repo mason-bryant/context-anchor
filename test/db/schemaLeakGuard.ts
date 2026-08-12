@@ -71,7 +71,7 @@ export async function teardown(): Promise<void> {
       console.warn(
         "[schema leak guard] No baseline was captured at setup, but the test database is " +
           "reachable now — this run was NOT checked for leaked schemas. Run " +
-          "`node scripts/drop-orphan-test-schemas.mjs` to see whether any were left behind.",
+          "`npm run db:clean-test-schemas` to see whether any were left behind.",
       );
     }
     return;

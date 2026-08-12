@@ -105,10 +105,11 @@ export async function dropAllSchemas(pool: Pool, schemaName: string): Promise<vo
 const registered = new Set<string>();
 
 /**
- * The one definition of what a test schema name looks like. `schemaLeakGuard` imports this rather
- * than keeping its own copy, and `scripts/drop-orphan-test-schemas.mjs` carries a duplicate that
- * `schemaLeak.contract.test.ts` asserts is identical — a name the guard flags but the sweep script
- * will not remove is a leak reported forever and never cleaned.
+ * The one definition of what a test schema name looks like, and the only one: `schemaLeakGuard`
+ * and `scripts/drop-orphan-test-schemas.ts` both import it. They each carried a copy once, kept
+ * honest by a test comparing the literals — a name the guard flags but the sweep script will not
+ * remove is a leak reported forever and cleaned by nothing, so the copies were worth policing
+ * until they could be deleted outright.
  */
 export const TEST_SCHEMA_PATTERN = /^[a-z_][a-z0-9_]*_test_[0-9a-f]{12}(_ready)?(_telemetry)?$/;
 
