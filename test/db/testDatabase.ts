@@ -4,7 +4,7 @@ import { runMigrations } from "../../src/db/migrate.js";
 import type { Pool } from "pg";
 import pg from "pg";
 
-import { redactDatabaseUrl, telemetrySchemaNameFor } from "../../src/db/config.js";
+import { assertValidSchemaName, redactDatabaseUrl, telemetrySchemaNameFor } from "../../src/db/config.js";
 
 export const TEST_DATABASE_URL =
   process.env.TEST_DATABASE_URL ?? "postgres://anchor:anchor@127.0.0.1:55432/anchor_mcp";
@@ -110,7 +110,7 @@ const registered = new Set<string>();
  * `schemaLeak.contract.test.ts` asserts is identical — a name the guard flags but the sweep script
  * will not remove is a leak reported forever and never cleaned.
  */
-export const TEST_SCHEMA_PATTERN = /^[a-z0-9_]+_test_[0-9a-f]{12}(_ready)?(_telemetry)?$/;
+export const TEST_SCHEMA_PATTERN = /^[a-z_][a-z0-9_]*_test_[0-9a-f]{12}(_ready)?(_telemetry)?$/;
 
 /**
  * Refuses a prefix that would produce a name the guard cannot recognise.
@@ -123,12 +123,18 @@ export const TEST_SCHEMA_PATTERN = /^[a-z0-9_]+_test_[0-9a-f]{12}(_ready)?(_tele
  */
 export function testSchemaName(prefix = "knowledge_test"): string {
   const name = `${prefix}_${randomUUID().replace(/-/g, "").slice(0, 12)}`;
+  // The production rule, called rather than restated. A prefix like "9lives_test" satisfies the
+  // shape below but is not a legal schema name, so without this the helper would hand back a
+  // name that only failed later, inside DDL, with nothing pointing back at the prefix that
+  // caused it. Asking the same function the runtime asks keeps the two from drifting.
+  assertValidSchemaName(name);
   if (!TEST_SCHEMA_PATTERN.test(name)) {
     throw new Error(
       `Test schema prefix "${prefix}" produces "${name}", which the schema leak guard and the ` +
         `cleanup script would not recognise as a test schema — so a leak of it would go ` +
-        `unreported and unswept. A prefix must be lowercase letters, digits and underscores ` +
-        `ending in "_test" (for example "knowledge_test" or "my_feature_test").`,
+        `unreported and unswept. A prefix must be lowercase letters, digits and underscores, ` +
+        `must not start with a digit, and must end in "_test" (for example "knowledge_test" ` +
+        `or "my_feature_test").`,
     );
   }
   registered.add(name);

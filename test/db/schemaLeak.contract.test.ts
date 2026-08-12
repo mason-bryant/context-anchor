@@ -122,11 +122,22 @@ describe.runIf(await isTestDatabaseReachable())("schema creation is confined to 
  * meaningful: a registered name that the guard cannot recognise is not protected by anything.
  */
 describe("test schema names stay recognisable to the leak tooling", () => {
-  it("refuses a prefix that would produce an unrecognisable name", () => {
+  // Two separate rejections, kept apart because they fail for different reasons and a caller
+  // reading the message needs to know which. A legal schema name of the wrong shape is invisible
+  // to the leak tooling; an illegal one never reaches DDL at all.
+  it("refuses a legal schema name whose shape the leak tooling would not recognise", () => {
     // Each of these registers nothing and throws, so no schema is created and none can leak.
     expect(() => testSchemaName("scratch")).toThrow(/would not recognise/);
     expect(() => testSchemaName("my_test_")).toThrow(/would not recognise/);
-    expect(() => testSchemaName("Knowledge_Test")).toThrow(/would not recognise/);
+  });
+
+  it("refuses a prefix that is not a legal schema name, before any DDL sees it", () => {
+    // Postgres identifiers cannot start with a digit or carry uppercase unquoted, and
+    // assertValidSchemaName enforces that because schema names are interpolated straight into
+    // DDL. Without the check at the mint these produced names that passed the shape test and
+    // blew up later inside CREATE SCHEMA, with nothing pointing back at the prefix responsible.
+    expect(() => testSchemaName("9lives_test")).toThrow(/not starting with a digit/);
+    expect(() => testSchemaName("Knowledge_Test")).toThrow(/Invalid database schemaName/);
   });
 
   it("accepts single and multi-word prefixes, and the names it mints match the guard", () => {

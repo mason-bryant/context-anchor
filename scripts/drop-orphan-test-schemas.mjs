@@ -26,11 +26,12 @@ const DATABASE_URL =
  * hand — cannot match this, which is the property that makes the script safe to point at a
  * database holding real content.
  *
- * The prefix admits underscores so a multi-word one like `my_feature_test_<hex>` is swept too.
+ * The prefix admits underscores so a multi-word one like `my_feature_test_<hex>` is swept too,
+ * and cannot start with a digit, matching what Postgres and assertValidSchemaName actually allow.
  * That widens what matches, but not dangerously: the twelve-hex-digit suffix is what actually
  * separates a generated name from anything a person would type, and it is still required.
  */
-const TEST_SCHEMA_PATTERN = /^[a-z0-9_]+_test_[0-9a-f]{12}(_ready)?(_telemetry)?$/;
+const TEST_SCHEMA_PATTERN = /^[a-z_][a-z0-9_]*_test_[0-9a-f]{12}(_ready)?(_telemetry)?$/;
 
 const apply = process.argv.includes("--yes");
 
