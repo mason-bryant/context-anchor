@@ -8,7 +8,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { ensureBootstrap } from "../../src/db/bootstrap.js";
 import { KnowledgeDatabase } from "../../src/db/knowledgeDb.js";
 import { runMigrations } from "../../src/db/migrate.js";
-import { isTestDatabaseReachable, TEST_DATABASE_URL } from "./testDatabase.js";
+import { dropRegisteredSchemas, isTestDatabaseReachable, TEST_DATABASE_URL, testSchemaName } from "./testDatabase.js";
 
 const REAL_MIGRATIONS_DIR = path.resolve(import.meta.dirname, "../../migrations/knowledge");
 
@@ -18,12 +18,12 @@ describe.runIf(await isTestDatabaseReachable())("bootstrap + KnowledgeDatabase.l
 
   beforeAll(async () => {
     pool = new pg.Pool({ connectionString: TEST_DATABASE_URL, max: 4 });
-    schemaName = `knowledge_test_${randomUUID().replace(/-/g, "").slice(0, 12)}`;
+    schemaName = testSchemaName("knowledge_test");
     await runMigrations(pool, { schemaName, migrationsDir: REAL_MIGRATIONS_DIR });
   });
 
   afterAll(async () => {
-    await pool.query(`DROP SCHEMA IF EXISTS "${schemaName}" CASCADE`);
+    await dropRegisteredSchemas(pool);
     await pool.end();
   });
 

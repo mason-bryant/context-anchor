@@ -1,4 +1,3 @@
-import { randomUUID } from "node:crypto";
 import { mkdtemp, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -8,7 +7,7 @@ import pg from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { getMigrationStatus, runMigrations, MigrationChecksumMismatchError } from "../../src/db/migrate.js";
-import { isTestDatabaseReachable, TEST_DATABASE_URL } from "./testDatabase.js";
+import { dropRegisteredSchemas, isTestDatabaseReachable, TEST_DATABASE_URL, testSchemaName } from "./testDatabase.js";
 import { removeTempDir } from "../tempDir.js";
 
 const REAL_MIGRATIONS_DIR = path.resolve(import.meta.dirname, "../../migrations/knowledge");
@@ -22,14 +21,15 @@ describe.runIf(await isTestDatabaseReachable())("runMigrations / getMigrationSta
   });
 
   afterAll(async () => {
-    if (schemaName) {
-      await pool.query(`DROP SCHEMA IF EXISTS "${schemaName}" CASCADE`);
-    }
+    // Unconditional: the registry holds every name this file took, not just the one the first
+    // test assigns. Gating on `schemaName` would skip the backstop entirely under a filtered run
+    // where that test never executed.
+    await dropRegisteredSchemas(pool);
     await pool.end();
   });
 
   it("applies every committed migration to a fresh schema and reports it applied", async () => {
-    schemaName = `knowledge_test_${randomUUID().replace(/-/g, "").slice(0, 12)}`;
+    schemaName = testSchemaName();
 
     const before = await getMigrationStatus(pool, { schemaName, migrationsDir: REAL_MIGRATIONS_DIR });
     expect(before.pendingCount).toBeGreaterThan(0);
@@ -54,7 +54,7 @@ describe.runIf(await isTestDatabaseReachable())("runMigrations / getMigrationSta
   });
 
   it("re-running migrations against an already-migrated schema is a no-op", async () => {
-    const localSchema = `knowledge_test_${randomUUID().replace(/-/g, "").slice(0, 12)}`;
+    const localSchema = testSchemaName();
     try {
       const first = await runMigrations(pool, { schemaName: localSchema, migrationsDir: REAL_MIGRATIONS_DIR });
       expect(first.applied.length).toBeGreaterThan(0);
@@ -70,7 +70,7 @@ describe.runIf(await isTestDatabaseReachable())("runMigrations / getMigrationSta
   });
 
   it("throws if an already-applied migration file's content changes on disk", async () => {
-    const localSchema = `knowledge_test_${randomUUID().replace(/-/g, "").slice(0, 12)}`;
+    const localSchema = testSchemaName();
     const tmpMigrationsDir = await mkdtemp(path.join(os.tmpdir(), "knowledge-migrations-"));
     await writeFile(
       path.join(tmpMigrationsDir, "0001_widgets.sql"),
@@ -97,7 +97,7 @@ describe.runIf(await isTestDatabaseReachable())("runMigrations / getMigrationSta
   });
 
   it("rolls back a failing migration file so a retry starts clean", async () => {
-    const localSchema = `knowledge_test_${randomUUID().replace(/-/g, "").slice(0, 12)}`;
+    const localSchema = testSchemaName();
     const tmpMigrationsDir = await mkdtemp(path.join(os.tmpdir(), "knowledge-migrations-"));
     await writeFile(
       path.join(tmpMigrationsDir, "0001_ok.sql"),

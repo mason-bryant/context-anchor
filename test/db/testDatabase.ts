@@ -1,9 +1,10 @@
+import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { runMigrations } from "../../src/db/migrate.js";
 import type { Pool } from "pg";
 import pg from "pg";
 
-import { redactDatabaseUrl, telemetrySchemaNameFor } from "../../src/db/config.js";
+import { assertValidSchemaName, redactDatabaseUrl, telemetrySchemaNameFor } from "../../src/db/config.js";
 
 export const TEST_DATABASE_URL =
   process.env.TEST_DATABASE_URL ?? "postgres://anchor:anchor@127.0.0.1:55432/anchor_mcp";
@@ -90,6 +91,82 @@ export async function migrateAllSchemas(pool: Pool, schemaName: string): Promise
 export async function dropAllSchemas(pool: Pool, schemaName: string): Promise<void> {
   await pool.query(`DROP SCHEMA IF EXISTS "${schemaName}" CASCADE`);
   await pool.query(`DROP SCHEMA IF EXISTS "${telemetrySchemaNameFor(schemaName)}" CASCADE`);
+}
+
+/**
+ * A unique schema name for one test, remembered so teardown does not have to be told about it.
+ *
+ * Pairing `migrateAllSchemas` with `dropAllSchemas` by hand was a convention, and it did not
+ * hold: four contract files created a telemetry schema and tore down with a bare
+ * `DROP SCHEMA "<base>"`, leaking fifteen telemetry schemas per suite run and a thousand over
+ * the development database's life. Nothing linked the two calls, so each new test had to
+ * rediscover the pairing. Registering the name at creation makes the drop automatic instead.
+ */
+const registered = new Set<string>();
+
+/**
+ * The one definition of what a test schema name looks like, and the only one: `schemaLeakGuard`
+ * and `scripts/drop-orphan-test-schemas.ts` both import it. They each carried a copy once, kept
+ * honest by a test comparing the literals — a name the guard flags but the sweep script will not
+ * remove is a leak reported forever and cleaned by nothing, so the copies were worth policing
+ * until they could be deleted outright.
+ */
+export const TEST_SCHEMA_PATTERN = /^[a-z_][a-z0-9_]*_test_[0-9a-f]{12}(_ready)?(_telemetry)?$/;
+
+/**
+ * Refuses a prefix that would produce a name the guard cannot recognise.
+ *
+ * Registering the name is only half the protection: the suite-level guard finds leaks by matching
+ * the name shape, so a prefix like `scratch` or `my_test_` yields a schema that no longer looks
+ * like a test schema to anything downstream, and the "green run leaks schemas" failure mode
+ * reopens quietly. Checking the generated name against the very pattern the guard uses makes that
+ * unrepresentable rather than merely discouraged.
+ */
+export function testSchemaName(prefix = "knowledge_test"): string {
+  const name = `${prefix}_${randomUUID().replace(/-/g, "").slice(0, 12)}`;
+  // The production rule, called rather than restated. A prefix like "9lives_test" satisfies the
+  // shape below but is not a legal schema name, so without this the helper would hand back a
+  // name that only failed later, inside DDL, with nothing pointing back at the prefix that
+  // caused it. Asking the same function the runtime asks keeps the two from drifting.
+  assertValidSchemaName(name);
+  if (!TEST_SCHEMA_PATTERN.test(name)) {
+    throw new Error(
+      `Test schema prefix "${prefix}" produces "${name}", which the schema leak guard and the ` +
+        `cleanup script would not recognise as a test schema — so a leak of it would go ` +
+        `unreported and unswept. A prefix must be lowercase letters, digits and underscores, ` +
+        `must not start with a digit, and must end in "_test" (for example "knowledge_test" ` +
+        `or "my_feature_test").`,
+    );
+  }
+  registered.add(name);
+  return name;
+}
+
+/**
+ * Creates a uniquely named pair of schemas and registers them for teardown. Callers that need a
+ * second schema in the same test (a `_ready` variant, say) should take it from here too rather
+ * than deriving a name locally — a derived name is exactly what teardown will not know about.
+ */
+export async function createTestSchemas(pool: Pool, prefix?: string): Promise<string> {
+  const schemaName = testSchemaName(prefix);
+  await migrateAllSchemas(pool, schemaName);
+  return schemaName;
+}
+
+/**
+ * Drops every schema handed out by `testSchemaName`/`createTestSchemas` in this module instance.
+ * Safe to call more than once, and safe when a test already dropped its own.
+ *
+ * "This module instance" means one test file, which holds only while Vitest gives each file its
+ * own module registry — `isolate: true`, set explicitly in vitest.config.ts for this reason. With
+ * isolation off, files in a worker would share `registered`, and this would drop schemas another
+ * file is still using.
+ */
+export async function dropRegisteredSchemas(pool: Pool): Promise<void> {
+  for (const schemaName of registered) {
+    await dropAllSchemas(pool, schemaName);
+  }
+  registered.clear();
 }
 
 /** Telemetry only, for tests that assert on the knowledge migration result itself. */

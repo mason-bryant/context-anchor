@@ -7,7 +7,7 @@ import type { Pool } from "pg";
 import pg from "pg";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { isTestDatabaseReachable, TEST_DATABASE_URL, migrateAllSchemas } from "./testDatabase.js";
+import { createTestSchemas, dropRegisteredSchemas, isTestDatabaseReachable, TEST_DATABASE_URL } from "./testDatabase.js";
 import { removeTempDir } from "../tempDir.js";
 
 // Forces a throw AFTER the knowledge database is created and before the runtime is
@@ -33,13 +33,12 @@ describe.runIf(await isTestDatabaseReachable())("createAnchorRuntime pool cleanu
 
   beforeEach(async () => {
     adminPool = new pg.Pool({ connectionString: TEST_DATABASE_URL, max: 2 });
-    schemaName = `knowledge_test_${randomUUID().replace(/-/g, "").slice(0, 12)}`;
-    await migrateAllSchemas(adminPool, schemaName);
+    schemaName = await createTestSchemas(adminPool);
     tmpDir = await mkdtemp(path.join(os.tmpdir(), "anchor-pool-cleanup-"));
   });
 
   afterEach(async () => {
-    await adminPool.query(`DROP SCHEMA IF EXISTS "${schemaName}" CASCADE`);
+    await dropRegisteredSchemas(adminPool);
     await adminPool.end();
     await removeTempDir(tmpDir);
   });

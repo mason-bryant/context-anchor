@@ -77,6 +77,16 @@ function checksumOf(sql: string): string {
   return createHash("sha256").update(sql, "utf8").digest("hex");
 }
 
+/**
+ * Creates the schema and its bookkeeping table. Only `runMigrations` may call this.
+ *
+ * Kept separate from the status read on purpose. When both shared one helper, asking whether a
+ * schema was migrated *created* it, so every status probe against a name that did not exist left
+ * an empty schema behind — including probes on paths that then refused to proceed. That silently
+ * grew a thousand orphan schemas in the development database, and it made `db status` against a
+ * mistyped schema name answer "0 applied, N pending" (which reads as "run the migrations")
+ * instead of "no such schema".
+ */
 async function ensureMigrationsTable(pool: Pool, schemaName: string): Promise<void> {
   assertValidSchemaName(schemaName);
   await pool.query(`CREATE SCHEMA IF NOT EXISTS "${schemaName}"`);
@@ -88,6 +98,36 @@ async function ensureMigrationsTable(pool: Pool, schemaName: string): Promise<vo
       applied_at timestamptz NOT NULL DEFAULT now()
     )
   `);
+}
+
+/**
+ * The read half: reports what is there without bringing any of it into being.
+ *
+ * A schema can also exist without the bookkeeping table — something else created the namespace,
+ * or a migration run died between the two statements above. That reads the same as an unmigrated
+ * schema, which is the truthful answer: nothing has been applied.
+ */
+async function readAppliedMigrations(
+  pool: Pool,
+  schemaName: string,
+): Promise<{ schemaPresent: boolean; applied: AppliedMigrationRow[] }> {
+  assertValidSchemaName(schemaName);
+
+  const present = await pool.query<{ schema_present: boolean; table_present: boolean }>(
+    `SELECT
+       EXISTS (SELECT 1 FROM information_schema.schemata WHERE schema_name = $1) AS schema_present,
+       to_regclass(format('%I.schema_migrations', $1::text)) IS NOT NULL AS table_present`,
+    [schemaName],
+  );
+  const row = present.rows[0];
+  if (!row?.schema_present) {
+    return { schemaPresent: false, applied: [] };
+  }
+  if (!row.table_present) {
+    return { schemaPresent: true, applied: [] };
+  }
+
+  return { schemaPresent: true, applied: await getAppliedMigrations(pool, schemaName) };
 }
 
 async function getAppliedMigrations(pool: Pool, schemaName: string): Promise<AppliedMigrationRow[]> {
@@ -118,27 +158,34 @@ async function assertNoChecksumDrift(
 
 export type MigrationStatus = {
   schemaName: string;
+  /**
+   * False when the schema does not exist at all, which is different from existing with nothing
+   * applied. Both report every migration as pending, but only one of them means the caller is
+   * probably looking at the wrong schema name.
+   */
+  schemaPresent: boolean;
   appliedCount: number;
   pendingCount: number;
   currentVersion: number | undefined;
   pending: MigrationFile[];
 };
 
+/** Read-only: never creates the schema it is asked about. See `ensureMigrationsTable`. */
 export async function getMigrationStatus(
   pool: Pool,
   options: { schemaName: string; migrationsDir: string },
 ): Promise<MigrationStatus> {
   assertValidSchemaName(options.schemaName);
-  await ensureMigrationsTable(pool, options.schemaName);
 
   const files = await loadMigrationFiles(options.migrationsDir);
-  const applied = await getAppliedMigrations(pool, options.schemaName);
+  const { schemaPresent, applied } = await readAppliedMigrations(pool, options.schemaName);
   await assertNoChecksumDrift(files, applied, options.migrationsDir);
 
   const pending = planPendingMigrations(files, applied.map((row) => row.id));
 
   return {
     schemaName: options.schemaName,
+    schemaPresent,
     appliedCount: applied.length,
     pendingCount: pending.length,
     currentVersion: applied.length > 0 ? Math.max(...applied.map((row) => row.id)) : undefined,

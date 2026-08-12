@@ -10,11 +10,9 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { AnchorRepository } from "../../src/git/repo.js";
 import { startHttpServer } from "../../src/http/server.js";
-import { runMigrations } from "../../src/db/migrate.js";
-import { isTestDatabaseReachable, TEST_DATABASE_URL } from "./testDatabase.js";
+import { createTestSchemas, dropRegisteredSchemas, isTestDatabaseReachable, TEST_DATABASE_URL } from "./testDatabase.js";
 import { removeTempDir } from "../tempDir.js";
 
-const REAL_MIGRATIONS_DIR = path.resolve(import.meta.dirname, "../../migrations/knowledge");
 const TOKEN = "test-token";
 
 /**
@@ -30,8 +28,11 @@ describe.runIf(await isTestDatabaseReachable())("startHttpServer bind-failure cl
 
   beforeEach(async () => {
     adminPool = new pg.Pool({ connectionString: TEST_DATABASE_URL, max: 2 });
-    schemaName = `knowledge_test_${randomUUID().replace(/-/g, "").slice(0, 12)}`;
-    await runMigrations(adminPool, { schemaName, migrationsDir: REAL_MIGRATIONS_DIR });
+    // Both schemas, not knowledge alone. Startup checks telemetry too, so migrating only
+    // knowledge made createKnowledgeDatabase throw MigrationsPendingError before it ever tried
+    // to bind — this test asserted `.rejects.toThrow()` with no matcher and passed on that
+    // error instead of the bind failure it names.
+    schemaName = await createTestSchemas(adminPool);
 
     tmpDir = await mkdtemp(path.join(os.tmpdir(), "anchor-bind-fail-"));
     const repo = new AnchorRepository({ repoPath: tmpDir });
@@ -43,7 +44,7 @@ describe.runIf(await isTestDatabaseReachable())("startHttpServer bind-failure cl
       await new Promise<void>((resolve) => blocker!.close(() => resolve()));
       blocker = undefined;
     }
-    await adminPool.query(`DROP SCHEMA IF EXISTS "${schemaName}" CASCADE`);
+    await dropRegisteredSchemas(adminPool);
     await adminPool.end();
     await removeTempDir(tmpDir);
   });
@@ -83,7 +84,9 @@ describe.runIf(await isTestDatabaseReachable())("startHttpServer bind-failure cl
         { host: "127.0.0.1", port: address.port, authToken: TOKEN, stateless: true },
         { databaseUrl: taggedUrl },
       ),
-    ).rejects.toThrow();
+      // Matched, not bare: an unmatched rejection accepts any failure, which is how this test
+      // spent its life proving the migrations path rather than the bind path.
+    ).rejects.toThrow(/EADDRINUSE|listen/i);
 
     // The pool is closed in the failure path, so none of its connections may survive.
     await waitFor(async () => (await taggedConnectionCount(adminPool, applicationName)) === 0);

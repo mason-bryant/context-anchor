@@ -119,7 +119,10 @@ async function printStatus(context: DbCommandContext): Promise<void> {
       { schemaName: telemetrySchemaNameFor(context.schemaName), migrationsDir: TELEMETRY_MIGRATIONS_DIR },
     ]) {
       const status = await getMigrationStatus(pool, target);
-      log(`schema: ${status.schemaName}`);
+      // Said plainly, because this command used to create whatever schema it was pointed at and
+      // then report it as merely unmigrated — so a mistyped `--schema` produced a plausible
+      // "0 applied, N pending" instead of telling the operator the name does not exist.
+      log(`schema: ${status.schemaName}${status.schemaPresent ? "" : "  (does not exist)"}`);
       log(`  applied: ${String(status.appliedCount)}  pending: ${String(status.pendingCount)}  version: ${status.currentVersion ?? "none"}`);
       for (const file of status.pending) {
         log(`  pending: ${file.filename}`);

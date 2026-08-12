@@ -1,0 +1,185 @@
+import { readFile } from "node:fs/promises";
+import path from "node:path";
+
+import type { Pool } from "pg";
+import pg from "pg";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+
+import { getMigrationStatus, runMigrations } from "../../src/db/migrate.js";
+import { createKnowledgeDatabase, MigrationsPendingError } from "../../src/db/knowledgeDb.js";
+import {
+  dropRegisteredSchemas,
+  isTestDatabaseReachable,
+  TEST_SCHEMA_PATTERN,
+  testSchemaName,
+  TEST_DATABASE_URL,
+} from "./testDatabase.js";
+
+const KNOWLEDGE_MIGRATIONS_DIR = path.resolve(import.meta.dirname, "../../migrations/knowledge");
+
+/**
+ * Guards the two ways this repository accumulated a thousand orphan schemas in its development
+ * database, both of which passed every test at the time.
+ *
+ * The leak was invisible because nothing ever asserted on schemas a test did not name. A suite
+ * can be entirely green while leaving fifteen schemas behind per run, and the only symptom is a
+ * database that slowly fills with names nobody recognises.
+ */
+describe.runIf(await isTestDatabaseReachable())("schema creation is confined to migrations", () => {
+  let pool: Pool;
+
+  beforeAll(() => {
+    pool = new pg.Pool({ connectionString: TEST_DATABASE_URL, max: 3 });
+  });
+
+  afterAll(async () => {
+    await dropRegisteredSchemas(pool);
+    await pool.end();
+  });
+
+  async function schemaExists(schemaName: string): Promise<boolean> {
+    const result = await pool.query<{ present: boolean }>(
+      `SELECT EXISTS (SELECT 1 FROM information_schema.schemata WHERE schema_name = $1) AS present`,
+      [schemaName],
+    );
+    return result.rows[0]?.present === true;
+  }
+
+  it("reports status for a schema that does not exist without bringing it into being", async () => {
+    const schemaName = testSchemaName();
+    expect(await schemaExists(schemaName)).toBe(false);
+
+    const status = await getMigrationStatus(pool, {
+      schemaName,
+      migrationsDir: KNOWLEDGE_MIGRATIONS_DIR,
+    });
+
+    expect(status.schemaPresent).toBe(false);
+    expect(status.appliedCount).toBe(0);
+    expect(status.pendingCount).toBeGreaterThan(0);
+    // The whole point: asking the question left nothing behind.
+    expect(await schemaExists(schemaName)).toBe(false);
+  });
+
+  it("distinguishes an absent schema from one that exists with nothing applied", async () => {
+    const schemaName = testSchemaName();
+    await pool.query(`CREATE SCHEMA "${schemaName}"`);
+
+    const status = await getMigrationStatus(pool, {
+      schemaName,
+      migrationsDir: KNOWLEDGE_MIGRATIONS_DIR,
+    });
+
+    // Same counts as the absent case, different diagnosis — which is why the flag exists.
+    expect(status.schemaPresent).toBe(true);
+    expect(status.appliedCount).toBe(0);
+  });
+
+  it("creates no telemetry schema when startup refuses because telemetry is unmigrated", async () => {
+    const schemaName = testSchemaName();
+    const telemetryName = `${schemaName}_telemetry`;
+    // Knowledge migrated, telemetry deliberately not. Without this the refusal comes from the
+    // knowledge check and returns before telemetry is ever probed — so the leak this test exists
+    // for would not be reachable, and the test would pass against the bug.
+    await runMigrations(pool, { schemaName, migrationsDir: KNOWLEDGE_MIGRATIONS_DIR });
+
+    await expect(
+      createKnowledgeDatabase(TEST_DATABASE_URL, { poolSize: 2, schemaName }),
+    ).rejects.toThrow(MigrationsPendingError);
+
+    // Startup probes telemetry as well as knowledge. While that probe created what it measured,
+    // every refused startup left a telemetry schema behind — including for callers that never
+    // mentioned telemetry at all. That is precisely how startupFailureCleanup, a test with no
+    // interest in telemetry, leaked a schema on every run.
+    expect(await schemaExists(telemetryName)).toBe(false);
+  });
+
+  it("still creates the schema when migrations are actually run", async () => {
+    const schemaName = testSchemaName();
+    await runMigrations(pool, { schemaName, migrationsDir: KNOWLEDGE_MIGRATIONS_DIR });
+
+    expect(await schemaExists(schemaName)).toBe(true);
+    const status = await getMigrationStatus(pool, {
+      schemaName,
+      migrationsDir: KNOWLEDGE_MIGRATIONS_DIR,
+    });
+    expect(status.schemaPresent).toBe(true);
+    expect(status.pendingCount).toBe(0);
+  });
+
+  it("names the absent schema in the startup refusal, rather than only saying migrations are pending", async () => {
+    const schemaName = testSchemaName();
+
+    await expect(
+      createKnowledgeDatabase(TEST_DATABASE_URL, { poolSize: 2, schemaName }),
+    ).rejects.toThrow(/does not exist/);
+  });
+});
+
+/**
+ * These need no database, so they run everywhere the suite does — including wherever the contract
+ * tests above skip themselves. The invariant they protect is the one that makes registration
+ * meaningful: a registered name that the guard cannot recognise is not protected by anything.
+ */
+describe("test schema names stay recognisable to the leak tooling", () => {
+  // Two separate rejections, kept apart because they fail for different reasons and a caller
+  // reading the message needs to know which. A legal schema name of the wrong shape is invisible
+  // to the leak tooling; an illegal one never reaches DDL at all.
+  it("refuses a legal schema name whose shape the leak tooling would not recognise", () => {
+    // Each of these registers nothing and throws, so no schema is created and none can leak.
+    expect(() => testSchemaName("scratch")).toThrow(/would not recognise/);
+    expect(() => testSchemaName("my_test_")).toThrow(/would not recognise/);
+  });
+
+  it("refuses a prefix that is not a legal schema name, before any DDL sees it", () => {
+    // Postgres identifiers cannot start with a digit or carry uppercase unquoted, and
+    // assertValidSchemaName enforces that because schema names are interpolated straight into
+    // DDL. Without the check at the mint these produced names that passed the shape test and
+    // blew up later inside CREATE SCHEMA, with nothing pointing back at the prefix responsible.
+    expect(() => testSchemaName("9lives_test")).toThrow(/not starting with a digit/);
+    expect(() => testSchemaName("Knowledge_Test")).toThrow(/Invalid database schemaName/);
+  });
+
+  it("accepts single and multi-word prefixes, and the names it mints match the guard", () => {
+    for (const prefix of [undefined, "diag_test", "my_feature_test"]) {
+      const name = prefix === undefined ? testSchemaName() : testSchemaName(prefix);
+      expect(name).toMatch(TEST_SCHEMA_PATTERN);
+      // The telemetry sibling is a separate schema that teardown drops and the guard must also
+      // recognise; the base name matching is not enough on its own.
+      expect(`${name}_telemetry`).toMatch(TEST_SCHEMA_PATTERN);
+    }
+  });
+
+  it("leaves the cleanup script importing the pattern rather than restating it", async () => {
+    // This replaces a test that compared two copies of the literal. The copies are gone — the
+    // script imports the canonical value — so the thing worth protecting is no longer "are they
+    // equal" but "is there still only one". A second declaration would drift silently, and a
+    // pattern the guard flags but the script will not sweep is a leak reported on every run and
+    // cleaned by nothing.
+    const source = await readFile(
+      path.resolve(import.meta.dirname, "../../scripts/drop-orphan-test-schemas.ts"),
+      "utf8",
+    );
+    expect(source).toMatch(/import \{ TEST_SCHEMA_PATTERN \} from "\.\.\/test\/db\/testDatabase\.js";/);
+    expect(source).not.toMatch(/(const|let|var)\s+TEST_SCHEMA_PATTERN\s*=/);
+  });
+
+  it("only tells operators to run npm scripts that exist", async () => {
+    // The guard's warning names a command to run next. Renaming the cleanup script left that
+    // message pointing at `node scripts/drop-orphan-test-schemas.mjs`, a path that no longer
+    // existed — advice that fails when followed is worse than no advice, and nothing would have
+    // caught it. Checking the whole file rather than the one known message, so the next command
+    // added to an operator-facing string is covered too.
+    const root = path.resolve(import.meta.dirname, "../..");
+    const source = await readFile(path.join(root, "test/db/schemaLeakGuard.ts"), "utf8");
+    const manifest = JSON.parse(await readFile(path.join(root, "package.json"), "utf8")) as {
+      scripts: Record<string, string>;
+    };
+
+    const referenced = [...source.matchAll(/npm run ([a-z0-9:_-]+)/g)].map((m) => m[1]);
+    expect(referenced.length).toBeGreaterThan(0);
+    for (const script of referenced) {
+      expect(Object.keys(manifest.scripts)).toContain(script);
+    }
+  });
+});

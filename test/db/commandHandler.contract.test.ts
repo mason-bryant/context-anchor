@@ -8,7 +8,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { ensureBootstrap, type BootstrapResult } from "../../src/db/bootstrap.js";
 import { CommandHandler, ConcurrentModificationError } from "../../src/db/commandHandler.js";
 import { runMigrations } from "../../src/db/migrate.js";
-import { isTestDatabaseReachable, TEST_DATABASE_URL } from "./testDatabase.js";
+import { dropRegisteredSchemas, isTestDatabaseReachable, TEST_DATABASE_URL, testSchemaName } from "./testDatabase.js";
 
 const REAL_MIGRATIONS_DIR = path.resolve(import.meta.dirname, "../../migrations/knowledge");
 
@@ -20,14 +20,14 @@ describe.runIf(await isTestDatabaseReachable())("CommandHandler (real Postgres)"
 
   beforeAll(async () => {
     pool = new pg.Pool({ connectionString: TEST_DATABASE_URL, max: 6 });
-    schemaName = `knowledge_test_${randomUUID().replace(/-/g, "").slice(0, 12)}`;
+    schemaName = testSchemaName("knowledge_test");
     await runMigrations(pool, { schemaName, migrationsDir: REAL_MIGRATIONS_DIR });
     bootstrap = await ensureBootstrap(pool, { schemaName });
     handler = new CommandHandler(pool, schemaName);
   });
 
   afterAll(async () => {
-    await pool.query(`DROP SCHEMA IF EXISTS "${schemaName}" CASCADE`);
+    await dropRegisteredSchemas(pool);
     await pool.end();
   });
 

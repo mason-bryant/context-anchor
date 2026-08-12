@@ -1,4 +1,3 @@
-import { randomUUID } from "node:crypto";
 
 import type { Pool } from "pg";
 import pg from "pg";
@@ -11,7 +10,7 @@ import { telemetrySchemaNameFor } from "../../src/db/config.js";
 import { importDocuments } from "../../src/db/importDocuments.js";
 import { planRoutedBundle, reportRecordUse } from "../../src/db/routing/plan.js";
 import { defaultRanker, type Ranker } from "../../src/db/routing/ranker.js";
-import { dropAllSchemas, isTestDatabaseReachable, migrateAllSchemas, TEST_DATABASE_URL } from "./testDatabase.js";
+import { dropAllSchemas, isTestDatabaseReachable, migrateAllSchemas, TEST_DATABASE_URL, testSchemaName } from "./testDatabase.js";
 
 const DOC = `---
 project: anchor-mcp
@@ -37,7 +36,7 @@ describe.runIf(await isTestDatabaseReachable())("routing diagnostics (real Postg
 
   beforeEach(async () => {
     pool = new pg.Pool({ connectionString: TEST_DATABASE_URL, max: 4 });
-    schemaName = `diag_test_${randomUUID().replace(/-/g, "").slice(0, 12)}`;
+    schemaName = testSchemaName("diag_test");
     telemetrySchema = telemetrySchemaNameFor(schemaName);
     await migrateAllSchemas(pool, schemaName);
     bootstrap = await ensureBootstrap(pool, { schemaName });
