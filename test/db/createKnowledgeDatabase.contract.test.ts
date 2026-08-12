@@ -51,7 +51,8 @@ describe.runIf(await isTestDatabaseReachable())("createKnowledgeDatabase startup
   it("starts successfully once migrations have been applied, and reports the applied schema version", async () => {
     // Taken from the registry rather than derived from schemaName: a derived name is exactly
     // what teardown does not know about, and this test leaked its telemetry schema on every run.
-    const readySchema = testSchemaName();
+    // The prefix keeps the "this is the migrated one" signal the old `_ready` suffix carried.
+    const readySchema = testSchemaName("ready_test");
     const { applied } = await runMigrations(adminPool, {
       schemaName: readySchema,
       migrationsDir: REAL_MIGRATIONS_DIR,
