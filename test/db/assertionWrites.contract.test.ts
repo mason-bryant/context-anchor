@@ -518,6 +518,38 @@ describe.runIf(await isTestDatabaseReachable())("assertion writes, T3 slice 2 (r
       expect(result.added).toEqual(["security"]);
     });
 
+    // commands.idempotency_key is a btree index, so a literal key built from a long stable key
+    // and a large scope set fails at write time on the size of the caller's data.
+    it("keeps the idempotency key bounded regardless of input size", async () => {
+      const created = await author("Tokens are required", "The reading.");
+      const many = Array.from({ length: 60 }, (_, i) => `bulk-scope-${String(i).padStart(3, "0")}`);
+      for (const slug of many) {
+        await pool.query(
+          `INSERT INTO "${schemaName}".scopes (workspace_guid, scope_guid, scope_slug, title, scope_kind)
+           VALUES ($1, gen_random_uuid(), $2, $2, 'practice')`,
+          [bootstrap.workspaceGuid, slug],
+        );
+      }
+
+      await setRecordScopes({
+        pool,
+        schemaName,
+        handler,
+        workspaceGuid: bootstrap.workspaceGuid,
+        actorPrincipalGuid: bootstrap.ownerPrincipalGuid,
+        recordType: "assertion",
+        recordGuid: created.assertionGuid,
+        scopeSlugs: many,
+        reason: "a very wide correction",
+      });
+
+      const key = await pool.query<{ idempotency_key: string }>(
+        `SELECT idempotency_key FROM "${schemaName}".commands
+          WHERE command_type = 'record.setScopes' ORDER BY accepted_at DESC LIMIT 1`,
+      );
+      expect(key.rows[0]!.idempotency_key.length).toBeLessThan(128);
+    });
+
     it("refuses a section association given no stable key", async () => {
       await expect(
         setRecordScopes({
