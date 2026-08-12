@@ -114,12 +114,20 @@ describe.runIf(await isTestDatabaseReachable())("importDocuments (real Postgres)
    * undo it, or the correction lasts only until the next import and the operator is never told.
    */
   describe("manual corrections survive a re-import", () => {
+    /**
+     * Counts live *section* associations. Constrained by record_type for the same reason the
+     * production suppression lookup is: stable_key is required on sections and merely permitted
+     * on other record types, so a query matching on stable key alone counts rows belonging to a
+     * different kind of record. These tests deliberately insert such a row, so leaving it
+     * unconstrained would make them agree with the code by coincidence.
+     */
     async function liveAssociation(stableKeyFragment: string, scopeSlug: string): Promise<number> {
       const result = await pool.query<{ n: number }>(
         `SELECT count(*)::int AS n
          FROM "${schemaName}".record_scopes a
          JOIN "${schemaName}".scopes s ON s.scope_guid = a.scope_guid
          WHERE a.workspace_guid = $1 AND a.retired_at IS NULL
+           AND a.record_type = 'section'
            AND a.stable_key LIKE '%' || $2 || '%'
            AND s.scope_slug = $3`,
         [bootstrap.workspaceGuid, stableKeyFragment, scopeSlug],

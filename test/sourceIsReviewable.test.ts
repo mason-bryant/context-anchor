@@ -19,7 +19,16 @@ import { describe, expect, it } from "vitest";
  */
 
 const ROOT = path.resolve(import.meta.dirname, "..");
-const DIRECTORIES = ["src", "test", "scripts"];
+
+/**
+ * Scanned by exclusion, not by an allow-list of directories.
+ *
+ * The first version listed src, test and scripts — while accepting .sql and .md, which live
+ * mostly in migrations/ and docs/. It would have passed over a NUL byte in the very migration
+ * this guard shipped alongside. Naming the places to skip is the only version that covers
+ * directories nobody has created yet.
+ */
+const SKIPPED_DIRECTORIES = new Set(["node_modules", "dist", "coverage", "build"]);
 const EXTENSIONS = new Set([".ts", ".tsx", ".mts", ".js", ".mjs", ".sql", ".json", ".md"]);
 
 async function sourceFiles(dir: string): Promise<string[]> {
@@ -28,7 +37,10 @@ async function sourceFiles(dir: string): Promise<string[]> {
   for (const entry of entries) {
     const full = path.join(dir, entry.name);
     if (entry.isDirectory()) {
-      if (entry.name === "node_modules" || entry.name.startsWith(".")) {
+      // Build output is excluded because it is generated from sources this guard already
+      // covers; a NUL there is a symptom, and failing on it would report the same defect twice
+      // while pointing at the file nobody edits.
+      if (SKIPPED_DIRECTORIES.has(entry.name) || entry.name.startsWith(".")) {
         continue;
       }
       found.push(...(await sourceFiles(full)));
@@ -41,7 +53,7 @@ async function sourceFiles(dir: string): Promise<string[]> {
 
 describe("source files stay reviewable", () => {
   it("contains no NUL bytes, which would make Git treat a file as binary", async () => {
-    const files = (await Promise.all(DIRECTORIES.map((d) => sourceFiles(path.join(ROOT, d))))).flat();
+    const files = await sourceFiles(ROOT);
     // Guards the guard: a glob that matched nothing would report success over an empty set.
     expect(files.length).toBeGreaterThan(100);
 
