@@ -42,6 +42,16 @@ export type PlanInput = {
   consumer?: string;
   /** Opt-in: expansion is stateless and the server never reads the task back. */
   storeTaskText?: boolean;
+  /**
+   * Match task terms against assertion titles and section headings as well as scope names.
+   *
+   * Off unless asked for. It is the fix for tasks that name no scope reaching nothing at all
+   * (T-45), but it widens answers sharply on the same workspace — "proposals and review" goes
+   * from 2 routes to 15 of 23 — and 15 of 23 scopes is not a route, it is the workspace with
+   * extra steps. Which trade is right is a question for the shadow ranker and T8, not for a
+   * default chosen here.
+   */
+  recordLexical?: boolean;
 };
 
 /** What a caller supplies; identity and role are the facade's to decide, never the caller's. */
