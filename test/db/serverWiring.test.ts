@@ -167,9 +167,13 @@ describe("listScopeChanges tool registration", () => {
     await server._registeredTools.planRoutedBundle!.handler(parsed);
     expect(received?.recordLexical).toBe(true);
 
-    // And absent when not asked for, so the default stays off at the surface rather than only
-    // in the planner.
-    const bare = schema.parse({ task: "logging retention" });
+    // Omitted, not defaulted to false. The contract this protects is that the surface adds
+    // nothing: a schema carrying `.default(false)` would still leave the signal off, so the
+    // planner's behaviour would look identical, but the key would then be present on every
+    // request and any later code reading "was this asked for" could no longer tell.
+    const bare = schema.parse({ task: "logging retention" }) as Record<string, unknown>;
+    expect(Object.hasOwn(bare, "recordLexical")).toBe(false);
+
     await server._registeredTools.planRoutedBundle!.handler(bare);
     expect(received?.recordLexical).toBeUndefined();
   });

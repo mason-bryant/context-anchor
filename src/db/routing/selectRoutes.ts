@@ -294,8 +294,9 @@ export async function selectRouteCandidates(
       if (hit) {
         add(row.scope_guid, {
           kind: "record-lexical",
-          // No article: "a assertion title" was the alternative, and match reasons are read by
-          // people.
+          // The article is omitted rather than chosen, because `source` is either "assertion"
+          // or "section" and a fixed article is wrong for one of them. Match reasons are read
+          // by people, so "matched section title" beats getting it wrong half the time.
           reason: `task term ${JSON.stringify(hit)} matched ${row.source} title in this scope`,
         });
       }
