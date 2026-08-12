@@ -9,7 +9,12 @@ import { CommandHandler } from "../../src/db/commandHandler.js";
 import { createAssertion } from "../../src/db/createAssertion.js";
 import { createAssertionRelation, SelfRelationError } from "../../src/db/createAssertionRelation.js";
 import { importDocuments } from "../../src/db/importDocuments.js";
-import { setAssertionStatus, AssertionNotFoundError } from "../../src/db/setAssertionStatus.js";
+import {
+  setAssertionStatus,
+  AssertionNotFoundError,
+  SupersededByLiveRelationError,
+  SupersededRequiresRelationError,
+} from "../../src/db/setAssertionStatus.js";
 import {
   setRecordScopes,
   CORRECTED_ASSOCIATION_TYPE,
@@ -64,6 +69,9 @@ describe.runIf(await isTestDatabaseReachable())("assertion writes, T3 slice 2 (r
       `SELECT block_guid FROM "${schemaName}".content_blocks
         WHERE raw_content LIKE '%bearer token%' LIMIT 1`,
     );
+    // Asserted rather than non-null-asserted: if the fixture or block parsing ever changes,
+    // every test in this file fails on a TypeError that names nothing.
+    expect(block.rowCount, "fixture: no content block matched 'bearer token'").toBe(1);
     blockGuid = block.rows[0]!.block_guid;
   });
 
@@ -164,6 +172,87 @@ describe.runIf(await isTestDatabaseReachable())("assertion writes, T3 slice 2 (r
       expect(replay.status).toBe("disputed");
       expect(replay.previousStatus).toBe(first.previousStatus);
       expect(replay.previousStatus).toBe("active");
+    });
+
+    // The design's rule runs both ways. createAssertionRelation enforces it forwards; these are
+    // the two ways it could still be broken from here.
+    it("refuses to mark a claim superseded without a relation saying what replaced it", async () => {
+      const created = await author("Tokens are required", "The reading.");
+
+      await expect(
+        setAssertionStatus({
+          pool,
+          schemaName,
+          handler,
+          workspaceGuid: bootstrap.workspaceGuid,
+          actorPrincipalGuid: bootstrap.ownerPrincipalGuid,
+          assertionGuid: created.assertionGuid,
+          status: "superseded",
+          reason: "superseded by nothing in particular",
+        }),
+      ).rejects.toThrow(SupersededRequiresRelationError);
+    });
+
+    it("refuses to move a claim out of superseded while a live relation holds it there", async () => {
+      const older = await author("Tokens are optional", "Older reading.");
+      const newer = await author("Tokens are required", "Newer reading.");
+      await createAssertionRelation({
+        pool,
+        schemaName,
+        handler,
+        workspaceGuid: bootstrap.workspaceGuid,
+        actorPrincipalGuid: bootstrap.ownerPrincipalGuid,
+        sourceAssertionGuid: newer.assertionGuid,
+        targetAssertionGuid: older.assertionGuid,
+        relationType: "supersedes",
+      });
+
+      await expect(
+        setAssertionStatus({
+          pool,
+          schemaName,
+          handler,
+          workspaceGuid: bootstrap.workspaceGuid,
+          actorPrincipalGuid: bootstrap.ownerPrincipalGuid,
+          assertionGuid: older.assertionGuid,
+          status: "active",
+          reason: "actually it still stands",
+        }),
+      ).rejects.toThrow(SupersededByLiveRelationError);
+    });
+
+    // Retiring the relation releases the claim, so the invariant constrains without trapping.
+    it("allows the standing to change once the relation is retired", async () => {
+      const older = await author("Tokens are optional", "Older reading.");
+      const newer = await author("Tokens are required", "Newer reading.");
+      await createAssertionRelation({
+        pool,
+        schemaName,
+        handler,
+        workspaceGuid: bootstrap.workspaceGuid,
+        actorPrincipalGuid: bootstrap.ownerPrincipalGuid,
+        sourceAssertionGuid: newer.assertionGuid,
+        targetAssertionGuid: older.assertionGuid,
+        relationType: "supersedes",
+      });
+      await pool.query(
+        `UPDATE "${schemaName}".assertion_relations SET retired_at = now()
+          WHERE target_assertion_guid = $1`,
+        [older.assertionGuid],
+      );
+
+      const result = await setAssertionStatus({
+        pool,
+        schemaName,
+        handler,
+        workspaceGuid: bootstrap.workspaceGuid,
+        actorPrincipalGuid: bootstrap.ownerPrincipalGuid,
+        assertionGuid: older.assertionGuid,
+        status: "active",
+        reason: "the replacement was withdrawn",
+      });
+
+      expect(result.status).toBe("active");
     });
 
     it("refuses a claim that does not exist rather than reporting success", async () => {

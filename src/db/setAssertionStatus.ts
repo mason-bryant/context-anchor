@@ -42,6 +42,35 @@ export type SetAssertionStatusResult = {
   replayed: boolean;
 };
 
+/**
+ * Both directions of the design's rule that status and lineage cannot disagree. The coupling in
+ * createAssertionRelation only enforces it forwards — recording a supersedes transitions the
+ * target — which leaves two ways to break it here: marking a claim superseded when nothing
+ * supersedes it, and moving a claim out of superseded while the relation that put it there is
+ * still live.
+ */
+export class SupersededRequiresRelationError extends Error {
+  constructor(assertionGuid: string) {
+    super(
+      `Cannot mark ${assertionGuid} superseded directly. Superseding is a relationship, not a ` +
+        `standing: record it with createAssertionRelation(relationType: "supersedes"), which ` +
+        `transitions the target in the same command. Setting the status alone would leave a ` +
+        `claim that nothing supersedes.`,
+    );
+    this.name = "SupersededRequiresRelationError";
+  }
+}
+
+export class SupersededByLiveRelationError extends Error {
+  constructor(assertionGuid: string) {
+    super(
+      `Cannot change the standing of ${assertionGuid} while a live supersedes relation targets ` +
+        `it. Retire the relation first, or the claim's status and its lineage would disagree.`,
+    );
+    this.name = "SupersededByLiveRelationError";
+  }
+}
+
 export class AssertionNotFoundError extends Error {
   constructor(assertionGuid: string) {
     super(`No live assertion ${assertionGuid} in this workspace.`);
@@ -70,6 +99,28 @@ export async function setAssertionStatus(
     apply: async (tx) => {
       const current = await loadAssertion(tx, input);
       previousStatus = current.status;
+
+      // Superseding is a relationship, not a standing. Allowing it to be set directly would
+      // produce a claim marked superseded with no record of what replaced it — the reader's
+      // obvious next question, unanswerable.
+      if (input.status === "superseded") {
+        throw new SupersededRequiresRelationError(input.assertionGuid);
+      }
+
+      // And the reverse: moving out of superseded while the relation that put it there is still
+      // live would leave lineage asserting a replacement that the status denies.
+      if (current.status === "superseded") {
+        const held = await tx.query(
+          `SELECT 1 FROM "${input.schemaName}".assertion_relations
+            WHERE workspace_guid = $1 AND target_assertion_guid = $2
+              AND relation_type = 'supersedes' AND retired_at IS NULL
+            LIMIT 1`,
+          [input.workspaceGuid, input.assertionGuid],
+        );
+        if (held.rows.length > 0) {
+          throw new SupersededByLiveRelationError(input.assertionGuid);
+        }
+      }
 
       const updated = await tx.query<{ status: AssertionStatus; version: number }>(
         `UPDATE "${input.schemaName}".assertions
