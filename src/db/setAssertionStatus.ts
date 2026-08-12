@@ -78,7 +78,14 @@ export async function setAssertionStatus(
         RETURNING status, version`,
         [input.workspaceGuid, input.assertionGuid, input.status],
       );
-      version = updated.rows[0]!.version;
+      // Zero rows means the claim stopped being live between the read above and this write —
+      // another transaction retired it. Without this check that surfaces as a TypeError on an
+      // undefined row rather than the domain refusal the caller can act on.
+      const row = updated.rows[0];
+      if (!row) {
+        throw new AssertionNotFoundError(input.assertionGuid);
+      }
+      version = row.version;
 
       return {
         resultingValue: {
@@ -110,10 +117,23 @@ export async function setAssertionStatus(
   if (!row) {
     throw new AssertionNotFoundError(input.assertionGuid);
   }
+
+  // The original command's own record of what it changed. Reporting the current status as
+  // `previousStatus` would tell the caller nothing moved, which is the one thing a replay must
+  // not imply — the change did happen, just not on this call.
+  const original = await input.pool.query<{ resulting_value: { previousStatus?: AssertionStatus } }>(
+    `SELECT resulting_value FROM "${input.schemaName}".mutation_log
+      WHERE workspace_guid = $1 AND command_guid = $2 AND entry_type = 'assertion.statusChanged'
+      LIMIT 1`,
+    // The handler returns the *original* command's guid on a replay, which is the one whose
+    // mutation_log entry recorded the transition.
+    [input.workspaceGuid, command.commandGuid],
+  );
+
   return {
     assertionGuid: input.assertionGuid,
     status: row.status,
-    previousStatus: row.status,
+    previousStatus: original.rows[0]?.resulting_value?.previousStatus ?? row.status,
     version: row.version,
     replayed: true,
   };

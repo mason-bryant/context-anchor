@@ -277,7 +277,10 @@ const LIVE_ASSOCIATIONS_SQL = (schema: string, matchColumn: string) =>
      JOIN "${schema}".scopes s
        ON s.workspace_guid = a.workspace_guid AND s.scope_guid = a.scope_guid
     WHERE a.workspace_guid = $1 AND a.record_type = $2 AND a.${matchColumn} = $3
-      AND a.retired_at IS NULL`;
+      -- Both sides must be live. An association to a retired scope is not a live membership,
+      -- and counting it would report as unchanged a scope that nothing else in the codebase
+      -- considers to exist.
+      AND a.retired_at IS NULL AND s.retired_at IS NULL`;
 
 async function loadLiveAssociations(
   tx: CommandTransaction,

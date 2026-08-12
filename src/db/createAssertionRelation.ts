@@ -132,6 +132,12 @@ export async function createAssertionRelation(
         // not bookkeeping: its primary key is what serializes concurrent writers, and
         // `expectedVersion` is checked against it, so omitting it would let two supersedes
         // races both commit and leave `assertions.version` ahead of its own history.
+        // Zero rows means the target stopped being live between the read above and this write.
+        // Reporting that as a domain refusal keeps it distinguishable from a bug here.
+        if (!transitioned.rows[0]) {
+          throw new AssertionNotFoundError(input.targetAssertionGuid);
+        }
+
         await tx.query(
           `INSERT INTO "${schema}".record_versions
              (workspace_guid, entity_type, entity_guid, version, payload, changed_by_principal_guid, command_guid)

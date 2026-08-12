@@ -142,6 +142,30 @@ describe.runIf(await isTestDatabaseReachable())("assertion writes, T3 slice 2 (r
       await expect(setAssertionStatus(args)).rejects.toThrow(AssertionNotFoundError);
     });
 
+    // A replay must not imply nothing moved: the change did happen, just not on this call. The
+    // original command's mutation_log entry is the only record of what the status was before.
+    it("reports the original previous status on a replay", async () => {
+      const created = await author("Tokens are required", "The reading.");
+      const args = {
+        pool,
+        schemaName,
+        handler,
+        workspaceGuid: bootstrap.workspaceGuid,
+        actorPrincipalGuid: bootstrap.ownerPrincipalGuid,
+        assertionGuid: created.assertionGuid,
+        status: "disputed" as const,
+        reason: "a second reading contradicts it",
+      };
+
+      const first = await setAssertionStatus(args);
+      const replay = await setAssertionStatus(args);
+
+      expect(replay.replayed).toBe(true);
+      expect(replay.status).toBe("disputed");
+      expect(replay.previousStatus).toBe(first.previousStatus);
+      expect(replay.previousStatus).toBe("active");
+    });
+
     it("refuses a claim that does not exist rather than reporting success", async () => {
       await expect(
         setAssertionStatus({
@@ -467,6 +491,31 @@ describe.runIf(await isTestDatabaseReachable())("assertion writes, T3 slice 2 (r
         [created.assertionGuid],
       );
       expect(streams.rows.map((r) => r.entity_type).sort()).toEqual(["assertion", MEMBERSHIP_ENTITY_TYPE].sort());
+    });
+
+    // An association to a retired scope is not a live membership; counting it would report a
+    // scope as unchanged that nothing else in the codebase considers to exist.
+    it("ignores associations whose scope has been retired", async () => {
+      const created = await author("Tokens are required", "The reading.");
+      await pool.query(
+        `UPDATE "${schemaName}".scopes SET retired_at = now() WHERE scope_slug = 'anchor-mcp'`,
+      );
+
+      const result = await setRecordScopes({
+        pool,
+        schemaName,
+        handler,
+        workspaceGuid: bootstrap.workspaceGuid,
+        actorPrincipalGuid: bootstrap.ownerPrincipalGuid,
+        recordType: "assertion",
+        recordGuid: created.assertionGuid,
+        scopeSlugs: ["security"],
+        reason: "the old scope is gone",
+      });
+
+      // The dead scope is neither retired again nor reported as still live membership.
+      expect(result.retired).toEqual([]);
+      expect(result.added).toEqual(["security"]);
     });
 
     it("refuses a section association given no stable key", async () => {
