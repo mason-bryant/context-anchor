@@ -32,24 +32,26 @@ const TEST_SCHEMA_PATTERN = /^[a-z0-9]+_test_[0-9a-f]{12}(_ready)?(_telemetry)?$
 
 let before: Set<string> | undefined;
 
-async function listSchemas(): Promise<Set<string> | undefined> {
+async function listSchemas(): Promise<Set<string>> {
   const pool = new pg.Pool({ connectionString: TEST_DATABASE_URL, max: 1, connectionTimeoutMillis: 2_000 });
   try {
     const result = await pool.query<{ schema_name: string }>(
       `SELECT schema_name FROM information_schema.schemata`,
     );
     return new Set(result.rows.map((row) => row.schema_name));
-  } catch {
-    // No database here — the contract tests skip themselves for the same reason, and a guard
-    // that failed the run in that case would make the suite unrunnable without Postgres.
-    return undefined;
   } finally {
     await pool.end().catch(() => {});
   }
 }
 
 export async function setup(): Promise<void> {
-  before = await listSchemas();
+  try {
+    before = await listSchemas();
+  } catch {
+    // No database here — the contract tests skip themselves for the same reason, and a guard
+    // that failed the run in that case would make the suite unrunnable without Postgres.
+    before = undefined;
+  }
 }
 
 export async function teardown(): Promise<void> {
@@ -59,10 +61,12 @@ export async function teardown(): Promise<void> {
   if (!baseline) {
     return;
   }
+
+  // Deliberately not caught. Reaching here means setup already listed the schemas, so the
+  // database was there when the run started; a failure now is a real fault, not an absent
+  // Postgres. Swallowing it would turn the guard off silently and leave a green run that
+  // checked nothing — the exact shape of the bug this file exists to prevent.
   const after = await listSchemas();
-  if (!after) {
-    return;
-  }
 
   const leaked = [...after].filter((name) => !baseline.has(name) && TEST_SCHEMA_PATTERN.test(name)).sort();
   if (leaked.length === 0) {

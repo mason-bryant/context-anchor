@@ -122,8 +122,13 @@ export async function createTestSchemas(pool: Pool, prefix?: string): Promise<st
 }
 
 /**
- * Drops every schema handed out by `testSchemaName`/`createTestSchemas` in this worker. Safe to
- * call more than once, and safe when a test already dropped its own.
+ * Drops every schema handed out by `testSchemaName`/`createTestSchemas` in this module instance.
+ * Safe to call more than once, and safe when a test already dropped its own.
+ *
+ * "This module instance" means one test file, which holds only while Vitest gives each file its
+ * own module registry — `isolate: true`, set explicitly in vitest.config.ts for this reason. With
+ * isolation off, files in a worker would share `registered`, and this would drop schemas another
+ * file is still using.
  */
 export async function dropRegisteredSchemas(pool: Pool): Promise<void> {
   for (const schemaName of registered) {

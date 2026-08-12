@@ -16,6 +16,12 @@ export default defineConfig({
     // leaked, which is exactly how this suite stayed green while filling the development
     // database with a thousand orphans.
     globalSetup: ["./test/db/schemaLeakGuard.ts"],
+    // Vitest's default, set explicitly because something now depends on it. The test-schema
+    // registry in test/db/testDatabase.ts is module state, so it is per-file only while files
+    // get their own module instances. Turning isolation off to speed the suite up would make
+    // one file's teardown drop schemas another file is still using — a cross-file flake with
+    // no obvious connection to the setting that caused it.
+    isolate: true,
     // Vitest transpiles through esbuild, which strips type annotations without checking them —
     // so a green `vitest run` says nothing about whether the types hold. That is not theoretical:
     // a result type missing a field its returns already set passed 26 contract tests here, and
