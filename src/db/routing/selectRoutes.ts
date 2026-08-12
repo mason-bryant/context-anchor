@@ -184,6 +184,16 @@ export async function selectRouteCandidates(
   );
   const readable = [...byGuid.values()];
 
+  // Nothing below can produce a candidate when no scope is readable: every producer routes
+  // through add(), which drops any scope absent from byGuid. Returning here skips whichever
+  // producers would otherwise query to populate a map guaranteed to stay empty -- at most the
+  // path mapping read, the relation hop, and the record-lexical scan over every assertion title
+  // and current section heading in the workspace. A caller with no grants is a valid state, not
+  // an error, and it should cost nothing.
+  if (readable.length === 0) {
+    return [];
+  }
+
   const signals = new Map<string, MatchSignal[]>();
   // Readability is enforced here, once, rather than at each producer. An unreadable scope
   // reaching this map would otherwise survive as far as record loading — a database read for
