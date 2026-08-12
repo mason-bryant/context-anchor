@@ -12,7 +12,7 @@ import { ensureBootstrap, type BootstrapResult } from "../../src/db/bootstrap.js
 import { CommandHandler } from "../../src/db/commandHandler.js";
 import { AnchorRepository } from "../../src/git/repo.js";
 import { startHttpServer } from "../../src/http/server.js";
-import { isTestDatabaseReachable, TEST_DATABASE_URL, migrateAllSchemas } from "./testDatabase.js";
+import { createTestSchemas, dropRegisteredSchemas, isTestDatabaseReachable, TEST_DATABASE_URL } from "./testDatabase.js";
 import { removeTempDir } from "../tempDir.js";
 
 const TOKEN = "test-token";
@@ -27,8 +27,7 @@ describe.runIf(await isTestDatabaseReachable())("GET /api/db/scope-changes (real
 
   beforeEach(async () => {
     adminPool = new pg.Pool({ connectionString: TEST_DATABASE_URL, max: 3 });
-    schemaName = `knowledge_test_${randomUUID().replace(/-/g, "").slice(0, 12)}`;
-    await migrateAllSchemas(adminPool, schemaName);
+    schemaName = await createTestSchemas(adminPool);
     bootstrap = await ensureBootstrap(adminPool, { schemaName });
 
     const handler = new CommandHandler(adminPool, schemaName);
@@ -86,7 +85,7 @@ describe.runIf(await isTestDatabaseReachable())("GET /api/db/scope-changes (real
       await new Promise<void>((resolve, reject) => server!.close((e) => (e ? reject(e) : resolve())));
       server = undefined;
     }
-    await adminPool.query(`DROP SCHEMA IF EXISTS "${schemaName}" CASCADE`);
+    await dropRegisteredSchemas(adminPool);
     await adminPool.end();
     await removeTempDir(tmpDir);
   });

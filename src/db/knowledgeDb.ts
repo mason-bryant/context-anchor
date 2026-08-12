@@ -58,9 +58,16 @@ export class ScopeNotFoundError extends Error {
 }
 
 export class MigrationsPendingError extends Error {
-  constructor(schemaName: string, pendingCount: number) {
+  constructor(schemaName: string, pendingCount: number, schemaPresent = true) {
     super(
-      `Database schema "${schemaName}" has ${pendingCount} pending migration(s). ` +
+      // An absent schema and an unmigrated one both leave every migration pending, but they call
+      // for different actions: one is "migrate", the other is usually "you named the wrong
+      // schema". Startup used to create the schema while checking it, which made the difference
+      // unobservable — now that the check is read-only, it is worth saying out loud.
+      (schemaPresent
+        ? `Database schema "${schemaName}" has ${pendingCount} pending migration(s). `
+        : `Database schema "${schemaName}" does not exist, so all ${pendingCount} migration(s) are pending. ` +
+          `If that name is unexpected, check the configured schema before migrating. `) +
         `Run \`anchor-mcp db migrate\` before starting the server.`,
     );
     this.name = "MigrationsPendingError";
@@ -325,7 +332,7 @@ export async function createKnowledgeDatabase(
       migrationsDir: KNOWLEDGE_MIGRATIONS_DIR,
     });
     if (status.pendingCount > 0) {
-      throw new MigrationsPendingError(resolvedConfig.schemaName, status.pendingCount);
+      throw new MigrationsPendingError(resolvedConfig.schemaName, status.pendingCount, status.schemaPresent);
     }
 
     // Checked with the same refusal as knowledge: retrieval writes telemetry on every
@@ -337,7 +344,11 @@ export async function createKnowledgeDatabase(
       migrationsDir: TELEMETRY_MIGRATIONS_DIR,
     });
     if (telemetryStatus.pendingCount > 0) {
-      throw new MigrationsPendingError(telemetrySchemaName, telemetryStatus.pendingCount);
+      throw new MigrationsPendingError(
+        telemetrySchemaName,
+        telemetryStatus.pendingCount,
+        telemetryStatus.schemaPresent,
+      );
     }
 
     const bootstrap = await ensureBootstrap(pool, { schemaName: resolvedConfig.schemaName });

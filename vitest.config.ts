@@ -12,6 +12,10 @@ export default defineConfig({
   test: {
     include: [TEST_FILES],
     testTimeout: 20_000,
+    // Runs once around the whole suite. Per-file teardown cannot see schemas another file
+    // leaked, which is exactly how this suite stayed green while filling the development
+    // database with a thousand orphans.
+    globalSetup: ["./test/db/schemaLeakGuard.ts"],
     // Vitest transpiles through esbuild, which strips type annotations without checking them —
     // so a green `vitest run` says nothing about whether the types hold. That is not theoretical:
     // a result type missing a field its returns already set passed 26 contract tests here, and

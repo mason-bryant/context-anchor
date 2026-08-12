@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { runMigrations } from "../../src/db/migrate.js";
 import type { Pool } from "pg";
@@ -90,6 +91,45 @@ export async function migrateAllSchemas(pool: Pool, schemaName: string): Promise
 export async function dropAllSchemas(pool: Pool, schemaName: string): Promise<void> {
   await pool.query(`DROP SCHEMA IF EXISTS "${schemaName}" CASCADE`);
   await pool.query(`DROP SCHEMA IF EXISTS "${telemetrySchemaNameFor(schemaName)}" CASCADE`);
+}
+
+/**
+ * A unique schema name for one test, remembered so teardown does not have to be told about it.
+ *
+ * Pairing `migrateAllSchemas` with `dropAllSchemas` by hand was a convention, and it did not
+ * hold: four contract files created a telemetry schema and tore down with a bare
+ * `DROP SCHEMA "<base>"`, leaking fifteen telemetry schemas per suite run and a thousand over
+ * the development database's life. Nothing linked the two calls, so each new test had to
+ * rediscover the pairing. Registering the name at creation makes the drop automatic instead.
+ */
+const registered = new Set<string>();
+
+export function testSchemaName(prefix = "knowledge_test"): string {
+  const name = `${prefix}_${randomUUID().replace(/-/g, "").slice(0, 12)}`;
+  registered.add(name);
+  return name;
+}
+
+/**
+ * Creates a uniquely named pair of schemas and registers them for teardown. Callers that need a
+ * second schema in the same test (a `_ready` variant, say) should take it from here too rather
+ * than deriving a name locally — a derived name is exactly what teardown will not know about.
+ */
+export async function createTestSchemas(pool: Pool, prefix?: string): Promise<string> {
+  const schemaName = testSchemaName(prefix);
+  await migrateAllSchemas(pool, schemaName);
+  return schemaName;
+}
+
+/**
+ * Drops every schema handed out by `testSchemaName`/`createTestSchemas` in this worker. Safe to
+ * call more than once, and safe when a test already dropped its own.
+ */
+export async function dropRegisteredSchemas(pool: Pool): Promise<void> {
+  for (const schemaName of registered) {
+    await dropAllSchemas(pool, schemaName);
+  }
+  registered.clear();
 }
 
 /** Telemetry only, for tests that assert on the knowledge migration result itself. */
