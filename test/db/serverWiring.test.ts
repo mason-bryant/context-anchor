@@ -171,7 +171,7 @@ describe("listScopeChanges tool registration", () => {
     // in the planner.
     const bare = schema.parse({ task: "logging retention" });
     await server._registeredTools.planRoutedBundle!.handler(bare);
-    expect(received?.recordLexical).toBeUndefined()
+    expect(received?.recordLexical).toBeUndefined();
   });
 
   it("trims scope and since at the schema, so a padded value resolves instead of failing downstream", () => {

@@ -198,8 +198,14 @@ export async function selectRouteCandidates(
     if (existing) {
       // Identical signals are dropped rather than accumulated. One scope can reach the same
       // record through more than one association row -- live uniqueness is per association_type
-      // -- so the same title would otherwise repeat its reason, padding matchReasons that a
-      // person reads and inflating the distinct-signal count the ranker's first tier uses.
+      // -- so the same title would otherwise repeat its reason verbatim.
+      //
+      // This does not change ranking under the default ranker: its first tier counts distinct
+      // signal *kinds*, so same-kind repeats were already collapsed there. The reason to drop
+      // them is that matchReasons is read by people and doubles as the explanation of why a
+      // route ranked where it did, and a list that says the same thing four times explains
+      // less than one that says it once. A replaceable ranker (A3) may also count raw signals,
+      // and should not inherit a duplicate that means nothing.
       if (existing.some((held) => held.kind === signal.kind && held.reason === signal.reason)) {
         return;
       }
