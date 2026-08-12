@@ -116,6 +116,31 @@ describe.runIf(await isTestDatabaseReachable())("assertion writes, T3 slice 2 (r
       expect(settled.version).toBe(2);
     });
 
+    // The replay branch is the only path some callers ever take, so a liveness filter missing
+    // there would hand back a retired claim as live while the write path refuses the same one.
+    it("refuses a retired claim on the replay path too", async () => {
+      const created = await author("Tokens are required", "The reading.");
+      const args = {
+        pool,
+        schemaName,
+        handler,
+        workspaceGuid: bootstrap.workspaceGuid,
+        actorPrincipalGuid: bootstrap.ownerPrincipalGuid,
+        assertionGuid: created.assertionGuid,
+        status: "disputed" as const,
+        reason: "a second reading contradicts it",
+      };
+      await setAssertionStatus(args);
+
+      await pool.query(
+        `UPDATE "${schemaName}".assertions SET retired_at = now() WHERE assertion_guid = $1`,
+        [created.assertionGuid],
+      );
+
+      // Same idempotency key, so this takes the replay branch rather than the write path.
+      await expect(setAssertionStatus(args)).rejects.toThrow(AssertionNotFoundError);
+    });
+
     it("refuses a claim that does not exist rather than reporting success", async () => {
       await expect(
         setAssertionStatus({
@@ -157,6 +182,36 @@ describe.runIf(await isTestDatabaseReachable())("assertion writes, T3 slice 2 (r
       expect((await statusOf(newer.assertionGuid)).status).toBe("active");
     });
 
+    // The handler snapshots its own entity — the relation — so the target's version advancing
+    // without a row here would leave assertions.version ahead of its own history, and
+    // record_versions' primary key is what serializes concurrent writers.
+    it("snapshots the superseded target, not only the relation", async () => {
+      const older = await author("Tokens are optional", "Older reading.");
+      const newer = await author("Tokens are required", "Newer reading.");
+
+      await createAssertionRelation({
+        pool,
+        schemaName,
+        handler,
+        workspaceGuid: bootstrap.workspaceGuid,
+        actorPrincipalGuid: bootstrap.ownerPrincipalGuid,
+        sourceAssertionGuid: newer.assertionGuid,
+        targetAssertionGuid: older.assertionGuid,
+        relationType: "supersedes",
+      });
+
+      const settled = await statusOf(older.assertionGuid);
+      const snapshots = await pool.query<{ version: number; payload: { status: string } }>(
+        `SELECT version, payload FROM "${schemaName}".record_versions
+          WHERE entity_type = 'assertion' AND entity_guid = $1 ORDER BY version DESC`,
+        [older.assertionGuid],
+      );
+      // The newest snapshot's version matches the row it describes, with no gap behind it.
+      expect(snapshots.rows[0]!.version).toBe(settled.version);
+      expect(snapshots.rows[0]!.payload.status).toBe("superseded");
+      expect(snapshots.rows.map((r) => r.version)).toEqual([2, 1]);
+    });
+
     it("leaves standing alone for a relation that is not supersedes", async () => {
       const left = await author("Tokens are optional", "One reading.");
       const right = await author("Tokens are required", "Another reading.");
@@ -175,6 +230,30 @@ describe.runIf(await isTestDatabaseReachable())("assertion writes, T3 slice 2 (r
       // A contradiction is not a resolution: both stay active until someone decides.
       expect((await statusOf(left.assertionGuid)).status).toBe("active");
       expect((await statusOf(right.assertionGuid)).status).toBe("active");
+    });
+
+    // The payload is what mutation_log renders from. Recording the target's unchanged status
+    // under a field named for a transition would read as a transition that never happened.
+    it("records no target status for a relation that transitions nothing", async () => {
+      const left = await author("Tokens are optional", "One reading.");
+      const right = await author("Tokens are required", "Another reading.");
+
+      await createAssertionRelation({
+        pool,
+        schemaName,
+        handler,
+        workspaceGuid: bootstrap.workspaceGuid,
+        actorPrincipalGuid: bootstrap.ownerPrincipalGuid,
+        sourceAssertionGuid: right.assertionGuid,
+        targetAssertionGuid: left.assertionGuid,
+        relationType: "contradicts",
+      });
+
+      const logged = await pool.query<{ resulting_value: Record<string, unknown> }>(
+        `SELECT resulting_value FROM "${schemaName}".mutation_log
+          WHERE entry_type = 'assertion.related' ORDER BY recorded_at DESC LIMIT 1`,
+      );
+      expect(logged.rows[0]!.resulting_value).not.toHaveProperty("targetStatus");
     });
 
     it("refuses a claim relating to itself", async () => {
@@ -280,6 +359,76 @@ describe.runIf(await isTestDatabaseReachable())("assertion writes, T3 slice 2 (r
         [created.assertionGuid],
       );
       expect(Number(retired.rows[0]!.count)).toBe(1);
+    });
+
+    // record_scopes associations do not grant access, so filing the history under a scope the
+    // record was merely associated with would expose its existence to that scope's readers.
+    it("files the change under the record's owning scope, not one it was associated with", async () => {
+      const created = await author("Tokens are required", "The reading.");
+      const owner = await pool.query<{ owner_scope_guid: string }>(
+        `SELECT owner_scope_guid FROM "${schemaName}".assertions WHERE assertion_guid = $1`,
+        [created.assertionGuid],
+      );
+
+      await setRecordScopes({
+        pool,
+        schemaName,
+        handler,
+        workspaceGuid: bootstrap.workspaceGuid,
+        actorPrincipalGuid: bootstrap.ownerPrincipalGuid,
+        recordType: "assertion",
+        recordGuid: created.assertionGuid,
+        scopeSlugs: ["security"],
+        reason: "this is about auth",
+      });
+
+      const logged = await pool.query<{ owner_scope_guid: string }>(
+        `SELECT owner_scope_guid FROM "${schemaName}".mutation_log
+          WHERE entry_type = 'record.scopesChanged' ORDER BY recorded_at DESC LIMIT 1`,
+      );
+      expect(logged.rows[0]!.owner_scope_guid).toBe(owner.rows[0]!.owner_scope_guid);
+    });
+
+    // Clearing every association has no requested scope to borrow an owner from, which is the
+    // case that made the previous attribution impossible rather than merely wrong.
+    it("can clear every association", async () => {
+      const created = await author("Tokens are required", "The reading.");
+
+      const result = await setRecordScopes({
+        pool,
+        schemaName,
+        handler,
+        workspaceGuid: bootstrap.workspaceGuid,
+        actorPrincipalGuid: bootstrap.ownerPrincipalGuid,
+        recordType: "assertion",
+        recordGuid: created.assertionGuid,
+        scopeSlugs: [],
+        reason: "routes nowhere for now",
+      });
+
+      expect(result.retired).toEqual(["anchor-mcp"]);
+      expect(await scopesOf(created.assertionGuid)).toEqual([]);
+    });
+
+    it("resolves a section's owning scope through its document", async () => {
+      const section = await pool.query<{ stable_key: string }>(
+        `SELECT stable_key FROM "${schemaName}".source_sections WHERE title = 'Current State' LIMIT 1`,
+      );
+
+      const result = await setRecordScopes({
+        pool,
+        schemaName,
+        handler,
+        workspaceGuid: bootstrap.workspaceGuid,
+        actorPrincipalGuid: bootstrap.ownerPrincipalGuid,
+        recordType: "section",
+        recordGuid: randomUUID(),
+        stableKey: section.rows[0]!.stable_key,
+        scopeSlugs: ["security"],
+        reason: "this section is about auth",
+      });
+
+      expect(result.added).toEqual(["security"]);
     });
 
     it("refuses a section association given no stable key", async () => {

@@ -100,8 +100,10 @@ export async function setAssertionStatus(
   // A replay applied nothing, so the values above were never written. Read the claim as it
   // actually stands rather than echoing what this call would have done.
   const settled = await input.pool.query<{ status: AssertionStatus; version: number }>(
+    // Same liveness filter as the write path: a retired claim returned here would look live to
+    // a caller that only ever sees this branch, and contradicts what AssertionNotFoundError says.
     `SELECT status, version FROM "${input.schemaName}".assertions
-      WHERE workspace_guid = $1 AND assertion_guid = $2`,
+      WHERE workspace_guid = $1 AND assertion_guid = $2 AND retired_at IS NULL`,
     [input.workspaceGuid, input.assertionGuid],
   );
   const row = settled.rows[0];

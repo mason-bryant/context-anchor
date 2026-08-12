@@ -88,6 +88,7 @@ export async function setRecordScopes(input: SetRecordScopesInput): Promise<SetR
     entity: { entityType: input.recordType, entityGuid: input.recordGuid },
     apply: async (tx) => {
       const scopes = await resolveScopes(tx, schema, input.workspaceGuid, desired);
+      const owningScopeGuid = await resolveOwningScope(tx, schema, input);
       const live = await loadLiveAssociations(tx, schema, input);
 
       const liveBySlug = new Map(live.map((row) => [row.scope_slug, row]));
@@ -126,9 +127,11 @@ export async function setRecordScopes(input: SetRecordScopesInput): Promise<SetR
       return {
         resultingValue: { recordType: input.recordType, scopeSlugs: desired, added, retired },
         entryType: "record.scopesChanged",
-        // Undefined when the caller cleared every association: there is no owning scope left to
-        // attribute the change to, and inventing one would misfile the history.
-        ownerScopeGuid: desired.length > 0 ? scopes.get(desired[0]!) : undefined,
+        // The record's *owning* scope, never one of the scopes it was just associated with. An
+        // association does not grant access, so filing this history under an associated scope
+        // would expose the record's existence to readers of that scope — and it would leave
+        // `scopeSlugs: []` with no scope to attribute the change to at all.
+        ownerScopeGuid: owningScopeGuid,
       };
     },
   });
@@ -149,6 +152,58 @@ export async function setRecordScopes(input: SetRecordScopesInput): Promise<SetR
 }
 
 type AssociationRow = { association_guid: string; scope_slug: string };
+
+export class RecordNotFoundError extends Error {
+  constructor(recordType: string, identity: string) {
+    super(`No live ${recordType} ${identity} in this workspace to re-associate.`);
+    this.name = "RecordNotFoundError";
+  }
+}
+
+/**
+ * The scope that owns the record, which is the permission boundary its history belongs under.
+ * An assertion carries it directly; a section inherits its document's, reached through the
+ * revision because a section row is revision-scoped.
+ */
+async function resolveOwningScope(
+  tx: CommandTransaction,
+  schema: string,
+  input: SetRecordScopesInput,
+): Promise<string> {
+  if (input.recordType === "assertion") {
+    const result = await tx.query<{ owner_scope_guid: string }>(
+      `SELECT owner_scope_guid FROM "${schema}".assertions
+        WHERE workspace_guid = $1 AND assertion_guid = $2 AND retired_at IS NULL`,
+      [input.workspaceGuid, input.recordGuid],
+    );
+    const row = result.rows[0];
+    if (!row) {
+      throw new RecordNotFoundError("assertion", input.recordGuid);
+    }
+    return row.owner_scope_guid;
+  }
+
+  const result = await tx.query<{ owner_scope_guid: string }>(
+    `SELECT d.owner_scope_guid
+       FROM "${schema}".source_sections s
+       JOIN "${schema}".document_revisions r
+         ON r.workspace_guid = s.workspace_guid AND r.revision_guid = s.revision_guid
+       JOIN "${schema}".source_documents d
+         ON d.workspace_guid = r.workspace_guid AND d.document_guid = r.document_guid
+      WHERE s.workspace_guid = $1 AND s.stable_key = $2 AND d.retired_at IS NULL
+      -- A stable key spans every revision of its section, so take the newest owner rather
+      -- than whichever row the planner happens to return first. revision_number is monotonic
+      -- per document; imported_at is not, since a reimport can write several in one second.
+      ORDER BY r.revision_number DESC, r.revision_guid DESC
+      LIMIT 1`,
+    [input.workspaceGuid, input.stableKey],
+  );
+  const row = result.rows[0];
+  if (!row) {
+    throw new RecordNotFoundError("section", input.stableKey ?? "");
+  }
+  return row.owner_scope_guid;
+}
 
 async function resolveScopes(
   tx: CommandTransaction,

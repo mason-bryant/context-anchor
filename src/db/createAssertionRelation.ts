@@ -90,7 +90,7 @@ export async function createAssertionRelation(
       `assertion.relate:${input.relationType}:${input.sourceAssertionGuid}:${input.targetAssertionGuid}`,
     reason: input.rationale ?? `record ${input.relationType}`,
     entity: { entityType: "assertion_relation", entityGuid: relationGuid },
-    apply: async (tx) => {
+    apply: async (tx, commandGuid) => {
       const source = await loadAssertion(tx, schema, input.workspaceGuid, input.sourceAssertionGuid);
       const target = await loadAssertion(tx, schema, input.workspaceGuid, input.targetAssertionGuid);
 
@@ -119,11 +119,36 @@ export async function createAssertionRelation(
       // Status and lineage cannot disagree, and they cannot disagree *transiently* either —
       // which is why this is the same transaction rather than a second command.
       if (input.relationType === "supersedes") {
-        await tx.query(
+        const transitioned = await tx.query<{ version: number }>(
           `UPDATE "${schema}".assertions
               SET status = 'superseded', version = version + 1
-            WHERE workspace_guid = $1 AND assertion_guid = $2 AND retired_at IS NULL`,
+            WHERE workspace_guid = $1 AND assertion_guid = $2 AND retired_at IS NULL
+          RETURNING version`,
           [input.workspaceGuid, input.targetAssertionGuid],
+        );
+
+        // The handler snapshots the command's own entity — the relation — so without this the
+        // target's version would advance with no `record_versions` row behind it. That row is
+        // not bookkeeping: its primary key is what serializes concurrent writers, and
+        // `expectedVersion` is checked against it, so omitting it would let two supersedes
+        // races both commit and leave `assertions.version` ahead of its own history.
+        await tx.query(
+          `INSERT INTO "${schema}".record_versions
+             (workspace_guid, entity_type, entity_guid, version, payload, changed_by_principal_guid, command_guid)
+           VALUES ($1, 'assertion', $2, $3, $4, $5, $6)`,
+          [
+            input.workspaceGuid,
+            input.targetAssertionGuid,
+            transitioned.rows[0]!.version,
+            JSON.stringify({
+              assertionGuid: input.targetAssertionGuid,
+              status: "superseded",
+              previousStatus: target.status,
+              supersededBy: input.sourceAssertionGuid,
+            }),
+            input.actorPrincipalGuid,
+            commandGuid,
+          ],
         );
       }
 
@@ -133,7 +158,10 @@ export async function createAssertionRelation(
           relationType: input.relationType,
           sourceAssertionGuid: input.sourceAssertionGuid,
           targetAssertionGuid: input.targetAssertionGuid,
-          targetStatus: input.relationType === "supersedes" ? "superseded" : target.status,
+          // Present only when this relation actually moved the target's standing. Recording the
+          // unchanged status here would read, in `mutation_log`, as a transition that never
+          // happened.
+          ...(input.relationType === "supersedes" ? { targetStatus: "superseded" } : {}),
         },
         entryType: "assertion.related",
         ownerScopeGuid: source.owner_scope_guid,
