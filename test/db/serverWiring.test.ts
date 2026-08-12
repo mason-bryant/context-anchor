@@ -164,6 +164,14 @@ describe("listScopes tool registration", () => {
     // writes the database on every call.
     expect(server._registeredTools.planRoutedBundle).toBeUndefined();
     expect(server._registeredTools.reportRecordUse).toBeUndefined();
+
+    // The writes must disappear with the rest of the database surface. An advertised tool that
+    // cannot work is worse than a missing one: an agent will call it and read the failure as a
+    // fact about the workspace rather than about the configuration.
+    expect(server._registeredTools.createAssertion).toBeUndefined();
+    expect(server._registeredTools.setAssertionStatus).toBeUndefined();
+    expect(server._registeredTools.createAssertionRelation).toBeUndefined();
+    expect(server._registeredTools.setRecordScopes).toBeUndefined();
   });
 
   it("is registered and returns scopes when a database backend is configured", async () => {
