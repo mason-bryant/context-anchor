@@ -13,6 +13,7 @@ import { setAssertionStatus, AssertionNotFoundError } from "../../src/db/setAsse
 import {
   setRecordScopes,
   CORRECTED_ASSOCIATION_TYPE,
+  MEMBERSHIP_ENTITY_TYPE,
   SectionStableKeyRequiredError,
   UnknownScopeError,
 } from "../../src/db/setRecordScopes.js";
@@ -410,9 +411,12 @@ describe.runIf(await isTestDatabaseReachable())("assertion writes, T3 slice 2 (r
       expect(await scopesOf(created.assertionGuid)).toEqual([]);
     });
 
-    it("resolves a section's owning scope through its document", async () => {
-      const section = await pool.query<{ stable_key: string }>(
-        `SELECT stable_key FROM "${schemaName}".source_sections WHERE title = 'Current State' LIMIT 1`,
+    // record_guid is the row the association was made against, so a caller-supplied guid could
+    // leave an audit trail pointing at a section that does not exist. It is resolved internally.
+    it("resolves a section's owning scope and provenance guid from its stable key alone", async () => {
+      const section = await pool.query<{ stable_key: string; section_guid: string }>(
+        `SELECT stable_key, section_guid FROM "${schemaName}".source_sections
+          WHERE title = 'Current State' LIMIT 1`,
       );
 
       const result = await setRecordScopes({
@@ -422,13 +426,47 @@ describe.runIf(await isTestDatabaseReachable())("assertion writes, T3 slice 2 (r
         workspaceGuid: bootstrap.workspaceGuid,
         actorPrincipalGuid: bootstrap.ownerPrincipalGuid,
         recordType: "section",
-        recordGuid: randomUUID(),
+        // Deliberately absent: a section's provenance guid is not the caller's to supply.
         stableKey: section.rows[0]!.stable_key,
         scopeSlugs: ["security"],
         reason: "this section is about auth",
       });
 
       expect(result.added).toEqual(["security"]);
+      const written = await pool.query<{ record_guid: string }>(
+        `SELECT record_guid FROM "${schemaName}".record_scopes
+          WHERE stable_key = $1 AND retired_at IS NULL AND association_type = $2`,
+        [section.rows[0]!.stable_key, CORRECTED_ASSOCIATION_TYPE],
+      );
+      expect(written.rows[0]!.record_guid).toBe(section.rows[0]!.section_guid);
+    });
+
+    // Membership versions as its own aggregate: folding it into the assertion's stream would
+    // advance record_versions without touching assertions.version, desyncing expectedVersion.
+    it("versions membership as its own stream, not the record's", async () => {
+      const created = await author("Tokens are required", "The reading.");
+      const before = await statusOf(created.assertionGuid);
+
+      await setRecordScopes({
+        pool,
+        schemaName,
+        handler,
+        workspaceGuid: bootstrap.workspaceGuid,
+        actorPrincipalGuid: bootstrap.ownerPrincipalGuid,
+        recordType: "assertion",
+        recordGuid: created.assertionGuid,
+        scopeSlugs: ["security"],
+        reason: "this is about auth",
+      });
+
+      // The claim itself did not change, so its version must not have moved.
+      expect((await statusOf(created.assertionGuid)).version).toBe(before.version);
+      const streams = await pool.query<{ entity_type: string }>(
+        `SELECT DISTINCT entity_type FROM "${schemaName}".record_versions
+          WHERE entity_guid = $1`,
+        [created.assertionGuid],
+      );
+      expect(streams.rows.map((r) => r.entity_type).sort()).toEqual(["assertion", MEMBERSHIP_ENTITY_TYPE].sort());
     });
 
     it("refuses a section association given no stable key", async () => {
@@ -440,7 +478,6 @@ describe.runIf(await isTestDatabaseReachable())("assertion writes, T3 slice 2 (r
           workspaceGuid: bootstrap.workspaceGuid,
           actorPrincipalGuid: bootstrap.ownerPrincipalGuid,
           recordType: "section",
-          recordGuid: randomUUID(),
           scopeSlugs: ["security"],
           reason: "no stable key supplied",
         }),

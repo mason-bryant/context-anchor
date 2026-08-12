@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 
 import type { Pool } from "pg";
 
@@ -21,6 +21,24 @@ import { assertValidSchemaName } from "./config.js";
 /** Distinguishes a human judgement from anything import derived. Import must not clobber these. */
 export const CORRECTED_ASSOCIATION_TYPE = "manual-correction";
 
+/**
+ * Scope membership versions as its own aggregate rather than as the record it describes. A
+ * correction is not a change to the claim's text or the section's content, and folding it into
+ * their streams would make `expectedVersion` disagree with `assertions.version`.
+ */
+export const MEMBERSHIP_ENTITY_TYPE = "record_scope_membership";
+
+/**
+ * A stable, derived guid for a section's membership stream. `record_versions.entity_guid` is a
+ * uuid, but a section's durable identity is its text `stable_key` — so the key is hashed into a
+ * well-formed uuid. Deterministic, so every call for one section lands on one stream, and
+ * version-stamped so it can never collide with a minted v4.
+ */
+export function membershipGuidForStableKey(stableKey: string): string {
+  const h = createHash("sha256").update(`record-scope-membership:${stableKey}`).digest("hex");
+  return `${h.slice(0, 8)}-${h.slice(8, 12)}-8${h.slice(13, 16)}-8${h.slice(17, 20)}-${h.slice(20, 32)}`;
+}
+
 export type SetRecordScopesInput = {
   pool: Pool;
   schemaName: string;
@@ -28,8 +46,12 @@ export type SetRecordScopesInput = {
   workspaceGuid: string;
   actorPrincipalGuid: string;
   recordType: "section" | "assertion";
-  /** Assertions resolve by guid; sections resolve by `stable_key` because section guids are revision-scoped. */
-  recordGuid: string;
+  /**
+   * Required for an assertion, whose guid is its durable identity. Ignored for a section: the
+   * provenance guid is resolved from `stableKey` internally, because a caller-supplied one can
+   * name a section that does not exist — or, after a reimport, one that is no longer current.
+   */
+  recordGuid?: string;
   stableKey?: string;
   /** The complete set of scope slugs this record should route under. Absent slugs are retired. */
   scopeSlugs: string[];
@@ -54,6 +76,13 @@ export class SectionStableKeyRequiredError extends Error {
   }
 }
 
+export class AssertionRecordGuidRequiredError extends Error {
+  constructor() {
+    super(`An assertion association needs its recordGuid: the guid is the claim's durable identity.`);
+    this.name = "AssertionRecordGuidRequiredError";
+  }
+}
+
 export class UnknownScopeError extends Error {
   constructor(slugs: string[]) {
     super(`No live scope in this workspace for: ${slugs.join(", ")}.`);
@@ -68,6 +97,16 @@ export async function setRecordScopes(input: SetRecordScopesInput): Promise<SetR
   if (input.recordType === "section" && !input.stableKey) {
     throw new SectionStableKeyRequiredError();
   }
+  if (input.recordType === "assertion" && !input.recordGuid) {
+    throw new AssertionRecordGuidRequiredError();
+  }
+
+  // The stream this command versions is the record's scope membership, not the record. Keying
+  // it on the record's own entity would advance the assertion's `record_versions` stream without
+  // touching `assertions.version` — desyncing optimistic concurrency — and, for a section, would
+  // start a fresh stream per call, since a section guid is revision-scoped.
+  const membershipGuid =
+    input.recordType === "assertion" ? input.recordGuid! : membershipGuidForStableKey(input.stableKey!);
 
   const desired = [...new Set(input.scopeSlugs.map((slug) => slug.trim()).filter(Boolean))].sort();
   let added: string[] = [];
@@ -85,10 +124,10 @@ export async function setRecordScopes(input: SetRecordScopesInput): Promise<SetR
       input.idempotencyKey ??
       `record.setScopes:${input.recordType}:${input.stableKey ?? input.recordGuid}:${desired.join(",")}`,
     reason: input.reason,
-    entity: { entityType: input.recordType, entityGuid: input.recordGuid },
+    entity: { entityType: MEMBERSHIP_ENTITY_TYPE, entityGuid: membershipGuid },
     apply: async (tx) => {
       const scopes = await resolveScopes(tx, schema, input.workspaceGuid, desired);
-      const owningScopeGuid = await resolveOwningScope(tx, schema, input);
+      const owner = await resolveOwner(tx, schema, input);
       const live = await loadLiveAssociations(tx, schema, input);
 
       const liveBySlug = new Map(live.map((row) => [row.scope_slug, row]));
@@ -116,7 +155,7 @@ export async function setRecordScopes(input: SetRecordScopesInput): Promise<SetR
             input.workspaceGuid,
             randomUUID(),
             input.recordType,
-            input.recordGuid,
+            owner.recordGuid,
             input.stableKey ?? null,
             scopes.get(slug)!,
             CORRECTED_ASSOCIATION_TYPE,
@@ -131,7 +170,7 @@ export async function setRecordScopes(input: SetRecordScopesInput): Promise<SetR
         // association does not grant access, so filing this history under an associated scope
         // would expose the record's existence to readers of that scope — and it would leave
         // `scopeSlugs: []` with no scope to attribute the change to at all.
-        ownerScopeGuid: owningScopeGuid,
+        ownerScopeGuid: owner.ownerScopeGuid,
       };
     },
   });
@@ -165,11 +204,11 @@ export class RecordNotFoundError extends Error {
  * An assertion carries it directly; a section inherits its document's, reached through the
  * revision because a section row is revision-scoped.
  */
-async function resolveOwningScope(
+async function resolveOwner(
   tx: CommandTransaction,
   schema: string,
   input: SetRecordScopesInput,
-): Promise<string> {
+): Promise<{ ownerScopeGuid: string; recordGuid: string }> {
   if (input.recordType === "assertion") {
     const result = await tx.query<{ owner_scope_guid: string }>(
       `SELECT owner_scope_guid FROM "${schema}".assertions
@@ -178,13 +217,16 @@ async function resolveOwningScope(
     );
     const row = result.rows[0];
     if (!row) {
-      throw new RecordNotFoundError("assertion", input.recordGuid);
+      throw new RecordNotFoundError("assertion", input.recordGuid ?? "");
     }
-    return row.owner_scope_guid;
+    return { ownerScopeGuid: row.owner_scope_guid, recordGuid: input.recordGuid! };
   }
 
-  const result = await tx.query<{ owner_scope_guid: string }>(
-    `SELECT d.owner_scope_guid
+  // The section guid is resolved here rather than trusted from the caller: `record_guid` is the
+  // row the association was made against, so a guid naming no section would leave an audit trail
+  // pointing at nothing.
+  const result = await tx.query<{ owner_scope_guid: string; section_guid: string }>(
+    `SELECT d.owner_scope_guid, s.section_guid
        FROM "${schema}".source_sections s
        JOIN "${schema}".document_revisions r
          ON r.workspace_guid = s.workspace_guid AND r.revision_guid = s.revision_guid
@@ -202,7 +244,7 @@ async function resolveOwningScope(
   if (!row) {
     throw new RecordNotFoundError("section", input.stableKey ?? "");
   }
-  return row.owner_scope_guid;
+  return { ownerScopeGuid: row.owner_scope_guid, recordGuid: row.section_guid };
 }
 
 async function resolveScopes(
