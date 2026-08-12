@@ -1,6 +1,6 @@
 import pg from "pg";
 
-import { TEST_DATABASE_URL, TEST_SCHEMA_PATTERN } from "./testDatabase.js";
+import { isTestDatabaseReachable, TEST_DATABASE_URL, TEST_SCHEMA_PATTERN } from "./testDatabase.js";
 
 /**
  * Fails the run if the suite leaves schemas behind in the test database.
@@ -43,13 +43,20 @@ async function listSchemas(): Promise<Set<string>> {
 }
 
 export async function setup(): Promise<void> {
-  try {
-    before = await listSchemas();
-  } catch {
-    // No database here — the contract tests skip themselves for the same reason, and a guard
-    // that failed the run in that case would make the suite unrunnable without Postgres.
+  // The same readiness question the contract tests ask, deliberately answered the same way.
+  // A single connection attempt here would give up on a Postgres that is merely slow to start —
+  // a CI service container still coming up — while the tests, which retry for ten seconds, went
+  // on to run against it. The guard would then sit silently disabled for exactly the runs that
+  // most need it. Sharing the probe keeps "the guard is active" and "the contract tests run"
+  // from ever disagreeing.
+  if (!(await isTestDatabaseReachable())) {
     before = undefined;
+    return;
   }
+
+  // Not caught: the probe above just succeeded, so a failure here is a real fault rather than an
+  // absent database.
+  before = await listSchemas();
 }
 
 export async function teardown(): Promise<void> {
@@ -57,6 +64,16 @@ export async function teardown(): Promise<void> {
   // because anything could reassign it while the query is in flight.
   const baseline = before;
   if (!baseline) {
+    // No baseline means the guard never armed. If the database turns out to be reachable now, the
+    // run just went unchecked — narrow, but it is the one case where silence would be a lie, so
+    // say so rather than letting a green run imply the schemas were verified.
+    if (await isTestDatabaseReachable()) {
+      console.warn(
+        "[schema leak guard] No baseline was captured at setup, but the test database is " +
+          "reachable now — this run was NOT checked for leaked schemas. Run " +
+          "`node scripts/drop-orphan-test-schemas.mjs` to see whether any were left behind.",
+      );
+    }
     return;
   }
 
