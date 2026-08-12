@@ -103,7 +103,7 @@ describe.runIf(await isTestDatabaseReachable())("planRoutedBundle (real Postgres
 
       expect(result.routes.length).toBeGreaterThan(0);
       expect(result.routes.flatMap((r) => r.matchReasons).join(" ")).toMatch(
-        /task term "decisions" matched a section title/,
+        /task term "decisions" matched section title/,
       );
     });
 

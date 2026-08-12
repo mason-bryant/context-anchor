@@ -196,6 +196,13 @@ export async function selectRouteCandidates(
     }
     const existing = signals.get(scopeGuid);
     if (existing) {
+      // Identical signals are dropped rather than accumulated. One scope can reach the same
+      // record through more than one association row -- live uniqueness is per association_type
+      // -- so the same title would otherwise repeat its reason, padding matchReasons that a
+      // person reads and inflating the distinct-signal count the ranker's first tier uses.
+      if (existing.some((held) => held.kind === signal.kind && held.reason === signal.reason)) {
+        return;
+      }
       existing.push(signal);
     } else {
       signals.set(scopeGuid, [signal]);
@@ -220,6 +227,13 @@ export async function selectRouteCandidates(
   // still promote a scope. That is why it ships behind a flag and is measured as a shadow
   // ranker before it decides anything.
   if (input.recordLexical) {
+    // Restricted to scopes the caller can read, rather than filtering after the fact in add().
+    // Every other producer here matches against something already narrowed; this one would
+    // otherwise read every active assertion title and current section heading in the workspace
+    // on each call, then discard the ones belonging to scopes the caller cannot see. The work
+    // done would scale with the workspace instead of with what the caller is permitted to
+    // receive, which is both wasteful and the wrong thing for a per-request path.
+    const readableGuids = readable.map((scope) => scope.scope_guid);
     const rows = await pool.query<{ scope_guid: string; text: string; source: string }>(
       `SELECT rs.scope_guid, a.title AS text, 'assertion' AS source
          FROM "${schemaName}".assertions a
@@ -227,6 +241,7 @@ export async function selectRouteCandidates(
            ON rs.workspace_guid = a.workspace_guid AND rs.record_type = 'assertion'
           AND rs.record_guid = a.assertion_guid AND rs.retired_at IS NULL
         WHERE a.workspace_guid = $1 AND a.retired_at IS NULL AND a.status = 'active'
+          AND rs.scope_guid = ANY($2::uuid[])
        UNION ALL
        -- Wrapped in a subquery because DISTINCT ON needs its own ORDER BY, and a bare ORDER BY
        -- in a UNION branch binds to the whole union instead.
@@ -248,6 +263,7 @@ export async function selectRouteCandidates(
              ON rs.workspace_guid = ss.workspace_guid AND rs.record_type = 'section'
             AND rs.stable_key = ss.stable_key AND rs.retired_at IS NULL
           WHERE ss.workspace_guid = $1
+            AND rs.scope_guid = ANY($2::uuid[])
             -- Current revision only. Taking the highest revision per stable_key is not enough:
             -- a heading a later commit deleted leaves a section whose stable_key exists in no
             -- newer revision, so it is the only row for that key and survives any per-key
@@ -262,7 +278,7 @@ export async function selectRouteCandidates(
           -- association types, and each would otherwise repeat the same match reason.
           ORDER BY rs.scope_guid, ss.stable_key, dr.revision_number DESC
        ) current_sections`,
-      [input.workspaceGuid],
+      [input.workspaceGuid, readableGuids],
     );
     // Matched in application code, like every other signal here, so the reason a route was
     // offered stays explainable to the person reading it.
@@ -272,7 +288,9 @@ export async function selectRouteCandidates(
       if (hit) {
         add(row.scope_guid, {
           kind: "record-lexical",
-          reason: `task term ${JSON.stringify(hit)} matched a ${row.source} title in this scope`,
+          // No article: "a assertion title" was the alternative, and match reasons are read by
+          // people.
+          reason: `task term ${JSON.stringify(hit)} matched ${row.source} title in this scope`,
         });
       }
     }

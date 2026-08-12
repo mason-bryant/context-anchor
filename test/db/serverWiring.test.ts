@@ -131,6 +131,49 @@ describe("listScopeChanges tool registration", () => {
     expect(result.structuredContent.changes).toHaveLength(1);
   });
 
+  /**
+   * T-46 shipped once already as a flag no surface could set — declared on the selection input
+   * but absent from PlanInput — and the fix for that was itself incomplete: PlanInput gained it
+   * while the MCP tool schema did not, so it stayed unreachable from the only surface callers
+   * use. Zod strips unknown keys, so the flag arriving as `undefined` at the facade is exactly
+   * what "silently ignored" looks like from the outside.
+   */
+  it("passes recordLexical from the tool schema through to the planner", async () => {
+    let received: Record<string, unknown> | undefined;
+    const server = createAnchorMcpServer({} as AnchorService, {
+      knowledgeDb: {
+        ...WRITE_STUBS,
+        listScopesForOwner: async () => SAMPLE_SCOPES,
+        listScopeChangesForOwner: async () => [],
+        importDocumentsAsOwner: async () => SAMPLE_REPORT,
+        planRoutedBundleAsOwner: async (input: Record<string, unknown>) => {
+          received = input;
+          return SAMPLE_PLAN;
+        },
+        reportRecordUseAsOwner: async () => ({ recorded: 0, rejected: [] }),
+      },
+    }) as unknown as AdvertisedServer;
+
+    // Through the schema, not around it. Calling the handler directly with a literal proves
+    // nothing about the tool's surface: the handler destructures whatever object it is given,
+    // so the test passed identically with the schema field deleted. Zod strips unknown keys,
+    // so parsing is the step that decides whether an MCP client can set this at all.
+    const schema = server._registeredTools.planRoutedBundle!.inputSchema!;
+    const parsed = schema.parse({ task: "logging retention", recordLexical: true }) as {
+      recordLexical?: boolean;
+    };
+    expect(parsed.recordLexical).toBe(true);
+
+    await server._registeredTools.planRoutedBundle!.handler(parsed);
+    expect(received?.recordLexical).toBe(true);
+
+    // And absent when not asked for, so the default stays off at the surface rather than only
+    // in the planner.
+    const bare = schema.parse({ task: "logging retention" });
+    await server._registeredTools.planRoutedBundle!.handler(bare);
+    expect(received?.recordLexical).toBeUndefined()
+  });
+
   it("trims scope and since at the schema, so a padded value resolves instead of failing downstream", () => {
     const server = createAnchorMcpServer({} as AnchorService, {
       knowledgeDb: {
