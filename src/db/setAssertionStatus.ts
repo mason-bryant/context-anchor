@@ -40,6 +40,12 @@ export type SetAssertionStatusResult = {
   previousStatus: AssertionStatus;
   version: number;
   replayed: boolean;
+  /**
+   * False when the claim already held the requested standing, so nothing was written. A version
+   * bump and a `statusChanged` entry for a status that did not change is history describing a
+   * change that never happened, and it makes callers reconcile versions that mean nothing.
+   */
+  changed: boolean;
 };
 
 /**
@@ -82,6 +88,29 @@ export async function setAssertionStatus(
   input: SetAssertionStatusInput,
 ): Promise<SetAssertionStatusResult> {
   assertValidSchemaName(input.schemaName);
+
+  // Checked before the command opens, because a no-op must not write. Re-read inside apply as
+  // well, where the transaction makes it authoritative — this is the cheap path, not the guard.
+  const existing = await input.pool.query<{ status: AssertionStatus; version: number }>(
+    `SELECT status, version FROM "${input.schemaName}".assertions
+      WHERE workspace_guid = $1 AND assertion_guid = $2 AND retired_at IS NULL`,
+    [input.workspaceGuid, input.assertionGuid],
+  );
+  const held = existing.rows[0];
+  if (!held) {
+    throw new AssertionNotFoundError(input.assertionGuid);
+  }
+  if (held.status === input.status) {
+    return {
+      assertionGuid: input.assertionGuid,
+      status: held.status,
+      previousStatus: held.status,
+      version: held.version,
+      replayed: false,
+      changed: false,
+    };
+  }
+
   let previousStatus: AssertionStatus = "active";
   let version = 0;
 
@@ -152,7 +181,14 @@ export async function setAssertionStatus(
   });
 
   if (!command.replayed) {
-    return { assertionGuid: input.assertionGuid, status: input.status, previousStatus, version, replayed: false };
+    return {
+      assertionGuid: input.assertionGuid,
+      status: input.status,
+      previousStatus,
+      version,
+      replayed: false,
+      changed: true,
+    };
   }
 
   // A replay applied nothing, so the values above were never written. Read the claim as it
@@ -187,6 +223,7 @@ export async function setAssertionStatus(
     previousStatus: original.rows[0]?.resulting_value?.previousStatus ?? row.status,
     version: row.version,
     replayed: true,
+    changed: true,
   };
 }
 

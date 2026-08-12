@@ -152,30 +152,32 @@ describe.runIf(await isTestDatabaseReachable())("assertion writes, T3 slice 2 (r
 
     // A replay must not imply nothing moved: the change did happen, just not on this call. The
     // original command's mutation_log entry is the only record of what the status was before.
+    //
+    // Reached with an explicit shared key across two different targets, because the same-status
+    // path is now a no-op that returns before the command handler ever sees a replay.
     it("reports the original previous status on a replay", async () => {
       const created = await author("Tokens are required", "The reading.");
-      const args = {
+      const base = {
         pool,
         schemaName,
         handler,
         workspaceGuid: bootstrap.workspaceGuid,
         actorPrincipalGuid: bootstrap.ownerPrincipalGuid,
         assertionGuid: created.assertionGuid,
-        status: "disputed" as const,
         reason: "a second reading contradicts it",
+        idempotencyKey: "shared-key-for-this-decision",
       };
 
-      const first = await setAssertionStatus(args);
-      const replay = await setAssertionStatus(args);
+      const first = await setAssertionStatus({ ...base, status: "disputed" });
+      const replay = await setAssertionStatus({ ...base, status: "retracted" });
 
+      expect(first.previousStatus).toBe("active");
       expect(replay.replayed).toBe(true);
+      // The accepted command stands: the claim is disputed, not retracted.
       expect(replay.status).toBe("disputed");
-      expect(replay.previousStatus).toBe(first.previousStatus);
       expect(replay.previousStatus).toBe("active");
     });
 
-    // The design's rule runs both ways. createAssertionRelation enforces it forwards; these are
-    // the two ways it could still be broken from here.
     it("refuses to mark a claim superseded without a relation saying what replaced it", async () => {
       const created = await author("Tokens are required", "The reading.");
 
@@ -253,6 +255,31 @@ describe.runIf(await isTestDatabaseReachable())("assertion writes, T3 slice 2 (r
       });
 
       expect(result.status).toBe("active");
+    });
+
+    // A version bump and a statusChanged entry for a status that did not change is history
+    // describing a change that never happened.
+    it("writes nothing when the claim already holds the requested standing", async () => {
+      const created = await author("Tokens are required", "The reading.");
+      const before = await statusOf(created.assertionGuid);
+
+      const result = await setAssertionStatus({
+        pool,
+        schemaName,
+        handler,
+        workspaceGuid: bootstrap.workspaceGuid,
+        actorPrincipalGuid: bootstrap.ownerPrincipalGuid,
+        assertionGuid: created.assertionGuid,
+        status: "active",
+        reason: "already active",
+      });
+
+      expect(result.changed).toBe(false);
+      expect((await statusOf(created.assertionGuid)).version).toBe(before.version);
+      const entries = await pool.query<{ count: string }>(
+        `SELECT count(*) FROM "${schemaName}".mutation_log WHERE entry_type = 'assertion.statusChanged'`,
+      );
+      expect(Number(entries.rows[0]!.count)).toBe(0);
     });
 
     it("refuses a claim that does not exist rather than reporting success", async () => {
