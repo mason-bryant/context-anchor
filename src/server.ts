@@ -16,8 +16,18 @@ import type { TraceLogger } from "./trace/logger.js";
 import { TraceRecorder, type TraceConnection } from "./trace/recorder.js";
 import { isDiscoveryCategory, type DiscoveryCategory } from "./taxonomy.js";
 import { ASSERTION_KINDS, CITATION_RELATIONS } from "./db/createAssertion.js";
-import { SETTABLE_ASSERTION_STATUSES } from "./db/setAssertionStatus.js";
-import { RELATION_TYPES } from "./db/createAssertionRelation.js";
+import {
+  SETTABLE_ASSERTION_STATUSES,
+  type SetAssertionStatusInput,
+  type SetAssertionStatusResult,
+} from "./db/setAssertionStatus.js";
+import type { CreateAssertionInput, CreateAssertionResult } from "./db/createAssertion.js";
+import type { CreateAssertionRelationResult } from "./db/createAssertionRelation.js";
+import type { SetRecordScopesInput, SetRecordScopesResult } from "./db/setRecordScopes.js";
+
+/** What a caller supplies: the owner facade fills in the pool, schema, handler, and identity. */
+type OwnerWrite<T> = Omit<T, "pool" | "schemaName" | "handler" | "workspaceGuid" | "actorPrincipalGuid">;
+import { RELATION_TYPES, type CreateAssertionRelationInput } from "./db/createAssertionRelation.js";
 import type {
   LoadContextInput,
   ProjectUpdateSnapshotInput,
@@ -174,10 +184,15 @@ export type KnowledgeDatabaseTool = {
   listScopesForOwner(): Promise<ScopeSummary[]>;
   planRoutedBundleAsOwner(input: PlanRequest, options?: PlanOptions): Promise<PlanResult>;
   reportRecordUseAsOwner(use: RecordUse): Promise<RecordUseResult>;
-  createAssertionAsOwner(input: Record<string, unknown>): Promise<unknown>;
-  setAssertionStatusAsOwner(input: Record<string, unknown>): Promise<unknown>;
-  createAssertionRelationAsOwner(input: Record<string, unknown>): Promise<unknown>;
-  setRecordScopesAsOwner(input: Record<string, unknown>): Promise<unknown>;
+  // Typed against the commands themselves rather than Record<string, unknown>: this interface is
+  // the only thing holding the wiring to the real signatures, and an untyped facade would let
+  // them drift silently — the same class of gap that let these tools be missing entirely.
+  createAssertionAsOwner(input: OwnerWrite<CreateAssertionInput>): Promise<CreateAssertionResult>;
+  setAssertionStatusAsOwner(input: OwnerWrite<SetAssertionStatusInput>): Promise<SetAssertionStatusResult>;
+  createAssertionRelationAsOwner(
+    input: OwnerWrite<CreateAssertionRelationInput>,
+  ): Promise<CreateAssertionRelationResult>;
+  setRecordScopesAsOwner(input: OwnerWrite<SetRecordScopesInput>): Promise<SetRecordScopesResult>;
   listScopeChangesForOwner(input: { scope: string; since?: string; limit?: number }): Promise<ScopeChange[]>;
   importDocumentsAsOwner(input: {
     repository: string;
@@ -2105,7 +2120,17 @@ the index when your workflow checks in that file.`,
           scopeSlugs: z.array(z.string().trim().min(1)),
           reason: z.string().trim().min(1),
           idempotencyKey: z.string().trim().min(1).optional(),
-        }),
+        })
+          // Each record kind has exactly one identity, and the command refuses the wrong one.
+          // Refusing at the schema instead says so before a call is made, and names the field.
+          .refine((value) => value.recordType !== "section" || value.stableKey !== undefined, {
+            message: "a section is identified by stableKey, because section guids are revision-scoped",
+            path: ["stableKey"],
+          })
+          .refine((value) => value.recordType !== "assertion" || value.recordGuid !== undefined, {
+            message: "an assertion is identified by recordGuid, which is its durable identity",
+            path: ["recordGuid"],
+          }),
       },
       async ({ traceId: _traceId, ...input }) => jsonResult(await knowledgeDb.setRecordScopesAsOwner(input)),
     );

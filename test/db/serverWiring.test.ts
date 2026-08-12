@@ -57,10 +57,32 @@ const SAMPLE_SCOPES: ScopeSummary[] = [
  * writes only need to exist — spreading them keeps adding a method from touching every stub.
  */
 const WRITE_STUBS = {
-  createAssertionAsOwner: async () => ({}),
-  setAssertionStatusAsOwner: async () => ({}),
-  createAssertionRelationAsOwner: async () => ({}),
-  setRecordScopesAsOwner: async () => ({}),
+  createAssertionAsOwner: async () => ({
+    assertionGuid: "11111111-1111-4111-8111-111111111111",
+    citationGuid: "22222222-2222-4222-8222-222222222222",
+    version: 1,
+    scopeGuid: "33333333-3333-4333-8333-333333333333",
+    replayed: false,
+  }),
+  setAssertionStatusAsOwner: async () => ({
+    assertionGuid: "11111111-1111-4111-8111-111111111111",
+    status: "disputed" as const,
+    previousStatus: "active" as const,
+    version: 2,
+    replayed: false,
+    changed: true,
+  }),
+  createAssertionRelationAsOwner: async () => ({
+    relationGuid: "44444444-4444-4444-8444-444444444444",
+    relationType: "contradicts" as const,
+    replayed: false,
+  }),
+  setRecordScopesAsOwner: async () => ({
+    added: ["security"],
+    retired: [],
+    unchanged: [],
+    replayed: false,
+  }),
 };
 
 describe("listScopeChanges tool registration", () => {
@@ -199,6 +221,24 @@ describe("listScopes tool registration", () => {
         reason: "r",
       }),
     ).not.toThrow();
+
+    // Each record kind has exactly one identity. The command refuses the wrong one, but the
+    // schema saying so first means the caller learns before spending a round trip.
+    expect(() =>
+      server._registeredTools.setRecordScopes!.inputSchema!.parse({
+        recordType: "section",
+        scopeSlugs: ["security"],
+        reason: "no stableKey",
+      }),
+    ).toThrow();
+    expect(() =>
+      server._registeredTools.setRecordScopes!.inputSchema!.parse({
+        recordType: "assertion",
+        stableKey: "doc#heading",
+        scopeSlugs: ["security"],
+        reason: "wrong identifier for the kind",
+      }),
+    ).toThrow();
     // The MCP import path must be able to claim coverage too, or deletions linger for the
     // primary agent-facing importer while the CLI handles them.
     expect(
