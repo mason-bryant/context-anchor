@@ -22,12 +22,15 @@ import {
   type SetAssertionStatusResult,
 } from "./db/setAssertionStatus.js";
 import type { CreateAssertionInput, CreateAssertionResult } from "./db/createAssertion.js";
-import type { CreateAssertionRelationResult } from "./db/createAssertionRelation.js";
+import {
+  RELATION_TYPES,
+  type CreateAssertionRelationInput,
+  type CreateAssertionRelationResult,
+} from "./db/createAssertionRelation.js";
 import type { SetRecordScopesInput, SetRecordScopesResult } from "./db/setRecordScopes.js";
 
 /** What a caller supplies: the owner facade fills in the pool, schema, handler, and identity. */
 type OwnerWrite<T> = Omit<T, "pool" | "schemaName" | "handler" | "workspaceGuid" | "actorPrincipalGuid">;
-import { RELATION_TYPES, type CreateAssertionRelationInput } from "./db/createAssertionRelation.js";
 import type {
   LoadContextInput,
   ProjectUpdateSnapshotInput,
@@ -2129,6 +2132,17 @@ the index when your workflow checks in that file.`,
           })
           .refine((value) => value.recordType !== "assertion" || value.recordGuid !== undefined, {
             message: "an assertion is identified by recordGuid, which is its durable identity",
+            path: ["recordGuid"],
+          })
+          // Exactly one identity per kind, not merely at least one. A stray stableKey on an
+          // assertion is not harmless: it changes the derived idempotency key, so the same
+          // intent sent twice with and without it would be treated as two different commands.
+          .refine((value) => value.recordType !== "assertion" || value.stableKey === undefined, {
+            message: "stableKey does not apply to an assertion; it is identified by recordGuid alone",
+            path: ["stableKey"],
+          })
+          .refine((value) => value.recordType !== "section" || value.recordGuid === undefined, {
+            message: "recordGuid does not apply to a section; its provenance guid is resolved from stableKey",
             path: ["recordGuid"],
           }),
       },

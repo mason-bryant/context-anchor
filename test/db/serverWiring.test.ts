@@ -239,6 +239,28 @@ describe("listScopes tool registration", () => {
         reason: "wrong identifier for the kind",
       }),
     ).toThrow();
+
+    // Exactly one identity per kind, not merely at least one: a stray stableKey alongside a
+    // valid recordGuid changes the derived idempotency key, so the same intent sent with and
+    // without it would be accepted as two separate commands.
+    expect(() =>
+      server._registeredTools.setRecordScopes!.inputSchema!.parse({
+        recordType: "assertion",
+        recordGuid: "11111111-1111-4111-8111-111111111111",
+        stableKey: "doc#heading",
+        scopeSlugs: ["security"],
+        reason: "both identifiers",
+      }),
+    ).toThrow();
+    expect(() =>
+      server._registeredTools.setRecordScopes!.inputSchema!.parse({
+        recordType: "section",
+        stableKey: "doc#heading",
+        recordGuid: "11111111-1111-4111-8111-111111111111",
+        scopeSlugs: ["security"],
+        reason: "both identifiers",
+      }),
+    ).toThrow();
     // The MCP import path must be able to claim coverage too, or deletions linger for the
     // primary agent-facing importer while the CLI handles them.
     expect(
