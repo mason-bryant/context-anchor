@@ -15,6 +15,9 @@ import { newTraceId } from "./trace/events.js";
 import type { TraceLogger } from "./trace/logger.js";
 import { TraceRecorder, type TraceConnection } from "./trace/recorder.js";
 import { isDiscoveryCategory, type DiscoveryCategory } from "./taxonomy.js";
+import { ASSERTION_KINDS, CITATION_RELATIONS } from "./db/createAssertion.js";
+import { SETTABLE_ASSERTION_STATUSES } from "./db/setAssertionStatus.js";
+import { RELATION_TYPES } from "./db/createAssertionRelation.js";
 import type {
   LoadContextInput,
   ProjectUpdateSnapshotInput,
@@ -171,6 +174,10 @@ export type KnowledgeDatabaseTool = {
   listScopesForOwner(): Promise<ScopeSummary[]>;
   planRoutedBundleAsOwner(input: PlanRequest, options?: PlanOptions): Promise<PlanResult>;
   reportRecordUseAsOwner(use: RecordUse): Promise<RecordUseResult>;
+  createAssertionAsOwner(input: Record<string, unknown>): Promise<unknown>;
+  setAssertionStatusAsOwner(input: Record<string, unknown>): Promise<unknown>;
+  createAssertionRelationAsOwner(input: Record<string, unknown>): Promise<unknown>;
+  setRecordScopesAsOwner(input: Record<string, unknown>): Promise<unknown>;
   listScopeChangesForOwner(input: { scope: string; since?: string; limit?: number }): Promise<ScopeChange[]>;
   importDocumentsAsOwner(input: {
     repository: string;
@@ -2000,6 +2007,107 @@ the index when your workflow checks in that file.`,
       },
       async ({ requestId, refs, useKind }) =>
         jsonResult(await knowledgeDb.reportRecordUseAsOwner({ requestId, refs, useKind })),
+    );
+
+    // T3's authoring surface. The design requires every capability to have a surface a person
+    // can drive; these four shipped as library functions reachable only from contract tests,
+    // which made the assertion pass the build order asks for impossible to actually perform.
+    server.registerTool(
+      "createAssertion",
+      {
+        title: "Create Assertion",
+        description:
+          "Author a claim with provenance: one command writes the assertion, its first version snapshot, a " +
+          "citation carrying the exact quote and its position, the routing association, and the mutation log " +
+          "entry. The quote is verified against the cited block before anything is written, so a citation can " +
+          "always be re-found when the source moves. Status describes the standing of the claim, not the outcome " +
+          "of what it describes: \"we tried X and it failed\" is an active fact. Requires the database backend.",
+        inputSchema: z.object({
+          traceId: TraceIdSchema,
+          scopeSlug: z.string().trim().min(1),
+          kind: z.enum(ASSERTION_KINDS),
+          title: z.string().trim().min(1),
+          content: z.string().trim().min(1),
+          citation: z.object({
+            blockGuid: z.string().uuid(),
+            exactQuote: z.string().min(1),
+            prefix: z.string().optional(),
+            suffix: z.string().optional(),
+            relation: z.enum(CITATION_RELATIONS).optional(),
+          }),
+          idempotencyKey: z.string().trim().min(1).optional(),
+        }),
+      },
+      async ({ traceId: _traceId, ...input }) => jsonResult(await knowledgeDb.createAssertionAsOwner(input)),
+    );
+
+    server.registerTool(
+      "setAssertionStatus",
+      {
+        title: "Set Assertion Status",
+        description:
+          "Move a claim between active, disputed, and retracted. This changes only what the claim stands for, " +
+          "never what it says, so a reader can tell \"we no longer stand behind this\" from \"this now says " +
+          "something else\". Superseded cannot be set here: superseding is a relationship, so record it with " +
+          "createAssertionRelation, which transitions the target in the same command. Setting the standing a " +
+          "claim already holds writes nothing. Requires the database backend.",
+        inputSchema: z.object({
+          traceId: TraceIdSchema,
+          assertionGuid: z.string().uuid(),
+          // Deliberately narrower than the column: superseded is reachable only through
+          // createAssertionRelation, which transitions the target in the same command. Offering
+          // it here would advertise an option that can only ever be refused.
+          status: z.enum(SETTABLE_ASSERTION_STATUSES),
+          reason: z.string().trim().min(1),
+          expectedVersion: z.number().int().positive().optional(),
+          idempotencyKey: z.string().trim().min(1).optional(),
+        }),
+      },
+      async ({ traceId: _traceId, ...input }) => jsonResult(await knowledgeDb.setAssertionStatusAsOwner(input)),
+    );
+
+    server.registerTool(
+      "createAssertionRelation",
+      {
+        title: "Create Assertion Relation",
+        description:
+          "Record a conflict or lineage between two claims, so a contradiction surfaces even when the two are " +
+          "routed separately. A supersedes transitions the target to superseded in the same command, because " +
+          "status and lineage cannot disagree. A contradicts deliberately changes no standing: a contradiction " +
+          "is not a resolution, and both claims stay active until someone decides. Requires the database backend.",
+        inputSchema: z.object({
+          traceId: TraceIdSchema,
+          sourceAssertionGuid: z.string().uuid(),
+          targetAssertionGuid: z.string().uuid(),
+          relationType: z.enum(RELATION_TYPES),
+          rationale: z.string().trim().min(1).optional(),
+          idempotencyKey: z.string().trim().min(1).optional(),
+        }),
+      },
+      async ({ traceId: _traceId, ...input }) => jsonResult(await knowledgeDb.createAssertionRelationAsOwner(input)),
+    );
+
+    server.registerTool(
+      "setRecordScopes",
+      {
+        title: "Set Record Scopes",
+        description:
+          "Correct where a record routes. Import derives associations from where a document lives, which " +
+          "describes location rather than subject, so a person reading a route is the first signal that a " +
+          "derived association is wrong. Pass the complete set of scope slugs the record should route under: " +
+          "any absent from it are retired, and retired associations stay as history. A section is identified by " +
+          "its stableKey, an assertion by its guid. Requires the database backend.",
+        inputSchema: z.object({
+          traceId: TraceIdSchema,
+          recordType: z.enum(["section", "assertion"]),
+          recordGuid: z.string().uuid().optional(),
+          stableKey: z.string().trim().min(1).optional(),
+          scopeSlugs: z.array(z.string().trim().min(1)),
+          reason: z.string().trim().min(1),
+          idempotencyKey: z.string().trim().min(1).optional(),
+        }),
+      },
+      async ({ traceId: _traceId, ...input }) => jsonResult(await knowledgeDb.setRecordScopesAsOwner(input)),
     );
 
     server.registerTool(

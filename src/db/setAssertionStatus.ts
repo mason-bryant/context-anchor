@@ -19,6 +19,13 @@ import { assertValidSchemaName } from "./config.js";
 export const ASSERTION_STATUSES = ["active", "disputed", "superseded", "retracted"] as const;
 export type AssertionStatus = (typeof ASSERTION_STATUSES)[number];
 
+/**
+ * What this command will accept. Narrower than the column by one value: `superseded` is a
+ * consequence of a supersedes relation, never a standing set on its own, so a surface that
+ * offered it would be advertising an option that can only ever be refused.
+ */
+export const SETTABLE_ASSERTION_STATUSES = ["active", "disputed", "retracted"] as const;
+
 export type SetAssertionStatusInput = {
   pool: Pool;
   schemaName: string;
