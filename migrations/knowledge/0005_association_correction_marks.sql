@@ -12,6 +12,15 @@
 ALTER TABLE record_scopes
   ADD COLUMN retired_by_correction boolean NOT NULL DEFAULT false;
 
+-- The mark qualifies a retirement, so it cannot outlive one. A live row carrying it would be
+-- invisible in every way that matters: reinstatement would skip a row that is not retired, and
+-- import would refuse to derive an association that looks perfectly current to anyone reading
+-- record_scopes. The database is the only place that can rule it out for every writer, including
+-- manual SQL and code not yet written.
+ALTER TABLE record_scopes
+  ADD CONSTRAINT record_scopes_correction_requires_retirement
+  CHECK (NOT retired_by_correction OR retired_at IS NOT NULL);
+
 -- Existing retired rows keep the default. They were all written by import, which is the only
 -- thing that had retired an association before this column existed, so `false` is accurate
 -- history rather than an assumption.

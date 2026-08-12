@@ -156,6 +156,22 @@ describe.runIf(await isTestDatabaseReachable())("importDocuments (real Postgres)
       );
     }
 
+    it("refuses to mark a live association as corrected", async () => {
+      await runImport();
+
+      // The mark qualifies a retirement. A live row carrying it would be invisible in every way
+      // that matters -- reinstatement skips rows that are not retired, and import would refuse
+      // to derive an association that reads as perfectly current. Enforced in the schema because
+      // that is the only place that binds manual SQL and code not yet written.
+      await expect(
+        pool.query(
+          `UPDATE "${schemaName}".record_scopes SET retired_by_correction = true
+            WHERE workspace_guid = $1 AND retired_at IS NULL`,
+          [bootstrap.workspaceGuid],
+        ),
+      ).rejects.toThrow(/record_scopes_correction_requires_retirement/);
+    });
+
     it("does not let a corrected assertion association suppress a section derivation", async () => {
       await runImport();
 
