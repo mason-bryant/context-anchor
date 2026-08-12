@@ -136,9 +136,13 @@ describe.runIf(await isTestDatabaseReachable())("importDocuments (real Postgres)
     }
 
     /**
-     * Marks every live association whose stable key contains `stableKeyFragment` as
+     * Marks every live *section* association whose stable key contains `stableKeyFragment` as
      * corrected — `LIKE`, so this is one or many sections, not necessarily one. Sets both
      * columns setRecordScopes sets, which is the state import has to respect.
+     *
+     * record_type is constrained here for the same reason it is in the production suppression
+     * lookup, and because these tests deliberately create a non-section row carrying a section's
+     * stable key: a helper that matched on stable key alone would touch it.
      */
     async function retireAssociations(stableKeyFragment: string, scopeSlug: string): Promise<void> {
       await pool.query(
@@ -146,6 +150,7 @@ describe.runIf(await isTestDatabaseReachable())("importDocuments (real Postgres)
           FROM "${schemaName}".scopes s
          WHERE s.scope_guid = a.scope_guid
            AND a.workspace_guid = $1 AND a.retired_at IS NULL
+           AND a.record_type = 'section'
            AND a.stable_key LIKE '%' || $2 || '%' AND s.scope_slug = $3`,
         [bootstrap.workspaceGuid, stableKeyFragment, scopeSlug],
       );
@@ -160,8 +165,12 @@ describe.runIf(await isTestDatabaseReachable())("importDocuments (real Postgres)
       // can carry the same stable key as a section, and a suppression lookup that matches on
       // stable key alone would let one record kind silently veto derivation for another.
       const section = await pool.query<{ stable_key: string; scope_guid: string }>(
+        // Constrained the same way as everything else here: the point of this test is to add a
+        // non-section row alongside a section one, so picking the row to collide with must not
+        // itself be able to select a non-section row.
         `SELECT a.stable_key, a.scope_guid FROM "${schemaName}".record_scopes a
-          WHERE a.workspace_guid = $1 AND a.stable_key LIKE '%db-backed%' LIMIT 1`,
+          WHERE a.workspace_guid = $1 AND a.record_type = 'section' AND a.retired_at IS NULL
+            AND a.stable_key LIKE '%db-backed%' LIMIT 1`,
         [bootstrap.workspaceGuid],
       );
       const target = section.rows[0]!;
@@ -220,7 +229,7 @@ describe.runIf(await isTestDatabaseReachable())("importDocuments (real Postgres)
       // deriving the association again, with nothing saying why.
       await pool.query(
         `UPDATE "${schemaName}".record_scopes SET retired_by_correction = false
-          WHERE workspace_guid = $1 AND retired_by_correction`,
+          WHERE workspace_guid = $1 AND record_type = 'section' AND retired_by_correction`,
         [bootstrap.workspaceGuid],
       );
 
