@@ -173,6 +173,8 @@ describe.runIf(await isTestDatabaseReachable())("assertion writes, T3 slice 2 (r
 
       expect(first.previousStatus).toBe("active");
       expect(replay.replayed).toBe(true);
+      // A replay wrote nothing, so `changed` must be false here exactly as on the short circuit.
+      expect(replay.changed).toBe(false);
       // The accepted command stands: the claim is disputed, not retracted.
       expect(replay.status).toBe("disputed");
       expect(replay.previousStatus).toBe("active");

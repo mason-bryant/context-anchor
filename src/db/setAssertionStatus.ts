@@ -255,7 +255,10 @@ export async function setAssertionStatus(
     previousStatus: original.rows[0]?.resulting_value?.previousStatus ?? row.status,
     version: row.version,
     replayed: true,
-    changed: true,
+    // False on every replay, matching the short-circuit branch: `changed` answers "did this
+    // call write", and a replay never does. What happened previously is what `replayed` and
+    // `previousStatus` are for.
+    changed: false,
   };
 }
 
