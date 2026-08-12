@@ -50,6 +50,7 @@
     "db:down": "tsx scripts/db.ts down",
     "db:status": "tsx scripts/db.ts status",
     "db:migrate": "tsx scripts/db.ts migrate",
+    "db:clean-test-schemas": "tsx scripts/drop-orphan-test-schemas.ts",
     "db:psql": "tsx scripts/db.ts psql",
     "db:reset": "tsx scripts/db.ts reset",
     "dev:stdio": "tsx src/bin/anchor-mcp.ts --repo ./fixtures/demo-context",

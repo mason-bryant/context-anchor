@@ -150,16 +150,17 @@ describe("test schema names stay recognisable to the leak tooling", () => {
     }
   });
 
-  it("keeps the cleanup script's copy of the pattern identical to the canonical one", async () => {
-    // The script is a standalone .mjs that opens a pool at import, so it cannot be imported here
-    // to compare the value directly — read the literal instead. A pattern the guard flags but the
-    // script will not sweep means a leak reported on every run and cleaned by nothing.
+  it("leaves the cleanup script importing the pattern rather than restating it", async () => {
+    // This replaces a test that compared two copies of the literal. The copies are gone — the
+    // script imports the canonical value — so the thing worth protecting is no longer "are they
+    // equal" but "is there still only one". A second declaration would drift silently, and a
+    // pattern the guard flags but the script will not sweep is a leak reported on every run and
+    // cleaned by nothing.
     const source = await readFile(
-      path.resolve(import.meta.dirname, "../../scripts/drop-orphan-test-schemas.mjs"),
+      path.resolve(import.meta.dirname, "../../scripts/drop-orphan-test-schemas.ts"),
       "utf8",
     );
-    const match = /^const TEST_SCHEMA_PATTERN = (.+);$/m.exec(source);
-    expect(match, "the cleanup script must declare TEST_SCHEMA_PATTERN on one line").not.toBeNull();
-    expect(match?.[1]).toBe(TEST_SCHEMA_PATTERN.toString());
+    expect(source).toMatch(/import \{ TEST_SCHEMA_PATTERN \} from "\.\.\/test\/db\/testDatabase\.js";/);
+    expect(source).not.toMatch(/(const|let|var)\s+TEST_SCHEMA_PATTERN\s*=/);
   });
 });
