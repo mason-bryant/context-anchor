@@ -84,6 +84,34 @@ describe("redactDatabaseUrl", () => {
     const redacted = redactDatabaseUrl("not a url with a s3cret in it");
     expect(redacted).not.toContain("s3cret");
   });
+
+  it("redacts a password passed as a query parameter, not just as userinfo", () => {
+    // Postgres accepts any connection parameter as a query key, and pg-connection-string honours
+    // it — this is a working connection string, not a malformed one, and it used to pass through
+    // this function untouched.
+    const redacted = redactDatabaseUrl("postgres://db.example.com:55432/anchor_mcp?password=sup3rs3cret");
+    expect(redacted).not.toContain("sup3rs3cret");
+    expect(redacted).toContain("password=***");
+    // The locator survives, which is the whole reason for redacting rather than dropping.
+    expect(redacted).toContain("db.example.com:55432/anchor_mcp");
+  });
+
+  it("redacts every credential-bearing parameter, including repeats", () => {
+    const redacted = redactDatabaseUrl(
+      "postgres://host/db?password=one&sslpassword=two&password=three&application_name=anchor",
+    );
+    for (const secret of ["one", "two", "three"]) {
+      expect(redacted).not.toContain(secret);
+    }
+    // Non-secret parameters are left alone; redacting them would cost diagnosability for nothing.
+    expect(redacted).toContain("application_name=anchor");
+  });
+
+  it("keeps TLS file paths visible, since they locate rather than authenticate", () => {
+    const redacted = redactDatabaseUrl("postgres://host/db?sslkey=/etc/certs/client.key&sslcert=/etc/certs/client.crt");
+    expect(redacted).toContain("sslkey=");
+    expect(redacted).toContain("client.key");
+  });
 });
 
 describe("assertValidDatabaseUrl", () => {
