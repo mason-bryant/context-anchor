@@ -128,6 +128,12 @@ export type SelectionInput = {
   role: WorkspaceRole;
   task: string;
   referencedPaths?: string[];
+  /**
+   * Off by default (T-46). Matches task terms against assertion titles and section headings so
+   * ordinary phrasing can reach a scope at all; flagged because it adds a signal kind, and tier
+   * 1 of the ranking rule counts distinct kinds, so enabling it changes existing orderings.
+   */
+  recordLexical?: boolean;
 };
 
 export async function selectRouteCandidates(
@@ -201,6 +207,51 @@ export async function selectRouteCandidates(
     const lexical = lexicalMatch(scope, terms);
     if (lexical) {
       add(scope.scope_guid, lexical);
+    }
+  }
+
+  // Records, not just scope names (T-46). A scope's slug, title, and aliases are the only text
+  // the lexical signal could see, so a task phrased in ordinary words — "logging retention" —
+  // reached nothing, even with a claim by that name in the workspace. Titles and headings only,
+  // never body text: body matching would put most scopes in most answers, which reads like
+  // working and is harder to notice than returning nothing.
+  //
+  // Weakest kind by position in SIGNAL_KINDS, but tier 1 counts distinct kinds, so this can
+  // still promote a scope. That is why it ships behind a flag and is measured as a shadow
+  // ranker before it decides anything.
+  if (input.recordLexical) {
+    const rows = await pool.query<{ scope_guid: string; text: string; source: string }>(
+      `SELECT rs.scope_guid, a.title AS text, 'assertion' AS source
+         FROM "${schemaName}".assertions a
+         JOIN "${schemaName}".record_scopes rs
+           ON rs.workspace_guid = a.workspace_guid AND rs.record_type = 'assertion'
+          AND rs.record_guid = a.assertion_guid AND rs.retired_at IS NULL
+        WHERE a.workspace_guid = $1 AND a.retired_at IS NULL AND a.status = 'active'
+       UNION ALL
+       SELECT rs.scope_guid, ss.title AS text, 'section' AS source
+         FROM "${schemaName}".source_sections ss
+         JOIN "${schemaName}".document_revisions dr
+           ON dr.workspace_guid = ss.workspace_guid AND dr.revision_guid = ss.revision_guid
+         JOIN "${schemaName}".source_documents d
+           ON d.workspace_guid = dr.workspace_guid AND d.document_guid = dr.document_guid
+          AND d.retired_at IS NULL
+         JOIN "${schemaName}".record_scopes rs
+           ON rs.workspace_guid = ss.workspace_guid AND rs.record_type = 'section'
+          AND rs.stable_key = ss.stable_key AND rs.retired_at IS NULL
+        WHERE ss.workspace_guid = $1`,
+      [input.workspaceGuid],
+    );
+    // Matched in application code, like every other signal here, so the reason a route was
+    // offered stays explainable to the person reading it.
+    for (const row of rows.rows) {
+      const words = row.text.toLowerCase().match(/[a-z0-9]{2,}/g) ?? [];
+      const hit = words.find((word) => terms.has(word));
+      if (hit) {
+        add(row.scope_guid, {
+          kind: "record-lexical",
+          reason: `task term ${JSON.stringify(hit)} matched a ${row.source} title in this scope`,
+        });
+      }
     }
   }
 
