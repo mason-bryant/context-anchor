@@ -104,8 +104,33 @@ export async function dropAllSchemas(pool: Pool, schemaName: string): Promise<vo
  */
 const registered = new Set<string>();
 
+/**
+ * The one definition of what a test schema name looks like. `schemaLeakGuard` imports this rather
+ * than keeping its own copy, and `scripts/drop-orphan-test-schemas.mjs` carries a duplicate that
+ * `schemaLeak.contract.test.ts` asserts is identical — a name the guard flags but the sweep script
+ * will not remove is a leak reported forever and never cleaned.
+ */
+export const TEST_SCHEMA_PATTERN = /^[a-z0-9_]+_test_[0-9a-f]{12}(_ready)?(_telemetry)?$/;
+
+/**
+ * Refuses a prefix that would produce a name the guard cannot recognise.
+ *
+ * Registering the name is only half the protection: the suite-level guard finds leaks by matching
+ * the name shape, so a prefix like `scratch` or `my_test_` yields a schema that no longer looks
+ * like a test schema to anything downstream, and the "green run leaks schemas" failure mode
+ * reopens quietly. Checking the generated name against the very pattern the guard uses makes that
+ * unrepresentable rather than merely discouraged.
+ */
 export function testSchemaName(prefix = "knowledge_test"): string {
   const name = `${prefix}_${randomUUID().replace(/-/g, "").slice(0, 12)}`;
+  if (!TEST_SCHEMA_PATTERN.test(name)) {
+    throw new Error(
+      `Test schema prefix "${prefix}" produces "${name}", which the schema leak guard and the ` +
+        `cleanup script would not recognise as a test schema — so a leak of it would go ` +
+        `unreported and unswept. A prefix must be lowercase letters, digits and underscores ` +
+        `ending in "_test" (for example "knowledge_test" or "my_feature_test").`,
+    );
+  }
   registered.add(name);
   return name;
 }

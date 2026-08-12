@@ -1,6 +1,6 @@
 import pg from "pg";
 
-import { TEST_DATABASE_URL } from "./testDatabase.js";
+import { TEST_DATABASE_URL, TEST_SCHEMA_PATTERN } from "./testDatabase.js";
 
 /**
  * Fails the run if the suite leaves schemas behind in the test database.
@@ -17,22 +17,16 @@ import { TEST_DATABASE_URL } from "./testDatabase.js";
  */
 
 /**
- * Any `<something>_test_<12 hex>` name, not an enumerated list of prefixes.
- *
- * The first version of this guard listed `knowledge` and `compare`, which happened to be the
- * prefixes that had already leaked. Six others were in use — `assert_test_`, `route_test_`,
- * `access_test_`, `t3s2_test_`, `diag_test_` — so the guard would have been blind to a leak from
- * most of the suite, and blind by construction to whatever the next test file invents. Matching
- * the shape instead of the vocabulary is what makes this hold for tests not yet written.
- *
- * The prefix admits underscores, because `testSchemaName` accepts any prefix and a plausible one
- * like `my_feature_test` would otherwise slip through — the same hole as the enumerated list,
- * one level down.
+ * The pattern is imported, not restated. It began as an enumerated list of the two prefixes that
+ * had already leaked, missing the six others in use (`assert_test_`, `route_test_`,
+ * `access_test_`, `t3s2_test_`, `diag_test_`, `compare_test_`) and blind by construction to
+ * whatever the next test file invents; then it missed multi-word prefixes. Each time, the fix's
+ * own coverage was narrower than the thing it covered. Keeping one definition, enforced where
+ * names are minted, is what ends that sequence — see `testSchemaName`.
  *
  * False positives are bounded twice over: the name must carry a 12-hex-digit suffix, and the
  * guard only ever considers schemas that appeared during the run.
  */
-const TEST_SCHEMA_PATTERN = /^[a-z0-9_]+_test_[0-9a-f]{12}(_ready)?(_telemetry)?$/;
 
 let before: Set<string> | undefined;
 

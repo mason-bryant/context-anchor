@@ -1,3 +1,4 @@
+import { readFile } from "node:fs/promises";
 import path from "node:path";
 
 import type { Pool } from "pg";
@@ -9,6 +10,7 @@ import { createKnowledgeDatabase, MigrationsPendingError } from "../../src/db/kn
 import {
   dropRegisteredSchemas,
   isTestDatabaseReachable,
+  TEST_SCHEMA_PATTERN,
   testSchemaName,
   TEST_DATABASE_URL,
 } from "./testDatabase.js";
@@ -111,5 +113,42 @@ describe.runIf(await isTestDatabaseReachable())("schema creation is confined to 
     await expect(
       createKnowledgeDatabase(TEST_DATABASE_URL, { poolSize: 2, schemaName }),
     ).rejects.toThrow(/does not exist/);
+  });
+});
+
+/**
+ * These need no database, so they run everywhere the suite does — including wherever the contract
+ * tests above skip themselves. The invariant they protect is the one that makes registration
+ * meaningful: a registered name that the guard cannot recognise is not protected by anything.
+ */
+describe("test schema names stay recognisable to the leak tooling", () => {
+  it("refuses a prefix that would produce an unrecognisable name", () => {
+    // Each of these registers nothing and throws, so no schema is created and none can leak.
+    expect(() => testSchemaName("scratch")).toThrow(/would not recognise/);
+    expect(() => testSchemaName("my_test_")).toThrow(/would not recognise/);
+    expect(() => testSchemaName("Knowledge_Test")).toThrow(/would not recognise/);
+  });
+
+  it("accepts single and multi-word prefixes, and the names it mints match the guard", () => {
+    for (const prefix of [undefined, "diag_test", "my_feature_test"]) {
+      const name = prefix === undefined ? testSchemaName() : testSchemaName(prefix);
+      expect(name).toMatch(TEST_SCHEMA_PATTERN);
+      // The telemetry sibling is a separate schema that teardown drops and the guard must also
+      // recognise; the base name matching is not enough on its own.
+      expect(`${name}_telemetry`).toMatch(TEST_SCHEMA_PATTERN);
+    }
+  });
+
+  it("keeps the cleanup script's copy of the pattern identical to the canonical one", async () => {
+    // The script is a standalone .mjs that opens a pool at import, so it cannot be imported here
+    // to compare the value directly — read the literal instead. A pattern the guard flags but the
+    // script will not sweep means a leak reported on every run and cleaned by nothing.
+    const source = await readFile(
+      path.resolve(import.meta.dirname, "../../scripts/drop-orphan-test-schemas.mjs"),
+      "utf8",
+    );
+    const match = /^const TEST_SCHEMA_PATTERN = (.+);$/m.exec(source);
+    expect(match, "the cleanup script must declare TEST_SCHEMA_PATTERN on one line").not.toBeNull();
+    expect(match?.[1]).toBe(TEST_SCHEMA_PATTERN.toString());
   });
 });
