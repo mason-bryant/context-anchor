@@ -1,6 +1,6 @@
 import type { Pool } from "pg";
 
-import type { CommandHandler, CommandTransaction } from "./commandHandler.js";
+import { ConcurrentModificationError, type CommandHandler, type CommandTransaction } from "./commandHandler.js";
 import { assertValidSchemaName } from "./config.js";
 
 /**
@@ -106,6 +106,18 @@ export async function setAssertionStatus(
     throw new AssertionNotFoundError(input.assertionGuid);
   }
   if (held.status === input.status) {
+    // Checked even though nothing will be written. expectedVersion is a statement about what the
+    // caller read, not about what this call intends to change: if the claim moved underneath
+    // them, a silent success here would confirm a decision they made against a stale reading.
+    if (input.expectedVersion !== undefined && input.expectedVersion !== held.version) {
+      throw new ConcurrentModificationError(
+        "assertion",
+        input.assertionGuid,
+        input.expectedVersion,
+        held.version,
+      );
+    }
+
     // Nothing to write either way, but the two reasons are different and a caller can act on
     // the difference: a retry of an accepted command is a replay and still owes the original
     // previousStatus, while a claim that merely happens to hold this standing was never

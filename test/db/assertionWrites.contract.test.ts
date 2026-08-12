@@ -5,7 +5,7 @@ import pg from "pg";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { ensureBootstrap, type BootstrapResult } from "../../src/db/bootstrap.js";
-import { CommandHandler } from "../../src/db/commandHandler.js";
+import { CommandHandler, ConcurrentModificationError } from "../../src/db/commandHandler.js";
 import { createAssertion } from "../../src/db/createAssertion.js";
 import { createAssertionRelation, SelfRelationError } from "../../src/db/createAssertionRelation.js";
 import { importDocuments } from "../../src/db/importDocuments.js";
@@ -205,6 +205,26 @@ describe.runIf(await isTestDatabaseReachable())("assertion writes, T3 slice 2 (r
       const coincidence = await setAssertionStatus({ ...args, assertionGuid: untouched.assertionGuid, status: "active" });
       expect(coincidence.changed).toBe(false);
       expect(coincidence.replayed).toBe(false);
+    });
+
+    // expectedVersion states what the caller read, not what they intend to change: a silent
+    // success would confirm a decision made against a stale reading.
+    it("still enforces expectedVersion when there is nothing to write", async () => {
+      const created = await author("Tokens are required", "The reading.");
+
+      await expect(
+        setAssertionStatus({
+          pool,
+          schemaName,
+          handler,
+          workspaceGuid: bootstrap.workspaceGuid,
+          actorPrincipalGuid: bootstrap.ownerPrincipalGuid,
+          assertionGuid: created.assertionGuid,
+          status: "active",
+          reason: "already active, but read at the wrong version",
+          expectedVersion: 99,
+        }),
+      ).rejects.toThrow(ConcurrentModificationError);
     });
 
     it("refuses to mark a claim superseded without a relation saying what replaced it", async () => {
