@@ -228,17 +228,40 @@ export async function selectRouteCandidates(
           AND rs.record_guid = a.assertion_guid AND rs.retired_at IS NULL
         WHERE a.workspace_guid = $1 AND a.retired_at IS NULL AND a.status = 'active'
        UNION ALL
-       SELECT rs.scope_guid, ss.title AS text, 'section' AS source
-         FROM "${schemaName}".source_sections ss
-         JOIN "${schemaName}".document_revisions dr
-           ON dr.workspace_guid = ss.workspace_guid AND dr.revision_guid = ss.revision_guid
-         JOIN "${schemaName}".source_documents d
-           ON d.workspace_guid = dr.workspace_guid AND d.document_guid = dr.document_guid
-          AND d.retired_at IS NULL
-         JOIN "${schemaName}".record_scopes rs
-           ON rs.workspace_guid = ss.workspace_guid AND rs.record_type = 'section'
-          AND rs.stable_key = ss.stable_key AND rs.retired_at IS NULL
-        WHERE ss.workspace_guid = $1`,
+       -- Wrapped in a subquery because DISTINCT ON needs its own ORDER BY, and a bare ORDER BY
+       -- in a UNION branch binds to the whole union instead.
+       --
+       -- DISTINCT ON matching loadRouteRecords: stable_key is revision-stable, so without it
+       -- every revision of a document contributes its headings. A heading a later commit deleted
+       -- would keep routing forever — the workspace could never be corrected by editing it — and
+       -- each stable key would also emit one row per revision.
+       SELECT scope_guid, text, source FROM (
+         SELECT DISTINCT ON (rs.scope_guid, ss.stable_key)
+                rs.scope_guid, ss.title AS text, 'section' AS source
+           FROM "${schemaName}".source_sections ss
+           JOIN "${schemaName}".document_revisions dr
+             ON dr.workspace_guid = ss.workspace_guid AND dr.revision_guid = ss.revision_guid
+           JOIN "${schemaName}".source_documents d
+             ON d.workspace_guid = dr.workspace_guid AND d.document_guid = dr.document_guid
+            AND d.retired_at IS NULL
+           JOIN "${schemaName}".record_scopes rs
+             ON rs.workspace_guid = ss.workspace_guid AND rs.record_type = 'section'
+            AND rs.stable_key = ss.stable_key AND rs.retired_at IS NULL
+          WHERE ss.workspace_guid = $1
+            -- Current revision only. Taking the highest revision per stable_key is not enough:
+            -- a heading a later commit deleted leaves a section whose stable_key exists in no
+            -- newer revision, so it is the only row for that key and survives any per-key
+            -- dedupe. Restricting to the document's latest revision drops it, which is what
+            -- "reflects the current workspace" has to mean.
+            AND dr.revision_number = (
+              SELECT max(dr2.revision_number)
+                FROM "${schemaName}".document_revisions dr2
+               WHERE dr2.workspace_guid = dr.workspace_guid AND dr2.document_guid = dr.document_guid
+            )
+          -- Still deduped: one scope can associate the same section more than once, by different
+          -- association types, and each would otherwise repeat the same match reason.
+          ORDER BY rs.scope_guid, ss.stable_key, dr.revision_number DESC
+       ) current_sections`,
       [input.workspaceGuid],
     );
     // Matched in application code, like every other signal here, so the reason a route was

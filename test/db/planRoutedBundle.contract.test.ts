@@ -107,6 +107,33 @@ describe.runIf(await isTestDatabaseReachable())("planRoutedBundle (real Postgres
       );
     });
 
+    // stable_key is revision-stable, so every revision of a document contributes its sections
+    // unless the query says otherwise. loadRouteRecords already takes the highest revision per
+    // stable key for exactly this reason; without the same treatment a heading that a later
+    // commit deleted keeps routing forever, and the workspace can never be corrected by editing.
+    it("reads the current revision only, not headings a later commit removed", async () => {
+      await importDocuments({
+        pool,
+        schemaName,
+        handler: new CommandHandler(pool, schemaName),
+        workspaceGuid: bootstrap.workspaceGuid,
+        actorPrincipalGuid: bootstrap.ownerPrincipalGuid,
+        repository: "agent-context",
+        commitSha: "b".repeat(40),
+        files: [
+          {
+            path: "projects/anchor-mcp/anchor-mcp-project-context.md",
+            content: HTTP_DOC.replace("## Decisions", "## Tradeoffs"),
+          },
+        ],
+      });
+
+      expect((await plan("decisions", { recordLexical: true })).routes).toEqual([]);
+      // The replacement heading routes, so the document is still indexed — this is about which
+      // revision is read, not about the document having dropped out entirely.
+      expect((await plan("tradeoffs", { recordLexical: true })).routes.length).toBeGreaterThan(0);
+    });
+
     // The restriction the whole signal rests on. Body matching would put most scopes in most
     // answers, which reads like working and is far harder to notice than returning nothing —
     // so a word that appears only in prose must still route nowhere.
