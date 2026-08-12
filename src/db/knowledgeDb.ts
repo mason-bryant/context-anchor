@@ -24,6 +24,14 @@ import {
   type Person,
   type ProjectMapping,
 } from "./importDocuments.js";
+import { createAssertion, type CreateAssertionInput, type CreateAssertionResult } from "./createAssertion.js";
+import {
+  createAssertionRelation,
+  type CreateAssertionRelationInput,
+  type CreateAssertionRelationResult,
+} from "./createAssertionRelation.js";
+import { setAssertionStatus, type SetAssertionStatusInput, type SetAssertionStatusResult } from "./setAssertionStatus.js";
+import { setRecordScopes, type SetRecordScopesInput, type SetRecordScopesResult } from "./setRecordScopes.js";
 import { listScopeChanges, type ScopeChange } from "./scopeChanges.js";
 import { resolveDatabaseConfig, type PartialDatabaseConfig, telemetrySchemaNameFor } from "./config.js";
 import { type BootstrapResult, ensureBootstrap } from "./bootstrap.js";
@@ -140,6 +148,48 @@ export class KnowledgeDatabase {
       actorPrincipalGuid: this.bootstrap.ownerPrincipalGuid,
       ...input,
     });
+  }
+
+  /**
+   * T3's writes, as the bootstrapped owner. Each takes a fresh CommandHandler for the same
+   * reason import does: a handler holds no state between commands, and sharing one would only
+   * couple unrelated calls.
+   */
+  private writeContext() {
+    return {
+      pool: this.pool,
+      schemaName: this.schemaName,
+      handler: new CommandHandler(this.pool, this.schemaName),
+      workspaceGuid: this.bootstrap.workspaceGuid,
+      actorPrincipalGuid: this.bootstrap.ownerPrincipalGuid,
+    };
+  }
+
+  async createAssertionAsOwner(
+    input: Omit<CreateAssertionInput, "pool" | "schemaName" | "handler" | "workspaceGuid" | "actorPrincipalGuid">,
+  ): Promise<CreateAssertionResult> {
+    return createAssertion({ ...this.writeContext(), ...input });
+  }
+
+  async setAssertionStatusAsOwner(
+    input: Omit<SetAssertionStatusInput, "pool" | "schemaName" | "handler" | "workspaceGuid" | "actorPrincipalGuid">,
+  ): Promise<SetAssertionStatusResult> {
+    return setAssertionStatus({ ...this.writeContext(), ...input });
+  }
+
+  async createAssertionRelationAsOwner(
+    input: Omit<
+      CreateAssertionRelationInput,
+      "pool" | "schemaName" | "handler" | "workspaceGuid" | "actorPrincipalGuid"
+    >,
+  ): Promise<CreateAssertionRelationResult> {
+    return createAssertionRelation({ ...this.writeContext(), ...input });
+  }
+
+  async setRecordScopesAsOwner(
+    input: Omit<SetRecordScopesInput, "pool" | "schemaName" | "handler" | "workspaceGuid" | "actorPrincipalGuid">,
+  ): Promise<SetRecordScopesResult> {
+    return setRecordScopes({ ...this.writeContext(), ...input });
   }
 
   /** T4's read, as the bootstrapped owner. `scope` may be a slug or a guid. */

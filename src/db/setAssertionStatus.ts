@@ -19,6 +19,15 @@ import { assertValidSchemaName } from "./config.js";
 export const ASSERTION_STATUSES = ["active", "disputed", "superseded", "retracted"] as const;
 export type AssertionStatus = (typeof ASSERTION_STATUSES)[number];
 
+/**
+ * What this command will accept. Narrower than the column by one value: `superseded` is a
+ * consequence of a supersedes relation, never a standing set on its own, so a surface that
+ * offered it would be advertising an option that can only ever be refused.
+ */
+export const SETTABLE_ASSERTION_STATUSES = ["active", "disputed", "retracted"] as const;
+/** The compile-time half of the same rule, so a refused value cannot typecheck. */
+export type SettableAssertionStatus = (typeof SETTABLE_ASSERTION_STATUSES)[number];
+
 export type SetAssertionStatusInput = {
   pool: Pool;
   schemaName: string;
@@ -26,7 +35,9 @@ export type SetAssertionStatusInput = {
   workspaceGuid: string;
   actorPrincipalGuid: string;
   assertionGuid: string;
-  status: AssertionStatus;
+  // Narrower than the column, matching what this command will accept: declaring the full set
+  // would let `superseded` typecheck at a call site that is guaranteed to be refused at runtime.
+  status: SettableAssertionStatus;
   /** Why the standing changed. Carried into `mutation_log`, where it is the only account of intent. */
   reason: string;
   /** Optimistic concurrency: refuse if the claim moved since the caller read it. */
@@ -164,7 +175,11 @@ export async function setAssertionStatus(
       // Superseding is a relationship, not a standing. Allowing it to be set directly would
       // produce a claim marked superseded with no record of what replaced it — the reader's
       // obvious next question, unanswerable.
-      if (input.status === "superseded") {
+      // Cast because the input type already excludes it, so TypeScript reads this as dead. It
+      // is not: values arriving as JSON over MCP or from a JavaScript caller never met that
+      // type, and this is the only thing standing between them and a claim marked superseded
+      // with nothing superseding it.
+      if ((input.status as AssertionStatus) === "superseded") {
         throw new SupersededRequiresRelationError(input.assertionGuid);
       }
 

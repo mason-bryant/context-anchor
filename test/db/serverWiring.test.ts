@@ -52,6 +52,39 @@ const SAMPLE_SCOPES: ScopeSummary[] = [
   },
 ];
 
+/**
+ * The T3 write surface, stubbed once. These cases exercise reads and advertisement, so the
+ * writes only need to exist — spreading them keeps adding a method from touching every stub.
+ */
+const WRITE_STUBS = {
+  createAssertionAsOwner: async () => ({
+    assertionGuid: "11111111-1111-4111-8111-111111111111",
+    citationGuid: "22222222-2222-4222-8222-222222222222",
+    version: 1,
+    scopeGuid: "33333333-3333-4333-8333-333333333333",
+    replayed: false,
+  }),
+  setAssertionStatusAsOwner: async () => ({
+    assertionGuid: "11111111-1111-4111-8111-111111111111",
+    status: "disputed" as const,
+    previousStatus: "active" as const,
+    version: 2,
+    replayed: false,
+    changed: true,
+  }),
+  createAssertionRelationAsOwner: async () => ({
+    relationGuid: "44444444-4444-4444-8444-444444444444",
+    relationType: "contradicts" as const,
+    replayed: false,
+  }),
+  setRecordScopesAsOwner: async () => ({
+    added: ["security"],
+    retired: [],
+    unchanged: [],
+    replayed: false,
+  }),
+};
+
 describe("listScopeChanges tool registration", () => {
   it("is not registered when no database backend is configured", () => {
     const server = createAnchorMcpServer({} as AnchorService) as unknown as AdvertisedServer;
@@ -77,6 +110,7 @@ describe("listScopeChanges tool registration", () => {
 
     const server = createAnchorMcpServer({} as AnchorService, {
       knowledgeDb: {
+        ...WRITE_STUBS,
         listScopesForOwner: async () => SAMPLE_SCOPES,
         listScopeChangesForOwner: async (input: { scope: string }) => {
           expect(input.scope).toBe("http-transport");
@@ -100,6 +134,7 @@ describe("listScopeChanges tool registration", () => {
   it("trims scope and since at the schema, so a padded value resolves instead of failing downstream", () => {
     const server = createAnchorMcpServer({} as AnchorService, {
       knowledgeDb: {
+        ...WRITE_STUBS,
         listScopesForOwner: async () => SAMPLE_SCOPES,
         listScopeChangesForOwner: async () => [],
         importDocumentsAsOwner: async () => SAMPLE_REPORT,
@@ -129,10 +164,19 @@ describe("listScopes tool registration", () => {
     // writes the database on every call.
     expect(server._registeredTools.planRoutedBundle).toBeUndefined();
     expect(server._registeredTools.reportRecordUse).toBeUndefined();
+
+    // The writes must disappear with the rest of the database surface. An advertised tool that
+    // cannot work is worse than a missing one: an agent will call it and read the failure as a
+    // fact about the workspace rather than about the configuration.
+    expect(server._registeredTools.createAssertion).toBeUndefined();
+    expect(server._registeredTools.setAssertionStatus).toBeUndefined();
+    expect(server._registeredTools.createAssertionRelation).toBeUndefined();
+    expect(server._registeredTools.setRecordScopes).toBeUndefined();
   });
 
   it("is registered and returns scopes when a database backend is configured", async () => {
     const fakeKnowledgeDb = {
+      ...WRITE_STUBS,
       listScopesForOwner: async () => SAMPLE_SCOPES,
       listScopeChangesForOwner: async () => [],
       importDocumentsAsOwner: async () => SAMPLE_REPORT,
@@ -148,6 +192,83 @@ describe("listScopes tool registration", () => {
     // Registered together with the rest of the database surface, and absent entirely when no
     // database is configured — an agent must not see a tool that cannot work.
     expect(server._registeredTools.planRoutedBundle).toBeDefined();
+
+    // T3's writes. These existed as library functions reachable only from contract tests, which
+    // made the assertion pass the build order asks for impossible to actually perform — a
+    // capability with no surface is not shipped, whatever its tests say.
+    expect(server._registeredTools.createAssertion).toBeDefined();
+    expect(server._registeredTools.setAssertionStatus).toBeDefined();
+    expect(server._registeredTools.createAssertionRelation).toBeDefined();
+    expect(server._registeredTools.setRecordScopes).toBeDefined();
+
+    // Superseding is a relationship, not a standing. The command refuses it, but the tool must
+    // not offer it either: an advertised option that can only ever fail sends an agent down a
+    // path with no successful ending.
+    expect(() =>
+      server._registeredTools.setAssertionStatus!.inputSchema!.parse({
+        assertionGuid: "00000000-0000-4000-8000-000000000000",
+        status: "superseded",
+        reason: "r",
+      }),
+    ).toThrow();
+    expect(() =>
+      server._registeredTools.setAssertionStatus!.inputSchema!.parse({
+        assertionGuid: "00000000-0000-4000-8000-000000000000",
+        status: "retracted",
+        reason: "r",
+      }),
+    ).not.toThrow();
+
+    // A section is addressed by its stable key, so the schema must accept one without a guid:
+    // section guids are revision-scoped and are resolved internally.
+    expect(() =>
+      server._registeredTools.setRecordScopes!.inputSchema!.parse({
+        recordType: "section",
+        stableKey: "doc#heading",
+        scopeSlugs: ["security"],
+        reason: "r",
+      }),
+    ).not.toThrow();
+
+    // Each record kind has exactly one identity. The command refuses the wrong one, but the
+    // schema saying so first means the caller learns before spending a round trip.
+    expect(() =>
+      server._registeredTools.setRecordScopes!.inputSchema!.parse({
+        recordType: "section",
+        scopeSlugs: ["security"],
+        reason: "no stableKey",
+      }),
+    ).toThrow();
+    expect(() =>
+      server._registeredTools.setRecordScopes!.inputSchema!.parse({
+        recordType: "assertion",
+        stableKey: "doc#heading",
+        scopeSlugs: ["security"],
+        reason: "wrong identifier for the kind",
+      }),
+    ).toThrow();
+
+    // Exactly one identity per kind, not merely at least one: a stray stableKey alongside a
+    // valid recordGuid changes the derived idempotency key, so the same intent sent with and
+    // without it would be accepted as two separate commands.
+    expect(() =>
+      server._registeredTools.setRecordScopes!.inputSchema!.parse({
+        recordType: "assertion",
+        recordGuid: "11111111-1111-4111-8111-111111111111",
+        stableKey: "doc#heading",
+        scopeSlugs: ["security"],
+        reason: "both identifiers",
+      }),
+    ).toThrow();
+    expect(() =>
+      server._registeredTools.setRecordScopes!.inputSchema!.parse({
+        recordType: "section",
+        stableKey: "doc#heading",
+        recordGuid: "11111111-1111-4111-8111-111111111111",
+        scopeSlugs: ["security"],
+        reason: "both identifiers",
+      }),
+    ).toThrow();
     // The MCP import path must be able to claim coverage too, or deletions linger for the
     // primary agent-facing importer while the CLI handles them.
     expect(
@@ -176,6 +297,7 @@ describe("importDocuments tool registration", () => {
   it("is registered and returns the import report when a backend is configured", async () => {
     const server = createAnchorMcpServer({} as AnchorService, {
       knowledgeDb: {
+        ...WRITE_STUBS,
         listScopesForOwner: async () => SAMPLE_SCOPES,
         listScopeChangesForOwner: async () => [],
         importDocumentsAsOwner: async (input: { files: unknown[] }) => {
@@ -201,6 +323,7 @@ describe("importDocuments tool registration", () => {
     let received: Record<string, unknown> | undefined;
     const server = createAnchorMcpServer({} as AnchorService, {
       knowledgeDb: {
+        ...WRITE_STUBS,
         listScopesForOwner: async () => SAMPLE_SCOPES,
         listScopeChangesForOwner: async () => [],
         importDocumentsAsOwner: async (input: Record<string, unknown>) => {
@@ -228,6 +351,7 @@ describe("importDocuments tool registration", () => {
   it("accepts a schema-valid payload carrying mappings and people", () => {
     const server = createAnchorMcpServer({} as AnchorService, {
       knowledgeDb: {
+        ...WRITE_STUBS,
         listScopesForOwner: async () => SAMPLE_SCOPES,
         listScopeChangesForOwner: async () => [],
         importDocumentsAsOwner: async () => SAMPLE_REPORT,
@@ -251,6 +375,7 @@ describe("importDocuments tool registration", () => {
   it("requires a full 40-hex commit sha, since the import is defined as being of a pinned commit", () => {
     const server = createAnchorMcpServer({} as AnchorService, {
       knowledgeDb: {
+        ...WRITE_STUBS,
         listScopesForOwner: async () => SAMPLE_SCOPES,
         listScopeChangesForOwner: async () => [],
         importDocumentsAsOwner: async () => SAMPLE_REPORT,
@@ -273,6 +398,7 @@ describe("importDocuments tool registration", () => {
   it("requires at least one file", () => {
     const server = createAnchorMcpServer({} as AnchorService, {
       knowledgeDb: {
+        ...WRITE_STUBS,
         listScopesForOwner: async () => SAMPLE_SCOPES,
         listScopeChangesForOwner: async () => [],
         importDocumentsAsOwner: async () => SAMPLE_REPORT,

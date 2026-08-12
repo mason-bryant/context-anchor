@@ -15,6 +15,22 @@ import { newTraceId } from "./trace/events.js";
 import type { TraceLogger } from "./trace/logger.js";
 import { TraceRecorder, type TraceConnection } from "./trace/recorder.js";
 import { isDiscoveryCategory, type DiscoveryCategory } from "./taxonomy.js";
+import { ASSERTION_KINDS, CITATION_RELATIONS } from "./db/createAssertion.js";
+import {
+  SETTABLE_ASSERTION_STATUSES,
+  type SetAssertionStatusInput,
+  type SetAssertionStatusResult,
+} from "./db/setAssertionStatus.js";
+import type { CreateAssertionInput, CreateAssertionResult } from "./db/createAssertion.js";
+import {
+  RELATION_TYPES,
+  type CreateAssertionRelationInput,
+  type CreateAssertionRelationResult,
+} from "./db/createAssertionRelation.js";
+import type { SetRecordScopesInput, SetRecordScopesResult } from "./db/setRecordScopes.js";
+
+/** What a caller supplies: the owner facade fills in the pool, schema, handler, and identity. */
+type OwnerWrite<T> = Omit<T, "pool" | "schemaName" | "handler" | "workspaceGuid" | "actorPrincipalGuid">;
 import type {
   LoadContextInput,
   ProjectUpdateSnapshotInput,
@@ -171,6 +187,15 @@ export type KnowledgeDatabaseTool = {
   listScopesForOwner(): Promise<ScopeSummary[]>;
   planRoutedBundleAsOwner(input: PlanRequest, options?: PlanOptions): Promise<PlanResult>;
   reportRecordUseAsOwner(use: RecordUse): Promise<RecordUseResult>;
+  // Typed against the commands themselves rather than Record<string, unknown>: this interface is
+  // the only thing holding the wiring to the real signatures, and an untyped facade would let
+  // them drift silently — the same class of gap that let these tools be missing entirely.
+  createAssertionAsOwner(input: OwnerWrite<CreateAssertionInput>): Promise<CreateAssertionResult>;
+  setAssertionStatusAsOwner(input: OwnerWrite<SetAssertionStatusInput>): Promise<SetAssertionStatusResult>;
+  createAssertionRelationAsOwner(
+    input: OwnerWrite<CreateAssertionRelationInput>,
+  ): Promise<CreateAssertionRelationResult>;
+  setRecordScopesAsOwner(input: OwnerWrite<SetRecordScopesInput>): Promise<SetRecordScopesResult>;
   listScopeChangesForOwner(input: { scope: string; since?: string; limit?: number }): Promise<ScopeChange[]>;
   importDocumentsAsOwner(input: {
     repository: string;
@@ -2000,6 +2025,128 @@ the index when your workflow checks in that file.`,
       },
       async ({ requestId, refs, useKind }) =>
         jsonResult(await knowledgeDb.reportRecordUseAsOwner({ requestId, refs, useKind })),
+    );
+
+    // T3's authoring surface. The design requires every capability to have a surface a person
+    // can drive; these four shipped as library functions reachable only from contract tests,
+    // which made the assertion pass the build order asks for impossible to actually perform.
+    server.registerTool(
+      "createAssertion",
+      {
+        title: "Create Assertion",
+        description:
+          "Author a claim with provenance: one command writes the assertion, its first version snapshot, a " +
+          "citation carrying the exact quote and its position, the routing association, and the mutation log " +
+          "entry. The quote is verified against the cited block before anything is written, so a citation can " +
+          "always be re-found when the source moves. Status describes the standing of the claim, not the outcome " +
+          "of what it describes: \"we tried X and it failed\" is an active fact. Requires the database backend.",
+        inputSchema: z.object({
+          traceId: TraceIdSchema,
+          scopeSlug: z.string().trim().min(1),
+          kind: z.enum(ASSERTION_KINDS),
+          title: z.string().trim().min(1),
+          content: z.string().trim().min(1),
+          citation: z.object({
+            blockGuid: z.string().uuid(),
+            exactQuote: z.string().min(1),
+            prefix: z.string().optional(),
+            suffix: z.string().optional(),
+            relation: z.enum(CITATION_RELATIONS).optional(),
+          }),
+          idempotencyKey: z.string().trim().min(1).optional(),
+        }),
+      },
+      async ({ traceId: _traceId, ...input }) => jsonResult(await knowledgeDb.createAssertionAsOwner(input)),
+    );
+
+    server.registerTool(
+      "setAssertionStatus",
+      {
+        title: "Set Assertion Status",
+        description:
+          "Move a claim between active, disputed, and retracted. This changes only what the claim stands for, " +
+          "never what it says, so a reader can tell \"we no longer stand behind this\" from \"this now says " +
+          "something else\". Superseded cannot be set here: superseding is a relationship, so record it with " +
+          "createAssertionRelation, which transitions the target in the same command. Setting the standing a " +
+          "claim already holds writes nothing. Requires the database backend.",
+        inputSchema: z.object({
+          traceId: TraceIdSchema,
+          assertionGuid: z.string().uuid(),
+          // Deliberately narrower than the column: superseded is reachable only through
+          // createAssertionRelation, which transitions the target in the same command. Offering
+          // it here would advertise an option that can only ever be refused.
+          status: z.enum(SETTABLE_ASSERTION_STATUSES),
+          reason: z.string().trim().min(1),
+          expectedVersion: z.number().int().positive().optional(),
+          idempotencyKey: z.string().trim().min(1).optional(),
+        }),
+      },
+      async ({ traceId: _traceId, ...input }) => jsonResult(await knowledgeDb.setAssertionStatusAsOwner(input)),
+    );
+
+    server.registerTool(
+      "createAssertionRelation",
+      {
+        title: "Create Assertion Relation",
+        description:
+          "Record a conflict or lineage between two claims, so a contradiction surfaces even when the two are " +
+          "routed separately. A supersedes transitions the target to superseded in the same command, because " +
+          "status and lineage cannot disagree. A contradicts deliberately changes no standing: a contradiction " +
+          "is not a resolution, and both claims stay active until someone decides. Requires the database backend.",
+        inputSchema: z.object({
+          traceId: TraceIdSchema,
+          sourceAssertionGuid: z.string().uuid(),
+          targetAssertionGuid: z.string().uuid(),
+          relationType: z.enum(RELATION_TYPES),
+          rationale: z.string().trim().min(1).optional(),
+          idempotencyKey: z.string().trim().min(1).optional(),
+        }),
+      },
+      async ({ traceId: _traceId, ...input }) => jsonResult(await knowledgeDb.createAssertionRelationAsOwner(input)),
+    );
+
+    server.registerTool(
+      "setRecordScopes",
+      {
+        title: "Set Record Scopes",
+        description:
+          "Correct where a record routes. Import derives associations from where a document lives, which " +
+          "describes location rather than subject, so a person reading a route is the first signal that a " +
+          "derived association is wrong. Pass the complete set of scope slugs the record should route under: " +
+          "any absent from it are retired, and retired associations stay as history. A section is identified by " +
+          "its stableKey, an assertion by its guid. Requires the database backend.",
+        inputSchema: z.object({
+          traceId: TraceIdSchema,
+          recordType: z.enum(["section", "assertion"]),
+          recordGuid: z.string().uuid().optional(),
+          stableKey: z.string().trim().min(1).optional(),
+          scopeSlugs: z.array(z.string().trim().min(1)),
+          reason: z.string().trim().min(1),
+          idempotencyKey: z.string().trim().min(1).optional(),
+        })
+          // Each record kind has exactly one identity, and the command refuses the wrong one.
+          // Refusing at the schema instead says so before a call is made, and names the field.
+          .refine((value) => value.recordType !== "section" || value.stableKey !== undefined, {
+            message: "a section is identified by stableKey, because section guids are revision-scoped",
+            path: ["stableKey"],
+          })
+          .refine((value) => value.recordType !== "assertion" || value.recordGuid !== undefined, {
+            message: "an assertion is identified by recordGuid, which is its durable identity",
+            path: ["recordGuid"],
+          })
+          // Exactly one identity per kind, not merely at least one. A stray stableKey on an
+          // assertion is not harmless: it changes the derived idempotency key, so the same
+          // intent sent twice with and without it would be treated as two different commands.
+          .refine((value) => value.recordType !== "assertion" || value.stableKey === undefined, {
+            message: "stableKey does not apply to an assertion; it is identified by recordGuid alone",
+            path: ["stableKey"],
+          })
+          .refine((value) => value.recordType !== "section" || value.recordGuid === undefined, {
+            message: "recordGuid does not apply to a section; its provenance guid is resolved from stableKey",
+            path: ["recordGuid"],
+          }),
+      },
+      async ({ traceId: _traceId, ...input }) => jsonResult(await knowledgeDb.setRecordScopesAsOwner(input)),
     );
 
     server.registerTool(

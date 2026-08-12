@@ -14,6 +14,7 @@ import {
   AssertionNotFoundError,
   SupersededByLiveRelationError,
   SupersededRequiresRelationError,
+  type SettableAssertionStatus,
 } from "../../src/db/setAssertionStatus.js";
 import {
   setRecordScopes,
@@ -240,7 +241,9 @@ describe.runIf(await isTestDatabaseReachable())("assertion writes, T3 slice 2 (r
           workspaceGuid: bootstrap.workspaceGuid,
           actorPrincipalGuid: bootstrap.ownerPrincipalGuid,
           assertionGuid: created.assertionGuid,
-          status: "superseded",
+          // Cast deliberately: the input type now excludes this, and the point of the test is
+          // the runtime refusal that still protects callers who never met the type.
+          status: "superseded" as SettableAssertionStatus,
           reason: "superseded by nothing in particular",
         }),
       ).rejects.toThrow(SupersededRequiresRelationError);
