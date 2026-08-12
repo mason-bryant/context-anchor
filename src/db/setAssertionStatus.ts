@@ -89,6 +89,11 @@ export async function setAssertionStatus(
 ): Promise<SetAssertionStatusResult> {
   assertValidSchemaName(input.schemaName);
 
+  // Computed once: the short circuit below has to ask about the same key the command would use,
+  // or a retry would look like a first call.
+  const idempotencyKey =
+    input.idempotencyKey ?? `assertion.setStatus:${input.assertionGuid}:${input.status}`;
+
   // Checked before the command opens, because a no-op must not write. Re-read inside apply as
   // well, where the transaction makes it authoritative — this is the cheap path, not the guard.
   const existing = await input.pool.query<{ status: AssertionStatus; version: number }>(
@@ -101,12 +106,27 @@ export async function setAssertionStatus(
     throw new AssertionNotFoundError(input.assertionGuid);
   }
   if (held.status === input.status) {
+    // Nothing to write either way, but the two reasons are different and a caller can act on
+    // the difference: a retry of an accepted command is a replay and still owes the original
+    // previousStatus, while a claim that merely happens to hold this standing was never
+    // commanded here at all. Short-circuiting without asking would collapse them.
+    const prior = await input.pool.query<{ resulting_value: { previousStatus?: AssertionStatus } | null }>(
+      `SELECT m.resulting_value
+         FROM "${input.schemaName}".commands c
+         LEFT JOIN "${input.schemaName}".mutation_log m
+           ON m.workspace_guid = c.workspace_guid AND m.command_guid = c.command_guid
+          AND m.entry_type = 'assertion.statusChanged'
+        WHERE c.workspace_guid = $1 AND c.idempotency_key = $2
+        LIMIT 1`,
+      [input.workspaceGuid, idempotencyKey],
+    );
+    const accepted = prior.rows[0];
     return {
       assertionGuid: input.assertionGuid,
       status: held.status,
-      previousStatus: held.status,
+      previousStatus: accepted?.resulting_value?.previousStatus ?? held.status,
       version: held.version,
-      replayed: false,
+      replayed: accepted !== undefined,
       changed: false,
     };
   }
@@ -121,7 +141,7 @@ export async function setAssertionStatus(
     origin: "mcp",
     // Keyed on the target standing rather than the reason text: setting the same claim to the
     // same status twice is a retry. Rewording the reason does not make it a second decision.
-    idempotencyKey: input.idempotencyKey ?? `assertion.setStatus:${input.assertionGuid}:${input.status}`,
+    idempotencyKey,
     reason: input.reason,
     entity: { entityType: "assertion", entityGuid: input.assertionGuid },
     expectedVersion: input.expectedVersion,

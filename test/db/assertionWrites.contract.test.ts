@@ -178,6 +178,35 @@ describe.runIf(await isTestDatabaseReachable())("assertion writes, T3 slice 2 (r
       expect(replay.previousStatus).toBe("active");
     });
 
+    // Both reach the same "nothing written" outcome for different reasons, and a caller can act
+    // on the difference — so the no-op path still has to consult the idempotency key.
+    it("distinguishes a retried command from a claim that already held the standing", async () => {
+      const created = await author("Tokens are required", "The reading.");
+      const args = {
+        pool,
+        schemaName,
+        handler,
+        workspaceGuid: bootstrap.workspaceGuid,
+        actorPrincipalGuid: bootstrap.ownerPrincipalGuid,
+        assertionGuid: created.assertionGuid,
+        status: "disputed" as const,
+        reason: "a second reading contradicts it",
+      };
+      await setAssertionStatus(args);
+
+      const retry = await setAssertionStatus(args);
+      expect(retry.changed).toBe(false);
+      expect(retry.replayed).toBe(true);
+      // The original transition is still reported, not the current standing echoed back.
+      expect(retry.previousStatus).toBe("active");
+
+      // Never commanded here: nothing was written and nothing is being replayed.
+      const untouched = await author("Tokens are mandatory", "A third reading.");
+      const coincidence = await setAssertionStatus({ ...args, assertionGuid: untouched.assertionGuid, status: "active" });
+      expect(coincidence.changed).toBe(false);
+      expect(coincidence.replayed).toBe(false);
+    });
+
     it("refuses to mark a claim superseded without a relation saying what replaced it", async () => {
       const created = await author("Tokens are required", "The reading.");
 
