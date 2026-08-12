@@ -25,10 +25,14 @@ import { TEST_DATABASE_URL } from "./testDatabase.js";
  * most of the suite, and blind by construction to whatever the next test file invents. Matching
  * the shape instead of the vocabulary is what makes this hold for tests not yet written.
  *
+ * The prefix admits underscores, because `testSchemaName` accepts any prefix and a plausible one
+ * like `my_feature_test` would otherwise slip through — the same hole as the enumerated list,
+ * one level down.
+ *
  * False positives are bounded twice over: the name must carry a 12-hex-digit suffix, and the
  * guard only ever considers schemas that appeared during the run.
  */
-const TEST_SCHEMA_PATTERN = /^[a-z0-9]+_test_[0-9a-f]{12}(_ready)?(_telemetry)?$/;
+const TEST_SCHEMA_PATTERN = /^[a-z0-9_]+_test_[0-9a-f]{12}(_ready)?(_telemetry)?$/;
 
 let before: Set<string> | undefined;
 

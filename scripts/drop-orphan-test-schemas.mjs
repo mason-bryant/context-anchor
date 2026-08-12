@@ -20,13 +20,17 @@ const DATABASE_URL =
   process.env.TEST_DATABASE_URL ?? "postgres://anchor:anchor@127.0.0.1:55432/anchor_mcp";
 
 /**
- * Deliberately narrow: a test schema is a known prefix, an underscore, and exactly twelve hex
+ * Deliberately narrow: a test schema is a prefix ending in `_test`, then exactly twelve hex
  * digits from randomUUID, optionally with the `_ready` and `_telemetry` suffixes the suite
  * appends. A real workspace schema — `knowledge`, `anchor_real`, anything an operator named by
  * hand — cannot match this, which is the property that makes the script safe to point at a
  * database holding real content.
+ *
+ * The prefix admits underscores so a multi-word one like `my_feature_test_<hex>` is swept too.
+ * That widens what matches, but not dangerously: the twelve-hex-digit suffix is what actually
+ * separates a generated name from anything a person would type, and it is still required.
  */
-const TEST_SCHEMA_PATTERN = /^[a-z0-9]+_test_[0-9a-f]{12}(_ready)?(_telemetry)?$/;
+const TEST_SCHEMA_PATTERN = /^[a-z0-9_]+_test_[0-9a-f]{12}(_ready)?(_telemetry)?$/;
 
 const apply = process.argv.includes("--yes");
 
