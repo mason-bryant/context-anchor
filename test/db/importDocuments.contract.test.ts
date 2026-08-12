@@ -127,7 +127,11 @@ describe.runIf(await isTestDatabaseReachable())("importDocuments (real Postgres)
       return result.rows[0]!.n;
     }
 
-    /** Retires every live association for a section, the way setRecordScopes does. */
+    /**
+     * Marks every live association whose stable key contains `stableKeyFragment` as
+     * corrected — `LIKE`, so this is one or many sections, not necessarily one. Sets both
+     * columns setRecordScopes sets, which is the state import has to respect.
+     */
     async function retireAssociations(stableKeyFragment: string, scopeSlug: string): Promise<void> {
       await pool.query(
         `UPDATE "${schemaName}".record_scopes a SET retired_at = now(), retired_by_correction = true
@@ -138,6 +142,48 @@ describe.runIf(await isTestDatabaseReachable())("importDocuments (real Postgres)
         [bootstrap.workspaceGuid, stableKeyFragment, scopeSlug],
       );
     }
+
+    it("does not let a corrected assertion association suppress a section derivation", async () => {
+      await runImport();
+
+      // stable_key is required on section rows and merely permitted on others — the CHECK is
+      // `record_type <> 'section' OR stable_key IS NOT NULL` — and setRecordScopes writes
+      // whatever stable key it is handed regardless of record type. So an assertion association
+      // can carry the same stable key as a section, and a suppression lookup that matches on
+      // stable key alone would let one record kind silently veto derivation for another.
+      const section = await pool.query<{ stable_key: string; scope_guid: string }>(
+        `SELECT a.stable_key, a.scope_guid FROM "${schemaName}".record_scopes a
+          WHERE a.workspace_guid = $1 AND a.stable_key LIKE '%db-backed%' LIMIT 1`,
+        [bootstrap.workspaceGuid],
+      );
+      const target = section.rows[0]!;
+
+      await pool.query(
+        `INSERT INTO "${schemaName}".record_scopes
+           (workspace_guid, association_guid, record_type, record_guid, stable_key, scope_guid,
+            association_type, derived_from_signal, retired_at, retired_by_correction)
+         VALUES ($1, gen_random_uuid(), 'assertion', gen_random_uuid(), $2, $3,
+                 'manual-correction', 'corrected', now(), true)`,
+        [bootstrap.workspaceGuid, target.stable_key, target.scope_guid],
+      );
+
+      // The section association is untouched by that, so a re-import must still derive it.
+      await pool.query(
+        `DELETE FROM "${schemaName}".record_scopes
+          WHERE workspace_guid = $1 AND record_type = 'section' AND stable_key = $2 AND scope_guid = $3`,
+        [bootstrap.workspaceGuid, target.stable_key, target.scope_guid],
+      );
+
+      await runImport({ commit: "e".repeat(40) });
+
+      const after = await pool.query<{ n: number }>(
+        `SELECT count(*)::int AS n FROM "${schemaName}".record_scopes
+          WHERE workspace_guid = $1 AND record_type = 'section' AND retired_at IS NULL
+            AND stable_key = $2 AND scope_guid = $3`,
+        [bootstrap.workspaceGuid, target.stable_key, target.scope_guid],
+      );
+      expect(after.rows[0]!.n).toBeGreaterThan(0);
+    });
 
     it("does not re-derive an association a correction retired", async () => {
       await runImport();

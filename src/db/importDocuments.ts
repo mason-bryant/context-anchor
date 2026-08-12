@@ -689,6 +689,12 @@ async function associate(
         -- NOTHING never fires.
         SELECT 1 FROM "${input.schemaName}".record_scopes
          WHERE workspace_guid = $1 AND stable_key = $4 AND scope_guid = $5
+           -- Scoped to sections, because stable_key is required on section rows and merely
+           -- permitted on others (the CHECK only says a section must have one), and
+           -- setRecordScopes writes whatever key it is handed for any record type.
+           -- Without this, a corrected assertion association sharing a stable key would veto
+           -- the derivation of a section that nobody had corrected.
+           AND record_type = 'section'
            AND retired_by_correction
       )
      ON CONFLICT DO NOTHING`,
