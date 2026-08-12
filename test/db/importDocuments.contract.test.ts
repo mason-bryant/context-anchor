@@ -108,6 +108,166 @@ describe.runIf(await isTestDatabaseReachable())("importDocuments (real Postgres)
     });
   }
 
+  /**
+   * A human correcting an association is making a judgement the derivation could not: "this
+   * section is not really about that scope". Re-importing the same repository must not quietly
+   * undo it, or the correction lasts only until the next import and the operator is never told.
+   */
+  describe("manual corrections survive a re-import", () => {
+    /**
+     * Counts live *section* associations. Constrained by record_type for the same reason the
+     * production suppression lookup is: stable_key is required on sections and merely permitted
+     * on other record types, so a query matching on stable key alone counts rows belonging to a
+     * different kind of record. These tests deliberately insert such a row, so leaving it
+     * unconstrained would make them agree with the code by coincidence.
+     */
+    async function liveAssociation(stableKeyFragment: string, scopeSlug: string): Promise<number> {
+      const result = await pool.query<{ n: number }>(
+        `SELECT count(*)::int AS n
+         FROM "${schemaName}".record_scopes a
+         JOIN "${schemaName}".scopes s ON s.scope_guid = a.scope_guid
+         WHERE a.workspace_guid = $1 AND a.retired_at IS NULL
+           AND a.record_type = 'section'
+           AND a.stable_key LIKE '%' || $2 || '%'
+           AND s.scope_slug = $3`,
+        [bootstrap.workspaceGuid, stableKeyFragment, scopeSlug],
+      );
+      return result.rows[0]!.n;
+    }
+
+    /**
+     * Marks every live *section* association whose stable key contains `stableKeyFragment` as
+     * corrected — `LIKE`, so this is one or many sections, not necessarily one. Sets both
+     * columns setRecordScopes sets, which is the state import has to respect.
+     *
+     * record_type is constrained here for the same reason it is in the production suppression
+     * lookup, and because these tests deliberately create a non-section row carrying a section's
+     * stable key: a helper that matched on stable key alone would touch it.
+     */
+    async function retireAssociations(stableKeyFragment: string, scopeSlug: string): Promise<void> {
+      await pool.query(
+        `UPDATE "${schemaName}".record_scopes a SET retired_at = now(), retired_by_correction = true
+          FROM "${schemaName}".scopes s
+         WHERE s.scope_guid = a.scope_guid
+           AND a.workspace_guid = $1 AND a.retired_at IS NULL
+           AND a.record_type = 'section'
+           AND a.stable_key LIKE '%' || $2 || '%' AND s.scope_slug = $3`,
+        [bootstrap.workspaceGuid, stableKeyFragment, scopeSlug],
+      );
+    }
+
+    it("refuses to mark a live association as corrected", async () => {
+      await runImport();
+
+      // The mark qualifies a retirement. A live row carrying it would be invisible in every way
+      // that matters -- reinstatement skips rows that are not retired, and import would refuse
+      // to derive an association that reads as perfectly current. Enforced in the schema because
+      // that is the only place that binds manual SQL and code not yet written.
+      await expect(
+        pool.query(
+          `UPDATE "${schemaName}".record_scopes SET retired_by_correction = true
+            WHERE workspace_guid = $1 AND retired_at IS NULL`,
+          [bootstrap.workspaceGuid],
+        ),
+      ).rejects.toThrow(/record_scopes_correction_requires_retirement/);
+    });
+
+    it("does not let a corrected assertion association suppress a section derivation", async () => {
+      await runImport();
+
+      // stable_key is required on section rows and merely permitted on others — the CHECK is
+      // `record_type <> 'section' OR stable_key IS NOT NULL` — and setRecordScopes writes
+      // whatever stable key it is handed regardless of record type. So an assertion association
+      // can carry the same stable key as a section, and a suppression lookup that matches on
+      // stable key alone would let one record kind silently veto derivation for another.
+      const section = await pool.query<{ stable_key: string; scope_guid: string }>(
+        // Constrained the same way as everything else here: the point of this test is to add a
+        // non-section row alongside a section one, so picking the row to collide with must not
+        // itself be able to select a non-section row.
+        `SELECT a.stable_key, a.scope_guid FROM "${schemaName}".record_scopes a
+          WHERE a.workspace_guid = $1 AND a.record_type = 'section' AND a.retired_at IS NULL
+            AND a.stable_key LIKE '%db-backed%' LIMIT 1`,
+        [bootstrap.workspaceGuid],
+      );
+      const target = section.rows[0]!;
+
+      await pool.query(
+        `INSERT INTO "${schemaName}".record_scopes
+           (workspace_guid, association_guid, record_type, record_guid, stable_key, scope_guid,
+            association_type, derived_from_signal, retired_at, retired_by_correction)
+         VALUES ($1, gen_random_uuid(), 'assertion', gen_random_uuid(), $2, $3,
+                 'manual-correction', 'corrected', now(), true)`,
+        [bootstrap.workspaceGuid, target.stable_key, target.scope_guid],
+      );
+
+      // The section association is untouched by that, so a re-import must still derive it.
+      await pool.query(
+        `DELETE FROM "${schemaName}".record_scopes
+          WHERE workspace_guid = $1 AND record_type = 'section' AND stable_key = $2 AND scope_guid = $3`,
+        [bootstrap.workspaceGuid, target.stable_key, target.scope_guid],
+      );
+
+      await runImport({ commit: "e".repeat(40) });
+
+      const after = await pool.query<{ n: number }>(
+        `SELECT count(*)::int AS n FROM "${schemaName}".record_scopes
+          WHERE workspace_guid = $1 AND record_type = 'section' AND retired_at IS NULL
+            AND stable_key = $2 AND scope_guid = $3`,
+        [bootstrap.workspaceGuid, target.stable_key, target.scope_guid],
+      );
+      expect(after.rows[0]!.n).toBeGreaterThan(0);
+    });
+
+    it("does not re-derive an association a correction retired", async () => {
+      await runImport();
+      expect(await liveAssociation("db-backed", "anchor-mcp-db-backed")).toBeGreaterThan(0);
+
+      await retireAssociations("db-backed", "anchor-mcp-db-backed");
+      expect(await liveAssociation("db-backed", "anchor-mcp-db-backed")).toBe(0);
+
+      // Same commit, same content: nothing about the repository changed, so nothing should
+      // resurrect. The live-uniqueness index is partial on retired_at, so the retired row does
+      // not block a fresh insert — the correction was undone by ON CONFLICT DO NOTHING never
+      // firing.
+      await runImport({ commit: "b".repeat(40) });
+      expect(await liveAssociation("db-backed", "anchor-mcp-db-backed")).toBe(0);
+    });
+
+    it("lets import derive again once the correction is withdrawn", async () => {
+      await runImport();
+      await retireAssociations("db-backed", "anchor-mcp-db-backed");
+      await runImport({ commit: "b".repeat(40) });
+      expect(await liveAssociation("db-backed", "anchor-mcp-db-backed")).toBe(0);
+
+      // The mark records what the operator currently wants, not everything they have ever
+      // wanted. Clearing it is what setRecordScopes does when a scope is added back, and without
+      // this the suppression would outlive the intent behind it — import forbidden from ever
+      // deriving the association again, with nothing saying why.
+      await pool.query(
+        `UPDATE "${schemaName}".record_scopes SET retired_by_correction = false
+          WHERE workspace_guid = $1 AND record_type = 'section' AND retired_by_correction`,
+        [bootstrap.workspaceGuid],
+      );
+
+      await runImport({ commit: "c".repeat(40) });
+      expect(await liveAssociation("db-backed", "anchor-mcp-db-backed")).toBeGreaterThan(0);
+    });
+
+    it("does not resurrect a corrected association when a document is reinstated", async () => {
+      await runImport();
+      await retireAssociations("db-backed", "anchor-mcp-db-backed");
+
+      // Drop the file, then bring it back. Reinstatement clears retired_at across the document's
+      // associations, which is right for the ones import retired and wrong for the one a human
+      // did.
+      const remaining = files().filter((f) => !f.path.includes("db-backed"));
+      await runImport({ files: remaining, commit: "c".repeat(40), retireAbsentUnder: ["projects/"] });
+      await runImport({ commit: "d".repeat(40), retireAbsentUnder: ["projects/"] });
+
+      expect(await liveAssociation("db-backed", "anchor-mcp-db-backed")).toBe(0);
+    });
+  });
+
   it("imports each file as a document with a revision, sections, and blocks", async () => {
     const report = await runImport();
 
