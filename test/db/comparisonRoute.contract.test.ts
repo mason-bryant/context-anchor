@@ -1,5 +1,4 @@
 import type { Server } from "node:http";
-import { randomUUID } from "node:crypto";
 import { mkdtemp } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -11,7 +10,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ensureBootstrap } from "../../src/db/bootstrap.js";
 import { AnchorRepository } from "../../src/git/repo.js";
 import { startHttpServer } from "../../src/http/server.js";
-import { dropAllSchemas, isTestDatabaseReachable, migrateAllSchemas, TEST_DATABASE_URL } from "./testDatabase.js";
+import { dropAllSchemas, isTestDatabaseReachable, migrateAllSchemas, TEST_DATABASE_URL, testSchemaName } from "./testDatabase.js";
 import { removeTempDir } from "../tempDir.js";
 
 const TOKEN = "test-token";
@@ -25,7 +24,7 @@ describe.runIf(await isTestDatabaseReachable())("the comparison gate's HTTP rout
 
   beforeEach(async () => {
     adminPool = new pg.Pool({ connectionString: TEST_DATABASE_URL, max: 3 });
-    schemaName = `compare_test_${randomUUID().replace(/-/g, "").slice(0, 12)}`;
+    schemaName = testSchemaName("compare_test");
     await migrateAllSchemas(adminPool, schemaName);
     // The routed planner needs a workspace and owner principal to plan against.
     await ensureBootstrap(adminPool, { schemaName });

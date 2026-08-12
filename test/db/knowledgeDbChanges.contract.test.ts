@@ -9,7 +9,7 @@ import { ensureBootstrap, type BootstrapResult } from "../../src/db/bootstrap.js
 import { CommandHandler } from "../../src/db/commandHandler.js";
 import { KnowledgeDatabase, ScopeNotFoundError } from "../../src/db/knowledgeDb.js";
 import { runMigrations } from "../../src/db/migrate.js";
-import { isTestDatabaseReachable, TEST_DATABASE_URL } from "./testDatabase.js";
+import { dropRegisteredSchemas, isTestDatabaseReachable, TEST_DATABASE_URL, testSchemaName } from "./testDatabase.js";
 
 const REAL_MIGRATIONS_DIR = path.resolve(import.meta.dirname, "../../migrations/knowledge");
 
@@ -21,7 +21,7 @@ describe.runIf(await isTestDatabaseReachable())("KnowledgeDatabase.listScopeChan
 
   beforeAll(async () => {
     pool = new pg.Pool({ connectionString: TEST_DATABASE_URL, max: 4 });
-    schemaName = `knowledge_test_${randomUUID().replace(/-/g, "").slice(0, 12)}`;
+    schemaName = testSchemaName("knowledge_test");
     await runMigrations(pool, { schemaName, migrationsDir: REAL_MIGRATIONS_DIR });
     bootstrap = await ensureBootstrap(pool, { schemaName });
     db = new KnowledgeDatabase(pool, schemaName, bootstrap);
@@ -51,7 +51,7 @@ describe.runIf(await isTestDatabaseReachable())("KnowledgeDatabase.listScopeChan
   });
 
   afterAll(async () => {
-    await pool.query(`DROP SCHEMA IF EXISTS "${schemaName}" CASCADE`);
+    await dropRegisteredSchemas(pool);
     await pool.end();
   });
 

@@ -23,7 +23,7 @@ import {
   SectionStableKeyRequiredError,
   UnknownScopeError,
 } from "../../src/db/setRecordScopes.js";
-import { dropAllSchemas, isTestDatabaseReachable, migrateAllSchemas, TEST_DATABASE_URL } from "./testDatabase.js";
+import { dropAllSchemas, isTestDatabaseReachable, migrateAllSchemas, TEST_DATABASE_URL, testSchemaName } from "./testDatabase.js";
 
 const DOC = `---
 project: anchor-mcp
@@ -46,7 +46,7 @@ describe.runIf(await isTestDatabaseReachable())("assertion writes, T3 slice 2 (r
 
   beforeEach(async () => {
     pool = new pg.Pool({ connectionString: TEST_DATABASE_URL, max: 4 });
-    schemaName = `t3s2_test_${randomUUID().replace(/-/g, "").slice(0, 12)}`;
+    schemaName = testSchemaName("t3s2_test");
     await migrateAllSchemas(pool, schemaName);
     bootstrap = await ensureBootstrap(pool, { schemaName });
     handler = new CommandHandler(pool, schemaName);

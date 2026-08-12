@@ -16,7 +16,19 @@ import { TEST_DATABASE_URL } from "./testDatabase.js";
  * so it catches a leak from a file that has not been written yet.
  */
 
-const TEST_SCHEMA_PATTERN = /^(knowledge|compare)_test_/;
+/**
+ * Any `<something>_test_<12 hex>` name, not an enumerated list of prefixes.
+ *
+ * The first version of this guard listed `knowledge` and `compare`, which happened to be the
+ * prefixes that had already leaked. Six others were in use — `assert_test_`, `route_test_`,
+ * `access_test_`, `t3s2_test_`, `diag_test_` — so the guard would have been blind to a leak from
+ * most of the suite, and blind by construction to whatever the next test file invents. Matching
+ * the shape instead of the vocabulary is what makes this hold for tests not yet written.
+ *
+ * False positives are bounded twice over: the name must carry a 12-hex-digit suffix, and the
+ * guard only ever considers schemas that appeared during the run.
+ */
+const TEST_SCHEMA_PATTERN = /^[a-z0-9]+_test_[0-9a-f]{12}(_ready)?(_telemetry)?$/;
 
 let before: Set<string> | undefined;
 
