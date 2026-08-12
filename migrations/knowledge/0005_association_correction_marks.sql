@@ -18,6 +18,10 @@ ALTER TABLE record_scopes
 
 -- Import consults this on every derived association it is about to write, so the lookup is on
 -- the path it takes for each section, not an occasional one.
+--
+-- The predicate mirrors that lookup exactly, record_type included. Without it the index also
+-- covers corrected assertion rows -- which the query can never match, and many of which have a
+-- null stable_key -- making it larger and less selective than the one access path it exists for.
 CREATE INDEX record_scopes_corrected_retirement_idx
   ON record_scopes (workspace_guid, stable_key, scope_guid)
-  WHERE retired_by_correction;
+  WHERE retired_by_correction AND record_type = 'section';

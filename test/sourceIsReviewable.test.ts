@@ -21,15 +21,29 @@ import { describe, expect, it } from "vitest";
 const ROOT = path.resolve(import.meta.dirname, "..");
 
 /**
- * Scanned by exclusion, not by an allow-list of directories.
+ * Scanned by exclusion at both levels — which directories to skip and which file types are
+ * legitimately binary — rather than by allow-lists of either.
  *
- * The first version listed src, test and scripts — while accepting .sql and .md, which live
- * mostly in migrations/ and docs/. It would have passed over a NUL byte in the very migration
- * this guard shipped alongside. Naming the places to skip is the only version that covers
- * directories nobody has created yet.
+ * Both allow-lists were wrong in the same way, one round apart. The directory list named src,
+ * test and scripts while accepting .sql and .md, so it would have passed over a NUL in the very
+ * migration this guard shipped beside. The extension list then named eight source types and
+ * omitted the .yml workflows and .sh scripts that decide how this repository builds and
+ * releases. An allow-list only ever covers what its author remembered; exclusion covers what
+ * nobody has added yet, which is the whole point of a guard.
  */
 const SKIPPED_DIRECTORIES = new Set(["node_modules", "dist", "coverage", "build"]);
-const EXTENSIONS = new Set([".ts", ".tsx", ".mts", ".js", ".mjs", ".sql", ".json", ".md"]);
+
+/**
+ * Files that are supposed to be binary. Everything else is expected to diff as text, including
+ * types this repository does not contain today.
+ */
+const BINARY_EXTENSIONS = new Set([
+  ".png", ".jpg", ".jpeg", ".gif", ".webp", ".ico", ".icns", ".bmp",
+  ".woff", ".woff2", ".ttf", ".otf", ".eot",
+  ".pdf", ".zip", ".gz", ".tgz", ".bz2", ".xz", ".7z",
+  ".mp3", ".mp4", ".mov", ".wav", ".webm",
+  ".node", ".wasm", ".dylib", ".so", ".dll", ".exe",
+]);
 
 async function sourceFiles(dir: string): Promise<string[]> {
   const entries = await readdir(dir, { withFileTypes: true });
@@ -40,11 +54,18 @@ async function sourceFiles(dir: string): Promise<string[]> {
       // Build output is excluded because it is generated from sources this guard already
       // covers; a NUL there is a symptom, and failing on it would report the same defect twice
       // while pointing at the file nobody edits.
-      if (SKIPPED_DIRECTORIES.has(entry.name) || entry.name.startsWith(".")) {
+      // .github is scanned despite the leading dot: its workflows decide how this repository
+      // builds and releases, so an unreadable diff there matters as much as one in src. Other
+      // dot-directories are skipped because they hold tooling state and worktree copies, which
+      // include their own node_modules.
+      const hidden = entry.name.startsWith(".") && entry.name !== ".github";
+      if (SKIPPED_DIRECTORIES.has(entry.name) || hidden) {
         continue;
       }
       found.push(...(await sourceFiles(full)));
-    } else if (EXTENSIONS.has(path.extname(entry.name))) {
+      // isFile(), not "not a directory": a symlink is neither, and reading one that points at a
+      // directory throws EISDIR. Following them would also risk walking outside the repository.
+    } else if (entry.isFile() && !BINARY_EXTENSIONS.has(path.extname(entry.name).toLowerCase())) {
       found.push(full);
     }
   }
