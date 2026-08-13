@@ -182,6 +182,26 @@ describe.runIf(await isTestDatabaseReachable())("routing diagnostics (real Postg
   // A negative window makes `now() - interval` reach into the future, so the report comes back
   // empty — indistinguishable from a workspace where nothing was ever retrieved. The HTTP route
   // validates today, but this is the function every future caller reaches for.
+  // The comparison gate plans a task purely to show a person two answers. Nobody acts on those
+  // routes, and the gate renders these diagnostics on the same screen — so without this the
+  // reader is watching numbers they are themselves generating, and "which routes are dead
+  // weight" answers with routes only the panel ever offered. Twenty-five judged tasks produce
+  // over a thousand such impressions, which is more traffic than the workspace sees in normal
+  // use.
+  it("excludes the comparison gate's own traffic, which is the instrument and not the retrieval", async () => {
+    await plan("anchor mcp", { consumer: "comparison-gate" });
+    await plan("anchor mcp", { consumer: "comparison-gate-record-lexical" });
+
+    expect((await diagnostics()).totals.requests).toBe(0);
+
+    // A real caller on the same workspace is still counted, so this excludes the instrument
+    // rather than simply reporting nothing.
+    await plan("anchor mcp", { consumer: "agent" });
+    const after = await diagnostics();
+    expect(after.totals.requests).toBe(1);
+    expect(after.totals.routesOffered).toBeGreaterThan(0);
+  });
+
   it("refuses a window that is not a positive integer", async () => {
     await expect(
       routingDiagnostics(pool, telemetrySchema, bootstrap.workspaceGuid, { sinceDays: -5 }),
