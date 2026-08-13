@@ -167,10 +167,16 @@ describe("listScopeChanges tool registration", () => {
     await server._registeredTools.planRoutedBundle!.handler(parsed);
     expect(received?.recordLexical).toBe(true);
 
-    // Omitted, not defaulted to false. The contract this protects is that the surface adds
-    // nothing: a schema carrying `.default(false)` would still leave the signal off, so the
-    // planner's behaviour would look identical, but the key would then be present on every
-    // request and any later code reading "was this asked for" could no longer tell.
+    // Omitted, not defaulted to false — asserted on the parsed schema output, which is exactly
+    // where this holds and no further. The handler spreads every optional field into the facade
+    // call, so `recordLexical: undefined` is a present key by the next line, the same as its
+    // five siblings. That is deliberate and unchanged here; distinguishing "absent" from
+    // "present and undefined" downstream would mean changing all six, and nothing reads either
+    // way — selection tests truthiness.
+    //
+    // What this still buys: a schema carrying `.default(false)` would put an explicit `false` on
+    // every request, which is a different thing from the caller declining to ask. The surface
+    // stays silent unless asked, and that is what is checked.
     const bare = schema.parse({ task: "logging retention" }) as Record<string, unknown>;
     expect(Object.hasOwn(bare, "recordLexical")).toBe(false);
 
