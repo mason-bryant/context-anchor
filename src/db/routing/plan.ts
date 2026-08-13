@@ -83,6 +83,26 @@ export type PlanResult = {
   recomputedAt: string;
   budget: RouteBudget;
   ranker: { id: string; version: string; deterministic: boolean; fellBack: boolean; fallbackReason?: string };
+  /**
+   * Candidates selection produced, before `budget.listed` truncated them.
+   *
+   * Equal to `routes.length` unless the budget clipped the answer, and that difference is the
+   * point: without it a caller cannot distinguish "ten scopes matched" from "forty matched and
+   * you are seeing a quarter of them". A comparison surface reading route counts to judge how
+   * far a signal widens the answer would silently saturate at the budget and report every
+   * blowout as the same size.
+   */
+  candidateCount: number;
+  /**
+   * Which optional selection inputs were actually applied.
+   *
+   * Echoed rather than assumed because a caller cannot otherwise tell a flag that did nothing
+   * from a flag that never arrived. Two panes rendering identical answers is a meaningful
+   * result if the flag was on and a broken instrument if it was not, and nothing else in this
+   * response distinguishes them — `plannerVersion` and `ranker` are the same constants either
+   * way.
+   */
+  appliedSignals: { recordLexical: boolean };
   routes: PlannedRoute[];
 };
 
@@ -223,6 +243,11 @@ export async function planRoutedBundle(
       fellBack: outcome.fellBack,
       ...(outcome.fallbackReason ? { fallbackReason: outcome.fallbackReason } : {}),
     },
+    // Counted from the ranked outcome rather than from `candidates`, so a ranker that drops
+    // candidates (A3 permits dropping, only not inventing) is reported as having dropped them
+    // instead of inflating the count with routes that were never offerable.
+    candidateCount: outcome.routes.length,
+    appliedSignals: { recordLexical: input.recordLexical === true },
     routes,
   };
 }

@@ -307,7 +307,15 @@ export async function selectRouteCandidates(
           // The article is omitted rather than chosen, because `source` is either "assertion"
           // or "section" and a fixed article is wrong for one of them. Match reasons are read
           // by people, so "matched section title" beats getting it wrong half the time.
-          reason: `task term ${JSON.stringify(hit)} matched ${row.source} title in this scope`,
+          //
+          // The matched title is quoted, not merely counted. Most offered routes are listed
+          // rather than expanded, so they carry no records at all — the reason is the entire
+          // basis on which someone decides whether the route belongs. "matched section title
+          // in this scope" identifies nothing and cannot support that decision; naming the
+          // heading turns it into a judgeable claim.
+          reason:
+            `task term ${JSON.stringify(hit)} matched ${row.source} title ` +
+            `${JSON.stringify(row.text)} in this scope`,
         });
       }
     }

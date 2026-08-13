@@ -38,6 +38,8 @@ const SAMPLE_PLAN = {
   recomputedAt: "2026-08-10T00:00:00.000Z",
   budget: { expanded: 2, listed: 10, recordsPerRoute: 25 },
   ranker: { id: "precedence", version: "1.0.0", deterministic: true, fellBack: false },
+  candidateCount: 0,
+  appliedSignals: { recordLexical: false },
   routes: [],
 };
 

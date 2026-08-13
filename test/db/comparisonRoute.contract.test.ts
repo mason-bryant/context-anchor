@@ -125,11 +125,17 @@ describe.runIf(await isTestDatabaseReachable())("the comparison gate's HTTP rout
     return fetch(`${baseUrl}/api/db/comparison${query}`, { headers: { Authorization: `Bearer ${TOKEN}` } });
   }
 
-  type Routed = { requestId: string; routes: Array<{ routeKey: string; matchReasons: string[] }> };
+  type Routed = {
+    requestId: string;
+    candidateCount: number;
+    appliedSignals: { recordLexical: boolean };
+    routes: Array<{ routeKey: string; matchReasons: string[] }>;
+  };
   type Body = {
-    routed?: Routed;
-    routedRecordLexical?: Routed;
-    legacy?: { projectResolution?: unknown };
+    routed?: Routed | null;
+    routedRecordLexical?: Routed | null;
+    legacy?: { projectResolution?: unknown } | null;
+    failures?: Record<string, { error: string } | null>;
     error?: string;
   };
 
@@ -210,6 +216,59 @@ describe.runIf(await isTestDatabaseReachable())("the comparison gate's HTTP rout
     const body = (await response.json()) as Body;
     // Only populated when the legacy planner actually received a repo or path signal.
     expect(body.legacy?.projectResolution).toBeDefined();
+  });
+
+  // The same fairness argument as the legacy baseline above, applied between the two routed
+  // panes — and it matters more here, because these two are read as differing in exactly one
+  // thing. Path mapping is the strongest signal kind, so a pane quietly denied referencedPaths
+  // would produce a worse answer for a reason that has nothing to do with recordLexical, and a
+  // person judging the difference would attribute it to the signal.
+  it("gives the record-lexical pane the same evidence as the routed baseline", async () => {
+    // Deliberately a task whose words match no scope name, so the ONLY way either pane reaches
+    // the scope is the path. With "anchor mcp" the scope is reachable lexically too, and the
+    // assertion below passes whether or not the record-lexical pane was given the paths --
+    // which is exactly the vacuous shape this test exists to rule out.
+    const response = await get(`?task=${encodeURIComponent("qqzz unrelated")}&paths=src/http/server.ts`);
+
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as Body;
+    expect(body.routed).toBeDefined();
+    expect(body.routedRecordLexical).toBeDefined();
+
+    // The path-mapped scope has to appear on both sides. recordLexical only ever adds routes,
+    // so anything the baseline reached on path evidence must still be reachable with it on.
+    const routedKeys = (body.routed?.routes ?? []).map((route) => route.routeKey);
+    const lexicalKeys = (body.routedRecordLexical?.routes ?? []).map((route) => route.routeKey);
+    expect(routedKeys.length).toBeGreaterThan(0);
+    for (const key of routedKeys) {
+      expect(lexicalKeys).toContain(key);
+    }
+  });
+
+  // A flag that silently stopped being applied is the worst failure this surface has, because it
+  // does not look like a failure: both panes render the same answer, the diff reports nothing
+  // added, and a reader records "the signal changes nothing" for every task they try.
+  it("reports which signals were actually applied, on both panes", async () => {
+    const response = await get(`?task=${encodeURIComponent("decisions")}`);
+
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as Body;
+    expect(body.routed?.appliedSignals).toEqual({ recordLexical: false });
+    expect(body.routedRecordLexical?.appliedSignals).toEqual({ recordLexical: true });
+  });
+
+  // Route counts saturate at the budget, and the widening this gate exists to measure is exactly
+  // the case that saturates: without the candidate count, a signal that matched fourteen scopes
+  // and one that matched forty are indistinguishable on screen.
+  it("reports how many candidates selection produced, not only how many survived the budget", async () => {
+    const response = await get(`?task=${encodeURIComponent("decisions")}`);
+
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as Body;
+    expect(typeof body.routedRecordLexical?.candidateCount).toBe("number");
+    expect(body.routedRecordLexical?.candidateCount).toBeGreaterThanOrEqual(
+      body.routedRecordLexical?.routes.length ?? 0,
+    );
   });
 
   // Express turns a repeated key into an array, and the hand-rolled parser this replaces read

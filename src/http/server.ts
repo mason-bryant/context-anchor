@@ -127,24 +127,66 @@ export async function startHttpServer(
         // answers side by side. Both run on every request rather than behind a toggle: the
         // comparison only means anything for the same task, and a reader who has to reload
         // with a flag is comparing two readings instead of one.
-        const [routed, routedRecordLexical, legacy] = await Promise.all([
-          knowledgeDb.planRoutedBundleAsOwner({ task, referencedPaths, consumer: "comparison-gate" }),
+        // Raised above the default 10, because this workspace holds 23 scopes and the case
+        // worth judging is the one where the signal matches most of them. At the default the
+        // pane saturates: a 14-scope widening and a 40-scope widening both render as ten
+        // routes, so the instrument reports every blowout as the same size — and the size is
+        // the thing being measured. Records load for every offered route, not only expanded
+        // ones, so this is genuinely more work per request; acceptable here because the gate
+        // is human-paced and UI-only, and not a default worth giving agent traffic.
+        const budget = { listed: 25 };
+
+        // Identical inputs but for the one flag under test. Withholding anything else from
+        // one side would show a difference the reader would attribute to recordLexical —
+        // path mapping is the strongest signal kind, so a pane quietly denied referencedPaths
+        // would look worse for a reason that has nothing to do with the signal. The same
+        // argument the legacy baseline gets, applied between the two routed panes.
+        const [routed, routedRecordLexical, legacy] = await Promise.allSettled([
+          knowledgeDb.planRoutedBundleAsOwner({ task, referencedPaths, budget, consumer: "comparison-gate" }),
           knowledgeDb.planRoutedBundleAsOwner({
             task,
             referencedPaths,
+            budget,
             recordLexical: true,
-            // Tagged apart from the signal-off call, which is not cosmetic. Every routed call
-            // writes a live retrieval request and one impression per offered route, and the
-            // signal-on routes are offered but seldom expanded — blended into one population
-            // they drag expansionByPosition down with routes nobody could have expanded, which
-            // is the very number T8 is judged on. `consumer` is the only column that can tell
-            // the two apart afterwards: routingDiagnostics does not filter on it yet, so the
-            // tag is what leaves that a query to write rather than telemetry already lost.
+            // Tagged apart from the signal-off call so the two remain separable in telemetry.
+            // routingDiagnostics does not filter on `consumer` at all today, so both gate
+            // populations already count as real retrieval there; `consumer` is simply the only
+            // column that can tell them apart, which leaves that a query to write rather than
+            // telemetry already lost.
             consumer: "comparison-gate-record-lexical",
           }),
           runtime.service.planContextBundle({ task, filePaths: referencedPaths }),
         ]);
-        res.json({ task, routed, routedRecordLexical, legacy });
+
+        // Settled rather than all: the record-lexical call is the newest and heaviest query
+        // here, scanning every active assertion title and current section heading. If it
+        // fails, the routed-versus-legacy comparison that worked before this pane existed
+        // should still answer, rather than the whole gate returning 500. A pane that failed
+        // says so in place, which is also the honest thing to show a reader judging results.
+        const settled = (outcome: PromiseSettledResult<unknown>) =>
+          outcome.status === "fulfilled" ? outcome.value : null;
+        const failure = (outcome: PromiseSettledResult<unknown>) =>
+          outcome.status === "rejected"
+            ? { error: outcome.reason instanceof Error ? outcome.reason.message : String(outcome.reason) }
+            : null;
+
+        for (const outcome of [routed, routedRecordLexical, legacy]) {
+          if (outcome.status === "rejected") {
+            runtime.logger.error("comparison pane failed", { error: errorMetadata(outcome.reason) });
+          }
+        }
+
+        res.json({
+          task,
+          routed: settled(routed),
+          routedRecordLexical: settled(routedRecordLexical),
+          legacy: settled(legacy),
+          failures: {
+            routed: failure(routed),
+            routedRecordLexical: failure(routedRecordLexical),
+            legacy: failure(legacy),
+          },
+        });
       } catch (error) {
         runtime.logger.error("comparison request failed", { error: errorMetadata(error) });
         res.status(500).json({ error: error instanceof Error ? error.message : String(error) });

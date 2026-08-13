@@ -19,7 +19,24 @@ type UiClaim = {
   effectiveCertainty?: { certainty: number; rows: unknown[]; aggregation: string };
 };
 
+type ComparePlan = {
+  routes: Array<{ routeKey: string; expanded?: boolean; recordCount?: number; matchReasons?: string[]; appliesWhen?: string }>;
+  candidateCount?: number;
+  appliedSignals?: { recordLexical: boolean };
+};
+
+type ComparePlansResult = {
+  added: string[];
+  dropped: string[];
+  reordered: boolean;
+  expansionChanged: boolean;
+  baselineExpanded: string[];
+  resultExpanded: string[];
+};
+
 type UiAssetHooks = {
+  comparePlans(result: ComparePlan, baseline: ComparePlan): ComparePlansResult;
+  renderRoutedAnswer(result: ComparePlan, baseline?: ComparePlan | null): string;
   claimStrengthValue(claim: UiClaim): string;
   claimCertaintyValue(claim: UiClaim): number | null;
   sortClaimsByCertainty(claims: UiClaim[]): UiClaim[];
@@ -2093,5 +2110,113 @@ describe("legacy claims URL state", () => {
     expect(href).not.toContain("claimsStatus");
     expect(href).not.toContain("claimsSearch");
     expect(href).not.toContain("claimsSort");
+  });
+});
+
+/**
+ * The comparison gate exists so a person can judge whether the recordLexical signal adds useful
+ * routes or noise, over 20-30 tasks. What that person reads is the output of these two
+ * functions, so a defect here is a wrong verdict rather than a cosmetic fault — and the two
+ * cases that matter most are the ones a naive "which keys are new" diff cannot see.
+ */
+describe("comparison gate diff", () => {
+  const plan = (keys: string[], expanded: string[] = [], candidateCount?: number): ComparePlan => ({
+    routes: keys.map((routeKey) => ({
+      routeKey,
+      expanded: expanded.includes(routeKey),
+      recordCount: 1,
+      matchReasons: ["because"],
+      appliesWhen: "you are working on it",
+    })),
+    ...(candidateCount === undefined ? {} : { candidateCount }),
+    appliedSignals: { recordLexical: true },
+  });
+
+  it("reports routes the signal dropped, not only the ones it added", () => {
+    const hooks = loadHooks();
+    // Reachable, and the reason it is reachable is the ranker: gaining record-lexical gives a
+    // scope a second distinct signal kind, tier 1 counts distinct kinds, so it climbs past
+    // routes that were previously offered and pushes them off the end of the budget.
+    const diff = hooks.comparePlans(plan(["c", "d", "a"]), plan(["a", "b"]));
+
+    expect(diff.added).toEqual(["c", "d"]);
+    expect(diff.dropped).toEqual(["b"]);
+  });
+
+  it("reports a pure reorder, which changes every record on screen while membership is identical", () => {
+    const hooks = loadHooks();
+    // Only the first routes are expanded, and only expanded routes carry records. So swapping
+    // the order swaps which routes have content — a reader shown "0 added, 0 dropped" would
+    // record "no effect" for a run where the entire answer changed.
+    const diff = hooks.comparePlans(plan(["c", "a", "b"], ["c"]), plan(["a", "b", "c"], ["a"]));
+
+    expect(diff.added).toEqual([]);
+    expect(diff.dropped).toEqual([]);
+    expect(diff.reordered).toBe(true);
+    expect(diff.expansionChanged).toBe(true);
+    expect(diff.baselineExpanded).toEqual(["a"]);
+    expect(diff.resultExpanded).toEqual(["c"]);
+  });
+
+  it("calls an unchanged answer unchanged", () => {
+    const hooks = loadHooks();
+    const diff = hooks.comparePlans(plan(["a", "b"], ["a"]), plan(["a", "b"], ["a"]));
+
+    expect(diff).toMatchObject({ added: [], dropped: [], reordered: false, expansionChanged: false });
+  });
+
+  it("says how many scopes the budget hid, so a clipped answer cannot read as a complete one", () => {
+    const hooks = loadHooks();
+    // Without this the pane saturates: at a listed budget of 2, a widening to 3 scopes and a
+    // widening to 30 both render as two routes.
+    const html = hooks.renderRoutedAnswer(plan(["a", "b"], [], 30), plan([]));
+
+    expect(html).toContain("Showing 2 of 30");
+  });
+
+  it("does not claim clipping when the budget did not clip", () => {
+    const hooks = loadHooks();
+    const html = hooks.renderRoutedAnswer(plan(["a", "b"], [], 2), plan([]));
+
+    expect(html).not.toContain("Showing");
+  });
+
+  it("names dropped routes in the pane, which has nothing else to attach them to", () => {
+    const hooks = loadHooks();
+    // The dropped route is absent from this pane by definition, so unlike an added route it
+    // cannot carry an inline badge; if the summary omitted it, it would be invisible.
+    const html = hooks.renderRoutedAnswer(plan(["a"]), plan(["a", "gone"]));
+
+    expect(html).toContain("gone");
+    expect(html).toContain("Dropped by this setting");
+  });
+
+  it("still reports the difference when the signal-on answer is empty", () => {
+    const hooks = loadHooks();
+    // "No routes matched" plus a silently discarded "2 dropped" would be a false negative on
+    // the most extreme result the instrument can produce.
+    const html = hooks.renderRoutedAnswer(plan([]), plan(["a", "b"]));
+
+    expect(html).toContain("2 dropped");
+    expect(html).toContain("a, b");
+  });
+
+  it("marks added routes without the palette used for blocked and overdue", () => {
+    const hooks = loadHooks();
+    // The reader is being asked whether these routes belong. Arriving pre-labelled in the warn
+    // colour answers that question on their behalf.
+    const html = hooks.renderRoutedAnswer(plan(["new"]), plan([]));
+
+    expect(html).toContain("ADDED");
+    expect(html).not.toContain("badge warn");
+  });
+
+  it("renders the baseline pane exactly as before when no baseline is passed", () => {
+    const hooks = loadHooks();
+    const html = hooks.renderRoutedAnswer(plan(["a"], ["a"]), null);
+
+    expect(html).not.toContain("ADDED");
+    expect(html).not.toContain("added");
+    expect(html).not.toContain("Showing");
   });
 });

@@ -2091,10 +2091,41 @@ textarea {
 
 /* The routes recordLexical adds are the only thing the third pane is read for, so they carry a
    rule and an indent as well as their badge: a reader scanning the column finds them by shape,
-   and the marking survives a greyscale print or a colour-blind reader. */
+   and the marking survives a greyscale print or a colour-blind reader.
+
+   Accent, not warn. The reader is being asked to judge whether these routes belong, and warn is
+   the palette this UI uses for blocked, overdue and unresolved — arriving pre-labelled as
+   suspect is an answer to the question, supplied by the instrument asking it. */
 .compare-route-new {
-  border-left: 3px solid var(--warn);
+  border-left: 3px solid var(--accent);
   padding-left: 10px;
+}
+
+/* Read before any route is, so it states added and dropped counts even when they are zero. */
+.compare-diff {
+  font-size: 13px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 8px;
+}
+
+.compare-clip {
+  font-size: 13px;
+  font-weight: 600;
+  padding: 6px 8px;
+  margin-bottom: 8px;
+  border-left: 3px solid var(--warn);
+  background: var(--panel);
+}
+
+/* Dropped routes have nothing to attach a marker to in this pane — they are absent from it —
+   so they are named in a block of their own rather than left to the summary line alone. */
+.compare-dropped {
+  font-size: 13px;
+  padding: 6px 8px;
+  margin-bottom: 10px;
+  border-left: 3px solid var(--border);
+  background: var(--panel);
 }
 
 @media (max-width: 900px) {
@@ -11750,6 +11781,119 @@ export const UI_JS = `(function () {
     load().catch(function (error) { setBanner(error.message, "error"); });
   }
 
+  /**
+   * Comparison-gate rendering. Deliberately at module scope rather than inside bind(): these
+   * are pure functions of two plain objects, and while they sat inside the event binder they
+   * could not be reached by the VM-based UI tests at all — the diff a person judges 20-30
+   * tasks on had no coverage, which is how it shipped reporting additions and silently
+   * ignoring the routes the signal dropped.
+   */
+  function comparePlans(result, baseline) {
+    var resultKeys = result.routes.map(function (route) { return route.routeKey; });
+    var baselineKeys = baseline.routes.map(function (route) { return route.routeKey; });
+    var inBaseline = new Set(baselineKeys);
+    var inResult = new Set(resultKeys);
+
+    var expandedIn = function (plan) {
+      return plan.routes
+        .filter(function (route) { return route.expanded; })
+        .map(function (route) { return route.routeKey; });
+    };
+    var baselineExpanded = expandedIn(baseline);
+    var resultExpanded = expandedIn(result);
+
+    // Reported separately from membership because they answer different questions, and only
+    // one of them is "did the signal add noise". A route the signal DROPPED is invisible if
+    // you only look at additions: gaining record-lexical gives a scope a second distinct
+    // signal kind, the ranker's first tier counts distinct kinds, so it climbs and pushes a
+    // baseline route off the end of the budget. And because only the first routes are
+    // expanded, a pure reorder swaps which routes carry records -- every record on screen
+    // changes while membership is identical. A summary that said "0 new routes" for either
+    // case would be telling the reader nothing happened on exactly the runs where the most
+    // happened.
+    return {
+      added: resultKeys.filter(function (key) { return !inBaseline.has(key); }),
+      dropped: baselineKeys.filter(function (key) { return !inResult.has(key); }),
+      reordered: resultKeys.length === baselineKeys.length &&
+        resultKeys.every(function (key) { return inBaseline.has(key); }) &&
+        resultKeys.join("\\u0000") !== baselineKeys.join("\\u0000"),
+      expansionChanged: baselineExpanded.join("\\u0000") !== resultExpanded.join("\\u0000"),
+      baselineExpanded: baselineExpanded,
+      resultExpanded: resultExpanded
+    };
+  }
+
+  function renderComparisonSummary(result, diff) {
+    var parts = [];
+    parts.push(diff.added.length + " added" + (diff.added.length ? ": " + escapeHtml(diff.added.join(", ")) : ""));
+    // Stated even when zero, so "nothing was dropped" is a reading rather than an absence a
+    // reader has to infer from silence.
+    parts.push(diff.dropped.length + " dropped" + (diff.dropped.length ? ": " + escapeHtml(diff.dropped.join(", ")) : ""));
+    if (diff.reordered) {
+      parts.push("order changed");
+    }
+    if (diff.expansionChanged) {
+      parts.push(
+        "different routes expanded (was " + escapeHtml(diff.baselineExpanded.join(", ") || "none") +
+        ", now " + escapeHtml(diff.resultExpanded.join(", ") || "none") + ")"
+      );
+    }
+    return "<p class=\\"compare-diff\\">" + parts.join(" &middot; ") + "</p>";
+  }
+
+  // Says outright how many candidates the budget hid. Without it the pane saturates: with a
+  // listed budget of N, a widening to N+4 scopes and a widening to N+30 render identically,
+  // and the size of the widening is the whole thing being measured.
+  function renderClipNote(result) {
+    if (!result || typeof result.candidateCount !== "number") {
+      return "";
+    }
+    if (result.candidateCount <= result.routes.length) {
+      return "";
+    }
+    return "<p class=\\"compare-clip\\">Showing " + result.routes.length + " of " +
+      result.candidateCount + " matched scopes -- the rest were cut by the route budget.</p>";
+  }
+
+  function renderRoutedAnswer(result, baseline) {
+    var diff = baseline ? comparePlans(result, baseline) : null;
+    var preamble = renderClipNote(result) + (diff ? renderComparisonSummary(result, diff) : "");
+    if (!result.routes.length) {
+      // Preamble first: with a baseline present, "0 added, 2 dropped" is a result, and
+      // returning only "no routes matched" would discard it.
+      return preamble + "<p class=\\"empty\\">No routes matched this task.</p>";
+    }
+    var baselineKeys = baseline ? new Set(baseline.routes.map(function (route) { return route.routeKey; })) : null;
+    var summary = preamble + (diff && diff.dropped.length
+      ? "<div class=\\"compare-dropped\\"><strong>Dropped by this setting:</strong> " +
+        escapeHtml(diff.dropped.join(", ")) + "</div>"
+      : "");
+    return summary + result.routes
+      .map(function (route) {
+        var isNew = baselineKeys !== null && !baselineKeys.has(route.routeKey);
+        var records = (route.records || [])
+          .map(function (record) {
+            var label = record.ref.type === "assertion" ? record.kind || "assertion" : record.heading || "section";
+            return "<li><strong>" + escapeHtml(label) + "</strong> " + escapeHtml((record.content || "").slice(0, 240)) + "</li>";
+          })
+          .join("");
+        return (
+          "<article class=\\"compare-route" + (isNew ? " compare-route-new" : "") + "\\">" +
+          "<h4>" + escapeHtml(route.routeKey) + (isNew ? " <span class=\\"badge\\">ADDED</span>" : "") +
+          (route.expanded ? " <em>expanded</em>" : " <em>listed</em>") + "</h4>" +
+          "<p class=\\"compare-applies\\">" + escapeHtml(route.appliesWhen) + "</p>" +
+          "<ul class=\\"compare-reasons\\">" +
+          route.matchReasons.map(function (reason) { return "<li>" + escapeHtml(reason) + "</li>"; }).join("") +
+          "</ul>" +
+          "<p class=\\"compare-count\\">" + route.recordCount + " record(s)" + (route.recordsTruncated ? ", truncated" : "") + "</p>" +
+          (records ? "<ul class=\\"compare-records\\">" + records + "</ul>" : "") +
+          "</article>"
+        );
+      })
+      .join("");
+  }
+
+
   function bind() {
     el("token-input").value = token();
     el("token-form").addEventListener("submit", function (event) {
@@ -12066,43 +12210,6 @@ export const UI_JS = `(function () {
     // eye will get it wrong on the run where it matters -- 15 of 23 scopes is past what anyone
     // holds in their head. The match reasons every route already carries are what the judgement
     // is made on, so a new route arrives with its own explanation attached.
-    function renderRoutedAnswer(result, baseline) {
-      if (!result.routes.length) {
-        return "<p class=\\"empty\\">No routes matched this task.</p>";
-      }
-      var baselineKeys = baseline ? new Set(baseline.routes.map(function (route) { return route.routeKey; })) : null;
-      var added = baselineKeys === null ? [] : result.routes
-        .filter(function (route) { return !baselineKeys.has(route.routeKey); })
-        .map(function (route) { return route.routeKey; });
-      var summary = baselineKeys === null
-        ? ""
-        : "<p class=\\"compare-count\\">" + added.length + " new route(s) of " + result.routes.length +
-          (added.length ? ": " + escapeHtml(added.join(", ")) : "") + "</p>";
-      return summary + result.routes
-        .map(function (route) {
-          var isNew = baselineKeys !== null && !baselineKeys.has(route.routeKey);
-          var records = (route.records || [])
-            .map(function (record) {
-              var label = record.ref.type === "assertion" ? record.kind || "assertion" : record.heading || "section";
-              return "<li><strong>" + escapeHtml(label) + "</strong> " + escapeHtml((record.content || "").slice(0, 240)) + "</li>";
-            })
-            .join("");
-          return (
-            "<article class=\\"compare-route" + (isNew ? " compare-route-new" : "") + "\\">" +
-            "<h4>" + escapeHtml(route.routeKey) + (isNew ? " <span class=\\"badge warn\\">NEW</span>" : "") +
-            (route.expanded ? " <em>expanded</em>" : " <em>listed</em>") + "</h4>" +
-            "<p class=\\"compare-applies\\">" + escapeHtml(route.appliesWhen) + "</p>" +
-            "<ul class=\\"compare-reasons\\">" +
-            route.matchReasons.map(function (reason) { return "<li>" + escapeHtml(reason) + "</li>"; }).join("") +
-            "</ul>" +
-            "<p class=\\"compare-count\\">" + route.recordCount + " record(s)" + (route.recordsTruncated ? ", truncated" : "") + "</p>" +
-            (records ? "<ul class=\\"compare-records\\">" + records + "</ul>" : "") +
-            "</article>"
-          );
-        })
-        .join("");
-    }
-
     function renderLegacyAnswer(bundle) {
       var included = (bundle && bundle.plan && bundle.plan.included) || bundle.included || [];
       if (!included.length) {
@@ -12179,13 +12286,51 @@ export const UI_JS = `(function () {
       el("compare-legacy").innerHTML = "<p class=\\"empty\\">Running…</p>";
       try {
         var result = await api(query);
-        el("compare-routed").innerHTML = renderRoutedAnswer(result.routed);
-        el("compare-routed-meta").textContent = result.routed.plannerVersion + " · " + result.routed.ranker.id;
-        el("compare-routed-lexical").innerHTML = renderRoutedAnswer(result.routedRecordLexical, result.routed);
-        el("compare-routed-lexical-meta").textContent =
-          result.routedRecordLexical.plannerVersion + " · " + result.routedRecordLexical.ranker.id;
-        el("compare-legacy").innerHTML = renderLegacyAnswer(result.legacy);
-        el("compare-legacy-meta").textContent = "git-backed planner";
+
+        // Each pane renders or reports its own failure. The endpoint settles the three calls
+        // independently, so one failing must not blank the two that answered -- a reader
+        // judging results needs to know which pane is missing and why, and a wholesale error
+        // screen would hide that two thirds of the comparison is on the page and valid.
+        var paneFailure = function (name) {
+          return result.failures && result.failures[name] ? result.failures[name].error : null;
+        };
+        var renderPane = function (id, metaId, name, render, meta) {
+          var failed = paneFailure(name);
+          if (failed || !result[name]) {
+            el(id).innerHTML = "<p class=\\"empty\\">This pane failed: " + escapeHtml(failed || "no answer returned") + "</p>";
+            el(metaId).textContent = "failed";
+            return false;
+          }
+          el(id).innerHTML = render();
+          el(metaId).textContent = meta();
+          return true;
+        };
+
+        var routedOk = renderPane("compare-routed", "compare-routed-meta", "routed",
+          function () { return renderRoutedAnswer(result.routed); },
+          function () { return result.routed.plannerVersion + " · " + result.routed.ranker.id; });
+
+        renderPane("compare-routed-lexical", "compare-routed-lexical-meta", "routedRecordLexical",
+          function () {
+            // Diffed only against a baseline that actually answered. Passing a failed pane as
+            // the baseline would report every route as newly added, which reads as a dramatic
+            // result rather than as a missing comparison.
+            return renderRoutedAnswer(result.routedRecordLexical, routedOk ? result.routed : null);
+          },
+          function () {
+            // The applied flag is read back from the response, not asserted by the pane's own
+            // label. If recordLexical ever stopped being passed, both panes would render the
+            // same answer and a reader would faithfully record "the signal changes nothing"
+            // across every task -- a silent failure that reads as a finding.
+            var applied = result.routedRecordLexical.appliedSignals &&
+              result.routedRecordLexical.appliedSignals.recordLexical;
+            return result.routedRecordLexical.plannerVersion + " · " + result.routedRecordLexical.ranker.id +
+              " · recordLexical " + (applied ? "ON" : "OFF — NOT APPLIED");
+          });
+
+        renderPane("compare-legacy", "compare-legacy-meta", "legacy",
+          function () { return renderLegacyAnswer(result.legacy); },
+          function () { return "git-backed planner"; });
         await loadDiagnostics();
       } catch (error) {
         errorBox.textContent = error.message;
@@ -12419,6 +12564,8 @@ export const UI_JS = `(function () {
   }
 
   if (window.__ANCHOR_MCP_UI_TEST_HOOKS__) {
+    window.__ANCHOR_MCP_UI_TEST_HOOKS__.comparePlans = comparePlans;
+    window.__ANCHOR_MCP_UI_TEST_HOOKS__.renderRoutedAnswer = renderRoutedAnswer;
     window.__ANCHOR_MCP_UI_TEST_HOOKS__.claimSources = claimSources;
     window.__ANCHOR_MCP_UI_TEST_HOOKS__.claimStrengthValue = claimStrengthValue;
     window.__ANCHOR_MCP_UI_TEST_HOOKS__.claimCertaintyValue = claimCertaintyValue;
