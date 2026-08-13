@@ -119,11 +119,32 @@ export async function startHttpServer(
         // baseline was never given, and the comparison would measure the handicap rather than
         // the retrieval. A reader cannot see that from the two answers, which is what makes it
         // worth stating here.
-        const [routed, legacy] = await Promise.all([
+        //
+        // The routed planner is asked twice, with the record-lexical signal off and on. Nobody
+        // has yet judged whether the routes that signal adds are relevant — it rescues tasks
+        // that name no scope from reaching nothing at all, but widens one real task from 2
+        // routes to 15 of 23 scopes — and that judgement is a person's to make from the two
+        // answers side by side. Both run on every request rather than behind a toggle: the
+        // comparison only means anything for the same task, and a reader who has to reload
+        // with a flag is comparing two readings instead of one.
+        const [routed, routedRecordLexical, legacy] = await Promise.all([
           knowledgeDb.planRoutedBundleAsOwner({ task, referencedPaths, consumer: "comparison-gate" }),
+          knowledgeDb.planRoutedBundleAsOwner({
+            task,
+            referencedPaths,
+            recordLexical: true,
+            // Tagged apart from the signal-off call, which is not cosmetic. Every routed call
+            // writes a live retrieval request and one impression per offered route, and the
+            // signal-on routes are offered but seldom expanded — blended into one population
+            // they drag expansionByPosition down with routes nobody could have expanded, which
+            // is the very number T8 is judged on. `consumer` is the only column that can tell
+            // the two apart afterwards: routingDiagnostics does not filter on it yet, so the
+            // tag is what leaves that a query to write rather than telemetry already lost.
+            consumer: "comparison-gate-record-lexical",
+          }),
           runtime.service.planContextBundle({ task, filePaths: referencedPaths }),
         ]);
-        res.json({ task, routed, legacy });
+        res.json({ task, routed, routedRecordLexical, legacy });
       } catch (error) {
         runtime.logger.error("comparison request failed", { error: errorMetadata(error) });
         res.status(500).json({ error: error instanceof Error ? error.message : String(error) });
