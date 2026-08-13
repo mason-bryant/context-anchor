@@ -146,12 +146,12 @@ describe.runIf(await isTestDatabaseReachable())("routed retrieval access control
         if (prop === "query") {
           return (...args: unknown[]) => {
             queries += 1;
-            // Bound explicitly. `(target.query)(...)` does keep `this` — parenthesising a member
-            // expression does not detach it, and this test would fail loudly if it did, since
-            // pg's Pool.query reads this.Promise on its first line. But the cast makes it read
-            // like an extracted function, a reviewer took it for one, and the difference between
-            // the two is invisible until it throws. Saying it outright costs nothing.
-            return Reflect.apply(target.query, target, args) as unknown;
+            // Called as a member expression on `target`, so `this` is bound by the call itself
+            // and no unbound method reference exists to be misread — or to trip
+            // @typescript-eslint/unbound-method, which rejects `Reflect.apply(target.query, ...)`
+            // for exactly the reason it looks wrong. pg's Pool.query reads `this.Promise` on its
+            // first line, so a lost binding throws immediately rather than lurking.
+            return (target as unknown as { query: (...a: unknown[]) => unknown }).query(...args);
           };
         }
         return Reflect.get(target, prop, receiver) as unknown;
