@@ -4,6 +4,8 @@ import {
   contentFingerprint,
   lexicalMatch,
   pathMatch,
+  RECORD_LEXICAL_EXAMPLES,
+  recordLexicalReason,
   routeKeyFor,
   taskTerms,
   type RouteRecord,
@@ -153,5 +155,51 @@ describe("content fingerprint", () => {
     expect(contentFingerprint([section("doc#one", "alpha"), section("doc#two", "beta")])).not.toBe(
       contentFingerprint([section("doc#one", "beta"), section("doc#two", "alpha")]),
     );
+  });
+});
+
+/**
+ * These sentences are the whole evidence for a listed route — most offered routes carry no
+ * records — so a person judging whether recordLexical adds signal or noise is judging these.
+ */
+describe("recordLexicalReason", () => {
+  const reason = (titles: string[], source = "section") =>
+    recordLexicalReason({ hit: "decisions", source, titles });
+
+  it("names the single title when only one matched, without a count to read past", () => {
+    expect(reason(["Decisions on logging"])).toBe(
+      'task term "decisions" matched section title "Decisions on logging" in this scope',
+    );
+  });
+
+  it("leads with how many matched, because the count is the judgement", () => {
+    // One heading is a plausible route; thirty means the term is a common word and the scope is
+    // noise. A reader given only examples cannot tell those apart.
+    const text = reason(["A decisions", "B decisions", "C decisions", "D decisions", "E decisions"]);
+
+    expect(text).toContain("matched 5 section titles");
+    expect(text).toContain("(+2 more)");
+  });
+
+  it("quotes no more than the example cap, so one scope cannot flood the pane", () => {
+    const titles = Array.from({ length: 30 }, (_, index) => `decisions ${String(index)}`);
+    const text = reason(titles);
+
+    expect(text.match(/"decisions \d+"/g) ?? []).toHaveLength(RECORD_LEXICAL_EXAMPLES);
+    expect(text).toContain("(+27 more)");
+  });
+
+  it("omits the remainder note when every match is shown", () => {
+    expect(reason(["a decisions", "b decisions"])).not.toContain("more)");
+  });
+
+  it("is stable regardless of the order rows arrived in", () => {
+    // The reason is stored in telemetry and compared across runs; ordering that followed the
+    // query would make two identical retrievals look like a change.
+    expect(reason(["b decisions", "a decisions"])).toBe(reason(["a decisions", "b decisions"]));
+  });
+
+  it("says assertion when the match came from an assertion", () => {
+    expect(reason(["Decisions on logging"], "assertion")).toContain("matched assertion title");
   });
 });

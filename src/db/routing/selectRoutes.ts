@@ -70,6 +70,38 @@ function normalizeReferencedPath(value: string): string {
  * Longest matching prefix wins, matching `repository_mappings`' own documented rule. A
  * prefix only matches on a path *segment* boundary, so `app` does not claim `application/`.
  */
+/** How many matched titles a record-lexical reason quotes before summarising the remainder. */
+export const RECORD_LEXICAL_EXAMPLES = 3;
+
+/**
+ * The sentence a person reads to decide whether a record-lexical route belongs.
+ *
+ * Most offered routes are listed rather than expanded and carry no records at all, so this is
+ * the entire evidence for them. It states how many titles matched and quotes the first few:
+ * the count separates a precise match from a common word, and the examples are what make the
+ * count checkable rather than something to take on trust.
+ *
+ * Titles are sorted so the same workspace and task always produce the same sentence — the
+ * reason is stored in telemetry and compared across runs, and an order that follows whatever
+ * the query returned would make identical retrievals look different.
+ *
+ * The article is omitted rather than chosen, because `source` is either "assertion" or
+ * "section" and a fixed article is wrong for one of them.
+ */
+export function recordLexicalReason(group: { hit: string; source: string; titles: string[] }): string {
+  const titles = [...group.titles].sort();
+  const shown = titles.slice(0, RECORD_LEXICAL_EXAMPLES).map((title) => JSON.stringify(title)).join(", ");
+  const term = JSON.stringify(group.hit);
+  if (titles.length === 1) {
+    return `task term ${term} matched ${group.source} title ${shown} in this scope`;
+  }
+  const remainder = titles.length - Math.min(RECORD_LEXICAL_EXAMPLES, titles.length);
+  return (
+    `task term ${term} matched ${String(titles.length)} ${group.source} titles: ${shown}` +
+    (remainder > 0 ? ` (+${String(remainder)} more)` : "")
+  );
+}
+
 export function pathMatch(
   referencedPaths: string[],
   mappings: Array<{ scope_guid: string; repository: string; path_prefix: string }>,
@@ -298,26 +330,35 @@ export async function selectRouteCandidates(
     );
     // Matched in application code, like every other signal here, so the reason a route was
     // offered stays explainable to the person reading it.
+    //
+    // Grouped before emitting — one signal per scope, term and source, rather than one per
+    // matched title. Two reasons, and the second is the important one. `add` deduplicates on
+    // the reason string, so a reason that names its own title is unique by construction and
+    // defeats it: a scope with thirty matching headings emitted thirty near-identical signals,
+    // which is the wall of text the deduplication exists to prevent. And the count is itself
+    // the judgement being asked for. A scope that matched one heading is a plausible route; one
+    // that matched thirty means the term is a common word and the scope is noise. A bare list
+    // of examples hides that difference; a bare count cannot be checked against anything.
+    const groups = new Map<string, { scopeGuid: string; hit: string; source: string; titles: string[] }>();
     for (const row of rows.rows) {
       const words = row.text.toLowerCase().match(/[a-z0-9]{2,}/g) ?? [];
       const hit = words.find((word) => terms.has(word));
-      if (hit) {
-        add(row.scope_guid, {
-          kind: "record-lexical",
-          // The article is omitted rather than chosen, because `source` is either "assertion"
-          // or "section" and a fixed article is wrong for one of them. Match reasons are read
-          // by people, so "matched section title" beats getting it wrong half the time.
-          //
-          // The matched title is quoted, not merely counted. Most offered routes are listed
-          // rather than expanded, so they carry no records at all — the reason is the entire
-          // basis on which someone decides whether the route belongs. "matched section title
-          // in this scope" identifies nothing and cannot support that decision; naming the
-          // heading turns it into a judgeable claim.
-          reason:
-            `task term ${JSON.stringify(hit)} matched ${row.source} title ` +
-            `${JSON.stringify(row.text)} in this scope`,
-        });
+      if (!hit) {
+        continue;
       }
+      // NUL-joined because a slug, a term and a source cannot contain it, so no two distinct
+      // triples can collide on one key.
+      const key = `${row.scope_guid}\u0000${hit}\u0000${row.source}`;
+      const held = groups.get(key);
+      if (held) {
+        held.titles.push(row.text);
+      } else {
+        groups.set(key, { scopeGuid: row.scope_guid, hit, source: row.source, titles: [row.text] });
+      }
+    }
+
+    for (const group of groups.values()) {
+      add(group.scopeGuid, { kind: "record-lexical", reason: recordLexicalReason(group) });
     }
   }
 

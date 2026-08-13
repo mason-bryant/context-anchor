@@ -102,8 +102,11 @@ describe.runIf(await isTestDatabaseReachable())("planRoutedBundle (real Postgres
       const result = await plan("decisions", { recordLexical: true });
 
       expect(result.routes.length).toBeGreaterThan(0);
-      expect(result.routes.flatMap((r) => r.matchReasons).join(" ")).toMatch(
-        /task term "decisions" matched section title/,
+      // Pinned to the whole sentence, not a prefix. `/matched section title/` matched both the
+      // reason that named no heading and the one that names it, so it could not have noticed
+      // either change to this string.
+      expect(result.routes.flatMap((r) => r.matchReasons).join(" ")).toContain(
+        'task term "decisions" matched section title "Decisions" in this scope',
       );
     });
 
@@ -132,6 +135,40 @@ describe.runIf(await isTestDatabaseReachable())("planRoutedBundle (real Postgres
       // The replacement heading routes, so the document is still indexed — this is about which
       // revision is read, not about the document having dropped out entirely.
       expect((await plan("tradeoffs", { recordLexical: true })).routes.length).toBeGreaterThan(0);
+    });
+
+    it("emits one reason per scope however many titles matched, with the count in it", async () => {
+      // Four headings in one document, all containing the term. Before grouping, each produced
+      // its own near-identical reason, because `add` deduplicates on the reason string and a
+      // reason that quotes its own title is unique by construction — so the deduplication added
+      // one commit earlier silently stopped applying to this signal kind.
+      await importDocuments({
+        pool,
+        schemaName,
+        handler: new CommandHandler(pool, schemaName),
+        workspaceGuid: bootstrap.workspaceGuid,
+        actorPrincipalGuid: bootstrap.ownerPrincipalGuid,
+        repository: "agent-context",
+        commitSha: "f".repeat(40),
+        files: [
+          {
+            path: "projects/anchor-mcp/anchor-mcp-project-context.md",
+            content:
+              "---\nproject: anchor-mcp\ntype: context-anchor\n---\n\n# Anchor MCP\n\n" +
+              "## Decisions on logging\n\nText.\n\n## Decisions on ranking\n\nText.\n\n" +
+              "## Decisions on retention\n\nText.\n\n## Decisions on routing\n\nText.\n",
+          },
+        ],
+      });
+
+      const result = await plan("decisions", { recordLexical: true });
+      const reasons = result.routes.flatMap((route) =>
+        route.matchReasons.filter((reason) => reason.includes("task term")),
+      );
+
+      expect(reasons).toHaveLength(1);
+      expect(reasons[0]).toContain("matched 4 section titles");
+      expect(reasons[0]).toContain("(+1 more)");
     });
 
     // The restriction the whole signal rests on. Body matching would put most scopes in most
