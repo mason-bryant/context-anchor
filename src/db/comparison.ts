@@ -50,7 +50,8 @@ export type RoutingDiagnostics = {
 const INSTRUMENT_CONSUMERS = ["comparison-gate", "comparison-gate-record-lexical"];
 
 /**
- * Applied to every query here rather than to some of them, because a partial exclusion is worse
+ * Applied at every site rather than to some of them -- seven predicates across four statements,
+ * since the totals query carries four subqueries -- because a partial exclusion is worse
  * than none: totals that count gate traffic beside per-route tables that do not would not add
  * up, and the disagreement would look like a bug in the retrieval rather than in the report.
  */

@@ -202,10 +202,11 @@ describe.runIf(await isTestDatabaseReachable())("routing diagnostics (real Postg
     expect(after.totals.routesOffered).toBeGreaterThan(0);
   });
 
-  // The exclusion has to hold on every query, not most of them. Stripping it from six of the
-  // seven left the suite green, because the only assertion was on totals.requests -- so the
-  // stated invariant, that the totals and the per-route tables describe the same population,
-  // had no test at all. That disagreement would read as a fault in the retrieval rather than in
+  // The exclusion has to hold at every site, not most of them. There are seven predicates across
+  // four statements -- the totals query alone carries four subqueries -- and stripping six of the
+  // seven left the suite green, because the only assertion was on totals.requests. The stated
+  // invariant, that the totals and the per-route tables describe the same population, had no test
+  // at all. That disagreement would read as a fault in the retrieval rather than in
   // the report.
   it("excludes gate traffic from every diagnostic, not only the request count", async () => {
     await plan("anchor mcp", { consumer: "comparison-gate" });
