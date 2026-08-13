@@ -2117,6 +2117,14 @@ textarea {
   margin-bottom: 8px;
 }
 
+/* Sits under the diagnostics heading and has to read as part of it, not as a stray line: the
+   panel below shows zeroes during a judging session and this is the only thing explaining why. */
+.compare-diagnostics-note {
+  font-size: 13px;
+  color: var(--muted);
+  margin-top: 4px;
+}
+
 .compare-clip {
   font-size: 13px;
   font-weight: 600;
@@ -11796,6 +11804,78 @@ export const UI_JS = `(function () {
    * tasks on had no coverage, which is how it shipped reporting additions and silently
    * ignoring the routes the signal dropped.
    */
+
+  function renderLegacyAnswer(bundle) {
+    var included = (bundle && bundle.plan && bundle.plan.included) || bundle.included || [];
+    if (!included.length) {
+      return "<p class=\\"empty\\">The planner included nothing for this task.</p>";
+    }
+    return (
+      "<ul class=\\"compare-records\\">" +
+      included
+        .map(function (entry) {
+          return "<li><strong>" + escapeHtml(entry.name || "") + "</strong> " + escapeHtml(entry.reason || "") + "</li>";
+        })
+        .join("") +
+      "</ul>"
+    );
+  }
+
+  /**
+   * What each comparison pane should show, decided in one pure function so it can be tested.
+   *
+   * The decision that matters is which baseline the record-lexical pane is diffed against, and
+   * it had no coverage while it lived inside the event binder: passing null there silently
+   * removes every ADDED badge, the dropped block and the whole difference summary, so a person
+   * judging twenty-five tasks would record "the signal changes nothing" on every one. That is a
+   * strictly larger version of the failure appliedSignals exists to prevent, and it was the
+   * one part with nothing pinning it.
+   */
+  function comparisonPanes(result) {
+    var failureOf = function (name) {
+      return result.failures && result.failures[name] ? result.failures[name].error : null;
+    };
+    var pane = function (name, render, meta) {
+      var failed = failureOf(name);
+      if (failed || !result[name]) {
+        return { failed: true, html: "<p class=\\"empty\\">This pane failed: " + escapeHtml(failed || "no answer returned") + "</p>", meta: "failed" };
+      }
+      return { failed: false, html: render(), meta: meta() };
+    };
+
+    var routed = pane("routed",
+      function () { return renderRoutedAnswer(result.routed); },
+      function () { return result.routed.plannerVersion + " · " + result.routed.ranker.id; });
+
+    var lexical = pane("routedRecordLexical",
+      function () {
+        // Diffed only against a baseline that actually answered. Passing a failed pane as the
+        // baseline would report every route as newly added, which reads as a dramatic result
+        // rather than as a missing comparison.
+        return renderRoutedAnswer(result.routedRecordLexical, routed.failed ? null : result.routed);
+      },
+      function () {
+        // The applied flag is read back from the response, not asserted by the pane's own label.
+        // If recordLexical ever stopped being passed, both panes would render the same answer and
+        // a reader would faithfully record "the signal changes nothing" across every task.
+        var applied = result.routedRecordLexical.appliedSignals &&
+          result.routedRecordLexical.appliedSignals.recordLexical;
+        var budget = result.routedRecordLexical.budget;
+        return result.routedRecordLexical.plannerVersion + " · " + result.routedRecordLexical.ranker.id +
+          " · recordLexical " + (applied ? "ON" : "OFF — NOT APPLIED") +
+          // Printed because the gate runs a wider budget than agents get, so routes past the
+          // production cut are on screen and judged like any other. Without this the verdict
+          // cannot be read back against the budget it would actually apply to.
+          (budget ? " · listed " + budget.listed + "/expanded " + budget.expanded : "");
+      });
+
+    var legacy = pane("legacy",
+      function () { return renderLegacyAnswer(result.legacy); },
+      function () { return "git-backed planner"; });
+
+    return { routed: routed, routedRecordLexical: lexical, legacy: legacy };
+  }
+
   function comparePlans(result, baseline) {
     var resultKeys = result.routes.map(function (route) { return route.routeKey; });
     var baselineKeys = baseline.routes.map(function (route) { return route.routeKey; });
@@ -12239,21 +12319,6 @@ export const UI_JS = `(function () {
     // eye will get it wrong on the run where it matters -- 15 of 23 scopes is past what anyone
     // holds in their head. The match reasons every route already carries are what the judgement
     // is made on, so a new route arrives with its own explanation attached.
-    function renderLegacyAnswer(bundle) {
-      var included = (bundle && bundle.plan && bundle.plan.included) || bundle.included || [];
-      if (!included.length) {
-        return "<p class=\\"empty\\">The planner included nothing for this task.</p>";
-      }
-      return (
-        "<ul class=\\"compare-records\\">" +
-        included
-          .map(function (entry) {
-            return "<li><strong>" + escapeHtml(entry.name || "") + "</strong> " + escapeHtml(entry.reason || "") + "</li>";
-          })
-          .join("") +
-        "</ul>"
-      );
-    }
 
     function renderDiagnostics(diag) {
       var positions = diag.expansionByPosition
@@ -12320,46 +12385,14 @@ export const UI_JS = `(function () {
         // independently, so one failing must not blank the two that answered -- a reader
         // judging results needs to know which pane is missing and why, and a wholesale error
         // screen would hide that two thirds of the comparison is on the page and valid.
-        var paneFailure = function (name) {
-          return result.failures && result.failures[name] ? result.failures[name].error : null;
+        var panes = comparisonPanes(result);
+        var paint = function (id, metaId, pane) {
+          el(id).innerHTML = pane.html;
+          el(metaId).textContent = pane.meta;
         };
-        var renderPane = function (id, metaId, name, render, meta) {
-          var failed = paneFailure(name);
-          if (failed || !result[name]) {
-            el(id).innerHTML = "<p class=\\"empty\\">This pane failed: " + escapeHtml(failed || "no answer returned") + "</p>";
-            el(metaId).textContent = "failed";
-            return false;
-          }
-          el(id).innerHTML = render();
-          el(metaId).textContent = meta();
-          return true;
-        };
-
-        var routedOk = renderPane("compare-routed", "compare-routed-meta", "routed",
-          function () { return renderRoutedAnswer(result.routed); },
-          function () { return result.routed.plannerVersion + " · " + result.routed.ranker.id; });
-
-        renderPane("compare-routed-lexical", "compare-routed-lexical-meta", "routedRecordLexical",
-          function () {
-            // Diffed only against a baseline that actually answered. Passing a failed pane as
-            // the baseline would report every route as newly added, which reads as a dramatic
-            // result rather than as a missing comparison.
-            return renderRoutedAnswer(result.routedRecordLexical, routedOk ? result.routed : null);
-          },
-          function () {
-            // The applied flag is read back from the response, not asserted by the pane's own
-            // label. If recordLexical ever stopped being passed, both panes would render the
-            // same answer and a reader would faithfully record "the signal changes nothing"
-            // across every task -- a silent failure that reads as a finding.
-            var applied = result.routedRecordLexical.appliedSignals &&
-              result.routedRecordLexical.appliedSignals.recordLexical;
-            return result.routedRecordLexical.plannerVersion + " · " + result.routedRecordLexical.ranker.id +
-              " · recordLexical " + (applied ? "ON" : "OFF — NOT APPLIED");
-          });
-
-        renderPane("compare-legacy", "compare-legacy-meta", "legacy",
-          function () { return renderLegacyAnswer(result.legacy); },
-          function () { return "git-backed planner"; });
+        paint("compare-routed", "compare-routed-meta", panes.routed);
+        paint("compare-routed-lexical", "compare-routed-lexical-meta", panes.routedRecordLexical);
+        paint("compare-legacy", "compare-legacy-meta", panes.legacy);
         await loadDiagnostics();
       } catch (error) {
         errorBox.textContent = error.message;
@@ -12594,6 +12627,7 @@ export const UI_JS = `(function () {
 
   if (window.__ANCHOR_MCP_UI_TEST_HOOKS__) {
     window.__ANCHOR_MCP_UI_TEST_HOOKS__.comparePlans = comparePlans;
+    window.__ANCHOR_MCP_UI_TEST_HOOKS__.comparisonPanes = comparisonPanes;
     window.__ANCHOR_MCP_UI_TEST_HOOKS__.renderRoutedAnswer = renderRoutedAnswer;
     window.__ANCHOR_MCP_UI_TEST_HOOKS__.claimSources = claimSources;
     window.__ANCHOR_MCP_UI_TEST_HOOKS__.claimStrengthValue = claimStrengthValue;

@@ -175,6 +175,46 @@ describe.runIf(await isTestDatabaseReachable())("planRoutedBundle (real Postgres
       expect(reasons[0]).toContain("(+1 more)");
     });
 
+    it("credits every task term a heading matched, not just the first", async () => {
+      // The reason builder is unit-tested, but nothing covered the code that BUILDS its input:
+      // reverting the multi-term collection to "first term wins", or dropping source from the
+      // group key, left every suite green.
+      await importDocuments({
+        pool,
+        schemaName,
+        handler: new CommandHandler(pool, schemaName),
+        workspaceGuid: bootstrap.workspaceGuid,
+        actorPrincipalGuid: bootstrap.ownerPrincipalGuid,
+        repository: "agent-context",
+        commitSha: "c".repeat(40),
+        files: [
+          {
+            path: "projects/anchor-mcp/anchor-mcp-project-context.md",
+            content:
+              "---\nproject: anchor-mcp\ntype: context-anchor\n---\n\n# Anchor MCP\n\n" +
+              // ONE heading carrying BOTH terms. Two headings each carrying one term cannot
+              // distinguish "collect every match" from "take the first": the group spans rows,
+              // so both terms accumulate either way.
+              "## Decisions about logging\n\nText.\n",
+          },
+        ],
+      });
+
+      const result = await plan("decisions logging", { recordLexical: true });
+      const reason = result.routes
+        .flatMap((route) => route.matchReasons)
+        .find((text) => text.includes("task term"))!;
+
+      expect(reason).toBeDefined();
+      // A single heading matched by both terms, so the count is one either way — what changes is
+      // whether both terms are credited.
+      // Both terms named. Taking only the first match per heading split one scope's evidence by
+      // word order inside the heading and reported two partial matches instead of one full one.
+      expect(reason).toContain('"decisions"');
+      expect(reason).toContain('"logging"');
+      expect(reason).toContain("task terms");
+    });
+
     // The restriction the whole signal rests on. Body matching would put most scopes in most
     // answers, which reads like working and is far harder to notice than returning nothing —
     // so a word that appears only in prose must still route nowhere.

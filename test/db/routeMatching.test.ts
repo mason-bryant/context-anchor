@@ -163,8 +163,21 @@ describe("content fingerprint", () => {
  * records — so a person judging whether recordLexical adds signal or noise is judging these.
  */
 describe("recordLexicalReason", () => {
+  // Every term is treated as matching every title unless the caller says otherwise, which keeps
+  // the simple cases readable; `termed` below builds the per-term mapping explicitly.
   const reason = (titles: string[], source = "section", hits: string[] = ["decisions"]) =>
-    recordLexicalReason({ hits, source, titles });
+    recordLexicalReason({
+      termTitles: new Map(hits.map((hit) => [hit, new Set(titles)])),
+      source,
+      titles,
+    });
+
+  const termed = (termTitles: Record<string, string[]>, source = "section") =>
+    recordLexicalReason({
+      termTitles: new Map(Object.entries(termTitles).map(([term, titles]) => [term, new Set(titles)])),
+      source,
+      titles: [...new Set(Object.values(termTitles).flat())],
+    });
 
   it("names the single title when only one matched, without a count to read past", () => {
     expect(reason(["Decisions on logging"])).toBe(
@@ -226,12 +239,36 @@ describe("recordLexicalReason", () => {
     // matching everything on a two-word task read as two unremarkable partial matches.
     const text = reason(["Decisions about logging", "Logging decisions"], "section", ["decisions", "logging"]);
 
-    expect(text).toContain('task terms "decisions", "logging"');
+    expect(text).toContain('task terms "decisions" (2), "logging" (2)');
   });
 
   it("orders the terms so the sentence is stable across runs", () => {
     expect(reason(["a", "b"], "section", ["logging", "decisions"])).toBe(
       reason(["a", "b"], "section", ["decisions", "logging"]),
     );
+  });
+
+  it("counts each term separately, so stopwords cannot pose as topical evidence", () => {
+    // taskTerms applies no stopword list, and the ordinary phrasings this signal exists to
+    // rescue are full of "the" and "to". A bare union let one relevant heading plus four
+    // stopword headings read as five-term evidence.
+    const text = termed({
+      the: ["How the importer works", "Notes on the migration", "Rate limiting and the transport"],
+      rate: ["Rate limiting and the transport"],
+    });
+
+    expect(text).toContain('"rate" (1)');
+    expect(text).toContain('"the" (3)');
+  });
+
+  it("quotes the titles found by the rarest term first, so the examples can check the count", () => {
+    // Alphabetical order filled the examples with stopword matches — the three titles offered to
+    // justify the count were the three least likely to.
+    const text = termed({
+      the: ["A the one", "B the two", "C the three", "Z rate limiting and the transport"],
+      rate: ["Z rate limiting and the transport"],
+    });
+
+    expect(text.indexOf('"Z rate limiting and the transport"')).toBeLessThan(text.indexOf('"A the one"'));
   });
 });

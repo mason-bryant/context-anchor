@@ -23,6 +23,9 @@ type ComparePlan = {
   routes: Array<{ routeKey: string; expanded?: boolean; recordCount?: number; matchReasons?: string[]; appliesWhen?: string }>;
   candidateCount?: number;
   appliedSignals?: { recordLexical: boolean };
+  plannerVersion?: string;
+  ranker?: { id: string; version: string };
+  budget?: { expanded: number; listed: number; recordsPerRoute: number };
 };
 
 type ComparePlansResult = {
@@ -37,6 +40,12 @@ type ComparePlansResult = {
 
 type UiAssetHooks = {
   comparePlans(result: ComparePlan, baseline: ComparePlan): ComparePlansResult;
+  comparisonPanes(result: {
+    routed?: ComparePlan | null;
+    routedRecordLexical?: ComparePlan | null;
+    legacy?: unknown;
+    failures?: Record<string, { error: string } | null>;
+  }): Record<string, { failed: boolean; html: string; meta: string }>;
   renderRoutedAnswer(result: ComparePlan, baseline?: ComparePlan | null): string;
   claimStrengthValue(claim: UiClaim): string;
   claimCertaintyValue(claim: UiClaim): number | null;
@@ -2131,6 +2140,11 @@ describe("comparison gate diff", () => {
     })),
     ...(candidateCount === undefined ? {} : { candidateCount }),
     appliedSignals: { recordLexical: true },
+    // Present because the meta line reads them; a fixture without them fails inside the renderer
+    // rather than at the assertion, which hides what the test was actually checking.
+    plannerVersion: "routing-1.0.0",
+    ranker: { id: "precedence", version: "1.0.0" },
+    budget: { expanded: 8, listed: 25, recordsPerRoute: 25 },
   });
 
   it("reports routes the signal dropped, not only the ones it added", () => {
@@ -2200,6 +2214,53 @@ describe("comparison gate diff", () => {
   // could be deleted from UI_HTML with all 190 UI tests passing, while at runtime
   // clearComparisonOutput would throw on a null element and the Compare button would stop
   // working — a total failure of the surface, invisible to the suite.
+  // The renderers and the markup are both covered; this is the wiring between them, and it was
+  // the one part with nothing pinning it. Passing a null baseline here silently removes every
+  // ADDED badge, the dropped block and the entire difference summary — a person judging 25 tasks
+  // would record "the signal changes nothing" on all of them. That is a strictly larger version
+  // of the failure appliedSignals exists to prevent, and appliedSignals has a contract test.
+  it("diffs the record-lexical pane against the routed answer, not against nothing", () => {
+    const hooks = loadHooks();
+    const panes = hooks.comparisonPanes({
+      routed: plan(["a"]),
+      routedRecordLexical: plan(["a", "b"]),
+      legacy: {},
+    });
+
+    expect(panes.routedRecordLexical.html).toContain("ADDED");
+    expect(panes.routedRecordLexical.html).toContain("1 added");
+    // "b" is the only new route; "a" was in the baseline and must not be named as added.
+    expect(panes.routedRecordLexical.html).toContain("1 added: b");
+    expect(panes.routedRecordLexical.html).not.toContain("added: a");
+  });
+
+  it("does not diff against a baseline that failed, which would mark every route as new", () => {
+    const hooks = loadHooks();
+    const panes = hooks.comparisonPanes({
+      routed: null,
+      routedRecordLexical: plan(["a", "b"]),
+      legacy: {},
+      failures: { routed: { error: "boom" } },
+    });
+
+    expect(panes.routed.failed).toBe(true);
+    expect(panes.routed.html).toContain("boom");
+    // Reporting two routes as newly added when the baseline is simply missing reads as a
+    // dramatic result rather than as an absent comparison.
+    expect(panes.routedRecordLexical.html).not.toContain("ADDED");
+  });
+
+  it("says on the pane whether the signal was actually applied", () => {
+    const hooks = loadHooks();
+    const off = hooks.comparisonPanes({
+      routed: plan(["a"]),
+      routedRecordLexical: { ...plan(["a"]), appliedSignals: { recordLexical: false } },
+      legacy: {},
+    });
+
+    expect(off.routedRecordLexical.meta).toContain("NOT APPLIED");
+  });
+
   it("keeps the elements the comparison view writes into", () => {
     expect(UI_HTML).toContain('id="compare-routed-lexical"');
     expect(UI_HTML).toContain('id="compare-routed-lexical-meta"');
