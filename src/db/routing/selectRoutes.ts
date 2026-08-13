@@ -128,6 +128,12 @@ export type SelectionInput = {
   role: WorkspaceRole;
   task: string;
   referencedPaths?: string[];
+  /**
+   * Off by default (T-46). Matches task terms against assertion titles and section headings so
+   * ordinary phrasing can reach a scope at all; flagged because it adds a signal kind, and tier
+   * 1 of the ranking rule counts distinct kinds, so enabling it changes existing orderings.
+   */
+  recordLexical?: boolean;
 };
 
 export async function selectRouteCandidates(
@@ -178,6 +184,16 @@ export async function selectRouteCandidates(
   );
   const readable = [...byGuid.values()];
 
+  // Nothing below can produce a candidate when no scope is readable: every producer routes
+  // through add(), which drops any scope absent from byGuid. Returning here skips whichever
+  // producers would otherwise query to populate a map guaranteed to stay empty -- at most the
+  // path mapping read, the relation hop, and the record-lexical scan over every assertion title
+  // and current section heading in the workspace. A caller with no grants is a valid state, not
+  // an error, and it should cost nothing.
+  if (readable.length === 0) {
+    return [];
+  }
+
   const signals = new Map<string, MatchSignal[]>();
   // Readability is enforced here, once, rather than at each producer. An unreadable scope
   // reaching this map would otherwise survive as far as record loading — a database read for
@@ -190,6 +206,19 @@ export async function selectRouteCandidates(
     }
     const existing = signals.get(scopeGuid);
     if (existing) {
+      // Identical signals are dropped rather than accumulated. One scope can reach the same
+      // record through more than one association row -- live uniqueness is per association_type
+      // -- so the same title would otherwise repeat its reason verbatim.
+      //
+      // This does not change ranking under the default ranker: its first tier counts distinct
+      // signal *kinds*, so same-kind repeats were already collapsed there. The reason to drop
+      // them is that matchReasons is read by people and doubles as the explanation of why a
+      // route ranked where it did, and a list that says the same thing four times explains
+      // less than one that says it once. A replaceable ranker (A3) may also count raw signals,
+      // and should not inherit a duplicate that means nothing.
+      if (existing.some((held) => held.kind === signal.kind && held.reason === signal.reason)) {
+        return;
+      }
       existing.push(signal);
     } else {
       signals.set(scopeGuid, [signal]);
@@ -201,6 +230,86 @@ export async function selectRouteCandidates(
     const lexical = lexicalMatch(scope, terms);
     if (lexical) {
       add(scope.scope_guid, lexical);
+    }
+  }
+
+  // Records, not just scope names (T-46). A scope's slug, title, and aliases are the only text
+  // the lexical signal could see, so a task phrased in ordinary words — "logging retention" —
+  // reached nothing, even with a claim by that name in the workspace. Titles and headings only,
+  // never body text: body matching would put most scopes in most answers, which reads like
+  // working and is harder to notice than returning nothing.
+  //
+  // Weakest kind by position in SIGNAL_KINDS, but tier 1 counts distinct kinds, so this can
+  // still promote a scope. That is why it ships behind a flag and is measured as a shadow
+  // ranker before it decides anything.
+  if (input.recordLexical) {
+    // Restricted to scopes the caller can read, rather than filtering after the fact in add().
+    // Every other producer here matches against something already narrowed; this one would
+    // otherwise read every active assertion title and current section heading in the workspace
+    // on each call, then discard the ones belonging to scopes the caller cannot see. The work
+    // done would scale with the workspace instead of with what the caller is permitted to
+    // receive, which is both wasteful and the wrong thing for a per-request path.
+    const readableGuids = readable.map((scope) => scope.scope_guid);
+    const rows = await pool.query<{ scope_guid: string; text: string; source: string }>(
+      `SELECT rs.scope_guid, a.title AS text, 'assertion' AS source
+         FROM "${schemaName}".assertions a
+         JOIN "${schemaName}".record_scopes rs
+           ON rs.workspace_guid = a.workspace_guid AND rs.record_type = 'assertion'
+          AND rs.record_guid = a.assertion_guid AND rs.retired_at IS NULL
+        WHERE a.workspace_guid = $1 AND a.retired_at IS NULL AND a.status = 'active'
+          AND rs.scope_guid = ANY($2::uuid[])
+       UNION ALL
+       -- Wrapped in a subquery because DISTINCT ON needs its own ORDER BY, and a bare ORDER BY
+       -- in a UNION branch binds to the whole union instead.
+       --
+       -- DISTINCT ON matching loadRouteRecords: stable_key is revision-stable, so without it
+       -- every revision of a document contributes its headings. A heading a later commit deleted
+       -- would keep routing forever — the workspace could never be corrected by editing it — and
+       -- each stable key would also emit one row per revision.
+       SELECT scope_guid, text, source FROM (
+         SELECT DISTINCT ON (rs.scope_guid, ss.stable_key)
+                rs.scope_guid, ss.title AS text, 'section' AS source
+           FROM "${schemaName}".source_sections ss
+           JOIN "${schemaName}".document_revisions dr
+             ON dr.workspace_guid = ss.workspace_guid AND dr.revision_guid = ss.revision_guid
+           JOIN "${schemaName}".source_documents d
+             ON d.workspace_guid = dr.workspace_guid AND d.document_guid = dr.document_guid
+            AND d.retired_at IS NULL
+           JOIN "${schemaName}".record_scopes rs
+             ON rs.workspace_guid = ss.workspace_guid AND rs.record_type = 'section'
+            AND rs.stable_key = ss.stable_key AND rs.retired_at IS NULL
+          WHERE ss.workspace_guid = $1
+            AND rs.scope_guid = ANY($2::uuid[])
+            -- Current revision only. Taking the highest revision per stable_key is not enough:
+            -- a heading a later commit deleted leaves a section whose stable_key exists in no
+            -- newer revision, so it is the only row for that key and survives any per-key
+            -- dedupe. Restricting to the document's latest revision drops it, which is what
+            -- "reflects the current workspace" has to mean.
+            AND dr.revision_number = (
+              SELECT max(dr2.revision_number)
+                FROM "${schemaName}".document_revisions dr2
+               WHERE dr2.workspace_guid = dr.workspace_guid AND dr2.document_guid = dr.document_guid
+            )
+          -- Still deduped: one scope can associate the same section more than once, by different
+          -- association types, and each would otherwise repeat the same match reason.
+          ORDER BY rs.scope_guid, ss.stable_key, dr.revision_number DESC
+       ) current_sections`,
+      [input.workspaceGuid, readableGuids],
+    );
+    // Matched in application code, like every other signal here, so the reason a route was
+    // offered stays explainable to the person reading it.
+    for (const row of rows.rows) {
+      const words = row.text.toLowerCase().match(/[a-z0-9]{2,}/g) ?? [];
+      const hit = words.find((word) => terms.has(word));
+      if (hit) {
+        add(row.scope_guid, {
+          kind: "record-lexical",
+          // The article is omitted rather than chosen, because `source` is either "assertion"
+          // or "section" and a fixed article is wrong for one of them. Match reasons are read
+          // by people, so "matched section title" beats getting it wrong half the time.
+          reason: `task term ${JSON.stringify(hit)} matched ${row.source} title in this scope`,
+        });
+      }
     }
   }
 

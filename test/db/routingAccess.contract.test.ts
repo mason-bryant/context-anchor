@@ -130,6 +130,56 @@ describe.runIf(await isTestDatabaseReachable())("routed retrieval access control
     expect(keys(await planAs("member", memberGuid))).toEqual([]);
   });
 
+  // Selection routes every producer through add(), which drops scopes the caller cannot read,
+  // so a caller with no grants can never yield a candidate. Without an early return, producers
+  // whose own preconditions are met still query to fill a map guaranteed to stay empty.
+  //
+  // Measured rather than assumed: this scenario runs 3 queries without the early return and 2
+  // with it. Only one producer is reached here — the record-lexical scan over every assertion
+  // title and current section heading in the workspace — because path mapping needs
+  // referencedPaths and the relation hop needs a prior match, and neither is present. One query
+  // is the floor of the saving, not the ceiling.
+  it("runs no selection queries for a caller who can read nothing", async () => {
+    let queries = 0;
+    const counting = new Proxy(pool, {
+      get(target, prop, receiver) {
+        if (prop === "query") {
+          return (...args: unknown[]) => {
+            queries += 1;
+            // Called as a member expression on `target`, so `this` is bound by the call itself
+            // and no unbound method reference exists to be misread — or to trip
+            // @typescript-eslint/unbound-method, which rejects `Reflect.apply(target.query, ...)`
+            // for exactly the reason it looks wrong. pg's Pool.query reads `this.Promise` on its
+            // first line, so a lost binding throws immediately rather than lurking.
+            return (target as unknown as { query: (...a: unknown[]) => unknown }).query(...args);
+          };
+        }
+        return Reflect.get(target, prop, receiver) as unknown;
+      },
+    });
+
+    // The scope read itself is unavoidable — readability cannot be known without it — so this
+    // counts what happens after, with the record-lexical signal on to make the skipped work as
+    // large as it gets.
+    const before = queries;
+    const result = await planRoutedBundle(counting, schemaName, telemetrySchema, {
+      task: "anchor mcp http transport",
+      recordLexical: true,
+      workspaceGuid: bootstrap.workspaceGuid,
+      principalGuid: memberGuid,
+      role: "member",
+    });
+    const used = queries - before;
+
+    expect(result.routes).toEqual([]);
+    // Exact, not a bound. A bound of 4 was the first attempt and it did not discriminate: the
+    // test passed with the early return removed, which is a test that looks like coverage and
+    // is not. Two queries are the scope readability lookup and telemetry's record of the
+    // request. If a deliberate change makes it three, this should be read and updated rather
+    // than loosened.
+    expect(used).toBe(2);
+  });
+
   it("offers only the granted scope to a member", async () => {
     await grant("anchor-mcp", "read");
 

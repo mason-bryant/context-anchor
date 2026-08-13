@@ -1968,6 +1968,12 @@ the index when your workflow checks in that file.`,
           // Off by default: nothing on the server reads the task back, so retaining it is a
           // diagnostics choice rather than a requirement.
           storeTaskText: z.boolean().optional(),
+          // Off by default. Matches task terms against assertion titles and section headings as
+          // well as scope names, which is the only entry point for a task naming no scope --
+          // and which widens answers sharply, so the caller asks for it rather than inheriting
+          // it. Exposed here because a flag reachable only from library code cannot be measured
+          // against real traffic, which is the entire point of shipping it off by default.
+          recordLexical: z.boolean().optional(),
           consumer: z.string().trim().min(1).optional(),
         }),
         // Deliberately not readOnlyHint: this writes a retrieval request and one impression
@@ -1975,7 +1981,7 @@ the index when your workflow checks in that file.`,
         // the hint to auto-approve side-effect-free tools would be misled.
         annotations: {},
       },
-      async ({ traceId, task, referencedPaths, routeKeys, budget, storeTaskText, consumer }) =>
+      async ({ traceId, task, referencedPaths, routeKeys, budget, storeTaskText, recordLexical, consumer }) =>
         jsonResult(
           await knowledgeDb.planRoutedBundleAsOwner({
             task,
@@ -1983,6 +1989,7 @@ the index when your workflow checks in that file.`,
             routeKeys,
             budget,
             storeTaskText,
+            recordLexical,
             consumer,
             traceId,
           }),

@@ -19,7 +19,7 @@
  */
 
 /** Ordered strongest to weakest; the order here *is* the precedence rule. */
-export const SIGNAL_KINDS = ["path-mapping", "lexical", "relation-hop"] as const;
+export const SIGNAL_KINDS = ["path-mapping", "lexical", "relation-hop", "record-lexical"] as const;
 export type SignalKind = (typeof SIGNAL_KINDS)[number];
 
 /** Ordered most specific to least; the order here *is* the specificity tier. */

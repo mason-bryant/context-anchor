@@ -88,6 +88,62 @@ describe.runIf(await isTestDatabaseReachable())("planRoutedBundle (real Postgres
     expect(route?.matchReasons.join(" ")).toMatch(/task term .* matched scope/);
   });
 
+  /**
+   * T-46. Lexical selection saw only a scope's slug, title and aliases, so a task phrased the way
+   * people actually phrase tasks reached nothing at all (T-45). This widens the entry point to
+   * the titles of records inside a scope — and deliberately no further.
+   */
+  describe("record-lexical signal", () => {
+    it("is off unless asked for, so a heading match alone routes nowhere", async () => {
+      expect((await plan("decisions")).routes).toEqual([]);
+    });
+
+    it("routes a task that names no scope, once enabled", async () => {
+      const result = await plan("decisions", { recordLexical: true });
+
+      expect(result.routes.length).toBeGreaterThan(0);
+      expect(result.routes.flatMap((r) => r.matchReasons).join(" ")).toMatch(
+        /task term "decisions" matched section title/,
+      );
+    });
+
+    // stable_key is revision-stable, so every revision of a document contributes its sections
+    // unless the query says otherwise. loadRouteRecords already takes the highest revision per
+    // stable key for exactly this reason; without the same treatment a heading that a later
+    // commit deleted keeps routing forever, and the workspace can never be corrected by editing.
+    it("reads the current revision only, not headings a later commit removed", async () => {
+      await importDocuments({
+        pool,
+        schemaName,
+        handler: new CommandHandler(pool, schemaName),
+        workspaceGuid: bootstrap.workspaceGuid,
+        actorPrincipalGuid: bootstrap.ownerPrincipalGuid,
+        repository: "agent-context",
+        commitSha: "b".repeat(40),
+        files: [
+          {
+            path: "projects/anchor-mcp/anchor-mcp-project-context.md",
+            content: HTTP_DOC.replace("## Decisions", "## Tradeoffs"),
+          },
+        ],
+      });
+
+      expect((await plan("decisions", { recordLexical: true })).routes).toEqual([]);
+      // The replacement heading routes, so the document is still indexed — this is about which
+      // revision is read, not about the document having dropped out entirely.
+      expect((await plan("tradeoffs", { recordLexical: true })).routes.length).toBeGreaterThan(0);
+    });
+
+    // The restriction the whole signal rests on. Body matching would put most scopes in most
+    // answers, which reads like working and is far harder to notice than returning nothing —
+    // so a word that appears only in prose must still route nowhere.
+    it("matches titles and headings only, never body text", async () => {
+      // "bearer" appears in a section body ("The HTTP transport requires a bearer token") and in
+      // no heading, scope slug, title or alias anywhere in the workspace.
+      expect((await plan("bearer", { recordLexical: true })).routes).toEqual([]);
+    });
+  });
+
   it("routes a referenced path to its component", async () => {
     const result = await plan("change something", { referencedPaths: ["src/http/server.ts"] });
 
