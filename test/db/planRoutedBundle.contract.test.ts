@@ -215,6 +215,35 @@ describe.runIf(await isTestDatabaseReachable())("planRoutedBundle (real Postgres
       expect(reason).toContain("task terms");
     });
 
+    it("ignores stopwords, which otherwise route on function words alone", async () => {
+      // A corpus run found 50 of 118 added routes came from a single stopword, with "and" alone
+      // reaching 15 of 23 scopes. The heading has to CONTAIN the stopwords or the assertion holds
+      // whether or not they are filtered -- the default fixture headings contain none, so the
+      // first version of this test passed with the filter removed.
+      await importDocuments({
+        pool,
+        schemaName,
+        handler: new CommandHandler(pool, schemaName),
+        workspaceGuid: bootstrap.workspaceGuid,
+        actorPrincipalGuid: bootstrap.ownerPrincipalGuid,
+        repository: "agent-context",
+        commitSha: "d".repeat(40),
+        files: [
+          {
+            path: "projects/anchor-mcp/anchor-mcp-project-context.md",
+            content:
+              "---\nproject: anchor-mcp\ntype: context-anchor\n---\n\n# Anchor MCP\n\n" +
+              "## Rate limiting and the transport\n\nText.\n\n## Notes on the migration\n\nText.\n",
+          },
+        ],
+      });
+
+      const result = await plan("the and of to", { recordLexical: true });
+      const reasons = result.routes.flatMap((route) => route.matchReasons).filter((r) => r.includes("task term"));
+
+      expect(reasons).toEqual([]);
+    });
+
     // The restriction the whole signal rests on. Body matching would put most scopes in most
     // answers, which reads like working and is far harder to notice than returning nothing —
     // so a word that appears only in prose must still route nowhere.

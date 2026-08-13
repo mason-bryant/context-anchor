@@ -66,6 +66,46 @@ function normalizeReferencedPath(value: string): string {
   return value.trim().replace(/\\/g, "/").replace(/^\/+/, "");
 }
 
+/**
+ * Words that carry no topical meaning in a heading.
+ *
+ * `taskTerms` deliberately applies no stopword list — for scope-name matching it does not need
+ * one, because a scope is not called "and" and whole-word equality against a slug makes a
+ * function word harmless. Matching against every heading in the workspace is a different
+ * problem: a corpus run found **50 of 118 added routes came from a single stopword**, with "and"
+ * alone reaching 15 of 23 scopes. Filtering here rather than in `taskTerms` keeps the baseline
+ * this signal is measured against unchanged.
+ *
+ * Function words plus the verbs that scaffold task phrasing ("add X", "run Y"). The test is
+ * whether a word is common in how people *phrase* tasks, not whether it is common in this
+ * workspace: "milestone" is everywhere in these documents and is still topical, so it is
+ * handled by the scope-frequency rule below rather than by being listed here. That distinction
+ * is what keeps this list portable to a workspace about something else.
+ */
+const RECORD_LEXICAL_STOPWORDS = new Set([
+  "the", "and", "or", "not", "but", "for", "of", "to", "in", "on", "at", "by", "with", "from",
+  "as", "is", "are", "was", "were", "be", "been", "being", "it", "its", "this", "that", "these",
+  "those", "an", "do", "does", "did", "how", "what", "why", "when", "where", "which", "who",
+  "can", "will", "would", "should", "must", "may", "we", "our", "you", "your", "they", "their",
+  "add", "new", "use", "using", "used", "get", "set", "run", "make", "need", "want", "into",
+  "about", "after", "before", "then", "than", "so", "if", "all", "any", "some", "more", "most",
+]);
+
+/**
+ * A term reaching most of the workspace is not routing anybody anywhere.
+ *
+ * Stopwords are the words that are common in *language*; this is the rule for words that are
+ * common in *this corpus*. "milestone goal ids" reached 19 of 23 scopes even with stopwords
+ * filtered, because every milestone document carries a `Milestone -- X` heading — the term is
+ * topical, and still useless as a route, because a signal that selects most of the workspace has
+ * selected nothing.
+ *
+ * Expressed as a fraction rather than a count so it holds as the workspace grows. Deliberately
+ * generous: at over half, a term has to be near-universal before it is dropped, which keeps a
+ * genuinely central term in a small workspace from being discarded for being central.
+ */
+const RECORD_LEXICAL_SCOPE_FRACTION = 0.5;
+
 /** How many matched titles a record-lexical reason quotes before summarising the remainder. */
 export const RECORD_LEXICAL_EXAMPLES = 3;
 
@@ -150,6 +190,58 @@ export function recordLexicalReason(group: {
  * Longest matching prefix wins, matching `repository_mappings`' own documented rule. A
  * prefix only matches on a path *segment* boundary, so `app` does not claim `application/`.
  */
+export type RecordLexicalGroup = {
+  scopeGuid: string;
+  termTitles: Map<string, Set<string>>;
+  source: string;
+  titles: string[];
+};
+
+/**
+ * Drops terms that reached most of the workspace, and any group left with none.
+ *
+ * Stopwords cover words common in *language*; this covers words common in *this corpus*.
+ * "milestone goal ids" reached 19 of 23 scopes with stopwords already filtered, because every
+ * milestone document carries a `Milestone -- X` heading. The term is topical and still useless
+ * as a route: a signal selecting most of the workspace has selected nothing.
+ *
+ * A group whose every term is undiscriminating is dropped rather than offered with a caveat. A
+ * route justified by evidence that applies everywhere is one the reader must rule out by hand,
+ * and volume is this signal's failure mode.
+ *
+ * Titles are recomputed from the surviving terms so the count and the quoted examples describe
+ * the evidence that actually justified the route, not titles reached only by a discarded term.
+ */
+export function discriminatingGroups(
+  groups: RecordLexicalGroup[],
+  readableScopeCount: number,
+): RecordLexicalGroup[] {
+  // Counted across groups rather than within one: a term is undiscriminating relative to the
+  // workspace, not relative to a single scope.
+  const scopesPerTerm = new Map<string, number>();
+  for (const group of groups) {
+    for (const term of group.termTitles.keys()) {
+      scopesPerTerm.set(term, (scopesPerTerm.get(term) ?? 0) + 1);
+    }
+  }
+  const limit = Math.max(1, Math.floor(readableScopeCount * RECORD_LEXICAL_SCOPE_FRACTION));
+
+  const kept: RecordLexicalGroup[] = [];
+  for (const group of groups) {
+    const termTitles = new Map(
+      [...group.termTitles].filter(([term]) => (scopesPerTerm.get(term) ?? 0) <= limit),
+    );
+    if (termTitles.size === 0) {
+      continue;
+    }
+    const titles = group.titles.filter((title) =>
+      [...termTitles.values()].some((reached) => reached.has(title)),
+    );
+    kept.push({ ...group, termTitles, titles });
+  }
+  return kept;
+}
+
 export function pathMatch(
   referencedPaths: string[],
   mappings: Array<{ scope_guid: string; repository: string; path_prefix: string }>,
@@ -407,7 +499,7 @@ export async function selectRouteCandidates(
       // evidence across several reasons by which task word happened to appear earliest in each
       // heading — a property with no bearing on relevance. A scope matching six of six headings
       // on a two-word task read as two unremarkable threes.
-      const hits = words.filter((word) => terms.has(word));
+      const hits = words.filter((word) => terms.has(word) && !RECORD_LEXICAL_STOPWORDS.has(word));
       if (hits.length === 0) {
         continue;
       }
@@ -434,7 +526,7 @@ export async function selectRouteCandidates(
       }
     }
 
-    for (const group of groups.values()) {
+    for (const group of discriminatingGroups([...groups.values()], readable.length)) {
       add(group.scopeGuid, { kind: "record-lexical", reason: recordLexicalReason(group) });
     }
   }

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   contentFingerprint,
+  discriminatingGroups,
   lexicalMatch,
   pathMatch,
   RECORD_LEXICAL_EXAMPLES,
@@ -270,5 +271,62 @@ describe("recordLexicalReason", () => {
     });
 
     expect(text.indexOf('"Z rate limiting and the transport"')).toBeLessThan(text.indexOf('"A the one"'));
+  });
+});
+
+/**
+ * The rule that keeps a topical-but-ubiquitous term from routing everywhere. Stopwords handle
+ * words common in language; this handles words common in this corpus.
+ */
+describe("discriminatingGroups", () => {
+  const group = (scopeGuid: string, termTitles: Record<string, string[]>) => ({
+    scopeGuid,
+    source: "section",
+    termTitles: new Map(Object.entries(termTitles).map(([t, titles]) => [t, new Set(titles)])),
+    titles: [...new Set(Object.values(termTitles).flat())],
+  });
+
+  it("drops a term that reached most of the workspace", () => {
+    // "milestone goal ids" reached 19 of 23 scopes with stopwords already filtered, because every
+    // milestone document carries a "Milestone -- X" heading. Topical, and still no route.
+    const groups = [
+      group("a", { milestone: ["Milestone -- A"] }),
+      group("b", { milestone: ["Milestone -- B"] }),
+      group("c", { milestone: ["Milestone -- C"] }),
+      group("d", { milestone: ["Milestone -- D"] }),
+    ];
+
+    expect(discriminatingGroups(groups, 4)).toEqual([]);
+  });
+
+  it("keeps a term confined to a few scopes, alongside one that is not", () => {
+    const groups = [
+      group("a", { milestone: ["Milestone -- A"], provenance: ["Claim provenance"] }),
+      group("b", { milestone: ["Milestone -- B"] }),
+      group("c", { milestone: ["Milestone -- C"] }),
+      group("d", { milestone: ["Milestone -- D"] }),
+    ];
+
+    const kept = discriminatingGroups(groups, 4);
+    expect(kept).toHaveLength(1);
+    expect(kept[0]!.scopeGuid).toBe("a");
+    // The ubiquitous term is gone from the survivor too, so the reason cannot cite it.
+    expect([...kept[0]!.termTitles.keys()]).toEqual(["provenance"]);
+    // And the title it alone reached is gone with it, so the count describes what justified the
+    // route rather than what a discarded term happened to touch.
+    expect(kept[0]!.titles).toEqual(["Claim provenance"]);
+  });
+
+  it("keeps everything when no term is widespread", () => {
+    const groups = [group("a", { logging: ["Logging"] }), group("b", { ranking: ["Ranking"] })];
+
+    expect(discriminatingGroups(groups, 10)).toHaveLength(2);
+  });
+
+  it("never drops everything in a one-scope workspace, where every term is by definition universal", () => {
+    // floor(1 * 0.5) is 0, which would discard a term reaching the only scope there is.
+    const groups = [group("a", { logging: ["Logging"] })];
+
+    expect(discriminatingGroups(groups, 1)).toHaveLength(1);
   });
 });
