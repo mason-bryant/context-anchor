@@ -100,9 +100,14 @@ const RECORD_LEXICAL_STOPWORDS = new Set([
  * topical, and still useless as a route, because a signal that selects most of the workspace has
  * selected nothing.
  *
- * Expressed as a fraction rather than a count so it holds as the workspace grows. Deliberately
- * generous: at over half, a term has to be near-universal before it is dropped, which keeps a
- * genuinely central term in a small workspace from being discarded for being central.
+ * Measured against the whole workspace, never against what this caller may read. Using the
+ * caller's grant slice made the threshold personal: a member granted three scopes got a limit of
+ * one, so a term reaching two of their three was discarded and they were routed nowhere — the
+ * zero-route failure this signal exists to fix, reintroduced for the callers who most need it,
+ * while an owner asking the same question got an answer. The premise is about the workspace
+ * being undiscriminating, and a caller's permissions do not change that.
+ *
+ * Expressed as a fraction rather than a count so it holds as the workspace grows.
  */
 const RECORD_LEXICAL_SCOPE_FRACTION = 0.5;
 
@@ -113,14 +118,13 @@ export const RECORD_LEXICAL_EXAMPLES = 3;
  * The sentence a person reads to decide whether a record-lexical route belongs.
  *
  * Most offered routes are listed rather than expanded and carry no records at all, so this is
- * the entire evidence for them, and every part of it is shaped by one problem: `taskTerms`
- * applies no stopword list. "the", "to" and "add" are task terms like any other, and the tasks
- * this signal exists to rescue are ordinary phrasings that are full of them.
+ * the entire evidence for them, so each term carries its own count.
  *
- * So each term carries its own count. A bare union of terms let a scope that matched one
- * relevant heading and four on "the" render as five-term evidence, which is stronger than what
- * the same scope produced before any of this — a reader could discount a standalone
- * `task term "the" matched...` at a glance.
+ * Stopwords no longer reach here, but ubiquitous topical words still do — a bare union of terms
+ * lets a scope that matched one relevant heading and four on a common word render as five-term
+ * evidence. The per-term breakdown is what makes that visible, and it is what exposed the
+ * stopword problem in the first place: before it, `task term "the" matched section title in this
+ * scope` and a genuine match were indistinguishable in the pane.
  *
  * And the examples are drawn from the titles reached by the *rarest* term first, not
  * alphabetically. Alphabetical order filled the quoted examples with stopword matches, so the
@@ -186,10 +190,7 @@ export function recordLexicalReason(group: {
   );
 }
 
-/**
- * Longest matching prefix wins, matching `repository_mappings`' own documented rule. A
- * prefix only matches on a path *segment* boundary, so `app` does not claim `application/`.
- */
+
 export type RecordLexicalGroup = {
   scopeGuid: string;
   termTitles: Map<string, Set<string>>;
@@ -214,22 +215,30 @@ export type RecordLexicalGroup = {
  */
 export function discriminatingGroups(
   groups: RecordLexicalGroup[],
-  readableScopeCount: number,
+  workspaceScopeCount: number,
 ): RecordLexicalGroup[] {
-  // Counted across groups rather than within one: a term is undiscriminating relative to the
-  // workspace, not relative to a single scope.
-  const scopesPerTerm = new Map<string, number>();
+  // Distinct scopes per term, not groups. Groups are keyed by scope AND source, so one scope
+  // whose assertion titles and section headings both match contributes two groups — counting
+  // those as two scopes made the effective threshold anywhere between a quarter and a half of
+  // the workspace depending on where records happen to live, and let authoring an assertion
+  // delete the route to its own scope without the term reaching anything new.
+  const scopesPerTerm = new Map<string, Set<string>>();
   for (const group of groups) {
     for (const term of group.termTitles.keys()) {
-      scopesPerTerm.set(term, (scopesPerTerm.get(term) ?? 0) + 1);
+      const reached = scopesPerTerm.get(term);
+      if (reached) {
+        reached.add(group.scopeGuid);
+      } else {
+        scopesPerTerm.set(term, new Set([group.scopeGuid]));
+      }
     }
   }
-  const limit = Math.max(1, Math.floor(readableScopeCount * RECORD_LEXICAL_SCOPE_FRACTION));
+  const limit = Math.max(1, Math.floor(workspaceScopeCount * RECORD_LEXICAL_SCOPE_FRACTION));
 
   const kept: RecordLexicalGroup[] = [];
   for (const group of groups) {
     const termTitles = new Map(
-      [...group.termTitles].filter(([term]) => (scopesPerTerm.get(term) ?? 0) <= limit),
+      [...group.termTitles].filter(([term]) => (scopesPerTerm.get(term)?.size ?? 0) <= limit),
     );
     if (termTitles.size === 0) {
       continue;
@@ -242,6 +251,10 @@ export function discriminatingGroups(
   return kept;
 }
 
+/**
+ * Longest matching prefix wins, matching `repository_mappings`' own documented rule. A
+ * prefix only matches on a path *segment* boundary, so `app` does not claim `application/`.
+ */
 export function pathMatch(
   referencedPaths: string[],
   mappings: Array<{ scope_guid: string; repository: string; path_prefix: string }>,
@@ -513,9 +526,10 @@ export async function selectRouteCandidates(
       }
       held.titles.push(row.text);
       // Which titles each term reached, not merely which terms appeared somewhere in the scope.
-      // `taskTerms` applies no stopword list, so "the", "to" and "add" are terms like any other;
-      // without per-term attribution a scope that matched one relevant heading and four on "the"
-      // reads exactly like one that matched five relevant headings.
+      // Per-term attribution, because a scope that matched one relevant heading and four on a
+      // common word otherwise reads exactly like one that matched five relevant headings.
+      // Stopwords are filtered above, but ubiquitous topical words are not — that is what the
+      // scope-frequency rule handles, and it needs the per-term counts to do it.
       for (const hit of hits) {
         const seen = held.termTitles.get(hit);
         if (seen) {
@@ -526,7 +540,9 @@ export async function selectRouteCandidates(
       }
     }
 
-    for (const group of discriminatingGroups([...groups.values()], readable.length)) {
+    // The workspace's live scope count, not `readable.length`: see discriminatingGroups. The
+    // numerator is already grant-restricted by the ANY($2) predicate, so this leaks nothing.
+    for (const group of discriminatingGroups([...groups.values()], scopes.rows.length)) {
       add(group.scopeGuid, { kind: "record-lexical", reason: recordLexicalReason(group) });
     }
   }

@@ -11,7 +11,12 @@ import {
   type RouteRecord,
 } from "./selectRoutes.js";
 
-export const PLANNER_VERSION = "routing-1.0.0";
+// Bumped because selection changed, not because the code did. This string is written into every
+// retrieval_requests row and is the only thing making impressions comparable across runs; the
+// record-lexical filters took added routes from 118 to 36 on a fixed corpus, so leaving it would
+// have claimed two materially different planners were the same — on the one field the evaluation
+// of this signal rests on.
+export const PLANNER_VERSION = "routing-1.1.0";
 
 /** Expanded routes return their records; listed routes return counts and reasons only. */
 export type RouteBudget = {

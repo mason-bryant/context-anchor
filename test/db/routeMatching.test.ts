@@ -317,6 +317,34 @@ describe("discriminatingGroups", () => {
     expect(kept[0]!.titles).toEqual(["Claim provenance"]);
   });
 
+  it("counts a scope once even when it matched in both assertions and sections", () => {
+    // Groups are keyed by scope AND source, so one scope matching in both contributes two groups.
+    // Counting groups made a scope raise a term's reach without the term touching anything new --
+    // authoring an assertion could delete the route to its own scope.
+    const groups = [
+      { ...group("a", { provenance: ["Provenance rules"] }), source: "section" },
+      { ...group("a", { provenance: ["Provenance model"] }), source: "assertion" },
+      { ...group("b", { provenance: ["Provenance rules"] }), source: "section" },
+      { ...group("b", { provenance: ["Provenance model"] }), source: "assertion" },
+    ];
+
+    // Two distinct scopes out of four, so under the limit; counting the four groups would drop it.
+    expect(discriminatingGroups(groups, 4)).toHaveLength(4);
+  });
+
+  it("measures against the workspace, not against what one caller may read", () => {
+    // The denominator was the caller's grant slice, so a member granted three scopes got a limit
+    // of one and was routed nowhere on a term reaching two of their three -- the zero-route
+    // failure this signal exists to fix, reintroduced for the callers who most need it.
+    const groups = [
+      group("a", { retention: ["Retention policy"] }),
+      group("b", { retention: ["Retention notes"] }),
+    ];
+
+    // A restricted caller sees two scopes, but the workspace has forty: the term is confined.
+    expect(discriminatingGroups(groups, 40)).toHaveLength(2);
+  });
+
   it("keeps everything when no term is widespread", () => {
     const groups = [group("a", { logging: ["Logging"] }), group("b", { ranking: ["Ranking"] })];
 

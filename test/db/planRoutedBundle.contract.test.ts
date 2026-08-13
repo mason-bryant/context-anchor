@@ -244,6 +244,40 @@ describe.runIf(await isTestDatabaseReachable())("planRoutedBundle (real Postgres
       expect(reasons).toEqual([]);
     });
 
+    it("drops a term that reaches most of the workspace, while keeping a confined one", async () => {
+      // Pins the CALL SITE, not the pure function. discriminatingGroups had five unit tests and
+      // could still be deleted from selectRouteCandidates with every suite green -- unit tests
+      // covered a library, nothing covered the wiring.
+      //
+      // "context" lands in a heading of every scope here; "provenance" in one. A task naming both
+      // must route on provenance alone.
+      const shared = (title: string) =>
+        "---\nproject: anchor-mcp\ntype: context-anchor\n---\n\n# Doc\n\n## " + title + "\n\nText.\n";
+      await importDocuments({
+        pool,
+        schemaName,
+        handler: new CommandHandler(pool, schemaName),
+        workspaceGuid: bootstrap.workspaceGuid,
+        actorPrincipalGuid: bootstrap.ownerPrincipalGuid,
+        repository: "agent-context",
+        commitSha: "e".repeat(40),
+        files: [
+          { path: "projects/anchor-mcp/anchor-mcp-project-context.md", content: shared("Context and provenance") },
+          { path: "projects/anchor-mcp/milestones/one.md", content: shared("Context notes one") },
+          { path: "projects/anchor-mcp/milestones/two.md", content: shared("Context notes two") },
+          { path: "agent-rules/rules.md", content: shared("Context notes three") },
+        ],
+      });
+
+      const result = await plan("context provenance", { recordLexical: true });
+      const reasons = result.routes.flatMap((r) => r.matchReasons).filter((r) => r.includes("task term"));
+
+      expect(reasons.length).toBeGreaterThan(0);
+      // The ubiquitous term cannot appear in any surviving reason.
+      expect(reasons.join(" ")).not.toContain('"context"');
+      expect(reasons.join(" ")).toContain('"provenance"');
+    });
+
     // The restriction the whole signal rests on. Body matching would put most scopes in most
     // answers, which reads like working and is far harder to notice than returning nothing —
     // so a word that appears only in prose must still route nowhere.
