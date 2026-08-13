@@ -102,8 +102,11 @@ describe.runIf(await isTestDatabaseReachable())("planRoutedBundle (real Postgres
       const result = await plan("decisions", { recordLexical: true });
 
       expect(result.routes.length).toBeGreaterThan(0);
-      expect(result.routes.flatMap((r) => r.matchReasons).join(" ")).toMatch(
-        /task term "decisions" matched section title/,
+      // Pinned to the whole sentence, not a prefix. `/matched section title/` matched both the
+      // reason that named no heading and the one that names it, so it could not have noticed
+      // either change to this string.
+      expect(result.routes.flatMap((r) => r.matchReasons).join(" ")).toContain(
+        'task term "decisions" matched section title "Decisions" in this scope',
       );
     });
 
@@ -134,6 +137,84 @@ describe.runIf(await isTestDatabaseReachable())("planRoutedBundle (real Postgres
       expect((await plan("tradeoffs", { recordLexical: true })).routes.length).toBeGreaterThan(0);
     });
 
+    it("emits one reason per scope however many titles matched, with the count in it", async () => {
+      // Four distinct headings in one document, all containing the term.
+      //
+      // Grouping is a constraint the reason text imposes, not a bug fix: `add` deduplicates on
+      // the reason string, so a reason that quotes its own title is unique by construction and
+      // slips past it. Quote titles without grouping and one scope emits one signal per heading.
+      // Note this was never main's behaviour — main's reason names no title, so its signals are
+      // byte-identical and collapse on their own. What grouping buys is the ability to say more
+      // in the sentence without giving that up.
+      await importDocuments({
+        pool,
+        schemaName,
+        handler: new CommandHandler(pool, schemaName),
+        workspaceGuid: bootstrap.workspaceGuid,
+        actorPrincipalGuid: bootstrap.ownerPrincipalGuid,
+        repository: "agent-context",
+        commitSha: "f".repeat(40),
+        files: [
+          {
+            path: "projects/anchor-mcp/anchor-mcp-project-context.md",
+            content:
+              "---\nproject: anchor-mcp\ntype: context-anchor\n---\n\n# Anchor MCP\n\n" +
+              "## Decisions on logging\n\nText.\n\n## Decisions on ranking\n\nText.\n\n" +
+              "## Decisions on retention\n\nText.\n\n## Decisions on routing\n\nText.\n",
+          },
+        ],
+      });
+
+      const result = await plan("decisions", { recordLexical: true });
+      const reasons = result.routes.flatMap((route) =>
+        route.matchReasons.filter((reason) => reason.includes("task term")),
+      );
+
+      expect(reasons).toHaveLength(1);
+      expect(reasons[0]).toContain("matched 4 distinct section titles");
+      expect(reasons[0]).toContain("(+1 more)");
+    });
+
+    it("credits every task term a heading matched, not just the first", async () => {
+      // The reason builder is unit-tested, but nothing covered the code that BUILDS its input:
+      // reverting the multi-term collection to "first term wins", or dropping source from the
+      // group key, left every suite green.
+      await importDocuments({
+        pool,
+        schemaName,
+        handler: new CommandHandler(pool, schemaName),
+        workspaceGuid: bootstrap.workspaceGuid,
+        actorPrincipalGuid: bootstrap.ownerPrincipalGuid,
+        repository: "agent-context",
+        commitSha: "c".repeat(40),
+        files: [
+          {
+            path: "projects/anchor-mcp/anchor-mcp-project-context.md",
+            content:
+              "---\nproject: anchor-mcp\ntype: context-anchor\n---\n\n# Anchor MCP\n\n" +
+              // ONE heading carrying BOTH terms. Two headings each carrying one term cannot
+              // distinguish "collect every match" from "take the first": the group spans rows,
+              // so both terms accumulate either way.
+              "## Decisions about logging\n\nText.\n",
+          },
+        ],
+      });
+
+      const result = await plan("decisions logging", { recordLexical: true });
+      const reason = result.routes
+        .flatMap((route) => route.matchReasons)
+        .find((text) => text.includes("task term"))!;
+
+      expect(reason).toBeDefined();
+      // A single heading matched by both terms, so the count is one either way — what changes is
+      // whether both terms are credited.
+      // Both terms named. Taking only the first match per heading split one scope's evidence by
+      // word order inside the heading and reported two partial matches instead of one full one.
+      expect(reason).toContain('"decisions"');
+      expect(reason).toContain('"logging"');
+      expect(reason).toContain("task terms");
+    });
+
     // The restriction the whole signal rests on. Body matching would put most scopes in most
     // answers, which reads like working and is far harder to notice than returning nothing —
     // so a word that appears only in prose must still route nowhere.
@@ -161,6 +242,21 @@ describe.runIf(await isTestDatabaseReachable())("planRoutedBundle (real Postgres
 
   it("returns no routes when nothing matches", async () => {
     expect((await plan("kubernetes helm chart")).routes).toEqual([]);
+  });
+
+  it("reports the candidates the budget discarded, not only the ones it kept", async () => {
+    // Clipping is the whole reason this field exists, so it has to be tested where clipping
+    // happens. An assertion that candidateCount >= routes.length passes by construction --
+    // routes IS the truncation of the candidates -- and would hold even if the field were
+    // hardwired to routes.length, which is exactly the failure it is meant to detect.
+    const clipped = await plan("anchor mcp http transport rate limiting", { budget: { expanded: 1, listed: 1 } });
+
+    expect(clipped.routes).toHaveLength(1);
+    expect(clipped.candidateCount).toBeGreaterThan(1);
+
+    // And unclipped, the two agree — so the field is reporting selection rather than a constant.
+    const whole = await plan("anchor mcp http transport rate limiting", { budget: { expanded: 1, listed: 10 } });
+    expect(whole.candidateCount).toBe(whole.routes.length);
   });
 
   it("expands within budget and lists the rest", async () => {

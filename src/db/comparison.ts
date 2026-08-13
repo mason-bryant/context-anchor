@@ -27,6 +27,36 @@ export type RoutingDiagnostics = {
  * Read straight from the telemetry schema rather than recomputed, so the diagnostics
  * describe what callers were actually offered rather than what a replay would produce now.
  */
+/**
+ * Consumers whose traffic is the instrument rather than the thing being measured.
+ *
+ * The comparison gate plans a task to show a person two answers side by side; nobody acts on
+ * those routes, and nothing is ever expanded beyond the first few. Counted as retrieval, they
+ * answer "which routes are dead weight" with routes that were only ever offered by the panel
+ * asking the question — and the panel renders these diagnostics on the same screen, so a
+ * reader watches the numbers they are generating. Twenty-five judged tasks produce over a
+ * thousand such impressions.
+ *
+ * Listed exactly rather than matched by prefix. `consumer` is caller-supplied — the
+ * planRoutedBundle tool takes any non-empty string — so a prefix rule lets any agent that names
+ * itself `comparison-gate-anything` erase itself from every diagnostic, permanently and
+ * retroactively, and would swallow a future legitimate consumer whose name merely begins the
+ * same way. The cost of an exact list is that a new gate tag must be added here, which is a
+ * change someone makes deliberately.
+ *
+ * Bound as a parameter rather than interpolated: values spliced into SQL are a habit that
+ * outlives the constant that made them safe.
+ */
+const INSTRUMENT_CONSUMERS = ["comparison-gate", "comparison-gate-record-lexical"];
+
+/**
+ * Applied at every site rather than to some of them -- seven predicates across four statements,
+ * since the totals query carries four subqueries -- because a partial exclusion is worse
+ * than none: totals that count gate traffic beside per-route tables that do not would not add
+ * up, and the disagreement would look like a bug in the retrieval rather than in the report.
+ */
+const EXCLUDES_INSTRUMENT = `AND (r.consumer IS NULL OR r.consumer <> ALL($3::text[]))`;
+
 export async function routingDiagnostics(
   pool: Pool,
   telemetrySchemaName: string,
@@ -52,20 +82,21 @@ export async function routingDiagnostics(
   }>(
     `SELECT
        (SELECT count(*) FROM "${telemetrySchemaName}".retrieval_requests r
-         WHERE r.workspace_guid = $1 AND r.created_at > now() - ($2 || ' days')::interval) AS requests,
+         WHERE r.workspace_guid = $1 ${EXCLUDES_INSTRUMENT}
+           AND r.created_at > now() - ($2 || ' days')::interval) AS requests,
        (SELECT count(*) FROM "${telemetrySchemaName}".retrieval_route_impressions i
           JOIN "${telemetrySchemaName}".retrieval_requests r USING (request_guid)
-         WHERE r.workspace_guid = $1 AND i.is_shadow = false
+         WHERE r.workspace_guid = $1 AND i.is_shadow = false ${EXCLUDES_INSTRUMENT}
            AND r.created_at > now() - ($2 || ' days')::interval) AS routes_offered,
        (SELECT count(*) FROM "${telemetrySchemaName}".retrieval_route_impressions i
           JOIN "${telemetrySchemaName}".retrieval_requests r USING (request_guid)
-         WHERE r.workspace_guid = $1 AND i.is_shadow = false AND i.expanded_at IS NOT NULL
+         WHERE r.workspace_guid = $1 AND i.is_shadow = false AND i.expanded_at IS NOT NULL ${EXCLUDES_INSTRUMENT}
            AND r.created_at > now() - ($2 || ' days')::interval) AS routes_expanded,
        (SELECT count(*) FROM "${telemetrySchemaName}".retrieval_record_uses u
           JOIN "${telemetrySchemaName}".retrieval_requests r USING (request_guid)
-         WHERE r.workspace_guid = $1
+         WHERE r.workspace_guid = $1 ${EXCLUDES_INSTRUMENT}
            AND r.created_at > now() - ($2 || ' days')::interval) AS record_uses`,
-    [workspaceGuid, String(since)],
+    [workspaceGuid, String(since), INSTRUMENT_CONSUMERS],
   );
 
   // Shadow impressions are excluded everywhere here: a shadow ordering was never shown to
@@ -75,13 +106,13 @@ export async function routingDiagnostics(
     `SELECT i.route_key, count(*) AS offered, max(r.created_at) AS last_offered_at
        FROM "${telemetrySchemaName}".retrieval_route_impressions i
        JOIN "${telemetrySchemaName}".retrieval_requests r USING (request_guid)
-      WHERE r.workspace_guid = $1 AND i.is_shadow = false
+      WHERE r.workspace_guid = $1 AND i.is_shadow = false ${EXCLUDES_INSTRUMENT}
         AND r.created_at > now() - ($2 || ' days')::interval
       GROUP BY i.route_key
      HAVING count(*) FILTER (WHERE i.expanded_at IS NOT NULL) = 0
       ORDER BY count(*) DESC, i.route_key
       LIMIT 50`,
-    [workspaceGuid, String(since)],
+    [workspaceGuid, String(since), INSTRUMENT_CONSUMERS],
   );
 
   const byPosition = await pool.query<{ position: number; offered: string; expanded: string }>(
@@ -90,11 +121,11 @@ export async function routingDiagnostics(
             count(*) FILTER (WHERE i.expanded_at IS NOT NULL) AS expanded
        FROM "${telemetrySchemaName}".retrieval_route_impressions i
        JOIN "${telemetrySchemaName}".retrieval_requests r USING (request_guid)
-      WHERE r.workspace_guid = $1 AND i.is_shadow = false
+      WHERE r.workspace_guid = $1 AND i.is_shadow = false ${EXCLUDES_INSTRUMENT}
         AND r.created_at > now() - ($2 || ' days')::interval
       GROUP BY i.offered_position
       ORDER BY i.offered_position`,
-    [workspaceGuid, String(since)],
+    [workspaceGuid, String(since), INSTRUMENT_CONSUMERS],
   );
 
   const neverUsed = await pool.query<{ route_key: string; expanded: string; used: string }>(
@@ -104,13 +135,13 @@ export async function routingDiagnostics(
        FROM "${telemetrySchemaName}".retrieval_route_impressions i
        JOIN "${telemetrySchemaName}".retrieval_requests r USING (request_guid)
        LEFT JOIN "${telemetrySchemaName}".retrieval_record_uses u ON u.impression_guid = i.impression_guid
-      WHERE r.workspace_guid = $1 AND i.is_shadow = false AND i.expanded_at IS NOT NULL
+      WHERE r.workspace_guid = $1 AND i.is_shadow = false AND i.expanded_at IS NOT NULL ${EXCLUDES_INSTRUMENT}
         AND r.created_at > now() - ($2 || ' days')::interval
       GROUP BY i.route_key
      HAVING count(u.use_guid) = 0
       ORDER BY count(DISTINCT i.impression_guid) DESC, i.route_key
       LIMIT 50`,
-    [workspaceGuid, String(since)],
+    [workspaceGuid, String(since), INSTRUMENT_CONSUMERS],
   );
 
   return {

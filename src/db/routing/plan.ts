@@ -48,8 +48,14 @@ export type PlanInput = {
    * Off unless asked for. It is the fix for tasks that name no scope reaching nothing at all
    * (T-45), but it widens answers sharply on the same workspace — "proposals and review" goes
    * from 2 routes to 15 of 23 — and 15 of 23 scopes is not a route, it is the workspace with
-   * extra steps. Which trade is right is a question for the shadow ranker and T8, not for a
+   * extra steps. Which trade is right is settled by judging the routes it adds, not by a
    * default chosen here.
+   *
+   * This comment used to name the shadow ranker as the way to settle it. That was wrong:
+   * selection runs once and every shadow ranker receives that same candidate array, so a
+   * shadow ordering can only permute scopes that already matched. This flag changes which
+   * scopes become candidates at all, which is upstream of anything a ranker sees. The
+   * comparison surface asks the question properly, because it runs selection twice.
    */
   recordLexical?: boolean;
 };
@@ -77,6 +83,31 @@ export type PlanResult = {
   recomputedAt: string;
   budget: RouteBudget;
   ranker: { id: string; version: string; deterministic: boolean; fellBack: boolean; fallbackReason?: string };
+  /**
+   * Candidates the ranker returned, before `budget.listed` truncated them.
+   *
+   * Counted after ranking rather than after selection, deliberately: A3 permits a ranker to drop
+   * candidates as well as reorder them, and a route the ranker discarded was never offerable, so
+   * counting it would overstate what the budget hid. The distinction only matters for a ranker
+   * that drops — the default one does not — but the field is named for what it counts.
+   *
+   * Equal to `routes.length` unless the budget clipped the answer, and that difference is the
+   * point: without it a caller cannot distinguish "ten scopes matched" from "forty matched and
+   * you are seeing a quarter of them". A comparison surface reading route counts to judge how
+   * far a signal widens the answer would silently saturate at the budget and report every
+   * blowout as the same size.
+   */
+  candidateCount: number;
+  /**
+   * Which optional selection inputs were actually applied.
+   *
+   * Echoed rather than assumed because a caller cannot otherwise tell a flag that did nothing
+   * from a flag that never arrived. Two panes rendering identical answers is a meaningful
+   * result if the flag was on and a broken instrument if it was not, and nothing else in this
+   * response distinguishes them — `plannerVersion` and `ranker` are the same constants either
+   * way.
+   */
+  appliedSignals: { recordLexical: boolean };
   routes: PlannedRoute[];
 };
 
@@ -217,6 +248,11 @@ export async function planRoutedBundle(
       fellBack: outcome.fellBack,
       ...(outcome.fallbackReason ? { fallbackReason: outcome.fallbackReason } : {}),
     },
+    // Counted from the ranked outcome rather than from `candidates`, so a ranker that drops
+    // candidates (A3 permits dropping, only not inventing) is reported as having dropped them
+    // instead of inflating the count with routes that were never offerable.
+    candidateCount: outcome.routes.length,
+    appliedSignals: { recordLexical: input.recordLexical === true },
     routes,
   };
 }

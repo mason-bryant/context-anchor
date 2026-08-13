@@ -66,6 +66,86 @@ function normalizeReferencedPath(value: string): string {
   return value.trim().replace(/\\/g, "/").replace(/^\/+/, "");
 }
 
+/** How many matched titles a record-lexical reason quotes before summarising the remainder. */
+export const RECORD_LEXICAL_EXAMPLES = 3;
+
+/**
+ * The sentence a person reads to decide whether a record-lexical route belongs.
+ *
+ * Most offered routes are listed rather than expanded and carry no records at all, so this is
+ * the entire evidence for them, and every part of it is shaped by one problem: `taskTerms`
+ * applies no stopword list. "the", "to" and "add" are task terms like any other, and the tasks
+ * this signal exists to rescue are ordinary phrasings that are full of them.
+ *
+ * So each term carries its own count. A bare union of terms let a scope that matched one
+ * relevant heading and four on "the" render as five-term evidence, which is stronger than what
+ * the same scope produced before any of this — a reader could discount a standalone
+ * `task term "the" matched...` at a glance.
+ *
+ * And the examples are drawn from the titles reached by the *rarest* term first, not
+ * alphabetically. Alphabetical order filled the quoted examples with stopword matches, so the
+ * three titles offered to check the count against were the three least likely to justify it.
+ * A term matching one title discriminates; a term matching every title does not.
+ *
+ * Titles and terms are otherwise sorted so the same workspace and task always produce the same
+ * sentence: the reason is stored in telemetry and compared across runs.
+ *
+ * The article is omitted rather than chosen, because `source` is either "assertion" or
+ * "section" and a fixed article is wrong for one of them.
+ */
+export function recordLexicalReason(group: {
+  termTitles: Map<string, Set<string>>;
+  source: string;
+  titles: string[];
+}): string {
+  const distinct = [...new Set(group.titles)];
+  const occurrences = group.titles.length;
+
+  // Rarest first, so the most discriminating evidence leads; ties broken alphabetically to keep
+  // the sentence stable.
+  const terms = [...group.termTitles.entries()].sort(
+    (a, b) => a[1].size - b[1].size || a[0].localeCompare(b[0]),
+  );
+  // Per-term counts only when there is more than one term. With a single term the count merely
+  // restates the title count already in the sentence, and the point of the breakdown is to show
+  // how the total divides -- there is nothing to divide.
+  const termList =
+    terms.length === 1
+      ? JSON.stringify(terms[0]![0])
+      : terms.map(([term, titles]) => `${JSON.stringify(term)} (${String(titles.size)})`).join(", ");
+  const label = terms.length === 1 ? "task term" : "task terms";
+
+  // A title's rank is the smallest number of titles any of its matching terms reached: a title
+  // found via a rare term is better evidence than one found only via a common one.
+  const rank = (title: string) => {
+    let best = Number.MAX_SAFE_INTEGER;
+    for (const [, titles] of terms) {
+      if (titles.has(title)) {
+        best = Math.min(best, titles.size);
+      }
+    }
+    return best;
+  };
+  const ordered = [...distinct].sort((a, b) => rank(a) - rank(b) || a.localeCompare(b));
+  const shown = ordered.slice(0, RECORD_LEXICAL_EXAMPLES).map((title) => JSON.stringify(title)).join(", ");
+
+  if (distinct.length === 1) {
+    // Said outright, because a heading repeated across a scope's documents is the signature of a
+    // template rather than of a topic, and that is what the reader most needs to notice.
+    return occurrences === 1
+      ? `${label} ${termList} matched ${group.source} title ${shown} in this scope`
+      : `${label} ${termList} matched the same ${group.source} title ${shown} in ${String(occurrences)} ${group.source}s of this scope`;
+  }
+
+  const remainder = distinct.length - Math.min(RECORD_LEXICAL_EXAMPLES, distinct.length);
+  return (
+    `${label} ${termList} matched ${String(distinct.length)} distinct ${group.source} titles` +
+    (occurrences > distinct.length ? ` across ${String(occurrences)} ${group.source}s` : "") +
+    `: ${shown}` +
+    (remainder > 0 ? ` (+${String(remainder)} more)` : "")
+  );
+}
+
 /**
  * Longest matching prefix wins, matching `repository_mappings`' own documented rule. A
  * prefix only matches on a path *segment* boundary, so `app` does not claim `application/`.
@@ -251,7 +331,12 @@ export async function selectRouteCandidates(
     // receive, which is both wasteful and the wrong thing for a per-request path.
     const readableGuids = readable.map((scope) => scope.scope_guid);
     const rows = await pool.query<{ scope_guid: string; text: string; source: string }>(
-      `SELECT rs.scope_guid, a.title AS text, 'assertion' AS source
+      // DISTINCT for the same reason the section branch below carries it: live uniqueness on
+      // record_scopes is per association_type, so one assertion can hold several live rows for
+      // one scope. Harmless while the reason ignored counts; now it would inflate "the same
+      // title in N assertions", which is the phrase whose whole job is to warn a reader that a
+      // match is template repetition rather than evidence.
+      `SELECT DISTINCT rs.scope_guid, a.title AS text, 'assertion' AS source
          FROM "${schemaName}".assertions a
          JOIN "${schemaName}".record_scopes rs
            ON rs.workspace_guid = a.workspace_guid AND rs.record_type = 'assertion'
@@ -298,18 +383,59 @@ export async function selectRouteCandidates(
     );
     // Matched in application code, like every other signal here, so the reason a route was
     // offered stays explainable to the person reading it.
+    //
+    // Grouped before emitting — one signal per scope and source, rather than one per matched
+    // title.
+    //
+    // This is what makes it safe for the reason to quote the titles at all. `add` deduplicates
+    // on the reason string, so a reason naming its own title is unique by construction and slips
+    // past it; quoting without grouping would emit one signal per heading. A reason that named
+    // no title, as this one used to, deduplicates on its own — so grouping is the price of
+    // saying more, not a repair of something that was broken.
+    //
+    // Saying more is worth the price because the count is the judgement being asked for. A scope
+    // that matched one heading is a plausible route; one that matched thirty means the term is a
+    // common word and the scope is noise. A bare list of examples hides that difference; a bare
+    // count cannot be checked against anything.
+    const groups = new Map<
+      string,
+      { scopeGuid: string; termTitles: Map<string, Set<string>>; source: string; titles: string[] }
+    >();
     for (const row of rows.rows) {
       const words = row.text.toLowerCase().match(/[a-z0-9]{2,}/g) ?? [];
-      const hit = words.find((word) => terms.has(word));
-      if (hit) {
-        add(row.scope_guid, {
-          kind: "record-lexical",
-          // The article is omitted rather than chosen, because `source` is either "assertion"
-          // or "section" and a fixed article is wrong for one of them. Match reasons are read
-          // by people, so "matched section title" beats getting it wrong half the time.
-          reason: `task term ${JSON.stringify(hit)} matched ${row.source} title in this scope`,
-        });
+      // Every matching term, not the first one found. Keying on a single term split one scope's
+      // evidence across several reasons by which task word happened to appear earliest in each
+      // heading — a property with no bearing on relevance. A scope matching six of six headings
+      // on a two-word task read as two unremarkable threes.
+      const hits = words.filter((word) => terms.has(word));
+      if (hits.length === 0) {
+        continue;
       }
+      // NUL-joined because neither a guid nor a source can contain it, so no two distinct pairs
+      // can collide on one key.
+      const key = `${row.scope_guid}\u0000${row.source}`;
+      let held = groups.get(key);
+      if (!held) {
+        held = { scopeGuid: row.scope_guid, termTitles: new Map(), source: row.source, titles: [] };
+        groups.set(key, held);
+      }
+      held.titles.push(row.text);
+      // Which titles each term reached, not merely which terms appeared somewhere in the scope.
+      // `taskTerms` applies no stopword list, so "the", "to" and "add" are terms like any other;
+      // without per-term attribution a scope that matched one relevant heading and four on "the"
+      // reads exactly like one that matched five relevant headings.
+      for (const hit of hits) {
+        const seen = held.termTitles.get(hit);
+        if (seen) {
+          seen.add(row.text);
+        } else {
+          held.termTitles.set(hit, new Set([row.text]));
+        }
+      }
+    }
+
+    for (const group of groups.values()) {
+      add(group.scopeGuid, { kind: "record-lexical", reason: recordLexicalReason(group) });
     }
   }
 

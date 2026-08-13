@@ -182,6 +182,76 @@ describe.runIf(await isTestDatabaseReachable())("routing diagnostics (real Postg
   // A negative window makes `now() - interval` reach into the future, so the report comes back
   // empty — indistinguishable from a workspace where nothing was ever retrieved. The HTTP route
   // validates today, but this is the function every future caller reaches for.
+  // The comparison gate plans a task purely to show a person two answers. Nobody acts on those
+  // routes, and the gate renders these diagnostics on the same screen — so without this the
+  // reader is watching numbers they are themselves generating, and "which routes are dead
+  // weight" answers with routes only the panel ever offered. Twenty-five judged tasks produce
+  // over a thousand such impressions, which is more traffic than the workspace sees in normal
+  // use.
+  it("excludes the comparison gate's own traffic, which is the instrument and not the retrieval", async () => {
+    await plan("anchor mcp", { consumer: "comparison-gate" });
+    await plan("anchor mcp", { consumer: "comparison-gate-record-lexical" });
+
+    expect((await diagnostics()).totals.requests).toBe(0);
+
+    // A real caller on the same workspace is still counted, so this excludes the instrument
+    // rather than simply reporting nothing.
+    await plan("anchor mcp", { consumer: "agent" });
+    const after = await diagnostics();
+    expect(after.totals.requests).toBe(1);
+    expect(after.totals.routesOffered).toBeGreaterThan(0);
+  });
+
+  // The exclusion has to hold at every site, not most of them. There are seven predicates across
+  // four statements -- the totals query alone carries four subqueries -- and stripping six of the
+  // seven left the suite green, because the only assertion was on totals.requests. The stated
+  // invariant, that the totals and the per-route tables describe the same population, had no test
+  // at all. That disagreement would read as a fault in the retrieval rather than in
+  // the report.
+  it("excludes gate traffic from every diagnostic, not only the request count", async () => {
+    await plan("anchor mcp", { consumer: "comparison-gate" });
+    await plan("anchor mcp", { consumer: "comparison-gate-record-lexical" });
+
+    // Every table has to be reachable for this to test all seven predicates. record_uses needs a
+    // reported use, and neverExpanded needs a route offered beyond the expanded budget -- without
+    // both, those two exclusions could be deleted with the suite still green, which is exactly
+    // the partial-exclusion failure the shared constant exists to prevent.
+    // Two gate plans, because no single one reaches every table: neverExpanded needs a route
+    // offered and not expanded, while record_uses needs an expanded route that carried records.
+    // Without both, those two exclusions could be deleted with the suite still green -- the
+    // partial-exclusion failure the shared constant exists to prevent.
+    // A task whose routes do not overlap the one below: neverExpanded groups by route key with
+    // HAVING "never expanded", so a route left unexpanded here but expanded there disappears from
+    // that table entirely and the predicate goes untested.
+    await plan("rate limiting", {
+      consumer: "comparison-gate",
+      budget: { expanded: 0, listed: 10, recordsPerRoute: 5 },
+    });
+
+    const gate = await plan("anchor mcp", {
+      consumer: "comparison-gate-record-lexical",
+      budget: { expanded: 5, listed: 10, recordsPerRoute: 5 },
+    });
+    const route = gate.routes.find((r) => (r.records?.length ?? 0) > 0)!;
+    expect(route).toBeDefined();
+    const record = route.records![0]!;
+    await reportRecordUse(pool, telemetrySchema, {
+      requestId: gate.requestId,
+      refs: [
+        record.ref.type === "section"
+          ? { type: "section", guid: record.ref.guid, stableKey: record.ref.stableKey, routeKey: route.routeKey }
+          : { type: "assertion", guid: record.ref.guid, routeKey: route.routeKey },
+      ],
+      useKind: "cited",
+    });
+
+    const diag = await diagnostics();
+    expect(diag.totals).toEqual({ requests: 0, routesOffered: 0, routesExpanded: 0, recordUses: 0 });
+    expect(diag.neverExpanded).toEqual([]);
+    expect(diag.expansionByPosition).toEqual([]);
+    expect(diag.neverUsed).toEqual([]);
+  });
+
   it("refuses a window that is not a positive integer", async () => {
     await expect(
       routingDiagnostics(pool, telemetrySchema, bootstrap.workspaceGuid, { sinceDays: -5 }),

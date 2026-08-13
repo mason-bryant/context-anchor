@@ -119,11 +119,84 @@ export async function startHttpServer(
         // baseline was never given, and the comparison would measure the handicap rather than
         // the retrieval. A reader cannot see that from the two answers, which is what makes it
         // worth stating here.
-        const [routed, legacy] = await Promise.all([
-          knowledgeDb.planRoutedBundleAsOwner({ task, referencedPaths, consumer: "comparison-gate" }),
+        //
+        // The routed planner is asked twice, with the record-lexical signal off and on. Nobody
+        // has yet judged whether the routes that signal adds are relevant — it rescues tasks
+        // that name no scope from reaching nothing at all, but widens one real task from 2
+        // routes to 15 of 23 scopes — and that judgement is a person's to make from the two
+        // answers side by side. Both run on every request rather than behind a toggle: the
+        // comparison only means anything for the same task, and a reader who has to reload
+        // with a flag is comparing two readings instead of one.
+        // Raised above the default 10, because this workspace holds 23 scopes and the case
+        // worth judging is the one where the signal matches most of them. At the default the
+        // pane saturates: a 14-scope widening and a 40-scope widening both render as ten
+        // routes, so the instrument reports every blowout as the same size — and the size is
+        // the thing being measured. Records load for every offered route, not only expanded
+        // ones, so this is genuinely more work per request; acceptable here because the gate
+        // is human-paced and UI-only, and not a default worth giving agent traffic.
+        // `expanded` is raised with `listed`, not left at the default of 2.
+        //
+        // Only expanded routes carry records, and the default ranker sorts on distinct signal
+        // kind count then strongest kind, with record-lexical last in SIGNAL_KINDS. A route the
+        // signal adds on title evidence alone therefore sorts below every baseline route, so
+        // both expanded slots went to routes that did not change — the pane showed full records
+        // for the answers nobody is judging and a single sentence for the ones they are.
+        //
+        // Records load for every offered route regardless, so raising `expanded` costs transfer
+        // rather than queries. Human-paced and UI-only, and deliberately not a default for
+        // agent traffic.
+        const budget = { listed: 25, expanded: 8 };
+
+        // Identical inputs but for the one flag under test. Withholding anything else from
+        // one side would show a difference the reader would attribute to recordLexical —
+        // path mapping is the strongest signal kind, so a pane quietly denied referencedPaths
+        // would look worse for a reason that has nothing to do with the signal. The same
+        // argument the legacy baseline gets, applied between the two routed panes.
+        const [routed, routedRecordLexical, legacy] = await Promise.allSettled([
+          knowledgeDb.planRoutedBundleAsOwner({ task, referencedPaths, budget, consumer: "comparison-gate" }),
+          knowledgeDb.planRoutedBundleAsOwner({
+            task,
+            referencedPaths,
+            budget,
+            recordLexical: true,
+            // Tagged apart from the signal-off call so the two remain separable in telemetry.
+            // routingDiagnostics excludes both by this prefix, so neither counts as real
+            // retrieval; keeping the tags distinct is what allows the two populations to be
+            // told apart later if anyone wants to read the gate's own traffic deliberately.
+            consumer: "comparison-gate-record-lexical",
+          }),
           runtime.service.planContextBundle({ task, filePaths: referencedPaths }),
         ]);
-        res.json({ task, routed, legacy });
+
+        // Settled rather than all: the record-lexical call is the newest and heaviest query
+        // here, scanning every active assertion title and current section heading. If it
+        // fails, the routed-versus-legacy comparison that worked before this pane existed
+        // should still answer, rather than the whole gate returning 500. A pane that failed
+        // says so in place, which is also the honest thing to show a reader judging results.
+        const settled = (outcome: PromiseSettledResult<unknown>) =>
+          outcome.status === "fulfilled" ? outcome.value : null;
+        const failure = (outcome: PromiseSettledResult<unknown>) =>
+          outcome.status === "rejected"
+            ? { error: outcome.reason instanceof Error ? outcome.reason.message : String(outcome.reason) }
+            : null;
+
+        for (const outcome of [routed, routedRecordLexical, legacy]) {
+          if (outcome.status === "rejected") {
+            runtime.logger.error("comparison pane failed", { error: errorMetadata(outcome.reason) });
+          }
+        }
+
+        res.json({
+          task,
+          routed: settled(routed),
+          routedRecordLexical: settled(routedRecordLexical),
+          legacy: settled(legacy),
+          failures: {
+            routed: failure(routed),
+            routedRecordLexical: failure(routedRecordLexical),
+            legacy: failure(legacy),
+          },
+        });
       } catch (error) {
         runtime.logger.error("comparison request failed", { error: errorMetadata(error) });
         res.status(500).json({ error: error instanceof Error ? error.message : String(error) });
