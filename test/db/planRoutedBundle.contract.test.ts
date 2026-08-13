@@ -138,10 +138,14 @@ describe.runIf(await isTestDatabaseReachable())("planRoutedBundle (real Postgres
     });
 
     it("emits one reason per scope however many titles matched, with the count in it", async () => {
-      // Four headings in one document, all containing the term. Before grouping, each produced
-      // its own near-identical reason, because `add` deduplicates on the reason string and a
-      // reason that quotes its own title is unique by construction — so the deduplication added
-      // one commit earlier silently stopped applying to this signal kind.
+      // Four distinct headings in one document, all containing the term.
+      //
+      // Grouping is a constraint the reason text imposes, not a bug fix: `add` deduplicates on
+      // the reason string, so a reason that quotes its own title is unique by construction and
+      // slips past it. Quote titles without grouping and one scope emits one signal per heading.
+      // Note this was never main's behaviour — main's reason names no title, so its signals are
+      // byte-identical and collapse on their own. What grouping buys is the ability to say more
+      // in the sentence without giving that up.
       await importDocuments({
         pool,
         schemaName,
@@ -167,7 +171,7 @@ describe.runIf(await isTestDatabaseReachable())("planRoutedBundle (real Postgres
       );
 
       expect(reasons).toHaveLength(1);
-      expect(reasons[0]).toContain("matched 4 section titles");
+      expect(reasons[0]).toContain("matched 4 distinct section titles");
       expect(reasons[0]).toContain("(+1 more)");
     });
 

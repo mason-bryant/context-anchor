@@ -134,7 +134,18 @@ export async function startHttpServer(
         // the thing being measured. Records load for every offered route, not only expanded
         // ones, so this is genuinely more work per request; acceptable here because the gate
         // is human-paced and UI-only, and not a default worth giving agent traffic.
-        const budget = { listed: 25 };
+        // `expanded` is raised with `listed`, not left at the default of 2.
+        //
+        // Only expanded routes carry records, and the default ranker sorts on distinct signal
+        // kind count then strongest kind, with record-lexical last in SIGNAL_KINDS. A route the
+        // signal adds on title evidence alone therefore sorts below every baseline route, so
+        // both expanded slots went to routes that did not change — the pane showed full records
+        // for the answers nobody is judging and a single sentence for the ones they are.
+        //
+        // Records load for every offered route regardless, so raising `expanded` costs transfer
+        // rather than queries. Human-paced and UI-only, and deliberately not a default for
+        // agent traffic.
+        const budget = { listed: 25, expanded: 8 };
 
         // Identical inputs but for the one flag under test. Withholding anything else from
         // one side would show a difference the reader would attribute to recordLexical —
@@ -149,10 +160,9 @@ export async function startHttpServer(
             budget,
             recordLexical: true,
             // Tagged apart from the signal-off call so the two remain separable in telemetry.
-            // routingDiagnostics does not filter on `consumer` at all today, so both gate
-            // populations already count as real retrieval there; `consumer` is simply the only
-            // column that can tell them apart, which leaves that a query to write rather than
-            // telemetry already lost.
+            // routingDiagnostics excludes both by this prefix, so neither counts as real
+            // retrieval; keeping the tags distinct is what allows the two populations to be
+            // told apart later if anyone wants to read the gate's own traffic deliberately.
             consumer: "comparison-gate-record-lexical",
           }),
           runtime.service.planContextBundle({ task, filePaths: referencedPaths }),

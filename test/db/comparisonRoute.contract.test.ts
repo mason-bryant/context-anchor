@@ -275,6 +275,13 @@ describe.runIf(await isTestDatabaseReachable())("the comparison gate's HTTP rout
     // Above the default, because at the default the pane saturates: the widening this gate
     // exists to measure is exactly the case that hits the cap.
     expect(body.routed?.budget.listed).toBeGreaterThan(10);
+
+    // Raised with it. Only expanded routes carry records, and a route the signal adds carries
+    // only the weakest signal kind, so it sorts below every baseline route: at the default of
+    // two, both slots go to routes that did not change and every route actually under judgment
+    // renders with no records at all.
+    expect(body.routed?.budget.expanded).toBeGreaterThan(2);
+    expect(body.routed?.budget.expanded).toBe(body.routedRecordLexical?.budget.expanded);
   });
 
   // Express turns a repeated key into an array, and the hand-rolled parser this replaces read

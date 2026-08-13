@@ -163,8 +163,8 @@ describe("content fingerprint", () => {
  * records — so a person judging whether recordLexical adds signal or noise is judging these.
  */
 describe("recordLexicalReason", () => {
-  const reason = (titles: string[], source = "section") =>
-    recordLexicalReason({ hit: "decisions", source, titles });
+  const reason = (titles: string[], source = "section", hits: string[] = ["decisions"]) =>
+    recordLexicalReason({ hits, source, titles });
 
   it("names the single title when only one matched, without a count to read past", () => {
     expect(reason(["Decisions on logging"])).toBe(
@@ -177,7 +177,7 @@ describe("recordLexicalReason", () => {
     // noise. A reader given only examples cannot tell those apart.
     const text = reason(["A decisions", "B decisions", "C decisions", "D decisions", "E decisions"]);
 
-    expect(text).toContain("matched 5 section titles");
+    expect(text).toContain("matched 5 distinct section titles");
     expect(text).toContain("(+2 more)");
   });
 
@@ -201,5 +201,37 @@ describe("recordLexicalReason", () => {
 
   it("says assertion when the match came from an assertion", () => {
     expect(reason(["Decisions on logging"], "assertion")).toContain("matched assertion title");
+  });
+
+  it("counts distinct titles, so a boilerplate heading cannot look like broad evidence", () => {
+    // Every anchor document carries the same structural headings, so a domain scope returns the
+    // same title once per document. Counting rows made that read as strong evidence when it is
+    // the strongest evidence of the opposite -- the term is structural, not topical.
+    const text = reason(["Decisions", "Decisions", "Decisions", "Decisions", "Decisions"]);
+
+    expect(text).toContain("matched the same section title");
+    expect(text).toContain("in 5 sections of this scope");
+    expect(text).not.toContain("5 distinct");
+  });
+
+  it("says how many sections carried the titles when they repeat", () => {
+    const text = reason(["Decisions", "Decisions", "Logging", "Logging"]);
+
+    expect(text).toContain("2 distinct section titles");
+    expect(text).toContain("across 4 sections");
+  });
+
+  it("names every task term that matched, not whichever appeared first", () => {
+    // Keying on one term split a scope's evidence by word order inside the heading, so a scope
+    // matching everything on a two-word task read as two unremarkable partial matches.
+    const text = reason(["Decisions about logging", "Logging decisions"], "section", ["decisions", "logging"]);
+
+    expect(text).toContain('task terms "decisions", "logging"');
+  });
+
+  it("orders the terms so the sentence is stable across runs", () => {
+    expect(reason(["a", "b"], "section", ["logging", "decisions"])).toBe(
+      reason(["a", "b"], "section", ["decisions", "logging"]),
+    );
   });
 });

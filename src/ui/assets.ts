@@ -557,6 +557,14 @@ export const UI_HTML = `<!doctype html>
               <div>
                 <h3>Routing diagnostics</h3>
                 <p>Offered but never expanded, expansion by position, and records never used — so a condition that reads wrong or a scope nobody wants is visible rather than inferred.</p>
+                <!-- Said on the page, because this panel sits directly beneath the comparison it
+                     excludes. Judging a corpus of tasks generates hundreds of gate impressions and
+                     none of them are counted here, so a workspace whose only traffic is this
+                     screen reports zeroes — which reads as broken telemetry rather than as a
+                     deliberate exclusion unless the page says so. -->
+                <p class="compare-diagnostics-note">Comparison-gate runs are excluded: these
+                  numbers describe retrieval by agents and other callers, not the tasks you run
+                  on this page.</p>
               </div>
               <div class="view-actions"><button id="compare-diagnostics-refresh" type="button">Refresh</button></div>
             </div>

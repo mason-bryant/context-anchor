@@ -2196,6 +2196,28 @@ describe("comparison gate diff", () => {
     expect(html).not.toContain("Showing");
   });
 
+  // The renderers are covered above, but nothing tied them to the page. The entire third pane
+  // could be deleted from UI_HTML with all 190 UI tests passing, while at runtime
+  // clearComparisonOutput would throw on a null element and the Compare button would stop
+  // working — a total failure of the surface, invisible to the suite.
+  it("keeps the elements the comparison view writes into", () => {
+    expect(UI_HTML).toContain('id="compare-routed-lexical"');
+    expect(UI_HTML).toContain('id="compare-routed-lexical-meta"');
+    expect(UI_HTML).toContain('id="compare-routed"');
+    expect(UI_HTML).toContain('id="compare-legacy"');
+    // The grid rule the three-pane layout depends on hangs off this class; without it the panes
+    // stack and the baseline a reader compares against is a screen away.
+    expect(UI_HTML).toContain('class="compare-panes"');
+    expect(UI_CSS).toContain(".compare-panes");
+  });
+
+  it("says on the page that its own runs are excluded from the diagnostics below", () => {
+    // The panel renders beneath the comparison and refreshes after every run. Judging a corpus
+    // generates hundreds of gate impressions, none of them counted, so a workspace whose only
+    // traffic is this screen shows zeroes — indistinguishable from broken telemetry.
+    expect(UI_HTML).toContain("Comparison-gate runs are excluded");
+  });
+
   it("does not blame the signal for routes the budget hid", () => {
     const hooks = loadHooks();
     // Both answers are clipped, so a baseline route missing from the result may simply have been

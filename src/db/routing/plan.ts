@@ -84,7 +84,12 @@ export type PlanResult = {
   budget: RouteBudget;
   ranker: { id: string; version: string; deterministic: boolean; fellBack: boolean; fallbackReason?: string };
   /**
-   * Candidates selection produced, before `budget.listed` truncated them.
+   * Candidates the ranker returned, before `budget.listed` truncated them.
+   *
+   * Counted after ranking rather than after selection, deliberately: A3 permits a ranker to drop
+   * candidates as well as reorder them, and a route the ranker discarded was never offerable, so
+   * counting it would overstate what the budget hid. The distinction only matters for a ranker
+   * that drops — the default one does not — but the field is named for what it counts.
    *
    * Equal to `routes.length` unless the budget clipped the answer, and that difference is the
    * point: without it a caller cannot distinguish "ten scopes matched" from "forty matched and

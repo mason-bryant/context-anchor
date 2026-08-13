@@ -202,6 +202,22 @@ describe.runIf(await isTestDatabaseReachable())("routing diagnostics (real Postg
     expect(after.totals.routesOffered).toBeGreaterThan(0);
   });
 
+  // The exclusion has to hold on every query, not most of them. Stripping it from six of the
+  // seven left the suite green, because the only assertion was on totals.requests -- so the
+  // stated invariant, that the totals and the per-route tables describe the same population,
+  // had no test at all. That disagreement would read as a fault in the retrieval rather than in
+  // the report.
+  it("excludes gate traffic from every diagnostic, not only the request count", async () => {
+    await plan("anchor mcp", { consumer: "comparison-gate" });
+    await plan("anchor mcp", { consumer: "comparison-gate-record-lexical" });
+
+    const diag = await diagnostics();
+    expect(diag.totals).toEqual({ requests: 0, routesOffered: 0, routesExpanded: 0, recordUses: 0 });
+    expect(diag.neverExpanded).toEqual([]);
+    expect(diag.expansionByPosition).toEqual([]);
+    expect(diag.neverUsed).toEqual([]);
+  });
+
   it("refuses a window that is not a positive integer", async () => {
     await expect(
       routingDiagnostics(pool, telemetrySchema, bootstrap.workspaceGuid, { sinceDays: -5 }),

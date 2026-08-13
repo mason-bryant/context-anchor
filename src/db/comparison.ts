@@ -38,7 +38,9 @@ export type RoutingDiagnostics = {
  * thousand such impressions.
  *
  * Matched with LIKE on a prefix so the gate's two calls — signal off and signal on — are both
- * covered without this list needing to know they exist.
+ * covered without this list needing to know they exist. Bound as a parameter rather than
+ * interpolated: the value is a module constant today, but a pattern spliced into SQL is a
+ * habit that outlives the constant that made it safe.
  */
 const INSTRUMENT_CONSUMER_PREFIX = "comparison-gate";
 
@@ -47,7 +49,10 @@ const INSTRUMENT_CONSUMER_PREFIX = "comparison-gate";
  * than none: totals that count gate traffic beside per-route tables that do not would not add
  * up, and the disagreement would look like a bug in the retrieval rather than in the report.
  */
-const EXCLUDES_INSTRUMENT = `AND (r.consumer IS NULL OR r.consumer NOT LIKE '${INSTRUMENT_CONSUMER_PREFIX}%')`;
+const EXCLUDES_INSTRUMENT = `AND (r.consumer IS NULL OR r.consumer NOT LIKE $3)`;
+
+/** The bound value for `$3`. Kept beside the predicate so the two cannot drift apart. */
+const INSTRUMENT_CONSUMER_PATTERN = `${INSTRUMENT_CONSUMER_PREFIX}%`;
 
 export async function routingDiagnostics(
   pool: Pool,
@@ -88,7 +93,7 @@ export async function routingDiagnostics(
           JOIN "${telemetrySchemaName}".retrieval_requests r USING (request_guid)
          WHERE r.workspace_guid = $1 ${EXCLUDES_INSTRUMENT}
            AND r.created_at > now() - ($2 || ' days')::interval) AS record_uses`,
-    [workspaceGuid, String(since)],
+    [workspaceGuid, String(since), INSTRUMENT_CONSUMER_PATTERN],
   );
 
   // Shadow impressions are excluded everywhere here: a shadow ordering was never shown to
@@ -104,7 +109,7 @@ export async function routingDiagnostics(
      HAVING count(*) FILTER (WHERE i.expanded_at IS NOT NULL) = 0
       ORDER BY count(*) DESC, i.route_key
       LIMIT 50`,
-    [workspaceGuid, String(since)],
+    [workspaceGuid, String(since), INSTRUMENT_CONSUMER_PATTERN],
   );
 
   const byPosition = await pool.query<{ position: number; offered: string; expanded: string }>(
@@ -117,7 +122,7 @@ export async function routingDiagnostics(
         AND r.created_at > now() - ($2 || ' days')::interval
       GROUP BY i.offered_position
       ORDER BY i.offered_position`,
-    [workspaceGuid, String(since)],
+    [workspaceGuid, String(since), INSTRUMENT_CONSUMER_PATTERN],
   );
 
   const neverUsed = await pool.query<{ route_key: string; expanded: string; used: string }>(
@@ -133,7 +138,7 @@ export async function routingDiagnostics(
      HAVING count(u.use_guid) = 0
       ORDER BY count(DISTINCT i.impression_guid) DESC, i.route_key
       LIMIT 50`,
-    [workspaceGuid, String(since)],
+    [workspaceGuid, String(since), INSTRUMENT_CONSUMER_PATTERN],
   );
 
   return {
