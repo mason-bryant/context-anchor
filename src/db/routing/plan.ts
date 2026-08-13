@@ -48,8 +48,14 @@ export type PlanInput = {
    * Off unless asked for. It is the fix for tasks that name no scope reaching nothing at all
    * (T-45), but it widens answers sharply on the same workspace — "proposals and review" goes
    * from 2 routes to 15 of 23 — and 15 of 23 scopes is not a route, it is the workspace with
-   * extra steps. Which trade is right is a question for the shadow ranker and T8, not for a
+   * extra steps. Which trade is right is settled by judging the routes it adds, not by a
    * default chosen here.
+   *
+   * This comment used to name the shadow ranker as the way to settle it. That was wrong:
+   * selection runs once and every shadow ranker receives that same candidate array, so a
+   * shadow ordering can only permute scopes that already matched. This flag changes which
+   * scopes become candidates at all, which is upstream of anything a ranker sees. The
+   * comparison surface asks the question properly, because it runs selection twice.
    */
   recordLexical?: boolean;
 };

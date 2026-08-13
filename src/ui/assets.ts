@@ -524,7 +524,7 @@ export const UI_HTML = `<!doctype html>
             <div class="view-header">
               <div>
                 <h2>Compare</h2>
-                <p id="compare-summary">One real task, both answers side by side. Routed retrieval from the database, and what the legacy planner returns from the Git-backed store. Judge whether the routed answer surfaced the right things, whether its conditions read correctly, and whether it wasted less of the budget.</p>
+                <p id="compare-summary">One real task, every answer side by side. Routed retrieval from the database, the same routing with the recordLexical signal switched on, and what the legacy planner returns from the Git-backed store. Judge whether the routed answer surfaced the right things, whether its conditions read correctly, and whether it wasted less of the budget.</p>
               </div>
             </div>
             <div class="compare-controls">
@@ -539,6 +539,14 @@ export const UI_HTML = `<!doctype html>
               <div class="compare-pane">
                 <h3>Routed <span id="compare-routed-meta" class="compare-meta"></span></h3>
                 <div id="compare-routed"></div>
+              </div>
+              <!-- recordLexical is off by default because it widens the answer sharply, and nobody
+                   has yet judged whether the routes it adds are relevant. It sits beside the routed
+                   pane rather than replacing it so the widening is read as a difference from a
+                   baseline that is on screen, not remembered from an earlier run. -->
+              <div class="compare-pane">
+                <h3>Routed + recordLexical <span id="compare-routed-lexical-meta" class="compare-meta"></span></h3>
+                <div id="compare-routed-lexical"></div>
               </div>
               <div class="compare-pane">
                 <h3>Legacy planner <span id="compare-legacy-meta" class="compare-meta"></span></h3>
@@ -2061,6 +2069,32 @@ textarea {
 
 .trace-dry-row:hover {
   background: var(--panel);
+}
+
+/* The panes had no rule at all, so they stacked vertically while the view's own copy said
+   "side by side". That was survivable with two; with three it defeats the point, because
+   judging whether a route the signal added is relevant means reading it against the baseline
+   answer, and a baseline a screen away is one you compare from memory. Below 1100px they stack
+   again deliberately — three columns of route text at that width is worse than scrolling. */
+.compare-panes {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+  align-items: start;
+}
+
+@media (max-width: 1100px) {
+  .compare-panes {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* The routes recordLexical adds are the only thing the third pane is read for, so they carry a
+   rule and an indent as well as their badge: a reader scanning the column finds them by shape,
+   and the marking survives a greyscale print or a colour-blind reader. */
+.compare-route-new {
+  border-left: 3px solid var(--warn);
+  padding-left: 10px;
 }
 
 @media (max-width: 900px) {
@@ -12025,12 +12059,28 @@ export const UI_JS = `(function () {
     });
     // T8, the comparison gate. Deliberately UI-only: an agent cannot judge whether its own
     // context was well chosen, because it never sees what it was not given.
-    function renderRoutedAnswer(result) {
+    //
+    // Pass a baseline answer to render this one as a difference from it: the routes it added are
+    // named up front and marked in place. Whether recordLexical earns its keep is a judgement
+    // about those routes specifically, and a reader who has to diff two panes of route keys by
+    // eye will get it wrong on the run where it matters -- 15 of 23 scopes is past what anyone
+    // holds in their head. The match reasons every route already carries are what the judgement
+    // is made on, so a new route arrives with its own explanation attached.
+    function renderRoutedAnswer(result, baseline) {
       if (!result.routes.length) {
         return "<p class=\\"empty\\">No routes matched this task.</p>";
       }
-      return result.routes
+      var baselineKeys = baseline ? new Set(baseline.routes.map(function (route) { return route.routeKey; })) : null;
+      var added = baselineKeys === null ? [] : result.routes
+        .filter(function (route) { return !baselineKeys.has(route.routeKey); })
+        .map(function (route) { return route.routeKey; });
+      var summary = baselineKeys === null
+        ? ""
+        : "<p class=\\"compare-count\\">" + added.length + " new route(s) of " + result.routes.length +
+          (added.length ? ": " + escapeHtml(added.join(", ")) : "") + "</p>";
+      return summary + result.routes
         .map(function (route) {
+          var isNew = baselineKeys !== null && !baselineKeys.has(route.routeKey);
           var records = (route.records || [])
             .map(function (record) {
               var label = record.ref.type === "assertion" ? record.kind || "assertion" : record.heading || "section";
@@ -12038,8 +12088,9 @@ export const UI_JS = `(function () {
             })
             .join("");
           return (
-            "<article class=\\"compare-route\\">" +
-            "<h4>" + escapeHtml(route.routeKey) + (route.expanded ? " <em>expanded</em>" : " <em>listed</em>") + "</h4>" +
+            "<article class=\\"compare-route" + (isNew ? " compare-route-new" : "") + "\\">" +
+            "<h4>" + escapeHtml(route.routeKey) + (isNew ? " <span class=\\"badge warn\\">NEW</span>" : "") +
+            (route.expanded ? " <em>expanded</em>" : " <em>listed</em>") + "</h4>" +
             "<p class=\\"compare-applies\\">" + escapeHtml(route.appliesWhen) + "</p>" +
             "<ul class=\\"compare-reasons\\">" +
             route.matchReasons.map(function (reason) { return "<li>" + escapeHtml(reason) + "</li>"; }).join("") +
@@ -12103,8 +12154,10 @@ export const UI_JS = `(function () {
     // routing against the baseline cannot tell that the numbers in front of them are old.
     function clearComparisonOutput() {
       el("compare-routed").innerHTML = "";
+      el("compare-routed-lexical").innerHTML = "";
       el("compare-legacy").innerHTML = "";
       el("compare-routed-meta").textContent = "";
+      el("compare-routed-lexical-meta").textContent = "";
       el("compare-legacy-meta").textContent = "";
       el("compare-diagnostics").innerHTML = "";
     }
@@ -12122,11 +12175,15 @@ export const UI_JS = `(function () {
       var paths = el("compare-paths").value.trim();
       var query = "/api/db/comparison?task=" + encodeURIComponent(task) + (paths ? "&paths=" + encodeURIComponent(paths) : "");
       el("compare-routed").innerHTML = "<p class=\\"empty\\">Running…</p>";
+      el("compare-routed-lexical").innerHTML = "<p class=\\"empty\\">Running…</p>";
       el("compare-legacy").innerHTML = "<p class=\\"empty\\">Running…</p>";
       try {
         var result = await api(query);
         el("compare-routed").innerHTML = renderRoutedAnswer(result.routed);
         el("compare-routed-meta").textContent = result.routed.plannerVersion + " · " + result.routed.ranker.id;
+        el("compare-routed-lexical").innerHTML = renderRoutedAnswer(result.routedRecordLexical, result.routed);
+        el("compare-routed-lexical-meta").textContent =
+          result.routedRecordLexical.plannerVersion + " · " + result.routedRecordLexical.ranker.id;
         el("compare-legacy").innerHTML = renderLegacyAnswer(result.legacy);
         el("compare-legacy-meta").textContent = "git-backed planner";
         await loadDiagnostics();
