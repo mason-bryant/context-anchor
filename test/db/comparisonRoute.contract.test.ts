@@ -129,6 +129,7 @@ describe.runIf(await isTestDatabaseReachable())("the comparison gate's HTTP rout
     requestId: string;
     candidateCount: number;
     appliedSignals: { recordLexical: boolean };
+    budget: { expanded: number; listed: number; recordsPerRoute: number };
     routes: Array<{ routeKey: string; matchReasons: string[] }>;
   };
   type Body = {
@@ -266,9 +267,14 @@ describe.runIf(await isTestDatabaseReachable())("the comparison gate's HTTP rout
     expect(response.status).toBe(200);
     const body = (await response.json()) as Body;
     expect(typeof body.routedRecordLexical?.candidateCount).toBe("number");
-    expect(body.routedRecordLexical?.candidateCount).toBeGreaterThanOrEqual(
-      body.routedRecordLexical?.routes.length ?? 0,
-    );
+
+    // Both panes must be given the same budget, for the same reason they must be given the same
+    // paths: a difference in what they were allowed to return would read as a difference the
+    // signal caused. Asserted on the echoed budget rather than trusting the call site.
+    expect(body.routed?.budget.listed).toBe(body.routedRecordLexical?.budget.listed);
+    // Above the default, because at the default the pane saturates: the widening this gate
+    // exists to measure is exactly the case that hits the cap.
+    expect(body.routed?.budget.listed).toBeGreaterThan(10);
   });
 
   // Express turns a repeated key into an array, and the hand-rolled parser this replaces read

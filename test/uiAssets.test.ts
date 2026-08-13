@@ -30,6 +30,7 @@ type ComparePlansResult = {
   dropped: string[];
   reordered: boolean;
   expansionChanged: boolean;
+  clipped: boolean;
   baselineExpanded: string[];
   resultExpanded: string[];
 };
@@ -2158,6 +2159,20 @@ describe("comparison gate diff", () => {
     expect(diff.resultExpanded).toEqual(["c"]);
   });
 
+  it("does not call a top-two swap a change of expanded routes", () => {
+    const hooks = loadHooks();
+    // The same two routes are expanded, so the identical records are on screen. Reported as a
+    // change, this over-states the signal's impact — and with expanded capped at two and a
+    // first ranking tier that is a small integer count, this swap is common rather than exotic,
+    // so the over-reporting would land on a large share of a 20-30 task corpus, always in the
+    // direction of "recordLexical changes a lot".
+    const diff = hooks.comparePlans(plan(["b", "a", "c"], ["b", "a"]), plan(["a", "b", "c"], ["a", "b"]));
+
+    expect(diff.expansionChanged).toBe(false);
+    // The reordering itself is still reported; it is only the claim about records that was wrong.
+    expect(diff.reordered).toBe(true);
+  });
+
   it("calls an unchanged answer unchanged", () => {
     const hooks = loadHooks();
     const diff = hooks.comparePlans(plan(["a", "b"], ["a"]), plan(["a", "b"], ["a"]));
@@ -2179,6 +2194,26 @@ describe("comparison gate diff", () => {
     const html = hooks.renderRoutedAnswer(plan(["a", "b"], [], 2), plan([]));
 
     expect(html).not.toContain("Showing");
+  });
+
+  it("does not blame the signal for routes the budget hid", () => {
+    const hooks = loadHooks();
+    // Both answers are clipped, so a baseline route missing from the result may simply have been
+    // pushed past the cap by the routes the signal added. "Dropped by this setting" asserts a
+    // cause the data cannot support, and it reads as a strong finding.
+    const diff = hooks.comparePlans(plan(["x", "y"], [], 40), plan(["a", "b"], [], 30));
+    expect(diff.clipped).toBe(true);
+
+    const html = hooks.renderRoutedAnswer(plan(["x", "y"], [], 40), plan(["a", "b"], [], 30));
+    expect(html).not.toContain("Dropped by this setting");
+    expect(html).toContain("No longer in the top");
+  });
+
+  it("does blame the signal when nothing was clipped, because then the claim holds", () => {
+    const hooks = loadHooks();
+    const html = hooks.renderRoutedAnswer(plan(["x"], [], 1), plan(["a"], [], 1));
+
+    expect(html).toContain("Dropped by this setting");
   });
 
   it("names dropped routes in the pane, which has nothing else to attach them to", () => {
@@ -2207,16 +2242,25 @@ describe("comparison gate diff", () => {
     // colour answers that question on their behalf.
     const html = hooks.renderRoutedAnswer(plan(["new"]), plan([]));
 
-    expect(html).toContain("ADDED");
-    expect(html).not.toContain("badge warn");
+    // Asserted on the class actually emitted, not on the absence of a string the code could
+    // never produce: `not.toContain("badge warn")` held whatever palette was chosen, because the
+    // markup is built as `class="badge"` plus a separate rule for the route article.
+    expect(html).toContain('<span class="badge">ADDED</span>');
+    expect(html).toContain("compare-route-new");
   });
 
-  it("renders the baseline pane exactly as before when no baseline is passed", () => {
+  it("omits the difference summary when there is no baseline to differ from", () => {
     const hooks = loadHooks();
-    const html = hooks.renderRoutedAnswer(plan(["a"], ["a"]), null);
+    // Deliberately supplies candidateCount, because the previous version of this test omitted it
+    // and so passed for the wrong reason: it read as proving the clip note depends on a
+    // baseline, when the note is independent of one. A clipped baseline pane SHOULD say it was
+    // clipped — the reader needs to know either column is partial.
+    const html = hooks.renderRoutedAnswer(plan(["a"], ["a"], 9), null);
 
     expect(html).not.toContain("ADDED");
     expect(html).not.toContain("added");
-    expect(html).not.toContain("Showing");
+    expect(html).not.toContain("dropped");
+    // The clip note is not part of the comparison, and is expected here.
+    expect(html).toContain("Showing 1 of 9");
   });
 });

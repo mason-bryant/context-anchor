@@ -11814,10 +11814,25 @@ export const UI_JS = `(function () {
     return {
       added: resultKeys.filter(function (key) { return !inBaseline.has(key); }),
       dropped: baselineKeys.filter(function (key) { return !inResult.has(key); }),
+      // True when either answer was truncated, which changes what "dropped" is allowed to mean.
+      // The diff compares post-budget lists, so a baseline route pushed past the cap by routes
+      // the signal added looks identical to one the signal displaced -- and the wording asserts
+      // a cause. Below the cap nothing is hidden and the causal claim holds; at or above it, all
+      // that can honestly be said is that the route is no longer in the top N.
+      clipped: (typeof result.candidateCount === "number" && result.candidateCount > result.routes.length) ||
+        (typeof baseline.candidateCount === "number" && baseline.candidateCount > baseline.routes.length),
       reordered: resultKeys.length === baselineKeys.length &&
         resultKeys.every(function (key) { return inBaseline.has(key); }) &&
         resultKeys.join("\\u0000") !== baselineKeys.join("\\u0000"),
-      expansionChanged: baselineExpanded.join("\\u0000") !== resultExpanded.join("\\u0000"),
+      // Compared as a set, not a sequence. Only expanded routes carry records, so what the
+      // reader is being told is "different records are on screen" -- and swapping the order
+      // of the same two expanded routes puts the identical records on screen. An ordered
+      // comparison reported that as a change, and with expanded capped at two and a first
+      // ranking tier that is a small integer count, top-two swaps are common: it would have
+      // over-reported the signal's impact on a large share of runs, all in the same
+      // direction.
+      expansionChanged: baselineExpanded.slice().sort().join("\\u0000") !==
+        resultExpanded.slice().sort().join("\\u0000"),
       baselineExpanded: baselineExpanded,
       resultExpanded: resultExpanded
     };
@@ -11828,7 +11843,10 @@ export const UI_JS = `(function () {
     parts.push(diff.added.length + " added" + (diff.added.length ? ": " + escapeHtml(diff.added.join(", ")) : ""));
     // Stated even when zero, so "nothing was dropped" is a reading rather than an absence a
     // reader has to infer from silence.
-    parts.push(diff.dropped.length + " dropped" + (diff.dropped.length ? ": " + escapeHtml(diff.dropped.join(", ")) : ""));
+    parts.push(
+      diff.dropped.length + (diff.clipped ? " no longer in the top N" : " dropped") +
+      (diff.dropped.length ? ": " + escapeHtml(diff.dropped.join(", ")) : "")
+    );
     if (diff.reordered) {
       parts.push("order changed");
     }
@@ -11865,8 +11883,11 @@ export const UI_JS = `(function () {
     }
     var baselineKeys = baseline ? new Set(baseline.routes.map(function (route) { return route.routeKey; })) : null;
     var summary = preamble + (diff && diff.dropped.length
-      ? "<div class=\\"compare-dropped\\"><strong>Dropped by this setting:</strong> " +
-        escapeHtml(diff.dropped.join(", ")) + "</div>"
+      ? "<div class=\\"compare-dropped\\"><strong>" +
+        (diff.clipped
+          ? "No longer in the top " + result.routes.length + " (the budget clipped this answer):"
+          : "Dropped by this setting:") +
+        "</strong> " + escapeHtml(diff.dropped.join(", ")) + "</div>"
       : "");
     return summary + result.routes
       .map(function (route) {

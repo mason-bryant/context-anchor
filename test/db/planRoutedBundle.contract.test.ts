@@ -200,6 +200,21 @@ describe.runIf(await isTestDatabaseReachable())("planRoutedBundle (real Postgres
     expect((await plan("kubernetes helm chart")).routes).toEqual([]);
   });
 
+  it("reports the candidates the budget discarded, not only the ones it kept", async () => {
+    // Clipping is the whole reason this field exists, so it has to be tested where clipping
+    // happens. An assertion that candidateCount >= routes.length passes by construction --
+    // routes IS the truncation of the candidates -- and would hold even if the field were
+    // hardwired to routes.length, which is exactly the failure it is meant to detect.
+    const clipped = await plan("anchor mcp http transport rate limiting", { budget: { expanded: 1, listed: 1 } });
+
+    expect(clipped.routes).toHaveLength(1);
+    expect(clipped.candidateCount).toBeGreaterThan(1);
+
+    // And unclipped, the two agree — so the field is reporting selection rather than a constant.
+    const whole = await plan("anchor mcp http transport rate limiting", { budget: { expanded: 1, listed: 10 } });
+    expect(whole.candidateCount).toBe(whole.routes.length);
+  });
+
   it("expands within budget and lists the rest", async () => {
     const result = await plan("anchor mcp http transport rate limiting", { budget: { expanded: 1, listed: 10 } });
 
