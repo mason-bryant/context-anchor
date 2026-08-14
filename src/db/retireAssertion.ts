@@ -152,15 +152,21 @@ export async function retireAssertion(input: RetireAssertionInput): Promise<Reti
       );
       retiredAssociations = associations.rows.map((row) => row.association_guid);
 
-      // Supersession is refused above, so what is left here is `contradicts`, `split_from` and
-      // `merged_from` — observations about the claim rather than standing conferred on another
-      // one. Retiring them is safe in a way retiring a supersedes is not: a surviving conflict
-      // against a tombstone would surface a contradiction the reader cannot go and look at.
+      // `contradicts`, `split_from` and `merged_from` — observations about the claim rather than
+      // standing conferred on another one. Retiring them is safe in a way retiring a supersedes
+      // is not: a surviving conflict against a tombstone would surface a contradiction the reader
+      // cannot go and look at.
+      //
+      // The type exclusion is redundant today, because the guard above refuses before this runs.
+      // It is here so the statement says what it does rather than relying on a caller three
+      // functions up to have already made it true — this file's whole subject is what happens
+      // when a supersedes is involved, and that guard moving is a plausible future edit.
       const relations = await tx.query<{ relation_guid: string }>(
         `UPDATE "${schema}".assertion_relations
             SET retired_at = now()
           WHERE workspace_guid = $1
             AND (source_assertion_guid = $2 OR target_assertion_guid = $2)
+            AND relation_type <> 'supersedes'
             AND retired_at IS NULL
         RETURNING relation_guid`,
         [input.workspaceGuid, input.assertionGuid],

@@ -265,6 +265,95 @@ describe.runIf(await isTestDatabaseReachable())("assertion lifecycle, T3 (real P
       expect((await rowOf(created.assertionGuid)).title).toBe("Someone else got here first");
     });
 
+    /**
+     * Two writers changing different fields. Each computes every column from the row it read, so
+     * the second to write would overwrite the first's field with the value it read before that
+     * change existed — a lost update, and a direct contradiction of "fields left out keep their
+     * current value".
+     *
+     * Nothing here takes a row lock, and this asserts that none is needed: the second writer's
+     * record_versions insert collides with the first on the primary key, which is what actually
+     * serializes writers, and surfaces as a refusal rather than a silent overwrite. Forced from
+     * inside the first command's own read rather than raced, so the interleaving is the one being
+     * reasoned about and not whichever one the scheduler happened to produce.
+     */
+    it("refuses the second of two concurrent edits rather than losing a field", async () => {
+      const created = await author("Bearer tokens are required", "The transport requires one.");
+      const second = new pg.Pool({ connectionString: TEST_DATABASE_URL, max: 2 });
+      let interleaved = false;
+      let secondOutcome: unknown = "never ran";
+
+      const interleaving = new Proxy(pool, {
+        get(target, property, receiver) {
+          if (property !== "connect") {
+            return Reflect.get(target, property, receiver) as unknown;
+          }
+          return (callback?: unknown) => {
+            if (typeof callback === "function") {
+              return (target.connect as (cb: unknown) => unknown)(callback);
+            }
+            return (async () => {
+              const client = await target.connect();
+              const realQuery = client.query.bind(client) as (...a: unknown[]) => Promise<unknown>;
+              client.query = (async (...args: unknown[]) => {
+                const [text] = args;
+                const fires =
+                  !interleaved &&
+                  typeof args[args.length - 1] !== "function" &&
+                  typeof text === "string" &&
+                  text.includes("SELECT kind, title, content, version, owner_scope_guid");
+                const result = await realQuery(...args);
+                if (fires) {
+                  interleaved = true;
+                  client.query = realQuery as typeof client.query;
+                  // Changes a different field, from the same starting row.
+                  secondOutcome = await updateAssertion({
+                    ...context(),
+                    pool: second,
+                    handler: new CommandHandler(second, schemaName),
+                    assertionGuid: created.assertionGuid,
+                    content: "Rewritten by the other writer.",
+                    reason: "concurrent edit to a different field",
+                  }).catch((error: unknown) => error);
+                }
+                return result;
+              }) as typeof client.query;
+              return client;
+            })();
+          };
+        },
+      });
+
+      let outerOutcome: unknown = "never ran";
+      try {
+        outerOutcome = await updateAssertion({
+          ...context(),
+          pool: interleaving,
+          handler: new CommandHandler(interleaving, schemaName),
+          assertionGuid: created.assertionGuid,
+          title: "Rewritten by the first writer.",
+          reason: "concurrent edit to the title",
+        }).catch((error: unknown) => error);
+      } finally {
+        await second.end();
+      }
+
+      expect(interleaved, "the interleave never fired, so this test proved nothing").toBe(true);
+
+      // The interleaved writer runs to completion inside the other's read, so it is the one that
+      // commits; the outer writer then finds its version taken. Which one loses is an artefact of
+      // the forced ordering. That exactly one loses is the point.
+      expect(secondOutcome).not.toBeInstanceOf(Error);
+      expect(outerOutcome).toBeInstanceOf(ConcurrentModificationError);
+
+      // No field was lost. The refused writer would have written both columns from the row it
+      // read before the other's change existed; its rollback is what keeps the title original.
+      const settled = await rowOf(created.assertionGuid);
+      expect(settled.content).toBe("Rewritten by the other writer.");
+      expect(settled.title).toBe("Bearer tokens are required");
+      expect(settled.version).toBe(2);
+    });
+
     it("leaves citations alone: rewording a claim does not change where it came from", async () => {
       const created = await author("Bearer tokens are required", "The transport requires one.");
       const before = await citationsOf(created.assertionGuid);
