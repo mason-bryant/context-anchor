@@ -607,44 +607,44 @@ describe.runIf(await isTestDatabaseReachable())("assertion lifecycle, T3 (real P
               return (target.connect as (cb: unknown) => unknown)(callback);
             }
             return (async () => {
-            const client = await target.connect();
-            const realQuery = client.query.bind(client) as (...args: unknown[]) => Promise<unknown>;
-            client.query = (async (...args: unknown[]) => {
-              const [text] = args;
-              const fires =
-                !interleaved &&
-                typeof args[args.length - 1] !== "function" &&
-                typeof text === "string" &&
-                // Anchored on the command's own guard, not on the phrase: the invariant query at
-                // the end of this test also mentions the relation type, and a predicate that
-                // matched it would arm the interleave against the wrong statement.
-                text.includes("assertion_relations") &&
-                text.includes("relation_type = 'supersedes'") &&
-                text.includes("LIMIT 1");
-              const result = await realQuery(...args);
-              if (fires) {
-                interleaved = true;
-                client.query = realQuery as typeof client.query;
-                await createAssertionRelation({
-                  pool: impatient,
-                  schemaName,
-                  handler: new CommandHandler(impatient, schemaName),
-                  workspaceGuid: bootstrap.workspaceGuid,
-                  actorPrincipalGuid: bootstrap.ownerPrincipalGuid,
-                  sourceAssertionGuid: replacement.assertionGuid,
-                  targetAssertionGuid: superseded.assertionGuid,
-                  relationType: "supersedes",
-                }).catch((error: unknown) => {
-                  // Losing the lock is the designed outcome. Anything else is a real failure and
-                  // must not be swallowed into a passing test.
-                  if (!/lock timeout|deadlock/i.test(String(error))) {
-                    throw error;
-                  }
-                });
-              }
-              return result;
-            }) as typeof client.query;
-            return client;
+              const client = await target.connect();
+              const realQuery = client.query.bind(client) as (...args: unknown[]) => Promise<unknown>;
+              client.query = (async (...args: unknown[]) => {
+                const [text] = args;
+                const fires =
+                  !interleaved &&
+                  typeof args[args.length - 1] !== "function" &&
+                  typeof text === "string" &&
+                  // Anchored on the command's own guard, not on the phrase: the invariant query at
+                  // the end of this test also mentions the relation type, and a predicate that
+                  // matched it would arm the interleave against the wrong statement.
+                  text.includes("assertion_relations") &&
+                  text.includes("relation_type = 'supersedes'") &&
+                  text.includes("LIMIT 1");
+                const result = await realQuery(...args);
+                if (fires) {
+                  interleaved = true;
+                  client.query = realQuery as typeof client.query;
+                  await createAssertionRelation({
+                    pool: impatient,
+                    schemaName,
+                    handler: new CommandHandler(impatient, schemaName),
+                    workspaceGuid: bootstrap.workspaceGuid,
+                    actorPrincipalGuid: bootstrap.ownerPrincipalGuid,
+                    sourceAssertionGuid: replacement.assertionGuid,
+                    targetAssertionGuid: superseded.assertionGuid,
+                    relationType: "supersedes",
+                  }).catch((error: unknown) => {
+                    // Losing the lock is the designed outcome. Anything else is a real failure and
+                    // must not be swallowed into a passing test.
+                    if (!/lock timeout|deadlock/i.test(String(error))) {
+                      throw error;
+                    }
+                  });
+                }
+                return result;
+              }) as typeof client.query;
+              return client;
             })();
           };
         },

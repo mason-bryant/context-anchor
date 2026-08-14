@@ -30,12 +30,21 @@ export class AssertionNotFoundError extends Error {
   }
 }
 
+/**
+ * An edit with nothing in it. A version bump and a history entry describing an edit that did
+ * not happen makes the record less trustworthy, not more.
+ *
+ * The two causes are named separately because they are different mistakes with different
+ * remedies: one caller forgot to say what to change, the other asked for what is already there
+ * — and the second is the one a retry produces, so it is worth being able to tell apart.
+ */
 export class NoAssertionChangesError extends Error {
-  constructor(assertionGuid: string) {
+  constructor(assertionGuid: string, cause: "no-fields" | "already-holds") {
     super(
-      `updateAssertion for ${assertionGuid} was given no fields to change. A version bump and a ` +
-        `history entry describing an edit that did not happen makes the record less trustworthy, ` +
-        `not more.`,
+      cause === "no-fields"
+        ? `updateAssertion for ${assertionGuid} was given no fields to change.`
+        : `updateAssertion for ${assertionGuid} was given only values the claim already holds, ` +
+          `so there is nothing to change.`,
     );
     this.name = "NoAssertionChangesError";
   }
@@ -115,7 +124,7 @@ export async function updateAssertion(input: UpdateAssertionInput): Promise<Upda
   const schema = input.schemaName;
 
   if (input.title === undefined && input.content === undefined && input.kind === undefined) {
-    throw new NoAssertionChangesError(input.assertionGuid);
+    throw new NoAssertionChangesError(input.assertionGuid, "no-fields");
   }
   if (input.kind !== undefined && !ASSERTION_KINDS.includes(input.kind)) {
     throw new Error(
@@ -159,7 +168,7 @@ export async function updateAssertion(input: UpdateAssertionInput): Promise<Upda
       // in the history with no difference behind it.
       changed = EDITABLE_FIELDS.filter((field) => next[field] !== current[field]);
       if (changed.length === 0) {
-        throw new NoAssertionChangesError(input.assertionGuid);
+        throw new NoAssertionChangesError(input.assertionGuid, "already-holds");
       }
       // Carried inside resultingValue because the handler has no separate prior-value slot, and
       // a version snapshot that records only the new wording leaves a reader unable to say what
