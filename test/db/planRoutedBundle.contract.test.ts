@@ -176,9 +176,7 @@ describe.runIf(await isTestDatabaseReachable())("planRoutedBundle (real Postgres
       });
 
       const result = await plan("decisions", { recordLexical: true });
-      const reasons = result.routes.flatMap((route) =>
-        route.matchReasons.filter((reason) => / title[s]?[ :]/.test(reason)),
-      );
+      const reasons = recordLexicalReasons(result.routes);
 
       expect(reasons).toHaveLength(1);
       expect(reasons[0]).toContain("matched 4 distinct section titles");
@@ -211,9 +209,7 @@ describe.runIf(await isTestDatabaseReachable())("planRoutedBundle (real Postgres
       });
 
       const result = await plan("decisions logging", { recordLexical: true });
-      const reason = result.routes
-        .flatMap((route) => route.matchReasons)
-        .find((text) => / title[s]?[ :]/.test(text))!;
+      const reason = recordLexicalReasons(result.routes)[0]!;
 
       expect(reason).toBeDefined();
       // A single heading matched by both terms, so the count is one either way — what changes is
