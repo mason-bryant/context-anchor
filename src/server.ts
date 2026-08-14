@@ -22,6 +22,9 @@ import {
   type SetAssertionStatusResult,
 } from "./db/setAssertionStatus.js";
 import type { CreateAssertionInput, CreateAssertionResult } from "./db/createAssertion.js";
+import type { UpdateAssertionInput, UpdateAssertionResult } from "./db/updateAssertion.js";
+import type { RetireAssertionInput, RetireAssertionResult } from "./db/retireAssertion.js";
+import type { AddCitationInput, AddCitationResult } from "./db/addCitation.js";
 import {
   RELATION_TYPES,
   type CreateAssertionRelationInput,
@@ -192,6 +195,9 @@ export type KnowledgeDatabaseTool = {
   // them drift silently — the same class of gap that let these tools be missing entirely.
   createAssertionAsOwner(input: OwnerWrite<CreateAssertionInput>): Promise<CreateAssertionResult>;
   setAssertionStatusAsOwner(input: OwnerWrite<SetAssertionStatusInput>): Promise<SetAssertionStatusResult>;
+  updateAssertionAsOwner(input: OwnerWrite<UpdateAssertionInput>): Promise<UpdateAssertionResult>;
+  retireAssertionAsOwner(input: OwnerWrite<RetireAssertionInput>): Promise<RetireAssertionResult>;
+  addCitationAsOwner(input: OwnerWrite<AddCitationInput>): Promise<AddCitationResult>;
   createAssertionRelationAsOwner(
     input: OwnerWrite<CreateAssertionRelationInput>,
   ): Promise<CreateAssertionRelationResult>;
@@ -2089,6 +2095,82 @@ the index when your workflow checks in that file.`,
         }),
       },
       async ({ traceId: _traceId, ...input }) => jsonResult(await knowledgeDb.setAssertionStatusAsOwner(input)),
+    );
+
+    server.registerTool(
+      "updateAssertion",
+      {
+        title: "Update Assertion",
+        description:
+          "Change what a claim says. Any subset of title, content, and kind; fields left out keep their current " +
+          "value, and fields resent unchanged are not counted as an edit — a version bump with no difference " +
+          "behind it makes the history less trustworthy, not more. Standing is not editable here: use " +
+          "setAssertionStatus, so a reader can tell \"we no longer stand behind this\" from \"this now says " +
+          "something else\". Citations are left alone; rewording a claim does not change where it came from. " +
+          "Requires the database backend.",
+        inputSchema: z.object({
+          traceId: TraceIdSchema,
+          assertionGuid: z.string().uuid(),
+          title: z.string().trim().min(1).optional(),
+          content: z.string().trim().min(1).optional(),
+          kind: z.enum(ASSERTION_KINDS).optional(),
+          reason: z.string().trim().min(1),
+          expectedVersion: z.number().int().positive().optional(),
+          idempotencyKey: z.string().trim().min(1).optional(),
+        }),
+      },
+      async ({ traceId: _traceId, ...input }) => jsonResult(await knowledgeDb.updateAssertionAsOwner(input)),
+    );
+
+    server.registerTool(
+      "retireAssertion",
+      {
+        title: "Retire Assertion",
+        description:
+          "Tombstone a claim: it stops routing and stops being returned. This is for records that should not be " +
+          "in the workspace at all — an import artefact, a duplicate, a claim authored against the wrong scope. " +
+          "Prefer setAssertionStatus(retracted) for a claim that was simply wrong: a reader who finds a retracted " +
+          "claim learns something, and a reader who finds nothing cannot tell an absent claim from a removed one. " +
+          "Refused while a live supersedes relation involves the claim, which would leave lineage pointing at a " +
+          "tombstone. Requires the database backend.",
+        inputSchema: z.object({
+          traceId: TraceIdSchema,
+          assertionGuid: z.string().uuid(),
+          reason: z.string().trim().min(1),
+          expectedVersion: z.number().int().positive().optional(),
+          idempotencyKey: z.string().trim().min(1).optional(),
+        }),
+      },
+      async ({ traceId: _traceId, ...input }) => jsonResult(await knowledgeDb.retireAssertionAsOwner(input)),
+    );
+
+    server.registerTool(
+      "addCitation",
+      {
+        title: "Add Citation",
+        description:
+          "Bind an existing claim to a further piece of source text: the same claim evidenced in a second " +
+          "document, a source that disputes it, or a re-anchor after the text moved. The quote is verified " +
+          "against the cited block before anything is written. Citations are additive — there is no delete, so a " +
+          "citation that turned out to be wrong is corrected by adding the right one and naming the old one as " +
+          "the re-anchor source. Requires the database backend.",
+        inputSchema: z.object({
+          traceId: TraceIdSchema,
+          assertionGuid: z.string().uuid(),
+          citation: z.object({
+            blockGuid: z.string().uuid(),
+            exactQuote: z.string().min(1),
+            prefix: z.string().optional(),
+            suffix: z.string().optional(),
+            relation: z.enum(CITATION_RELATIONS).optional(),
+          }),
+          reanchoredFromCitationGuid: z.string().uuid().optional(),
+          reason: z.string().trim().min(1),
+          expectedVersion: z.number().int().positive().optional(),
+          idempotencyKey: z.string().trim().min(1).optional(),
+        }),
+      },
+      async ({ traceId: _traceId, ...input }) => jsonResult(await knowledgeDb.addCitationAsOwner(input)),
     );
 
     server.registerTool(

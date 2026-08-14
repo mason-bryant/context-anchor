@@ -75,6 +75,25 @@ const WRITE_STUBS = {
     replayed: false,
     changed: true,
   }),
+  updateAssertionAsOwner: async () => ({
+    assertionGuid: "11111111-1111-4111-8111-111111111111",
+    version: 2,
+    replayed: false,
+    changed: ["title" as const],
+  }),
+  retireAssertionAsOwner: async () => ({
+    assertionGuid: "11111111-1111-4111-8111-111111111111",
+    version: 2,
+    replayed: false,
+    associationsRetired: 1,
+    relationsRetired: 0,
+  }),
+  addCitationAsOwner: async () => ({
+    citationGuid: "55555555-5555-4555-8555-555555555555",
+    assertionGuid: "11111111-1111-4111-8111-111111111111",
+    version: 2,
+    replayed: false,
+  }),
   createAssertionRelationAsOwner: async () => ({
     relationGuid: "44444444-4444-4444-8444-444444444444",
     relationType: "contradicts" as const,
