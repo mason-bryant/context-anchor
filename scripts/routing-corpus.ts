@@ -41,7 +41,9 @@ function parseArgs(argv: string[]): Args {
     const arg = argv[index];
     if (arg === "--seed") {
       args.seed = true;
-    } else if (arg === "--schema" && argv[index + 1]) {
+    } else if (arg === "--schema" && argv[index + 1] !== undefined && !argv[index + 1]!.startsWith("--")) {
+      // Guarded against the next flag: `--schema --json` otherwise takes "--json" as the schema
+      // name, fails on a nonsense schema, and loses the flag without saying so.
       args.schema = argv[index + 1];
       index += 1;
     } else if (arg === "--record-lexical") {
@@ -87,6 +89,7 @@ function render(report: CorpusReport, recordLexical: boolean): string {
   lines.push(`forbidden hits ${String(report.forbiddenHitCount)} tasks`);
   lines.push(`over ceiling   ${String(report.overMaxRoutesCount)} tasks`);
   lines.push(`offered, empty ${String(report.offeredButEmptyCount)} tasks`);
+  lines.push(`whole workspace ${String(report.wholeWorkspaceCount)} tasks`);
   lines.push("");
 
   // Per task, because the aggregate is what hid the stopword problem for four review rounds.
@@ -102,12 +105,55 @@ function render(report: CorpusReport, recordLexical: boolean): string {
     ].filter((mark) => mark.length > 0);
 
     lines.push(
-      `${result.id.padEnd(width)}  ${String(result.offeredScopes.length).padStart(2)} routes  ` +
+      `${result.id.padEnd(width)}  ${String(result.candidateCount).padStart(2)} cand  ` +
+        `${String(result.offeredScopes.length).padStart(2)} routes  ` +
         `${String(result.recordsReturned).padStart(3)} records  ${marks.join("; ")}`,
     );
   }
 
   return lines.join("\n");
+}
+
+/**
+ * The workspace and an owner principal in an existing schema, without writing anything.
+ *
+ * Refuses rather than guessing when there is more than one workspace: measuring the wrong one
+ * would report a retrieval failure that is really a selection of the wrong subject, and the
+ * report has no field that would show it.
+ */
+async function readWorkspace(
+  pool: pg.Pool,
+  schemaName: string,
+): Promise<{ workspaceGuid: string; ownerPrincipalGuid: string }> {
+  const workspaces = await pool.query<{ workspace_guid: string; workspace_slug: string }>(
+    `SELECT workspace_guid, workspace_slug FROM "${schemaName}".workspaces ORDER BY workspace_slug`,
+  );
+  if (workspaces.rows.length === 0) {
+    throw new Error(
+      `Schema ${schemaName} holds no workspace. Use --seed to build one, or point --schema at a ` +
+        `schema that has been bootstrapped.`,
+    );
+  }
+  if (workspaces.rows.length > 1) {
+    throw new Error(
+      `Schema ${schemaName} holds ${String(workspaces.rows.length)} workspaces ` +
+        `(${workspaces.rows.map((row) => row.workspace_slug).join(", ")}). This script will not ` +
+        `guess which one you meant.`,
+    );
+  }
+
+  const workspaceGuid = workspaces.rows[0]!.workspace_guid;
+  const owner = await pool.query<{ principal_guid: string }>(
+    `SELECT m.principal_guid FROM "${schemaName}".workspace_memberships m
+      WHERE m.workspace_guid = $1 AND m.role = 'owner'
+      ORDER BY m.principal_guid LIMIT 1`,
+    [workspaceGuid],
+  );
+  const ownerPrincipalGuid = owner.rows[0]?.principal_guid;
+  if (ownerPrincipalGuid === undefined) {
+    throw new Error(`Workspace in ${schemaName} has no owner principal to run the corpus as.`);
+  }
+  return { workspaceGuid, ownerPrincipalGuid };
 }
 
 async function main(): Promise<void> {
@@ -152,13 +198,23 @@ async function main(): Promise<void> {
       });
     }
 
-    const bootstrap = await ensureBootstrap(pool, { schemaName });
+    // Read, never bootstrap, when pointed at a workspace someone else owns.
+    //
+    // ensureBootstrap writes: it upserts a user keyed on the OS username, an owner principal, a
+    // membership and a default scope. Against a real schema whose workspace slug is not
+    // "default" it would quietly mint a second, empty workspace and then measure 100% zero-route
+    // against it — a measurement tool reporting total failure because it created the thing it
+    // measured. The only tell would be a density of 0 of 0.
+    const identity = args.seed
+      ? await ensureBootstrap(pool, { schemaName })
+      : await readWorkspace(pool, schemaName);
+
     const report = await runCorpus({
       pool,
       schemaName,
       telemetrySchemaName: telemetrySchemaNameFor(schemaName),
-      workspaceGuid: bootstrap.workspaceGuid,
-      principalGuid: bootstrap.ownerPrincipalGuid,
+      workspaceGuid: identity.workspaceGuid,
+      principalGuid: identity.ownerPrincipalGuid,
       role: "owner",
       corpus,
       recordLexical: args.recordLexical,
@@ -169,11 +225,20 @@ async function main(): Promise<void> {
     console.log(args.json ? JSON.stringify(report, null, 2) : render(report, args.recordLexical));
   } finally {
     if (args.seed) {
-      // Dropped even on failure. A corpus run that leaves schemas behind is the same problem
-      // the test-schema leak guard exists for, arriving by a different road.
-      await pool.query(`DROP SCHEMA IF EXISTS "${schemaName}" CASCADE`);
-      await pool.query(`DROP SCHEMA IF EXISTS "${telemetrySchemaNameFor(schemaName)}" CASCADE`);
+      // Dropped even on failure. A corpus run that leaves schemas behind is the same problem the
+      // test-schema leak guard exists for, arriving by a different road — and the telemetry
+      // schema is dropped even if the knowledge drop throws, or a failure halfway leaves exactly
+      // the orphan this is here to prevent.
+      for (const schema of [schemaName, telemetrySchemaNameFor(schemaName)]) {
+        try {
+          await pool.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);
+        } catch (error) {
+          console.error(`Failed to drop ${schema}:`, error);
+        }
+      }
     }
+    // Outside the drop entirely: a pool left open holds the process alive, and a cleanup failure
+    // that also hangs the run is two problems where there was one.
     await pool.end();
   }
 }

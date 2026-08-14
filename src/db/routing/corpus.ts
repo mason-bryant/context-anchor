@@ -80,13 +80,26 @@ export type CorpusTaskResult = {
   overMaxRoutes: boolean;
   /** Records actually returned inside the expanded budget. A route offered is not a caller served. */
   recordsReturned: number;
+  /**
+   * Routes the ranker produced before the listed budget clipped them.
+   *
+   * Fan-out has to be measured here or it saturates: with a listed budget of ten, a task
+   * selecting the whole workspace and a task selecting eleven scopes both report ten, and every
+   * blowout reads as the same size. The planner's own comment says so; this is the field that
+   * acts on it.
+   */
+  candidateCount: number;
 };
 
 export type CorpusReport = {
   corpusVersion: string;
   /**
-   * False when the run was against a workspace the corpus does not describe. Recall and missing
-   * are then omitted per task, because the expectations name scopes that workspace never had.
+   * False when the run was against a workspace the corpus does not describe.
+   *
+   * Recall is then undefined, and `missing` and `forbiddenHits` come back empty rather than
+   * absent — empty because the expectations name scopes that workspace never had, not because
+   * nothing was missed. Route ceilings still apply: a ceiling is a statement about how far an
+   * answer may spread, which holds wherever it is run.
    */
   scored: boolean;
   /** Authoring density, stamped because nine assertions in one of 23 scopes is not a workspace. */
@@ -102,6 +115,15 @@ export type CorpusReport = {
   overMaxRoutesCount: number;
   /** Tasks offered at least one route but returned no records inside the budget. */
   offeredButEmptyCount: number;
+  /**
+   * Tasks whose candidates covered most of the workspace.
+   *
+   * Counted separately from the zero-route rate because they are the other failure, and the
+   * headline hides them: a task rescued from silence by selecting every scope improves
+   * zeroRouteRate exactly as much as one rescued by finding the right scope. Three of the ten
+   * rescues in the first run of this corpus were of that kind.
+   */
+  wholeWorkspaceCount: number;
   results: CorpusTaskResult[];
 };
 
@@ -176,11 +198,13 @@ export async function runCorpus(input: CorpusRunInput): Promise<CorpusReport> {
     results.push(scoreTask(task, plan, scored));
   }
 
+  const density = await measureDensity(input.pool, input.schemaName, input.workspaceGuid);
+
   return {
     corpusVersion: input.corpus.version,
     scored,
-    density: await measureDensity(input.pool, input.schemaName, input.workspaceGuid),
-    ...summarise(results, scored),
+    density,
+    ...summarise(results, scored, density.routableScopes),
     results,
   };
 }
@@ -211,8 +235,11 @@ function scoreTask(task: CorpusTask, plan: PlanResult, scored: boolean): CorpusT
     recall: scored && expected.length > 0 ? (expected.length - missing.length) / expected.length : undefined,
     missing,
     forbiddenHits,
-    overMaxRoutes: task.maxRoutes !== undefined && offeredScopes.length > task.maxRoutes,
+    // Against candidateCount, not the clipped list. A ceiling that only ever sees the budget's
+    // first ten routes cannot tell "selected eleven scopes" from "selected the workspace".
+    overMaxRoutes: task.maxRoutes !== undefined && plan.candidateCount > task.maxRoutes,
     recordsReturned,
+    candidateCount: plan.candidateCount,
   };
 }
 
@@ -233,9 +260,13 @@ function scopeSlugOf(routeKey: string): string {
   return lastColon === -1 ? routeKey : routeKey.slice(lastColon + 1);
 }
 
+/** At or above this share of routable scopes, an answer is the workspace rather than a route. */
+export const WHOLE_WORKSPACE_FRACTION = 0.5;
+
 function summarise(
   results: CorpusTaskResult[],
   scored: boolean,
+  routableScopes: number,
 ): Omit<CorpusReport, "corpusVersion" | "scored" | "density" | "results"> {
   const judged = results.filter((result) => result.recall !== undefined);
   const zeroRoute = results.filter((result) => result.offeredScopes.length === 0);
@@ -251,6 +282,10 @@ function summarise(
     overMaxRoutesCount: results.filter((result) => result.overMaxRoutes).length,
     offeredButEmptyCount: results.filter(
       (result) => result.offeredScopes.length > 0 && result.recordsReturned === 0,
+    ).length,
+    wholeWorkspaceCount: results.filter(
+      (result) =>
+        routableScopes > 0 && result.candidateCount >= routableScopes * WHOLE_WORKSPACE_FRACTION,
     ).length,
   };
 }

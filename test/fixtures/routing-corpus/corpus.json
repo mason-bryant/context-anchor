@@ -8,7 +8,9 @@
     "Expectations are written against this fixture and do not transfer to a real workspace.",
     "Running the corpus elsewhere reports zero-route rate and fan-out, never recall.",
     "Each scope owns projects/<scope>/<scope>.md, because the importer derives a document's scope from its path. Ten documents under one project would import as one scope, and the fan-out this corpus measures would have nothing to fan out across.",
-    "Each scope also carries topical H3 headings alongside the shared template. Both halves are needed: the template reproduces the vocabulary that reaches every scope, and the topical headings give the record-lexical signal something to match. A fixture with only the template measures a workspace nobody has -- record-lexical never reads body text, so all the topical content would be invisible to it and the signal would score as useless."
+    "Each scope also carries topical H3 headings alongside the shared template. Both halves are needed: the template reproduces the vocabulary that reaches every scope, and the topical headings give the record-lexical signal something to match. A fixture with only the template measures a workspace nobody has -- record-lexical never reads body text, so all the topical content would be invisible to it and the signal would score as useless.",
+    "Six scopes carry headings built from function words ('Why We Require...', 'When And How...'). Without them the stopword filter could be deleted and this corpus would report an improvement -- the failure it was built to preserve would be undetectable in it.",
+    "Two tasks are expected to fail and are pinned that way: topical-identity and topical-review-flow both miss on stemming ('resolve' vs 'Resolution', 'reviews' vs 'Review'). A corpus holding only tasks the code already satisfies measures nothing."
   ],
   "scopes": [
     {
@@ -59,6 +61,12 @@
           "bullets": [
             "An idle session expires after one hour."
           ]
+        },
+        {
+          "heading": "Why We Require A Token On Every Request",
+          "bullets": [
+            "Anonymous calls cannot be attributed."
+          ]
         }
       ]
     },
@@ -87,6 +95,12 @@
           "bullets": [
             "Rotation is driven by size and age together."
           ]
+        },
+        {
+          "heading": "When And How Rotation Happens",
+          "bullets": [
+            "Rotation runs on size and on age."
+          ]
         }
       ]
     },
@@ -114,6 +128,12 @@
           "heading": "Conflict Detection Between Claims",
           "bullets": [
             "Contradictions surface even across scopes."
+          ]
+        },
+        {
+          "heading": "Why A Claim And Its Source Travel Together",
+          "bullets": [
+            "Provenance is not a separate record."
           ]
         }
       ]
@@ -166,12 +186,18 @@
           "bullets": [
             "A ranker returns a permutation of a subset."
           ]
+        },
+        {
+          "heading": "When To Fall Back To The Legacy Planner",
+          "bullets": [
+            "Only when routing returns nothing at all."
+          ]
         }
       ]
     },
     {
       "scope": "people-registry",
-      "title": "People and Teams",
+      "title": "People Registry",
       "kind": "domain",
       "currentState": [
         "People and teams resolve from slack ids, emails, and display names."
@@ -209,6 +235,12 @@
           "heading": "Review Before Apply",
           "bullets": [
             "A proposal is reviewed, then applied, never both at once."
+          ]
+        },
+        {
+          "heading": "Why Review And Apply Are Separate",
+          "bullets": [
+            "A reviewer must be able to decline."
           ]
         }
       ]
@@ -265,6 +297,12 @@
           "heading": "Safe On An Existing Database",
           "bullets": [
             "Each migration must apply to a populated database."
+          ]
+        },
+        {
+          "heading": "How And When To Roll Forward",
+          "bullets": [
+            "Fix forward; never write a down migration."
           ]
         }
       ]
@@ -343,7 +381,8 @@
         "logging",
         "retention"
       ],
-      "rationale": "Reached five headings all about provenance in the real run. One route, the right one."
+      "rationale": "Reached five headings all about provenance in the real run. Expected to reach exactly the provenance scope here; anything else is a term leaking through a scope title.",
+      "maxRoutes": 2
     },
     {
       "id": "topical-quote-resolve",
@@ -392,7 +431,7 @@
         "migrations",
         "telemetry"
       ],
-      "rationale": "Topical."
+      "rationale": "Expected to fail, and kept because it does. The task says 'resolve' and the heading says 'Identity Resolution': matching is whole-word with no stemming, so they do not meet. This is a real limitation of the signal rather than a fixture accident, and a corpus that only held tasks the code already satisfies would measure nothing. Its recall counts against the mean on purpose."
     },
     {
       "id": "scope-named-people",
@@ -418,7 +457,7 @@
         "logging",
         "retention"
       ],
-      "rationale": "Topical."
+      "rationale": "Expected to fail, for the same reason as topical-identity: 'reviews' and 'applied' do not match the headings 'Review Before Apply' and 'Why Review And Apply Are Separate', because matching is whole-word with no stemming. Two of twenty-eight tasks fail this way, which is the size of the gap and is worth knowing."
     },
     {
       "id": "scope-named-proposals",
@@ -432,7 +471,8 @@
         "retention",
         "telemetry"
       ],
-      "rationale": "Went from 2 routes to 15 of 23 in the real run. Fan-out is the thing measured here."
+      "rationale": "Went from 2 routes to 15 of 23 in the real run. Ceiled here so widening is measured rather than described: the interesting number is how far 'and' carries once the title no longer supplies it.",
+      "maxRoutes": 3
     },
     {
       "id": "topical-forward-only",
@@ -474,15 +514,14 @@
     {
       "id": "template-decisions",
       "task": "decisions",
-      "forbiddenScopes": [],
-      "maxRoutes": 10,
-      "rationale": "Every scope has a Decisions heading. This is the term the frequency rule took from 23 routes to zero. It is not expected to be precise -- it is here so a change that silences it is visible."
+      "maxRoutes": 4,
+      "rationale": "Every scope has a Decisions heading. The term the frequency rule took from 23 routes to zero. Ceiled at 4 of 10 scopes: routing a bare template word to most of the workspace is the fan-out failure, and this is expected to exceed it today. The ceiling is here to keep that visible and to fail if it ever gets worse."
     },
     {
       "id": "template-constraints",
       "task": "what are the current constraints",
-      "maxRoutes": 10,
-      "rationale": "Template vocabulary again, in a realistic phrasing."
+      "maxRoutes": 4,
+      "rationale": "Template vocabulary in a realistic phrasing, ceiled for the same reason as template-decisions."
     },
     {
       "id": "cross-scope-transport-logging",
@@ -532,6 +571,20 @@
         "migrations"
       ],
       "rationale": "Reached the right assertion exactly in the real run."
+    },
+    {
+      "id": "stopword-why-and-when",
+      "task": "why and when do we do this",
+      "expectedScopes": [],
+      "maxRoutes": 7,
+      "rationale": "Function words only. Note that 'why' and 'when' are deliberately NOT stopwords -- they head real content -- so this probe measures the marginal reach of the words that are: 'and', 'we', 'this'. The ceiling is calibrated to what the filter delivers today, so deleting the filter pushes it over. Without a probe like this the filter can be removed and this corpus reports an improvement: silence and recall both get better, and only precision collapses."
+    },
+    {
+      "id": "stopword-how-and-when",
+      "task": "how and when should this happen",
+      "expectedScopes": [],
+      "maxRoutes": 4,
+      "rationale": "Second probe with a different function-word mix, so a filter covering one word is not mistaken for a filter covering the class. Ceiling calibrated the same way."
     }
   ]
 }

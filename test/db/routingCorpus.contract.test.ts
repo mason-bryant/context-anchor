@@ -192,6 +192,73 @@ describe.runIf(await isTestDatabaseReachable())("routing task corpus (real Postg
     expect(result?.overMaxRoutes).toBe(false);
   });
 
+  it("detects a stopword filter regression, which the headline numbers cannot", async () => {
+    const on = await run(true);
+    const byId = new Map(on.results.map((result) => [result.id, result]));
+
+    // The founding purpose of this corpus, and it does not follow from the headline. Delete the
+    // stopword filter and zero-route drops 11% to 4% and recall rises 91% to 96% — the corpus
+    // reports the regression as an improvement. Only precision moves the other way: forbidden
+    // hits 2 to 6, ceilings 2 to 7. These are the assertions that fire.
+    //
+    // Calibrated to what the filter delivers rather than to an ideal. "why", "when" and "how"
+    // are deliberately not stopwords — they head real content — so these probes measure the
+    // marginal reach of the words that are: "and", "we", "this".
+    for (const id of ["stopword-why-and-when", "stopword-how-and-when"]) {
+      expect(byId.get(id)?.overMaxRoutes, `${id} spread past its ceiling`).toBe(false);
+    }
+
+    // Asserted as an exact set. A count alone lets one task stop failing while another starts,
+    // and the two template tasks are expected to exceed their ceilings — that is the known
+    // fan-out this corpus records rather than hides.
+    const overCeiling = on.results.filter((result) => result.overMaxRoutes).map((result) => result.id);
+    expect(overCeiling.sort()).toEqual(["template-constraints", "template-decisions"]);
+
+    const forbidden = on.results.filter((result) => result.forbiddenHits.length > 0).map((r) => r.id);
+    expect(forbidden.sort()).toEqual(["topical-existing-database", "topical-session-expiry"]);
+  });
+
+  it("counts answers that cover the workspace, which the zero-route rate hides", async () => {
+    const off = await run(false);
+    const on = await run(true);
+
+    // A task rescued from silence by selecting every scope improves zeroRouteRate exactly as
+    // much as one rescued by finding the right scope. Three of this corpus's first ten rescues
+    // were of that kind, and nothing in the headline said so.
+    expect(on.wholeWorkspaceCount).toBeGreaterThan(off.wholeWorkspaceCount);
+    expect(on.wholeWorkspaceCount).toBeGreaterThan(0);
+
+    // Measured before the listed budget clips, or every blowout reports as the same size: with
+    // a listed budget of ten, selecting eleven scopes and selecting the whole workspace both
+    // come back as ten routes.
+    const widest = on.results.reduce((most, result) => Math.max(most, result.candidateCount), 0);
+    expect(widest).toBeGreaterThanOrEqual(corpus.scopes.length);
+
+    // Proved under a budget that actually clips. With ten scopes and a listed budget of ten the
+    // two counts are equal for every task, so scoring ceilings against the clipped list looks
+    // identical to scoring them against the candidates — and on a real workspace, where fan-out
+    // runs past the budget, it would silently stop measuring.
+    const clipped = await runCorpus({
+      pool,
+      schemaName,
+      telemetrySchemaName: telemetrySchema,
+      workspaceGuid: bootstrap.workspaceGuid,
+      principalGuid: bootstrap.ownerPrincipalGuid,
+      role: "owner",
+      corpus,
+      recordLexical: true,
+      budget: { listed: 3 },
+    });
+
+    const template = clipped.results.find((result) => result.id === "template-decisions");
+    expect(template?.offeredScopes.length).toBe(3);
+    expect(template?.candidateCount).toBeGreaterThan(3);
+    // Its ceiling is 4. Judged on the clipped three it would pass; judged on the candidates it
+    // does not, and the fan-out is the thing being measured.
+    expect(template?.overMaxRoutes).toBe(true);
+    expect(clipped.wholeWorkspaceCount).toBe(on.wholeWorkspaceCount);
+  });
+
   it("shows the record-lexical trade rather than judging it", async () => {
     const off = await run(false);
     const on = await run(true);
@@ -208,8 +275,41 @@ describe.runIf(await isTestDatabaseReachable())("routing task corpus (real Postg
 
     // And the cost side, which is why it is off by default. Recorded, not asserted as good:
     // this is the trade the gate has to judge, and a test that demanded it be small would be
-    // this document deciding the question it says a person must decide.
+    // this file deciding the question it says a person must decide.
     expect(on.forbiddenHitCount).toBeGreaterThanOrEqual(off.forbiddenHitCount);
+
+    // The aggregate is guarded too. Folding unjudged tasks into the mean silently moved it from
+    // 87% to 77% and every per-task assertion still passed, because they are all per-task.
+    const judged = on.results.filter((result) => result.recall !== undefined);
+    const byHand = judged.reduce((total, result) => total + (result.recall ?? 0), 0) / judged.length;
+    expect(on.meanRecall).toBeCloseTo(byHand, 10);
+    expect(judged.length).toBeLessThan(on.taskCount);
+  });
+
+  it("pins the topical expectations the lexical signal is supposed to satisfy", async () => {
+    const on = await run(true);
+    const byId = new Map(on.results.map((result) => [result.id, result]));
+
+    // Without these, renaming the fixture's topical headings moves the headline from 91% to 76%
+    // and nothing fails: the only pinned tasks name their scope in the task text, so they match
+    // on the slug and never exercise record-lexical at all.
+    for (const id of [
+      "topical-bearer-token",
+      "topical-secrets-in-logs",
+      "topical-quote-resolve",
+      "topical-ranker",
+      "topical-conflict-detection",
+    ]) {
+      expect(byId.get(id)?.recall, `${id} stopped reaching its scope through a heading`).toBe(1);
+    }
+
+    // And the two expected to fail, pinned in the other direction. Matching is whole-word with
+    // no stemming, so "resolve" misses "Identity Resolution" and "reviews" misses "Review Before
+    // Apply". If either starts passing, something real changed and the corpus should say so
+    // rather than quietly absorb it into a better-looking mean.
+    for (const id of ["topical-identity", "topical-review-flow"]) {
+      expect(byId.get(id)?.recall, `${id} now matches; stemming appeared, update the corpus`).toBe(0);
+    }
   });
 
   it("gives the lexical signal topical headings to reach, not only the shared template", async () => {
