@@ -29,7 +29,13 @@ function toolForTest(server: unknown, name: string): RegisteredToolForTest {
 }
 
 function parseToolInput(tool: RegisteredToolForTest, input: unknown): unknown {
-  return tool.inputSchema?.parse(input) ?? input;
+  if (!tool.inputSchema) {
+    throw new Error(
+      "A tool advertising no input schema cannot receive arguments from a client, so falling " +
+        "back to the raw input here would silently restore the gap parsing exists to close.",
+    );
+  }
+  return tool.inputSchema.parse(input);
 }
 
 describe("MCP request logging", () => {
@@ -283,7 +289,8 @@ describe("MCP request logging", () => {
     const { logger, events } = requestLoggerForTest();
     const server = createAnchorMcpServer(service, { requestLogger: logger });
 
-    await toolForTest(server, "readAnchor").handler({ name: "shared/example.md" }, {});
+    const readAnchor = toolForTest(server, "readAnchor");
+    await readAnchor.handler(parseToolInput(readAnchor, { name: "shared/example.md" }), {});
 
     expect(events).toHaveLength(1);
     expect(events[0]).toMatchObject({
@@ -304,7 +311,10 @@ describe("MCP request logging", () => {
     const { logger, events } = requestLoggerForTest();
     const server = createAnchorMcpServer(service, { requestLogger: logger });
 
-    await expect(toolForTest(server, "readAnchor").handler({ name: "shared/example.md" }, {})).rejects.toThrow(
+    const readAnchorTool = toolForTest(server, "readAnchor");
+    await expect(
+      readAnchorTool.handler(parseToolInput(readAnchorTool, { name: "shared/example.md" }), {}),
+    ).rejects.toThrow(
       "read failed",
     );
 

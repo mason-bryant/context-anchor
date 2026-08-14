@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import type { AnchorService } from "../../src/anchorService.js";
 import { createAnchorMcpServer } from "../../src/server.js";
+import { callTool, type ToolRegistry } from "../mcpToolHarness.js";
 import type { ScopeSummary } from "../../src/db/knowledgeDb.js";
 
 type AdvertisedServer = {
@@ -126,7 +127,7 @@ describe("listScopeChanges tool registration", () => {
 
     expect(server._registeredTools.listScopeChanges).toBeDefined();
 
-    const result = (await server._registeredTools.listScopeChanges!.handler({
+    const result = (await callTool(server as unknown as ToolRegistry, "listScopeChanges", {
       scope: "http-transport",
       since: "7d",
     })) as { structuredContent: { changes: unknown[] } };
@@ -161,12 +162,18 @@ describe("listScopeChanges tool registration", () => {
     // so the test passed identically with the schema field deleted. Zod strips unknown keys,
     // so parsing is the step that decides whether an MCP client can set this at all.
     const schema = server._registeredTools.planRoutedBundle!.inputSchema!;
+    // Asserted on the parse output as well as through the harness: this test is specifically
+    // about whether the SCHEMA carries the field, so it checks the parsed value directly and
+    // then confirms the same input reaches the planner when sent the way a client sends it.
     const parsed = schema.parse({ task: "logging retention", recordLexical: true }) as {
       recordLexical?: boolean;
     };
     expect(parsed.recordLexical).toBe(true);
 
-    await server._registeredTools.planRoutedBundle!.handler(parsed);
+    await callTool(server as unknown as ToolRegistry, "planRoutedBundle", {
+      task: "logging retention",
+      recordLexical: true,
+    });
     expect(received?.recordLexical).toBe(true);
 
     // Omitted, not defaulted to false — asserted on the parsed schema output, which is exactly
@@ -182,8 +189,37 @@ describe("listScopeChanges tool registration", () => {
     const bare = schema.parse({ task: "logging retention" }) as Record<string, unknown>;
     expect(Object.hasOwn(bare, "recordLexical")).toBe(false);
 
-    await server._registeredTools.planRoutedBundle!.handler(bare);
+    await callTool(server as unknown as ToolRegistry, "planRoutedBundle", { task: "logging retention" });
     expect(received?.recordLexical).toBeUndefined();
+  });
+
+  it("rejects input the tool schema forbids, which calling the handler directly does not", async () => {
+    // The reason callTool exists, and a case only parsing can catch. An undeclared field proves
+    // nothing -- the handler destructures named fields, so it drops unknown keys whether or not
+    // Zod ran. Validation is different: the schema refuses a malformed commit sha, and a test
+    // that skips it happily exercises the tool with input no client could send.
+    //
+    // My first version of this test asserted the undeclared-field case, and passed with parsing
+    // removed. That is the exact defect this helper exists to prevent, written into its own
+    // test.
+    const server = createAnchorMcpServer({} as AnchorService, {
+      knowledgeDb: {
+        ...WRITE_STUBS,
+        listScopesForOwner: async () => SAMPLE_SCOPES,
+        listScopeChangesForOwner: async () => [],
+        importDocumentsAsOwner: async () => SAMPLE_REPORT,
+        planRoutedBundleAsOwner: async () => SAMPLE_PLAN,
+        reportRecordUseAsOwner: async () => ({ recorded: 0, rejected: [] }),
+      },
+    }) as unknown as AdvertisedServer;
+
+    await expect(
+      callTool(server as unknown as ToolRegistry, "importDocuments", {
+        repository: "context-anchor",
+        commitSha: "not-a-sha",
+        files: [{ path: "docs/a.md", content: "# A\n" }],
+      }),
+    ).rejects.toThrow(/40-character git SHA/);
   });
 
   it("trims scope and since at the schema, so a padded value resolves instead of failing downstream", () => {
@@ -336,7 +372,7 @@ describe("listScopes tool registration", () => {
     ).toMatchObject({ retireAbsentUnder: [""] });
     expect(server._registeredTools.reportRecordUse).toBeDefined();
 
-    const result = (await server._registeredTools.listScopes!.handler({ traceId: undefined })) as {
+    const result = (await callTool(server as unknown as ToolRegistry, "listScopes", {})) as {
       structuredContent: { scopes: ScopeSummary[] };
     };
     expect(result.structuredContent.scopes).toEqual(SAMPLE_SCOPES);
@@ -366,7 +402,7 @@ describe("importDocuments tool registration", () => {
 
     expect(server._registeredTools.importDocuments).toBeDefined();
 
-    const result = (await server._registeredTools.importDocuments!.handler({
+    const result = (await callTool(server as unknown as ToolRegistry, "importDocuments", {
       repository: "context-anchor",
       commitSha: "a".repeat(40),
       files: [{ path: "docs/a.md", content: "# A\n" }],
@@ -390,7 +426,7 @@ describe("importDocuments tool registration", () => {
       },
     }) as unknown as AdvertisedServer;
 
-    await server._registeredTools.importDocuments!.handler({
+    await callTool(server as unknown as ToolRegistry, "importDocuments", {
       repository: "context-anchor",
       commitSha: "a".repeat(40),
       files: [{ path: "docs/a.md", content: "# A\n" }],
