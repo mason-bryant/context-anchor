@@ -15,6 +15,34 @@ type AdvertisedServer = {
   >;
 };
 
+/**
+ * Invokes a registered tool the way an MCP client does: through its input schema, then its
+ * handler.
+ *
+ * Calling the handler directly proves nothing about the tool's surface. Handlers destructure
+ * whatever object they are given, so a test asserting a field reaches the facade passes
+ * unchanged when that field is deleted from the Zod schema — and Zod strips unknown keys, so
+ * parsing is the step that decides whether a client can send it at all. That is not
+ * hypothetical: it hid `recordLexical` being unreachable twice, on consecutive PRs.
+ *
+ * Parsing also means a test cannot smuggle in a value the schema would reject, so the fixtures
+ * below are held to the same contract as a caller.
+ */
+async function callTool(
+  server: AdvertisedServer,
+  name: string,
+  input: Record<string, unknown>,
+): Promise<unknown> {
+  const tool = server._registeredTools[name];
+  if (!tool) {
+    throw new Error(`Tool ${name} is not registered`);
+  }
+  if (!tool.inputSchema) {
+    throw new Error(`Tool ${name} advertises no input schema, so a client could send it nothing`);
+  }
+  return tool.handler(tool.inputSchema.parse(input));
+}
+
 const SAMPLE_REPORT = {
   batchGuid: "b1",
   documentsImported: 1,
@@ -126,7 +154,7 @@ describe("listScopeChanges tool registration", () => {
 
     expect(server._registeredTools.listScopeChanges).toBeDefined();
 
-    const result = (await server._registeredTools.listScopeChanges!.handler({
+    const result = (await callTool(server, "listScopeChanges", {
       scope: "http-transport",
       since: "7d",
     })) as { structuredContent: { changes: unknown[] } };
@@ -184,6 +212,35 @@ describe("listScopeChanges tool registration", () => {
 
     await server._registeredTools.planRoutedBundle!.handler(bare);
     expect(received?.recordLexical).toBeUndefined();
+  });
+
+  it("rejects input the tool schema forbids, which calling the handler directly does not", async () => {
+    // The reason callTool exists, and a case only parsing can catch. An undeclared field proves
+    // nothing -- the handler destructures named fields, so it drops unknown keys whether or not
+    // Zod ran. Validation is different: the schema refuses a malformed commit sha, and a test
+    // that skips it happily exercises the tool with input no client could send.
+    //
+    // My first version of this test asserted the undeclared-field case, and passed with parsing
+    // removed. That is the exact defect this helper exists to prevent, written into its own
+    // test.
+    const server = createAnchorMcpServer({} as AnchorService, {
+      knowledgeDb: {
+        ...WRITE_STUBS,
+        listScopesForOwner: async () => SAMPLE_SCOPES,
+        listScopeChangesForOwner: async () => [],
+        importDocumentsAsOwner: async () => SAMPLE_REPORT,
+        planRoutedBundleAsOwner: async () => SAMPLE_PLAN,
+        reportRecordUseAsOwner: async () => ({ recorded: 0, rejected: [] }),
+      },
+    }) as unknown as AdvertisedServer;
+
+    await expect(
+      callTool(server, "importDocuments", {
+        repository: "context-anchor",
+        commitSha: "not-a-sha",
+        files: [{ path: "docs/a.md", content: "# A\n" }],
+      }),
+    ).rejects.toThrow(/40-character git SHA/);
   });
 
   it("trims scope and since at the schema, so a padded value resolves instead of failing downstream", () => {
@@ -336,7 +393,7 @@ describe("listScopes tool registration", () => {
     ).toMatchObject({ retireAbsentUnder: [""] });
     expect(server._registeredTools.reportRecordUse).toBeDefined();
 
-    const result = (await server._registeredTools.listScopes!.handler({ traceId: undefined })) as {
+    const result = (await callTool(server, "listScopes", {})) as {
       structuredContent: { scopes: ScopeSummary[] };
     };
     expect(result.structuredContent.scopes).toEqual(SAMPLE_SCOPES);
@@ -366,7 +423,7 @@ describe("importDocuments tool registration", () => {
 
     expect(server._registeredTools.importDocuments).toBeDefined();
 
-    const result = (await server._registeredTools.importDocuments!.handler({
+    const result = (await callTool(server, "importDocuments", {
       repository: "context-anchor",
       commitSha: "a".repeat(40),
       files: [{ path: "docs/a.md", content: "# A\n" }],
@@ -390,7 +447,7 @@ describe("importDocuments tool registration", () => {
       },
     }) as unknown as AdvertisedServer;
 
-    await server._registeredTools.importDocuments!.handler({
+    await callTool(server, "importDocuments", {
       repository: "context-anchor",
       commitSha: "a".repeat(40),
       files: [{ path: "docs/a.md", content: "# A\n" }],
