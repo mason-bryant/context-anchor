@@ -167,6 +167,11 @@ async function main(): Promise<void> {
   // this apart from a real workspace at a glance.
   const schemaName = args.schema ?? `knowledge_corpus_${Date.now().toString(36)}`;
 
+  // Resolved once and reused. Seeding needs it to attribute the import, and the run needs it to
+  // plan as somebody; calling it twice in seed mode was two round trips and two places for the
+  // identity to come from.
+  let identity: { workspaceGuid: string; ownerPrincipalGuid: string } | undefined;
+
   try {
     if (args.seed) {
       const root = path.resolve(scriptDir, "..");
@@ -175,13 +180,13 @@ async function main(): Promise<void> {
         schemaName: telemetrySchemaNameFor(schemaName),
         migrationsDir: path.join(root, "migrations", "telemetry"),
       });
-      const bootstrap = await ensureBootstrap(pool, { schemaName });
+      identity = await ensureBootstrap(pool, { schemaName });
       await importDocuments({
         pool,
         schemaName,
         handler: new CommandHandler(pool, schemaName),
-        workspaceGuid: bootstrap.workspaceGuid,
-        actorPrincipalGuid: bootstrap.ownerPrincipalGuid,
+        workspaceGuid: identity.workspaceGuid,
+        actorPrincipalGuid: identity.ownerPrincipalGuid,
         repository: "agent-context",
         commitSha: "c".repeat(40),
         files: corpus.scopes.map((scope) => ({
@@ -205,9 +210,7 @@ async function main(): Promise<void> {
     // "default" it would quietly mint a second, empty workspace and then measure 100% zero-route
     // against it — a measurement tool reporting total failure because it created the thing it
     // measured. The only tell would be a density of 0 of 0.
-    const identity = args.seed
-      ? await ensureBootstrap(pool, { schemaName })
-      : await readWorkspace(pool, schemaName);
+    identity ??= await readWorkspace(pool, schemaName);
 
     const report = await runCorpus({
       pool,
