@@ -7,7 +7,7 @@ import pg from "pg";
 
 import { ensureBootstrap } from "../src/db/bootstrap.js";
 import { CommandHandler } from "../src/db/commandHandler.js";
-import { telemetrySchemaNameFor } from "../src/db/config.js";
+import { assertValidSchemaName, telemetrySchemaNameFor } from "../src/db/config.js";
 import { COMPOSE_MANAGED_DATABASE_URL } from "../src/db/cliArgs.js";
 import { importDocuments } from "../src/db/importDocuments.js";
 import { runMigrations } from "../src/db/migrate.js";
@@ -166,6 +166,12 @@ async function main(): Promise<void> {
   // Named for what it is, so an operator reading pg_stat_activity or a stray schema can tell
   // this apart from a real workspace at a glance.
   const schemaName = args.schema ?? `knowledge_corpus_${Date.now().toString(36)}`;
+  // Before any query runs, and before the DROP in particular. `--schema` is caller text, and a
+  // name carrying a quote would not merely read the wrong schema — the cleanup path would drop
+  // one. The generated name is validated too: it costs nothing and stops the guard from being
+  // something only the untrusted branch gets.
+  assertValidSchemaName(schemaName);
+  assertValidSchemaName(telemetrySchemaNameFor(schemaName));
 
   // Resolved once and reused. Seeding needs it to attribute the import, and the run needs it to
   // plan as somebody; calling it twice in seed mode was two round trips and two places for the

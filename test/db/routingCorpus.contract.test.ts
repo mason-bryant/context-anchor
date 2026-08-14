@@ -76,8 +76,41 @@ describe.runIf(await isTestDatabaseReachable())("routing task corpus (real Postg
       principalGuid: bootstrap.ownerPrincipalGuid,
       role: "owner",
       corpus,
-    ...(recordLexical ? { recordLexical: true } : {}),
+      ...(recordLexical ? { recordLexical: true } : {}),
     });
+
+  it("refuses a schema name that would reach SQL as an identifier", async () => {
+    // Postgres cannot parameterize an identifier, so every schema name here is interpolated, and
+    // this one arrives from a --schema flag as readily as from a test. The cleanup path makes it
+    // worse than a bad read: a crafted name would drop the wrong schema.
+    await expect(
+      runCorpus({
+        pool,
+        schemaName: 'evil"; DROP SCHEMA public CASCADE; --',
+        telemetrySchemaName: telemetrySchema,
+        workspaceGuid: bootstrap.workspaceGuid,
+        principalGuid: bootstrap.ownerPrincipalGuid,
+        role: "owner",
+        corpus,
+      }),
+    ).rejects.toThrow(/Invalid database schemaName/);
+
+    // The telemetry name travels to the planner rather than through anything in corpus.ts, so
+    // validating only the knowledge schema would leave it unchecked.
+    await expect(
+      runCorpus({
+        pool,
+        schemaName,
+        telemetrySchemaName: 'evil"; DROP SCHEMA public CASCADE; --',
+        workspaceGuid: bootstrap.workspaceGuid,
+        principalGuid: bootstrap.ownerPrincipalGuid,
+        role: "owner",
+        corpus,
+      }),
+      // Matched on the guard's own message, not on "it threw". Bad SQL throws too, so a bare
+      // toThrow() passes with the guard deleted — which is exactly what it did.
+    ).rejects.toThrow(/Invalid database schemaName/);
+  });
 
   it("holds a corpus large enough for the gate to accept, with judgements recorded", () => {
     // The gate criteria, checked on the file rather than assumed by whoever runs it. A corpus

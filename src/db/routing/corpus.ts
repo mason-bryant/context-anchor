@@ -1,6 +1,7 @@
 import type { Pool } from "pg";
 
 import type { WorkspaceRole } from "../access.js";
+import { assertValidSchemaName } from "../config.js";
 import type { ScopeKind } from "../scopeDerivation.js";
 import { planRoutedBundle, type PlanResult } from "./plan.js";
 
@@ -178,6 +179,13 @@ export type CorpusRunInput = {
 };
 
 export async function runCorpus(input: CorpusRunInput): Promise<CorpusReport> {
+  // Both, at the entry point. Postgres cannot parameterize an identifier, so every schema name
+  // reaching SQL here is interpolated — and this one arrives from a CLI flag as readily as from
+  // a test. Validating inside measureDensity alone would leave the telemetry name, which travels
+  // to the planner rather than through anything in this file.
+  assertValidSchemaName(input.schemaName);
+  assertValidSchemaName(input.telemetrySchemaName);
+
   const scored = input.scored ?? true;
   const results: CorpusTaskResult[] = [];
 
