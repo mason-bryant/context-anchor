@@ -28,6 +28,16 @@ type: context-anchor
 - Rate limiting belongs in the transport.
 `;
 
+/**
+ * Record-lexical reasons only. Scope-name matching emits `task term "x" matched scope <slug>`,
+ * which shares the "task term" prefix, so filtering on that alone mixes two signals — and
+ * `anchor-mcp` carries the alias `context-conductor`, so a task containing "context" really can
+ * produce both. A test asserting a term is absent from record-lexical evidence would then pass
+ * or fail on the wrong signal.
+ */
+const recordLexicalReasons = (routes: Array<{ matchReasons: string[] }>): string[] =>
+  routes.flatMap((route) => route.matchReasons).filter((reason) => / title[s]?[ :]/.test(reason));
+
 describe.runIf(await isTestDatabaseReachable())("planRoutedBundle (real Postgres)", () => {
   let pool: Pool;
   let schemaName: string;
@@ -167,7 +177,7 @@ describe.runIf(await isTestDatabaseReachable())("planRoutedBundle (real Postgres
 
       const result = await plan("decisions", { recordLexical: true });
       const reasons = result.routes.flatMap((route) =>
-        route.matchReasons.filter((reason) => reason.includes("task term")),
+        route.matchReasons.filter((reason) => / title[s]?[ :]/.test(reason)),
       );
 
       expect(reasons).toHaveLength(1);
@@ -203,7 +213,7 @@ describe.runIf(await isTestDatabaseReachable())("planRoutedBundle (real Postgres
       const result = await plan("decisions logging", { recordLexical: true });
       const reason = result.routes
         .flatMap((route) => route.matchReasons)
-        .find((text) => text.includes("task term"))!;
+        .find((text) => / title[s]?[ :]/.test(text))!;
 
       expect(reason).toBeDefined();
       // A single heading matched by both terms, so the count is one either way — what changes is
@@ -239,7 +249,7 @@ describe.runIf(await isTestDatabaseReachable())("planRoutedBundle (real Postgres
       });
 
       const result = await plan("the and of to", { recordLexical: true });
-      const reasons = result.routes.flatMap((route) => route.matchReasons).filter((r) => r.includes("task term"));
+      const reasons = recordLexicalReasons(result.routes);
 
       expect(reasons).toEqual([]);
     });
@@ -270,7 +280,7 @@ describe.runIf(await isTestDatabaseReachable())("planRoutedBundle (real Postgres
       });
 
       const result = await plan("context provenance", { recordLexical: true });
-      const reasons = result.routes.flatMap((r) => r.matchReasons).filter((r) => r.includes("task term"));
+      const reasons = recordLexicalReasons(result.routes);
 
       expect(reasons.length).toBeGreaterThan(0);
       // The ubiquitous term cannot appear in any surviving reason.
