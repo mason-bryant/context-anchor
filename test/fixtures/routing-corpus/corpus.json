@@ -1,0 +1,596 @@
+{
+  "version": "routing-corpus-1.0.0",
+  "notes": [
+    "Every scope carries the same four H2 headings. That is not filler: it is the structure that",
+    "defeated the scope-frequency rule (T-51, PR #127 closed unmerged). Template vocabulary",
+    "reaches every scope by construction while topical vocabulary concentrates, and a corpus",
+    "without that shape cannot measure the failure it exists to measure.",
+    "Expectations are written against this fixture and do not transfer to a real workspace.",
+    "Running the corpus elsewhere reports zero-route rate and fan-out, never recall.",
+    "Each scope owns projects/<scope>/<scope>.md, because the importer derives a document's scope from its path. Ten documents under one project would import as one scope, and the fan-out this corpus measures would have nothing to fan out across.",
+    "Each scope also carries topical H3 headings alongside the shared template. Both halves are needed: the template reproduces the vocabulary that reaches every scope, and the topical headings give the record-lexical signal something to match. A fixture with only the template measures a workspace nobody has -- record-lexical never reads body text, so all the topical content would be invisible to it and the signal would score as useless.",
+    "Six scopes carry headings built from function words ('Why We Require...', 'When And How...'). Without them the stopword filter could be deleted and this corpus would report an improvement -- the failure it was built to preserve would be undetectable in it.",
+    "Two tasks are expected to fail and are pinned that way: topical-identity and topical-review-flow both miss on stemming ('resolve' vs 'Resolution', 'reviews' vs 'Review'). A corpus holding only tasks the code already satisfies measures nothing.",
+    "Forbidden sets name scopes the signal actually reaches, not scopes it was never going to. Drawn the easy way they are all satisfiable and the precision headline reads better than the truth: only 2 of 12 could ever fire before this.",
+    "Some topical- tasks reach their scope by its slug rather than by a heading, and say so in their rationale. The prefix describes the phrasing, not the mechanism, and the signal-off recall of 48% is mostly those."
+  ],
+  "scopes": [
+    {
+      "scope": "anchor-mcp",
+      "title": "Anchor MCP",
+      "kind": "domain",
+      "currentState": [
+        "The server speaks MCP over stdio and HTTP."
+      ],
+      "decisions": [
+        "The HTTP transport is the primary one; stdio is secondary."
+      ],
+      "constraints": [
+        "Every tool must work on both transports."
+      ],
+      "topics": [
+        {
+          "heading": "Transport Parity",
+          "bullets": [
+            "Both transports expose the same tool surface."
+          ]
+        }
+      ]
+    },
+    {
+      "scope": "http-transport",
+      "title": "HTTP Transport",
+      "kind": "domain",
+      "partOf": "anchor-mcp",
+      "currentState": [
+        "The HTTP transport requires a bearer token."
+      ],
+      "decisions": [
+        "Rate limiting belongs in the transport, not in each tool."
+      ],
+      "constraints": [
+        "Sessions expire after one hour of inactivity."
+      ],
+      "topics": [
+        {
+          "heading": "Bearer Token Authentication",
+          "bullets": [
+            "Every request carries a bearer token."
+          ]
+        },
+        {
+          "heading": "Session Expiry",
+          "bullets": [
+            "An idle session expires after one hour."
+          ]
+        },
+        {
+          "heading": "Why We Require A Token On Every Request",
+          "bullets": [
+            "Anonymous calls cannot be attributed."
+          ]
+        }
+      ]
+    },
+    {
+      "scope": "logging",
+      "title": "Logging",
+      "kind": "domain",
+      "currentState": [
+        "File logging is bounded by both size and retention."
+      ],
+      "decisions": [
+        "Structured JSON lines, never free-form text."
+      ],
+      "constraints": [
+        "No secret or credential may appear in log output."
+      ],
+      "topics": [
+        {
+          "heading": "Log Output Redaction",
+          "bullets": [
+            "Credentials and secrets are redacted before write."
+          ]
+        },
+        {
+          "heading": "File Size Bounds",
+          "bullets": [
+            "Rotation is driven by size and age together."
+          ]
+        },
+        {
+          "heading": "When And How Rotation Happens",
+          "bullets": [
+            "Rotation runs on size and on age."
+          ]
+        }
+      ]
+    },
+    {
+      "scope": "claim-provenance",
+      "title": "Claim Provenance",
+      "kind": "domain",
+      "currentState": [
+        "Every claim carries a citation to the exact source text."
+      ],
+      "decisions": [
+        "A claim authored without provenance is refused."
+      ],
+      "constraints": [
+        "A quote must re-resolve against the block it cites."
+      ],
+      "topics": [
+        {
+          "heading": "Citation Quote Resolution",
+          "bullets": [
+            "A quote must re-resolve to exact offsets."
+          ]
+        },
+        {
+          "heading": "Conflict Detection Between Claims",
+          "bullets": [
+            "Contradictions surface even across scopes."
+          ]
+        },
+        {
+          "heading": "Why A Claim And Its Source Travel Together",
+          "bullets": [
+            "Provenance is not a separate record."
+          ]
+        }
+      ]
+    },
+    {
+      "scope": "retention",
+      "title": "Retention",
+      "kind": "domain",
+      "currentState": [
+        "Telemetry is kept for ninety days and then thinned."
+      ],
+      "decisions": [
+        "Retention thinning runs against telemetry, never knowledge."
+      ],
+      "constraints": [
+        "Thinning must not require write access to knowledge."
+      ],
+      "topics": [
+        {
+          "heading": "Ninety Day Thinning",
+          "bullets": [
+            "Telemetry older than ninety days is thinned."
+          ]
+        }
+      ]
+    },
+    {
+      "scope": "routing",
+      "title": "Routed Retrieval",
+      "kind": "domain",
+      "partOf": "anchor-mcp",
+      "currentState": [
+        "Routes are selected by path mapping, lexical match, and relation hops."
+      ],
+      "decisions": [
+        "Ranking is tiered rather than weighted."
+      ],
+      "constraints": [
+        "A ranker may reorder and drop, never invent."
+      ],
+      "topics": [
+        {
+          "heading": "Ranker Ordering",
+          "bullets": [
+            "Tiers, not weights: distinct signals, then strongest."
+          ]
+        },
+        {
+          "heading": "Reorder And Drop, Never Invent",
+          "bullets": [
+            "A ranker returns a permutation of a subset."
+          ]
+        },
+        {
+          "heading": "When To Fall Back To The Legacy Planner",
+          "bullets": [
+            "Only when routing returns nothing at all."
+          ]
+        }
+      ]
+    },
+    {
+      "scope": "people-registry",
+      "title": "People Registry",
+      "kind": "domain",
+      "currentState": [
+        "People and teams resolve from slack ids, emails, and display names."
+      ],
+      "decisions": [
+        "A task owner is a person or a team, never a free string."
+      ],
+      "constraints": [
+        "An unknown identity is an error, not an empty result."
+      ],
+      "topics": [
+        {
+          "heading": "Identity Resolution",
+          "bullets": [
+            "Slack ids, emails and display names resolve to one person."
+          ]
+        }
+      ]
+    },
+    {
+      "scope": "proposals",
+      "title": "Proposed Changes",
+      "kind": "domain",
+      "currentState": [
+        "A proposal is reviewed before it is applied."
+      ],
+      "decisions": [
+        "Review and apply are separate operations."
+      ],
+      "constraints": [
+        "An applied proposal cannot be edited afterwards."
+      ],
+      "topics": [
+        {
+          "heading": "Review Before Apply",
+          "bullets": [
+            "A proposal is reviewed, then applied, never both at once."
+          ]
+        },
+        {
+          "heading": "Why Review And Apply Are Separate",
+          "bullets": [
+            "A reviewer must be able to decline."
+          ]
+        }
+      ]
+    },
+    {
+      "scope": "telemetry",
+      "title": "Telemetry",
+      "kind": "domain",
+      "currentState": [
+        "Impressions and record uses are written on every routed request."
+      ],
+      "decisions": [
+        "Telemetry lives in its own schema, not in knowledge."
+      ],
+      "constraints": [
+        "Telemetry writes must never fail a retrieval."
+      ],
+      "topics": [
+        {
+          "heading": "Separate Telemetry Schema",
+          "bullets": [
+            "Retention can thin telemetry without touching knowledge."
+          ]
+        },
+        {
+          "heading": "Write Failure Isolation",
+          "bullets": [
+            "A telemetry write must never fail a retrieval."
+          ]
+        }
+      ]
+    },
+    {
+      "scope": "migrations",
+      "title": "Schema Migrations",
+      "kind": "domain",
+      "currentState": [
+        "Migrations are numbered files applied in one transaction each."
+      ],
+      "decisions": [
+        "Forward-only; no down migrations."
+      ],
+      "constraints": [
+        "A migration must be safe to apply to an existing database."
+      ],
+      "topics": [
+        {
+          "heading": "Forward Only Migrations",
+          "bullets": [
+            "No down migrations; roll forward instead."
+          ]
+        },
+        {
+          "heading": "Safe On An Existing Database",
+          "bullets": [
+            "Each migration must apply to a populated database."
+          ]
+        },
+        {
+          "heading": "How And When To Roll Forward",
+          "bullets": [
+            "Fix forward; never write a down migration."
+          ]
+        }
+      ]
+    }
+  ],
+  "tasks": [
+    {
+      "id": "scope-named-transport",
+      "task": "add rate limiting to the http transport",
+      "expectedScopes": [
+        "http-transport"
+      ],
+      "rationale": "Names the scope outright. If this misses, lexical matching is broken outright."
+    },
+    {
+      "id": "scope-named-logging",
+      "task": "change the logging format",
+      "expectedScopes": [
+        "logging"
+      ],
+      "rationale": "Scope name in the task."
+    },
+    {
+      "id": "topical-retention",
+      "task": "logging retention",
+      "expectedScopes": [
+        "logging",
+        "retention"
+      ],
+      "rationale": "Two scope names, both relevant. The one case the record-lexical run got exactly right."
+    },
+    {
+      "id": "topical-bearer-token",
+      "task": "why does every request need a bearer token",
+      "expectedScopes": [
+        "http-transport"
+      ],
+      "forbiddenScopes": [
+        "claim-provenance",
+        "logging",
+        "migrations",
+        "proposals",
+        "retention"
+      ],
+      "rationale": "Names no scope. The heading text is the only route in. This is the T-45 shape."
+    },
+    {
+      "id": "topical-session-expiry",
+      "task": "how long before a session expires",
+      "expectedScopes": [
+        "http-transport"
+      ],
+      "forbiddenScopes": [
+        "logging",
+        "migrations"
+      ],
+      "rationale": "Topical, no scope name."
+    },
+    {
+      "id": "topical-secrets-in-logs",
+      "task": "make sure credentials never end up in log output",
+      "expectedScopes": [
+        "logging"
+      ],
+      "forbiddenScopes": [
+        "claim-provenance",
+        "migrations",
+        "proposals"
+      ],
+      "rationale": "Topical, and the relevant text sits under a Constraints heading."
+    },
+    {
+      "id": "topical-citation",
+      "task": "claim provenance and citations",
+      "expectedScopes": [
+        "claim-provenance"
+      ],
+      "forbiddenScopes": [
+        "logging",
+        "retention"
+      ],
+      "rationale": "Reached five headings all about provenance in the real run. Expected to reach exactly the provenance scope here; anything else is a term leaking through a scope title.",
+      "maxRoutes": 2
+    },
+    {
+      "id": "topical-quote-resolve",
+      "task": "verify a quote still resolves against its source block",
+      "expectedScopes": [
+        "claim-provenance"
+      ],
+      "rationale": "Topical phrasing of a constraint."
+    },
+    {
+      "id": "topical-thinning",
+      "task": "nothing is thinning the ninety day telemetry",
+      "expectedScopes": [
+        "retention",
+        "telemetry"
+      ],
+      "rationale": "Spans two scopes, both genuinely relevant."
+    },
+    {
+      "id": "topical-ranker",
+      "task": "should the ranker be weighted instead of tiered",
+      "expectedScopes": [
+        "routing"
+      ],
+      "forbiddenScopes": [
+        "logging",
+        "migrations",
+        "people-registry"
+      ],
+      "rationale": "Topical, names a decision."
+    },
+    {
+      "id": "topical-reorder-drop",
+      "task": "can a ranker invent routes that did not match",
+      "expectedScopes": [
+        "routing"
+      ],
+      "rationale": "Carried by 'ranker' and 'invent' matching the routing scope, not by the question word. An earlier rationale claimed it guarded the stopword list against stripping questions to nothing; it does not, and it passes with every question word filtered. stopword-only-terms is the task that guards the filter."
+    },
+    {
+      "id": "topical-identity",
+      "task": "resolve a person from their slack id",
+      "expectedScopes": [
+        "people-registry"
+      ],
+      "forbiddenScopes": [
+        "migrations",
+        "telemetry"
+      ],
+      "rationale": "Expected to fail, and kept because it does. The task says 'resolve' and the heading says 'Identity Resolution': matching is whole-word with no stemming, so they do not meet. This is a real limitation of the signal rather than a fixture accident, and a corpus that only held tasks the code already satisfies would measure nothing. Its recall counts against the mean on purpose."
+    },
+    {
+      "id": "scope-named-people",
+      "task": "people and teams registry",
+      "expectedScopes": [
+        "people-registry"
+      ],
+      "forbiddenScopes": [
+        "logging",
+        "migrations",
+        "telemetry",
+        "proposals"
+      ],
+      "rationale": "The task whose term \"and\" reached 15 of 23 scopes before stopwords were filtered."
+    },
+    {
+      "id": "topical-review-flow",
+      "task": "who reviews a change before it is applied",
+      "expectedScopes": [
+        "proposals"
+      ],
+      "forbiddenScopes": [
+        "logging",
+        "retention"
+      ],
+      "rationale": "Expected to fail, for the same reason as topical-identity: 'reviews' and 'applied' do not match the headings 'Review Before Apply' and 'Why Review And Apply Are Separate', because matching is whole-word with no stemming. Two of twenty-eight tasks fail this way, which is the size of the gap and is worth knowing."
+    },
+    {
+      "id": "scope-named-proposals",
+      "task": "proposals and review",
+      "expectedScopes": [
+        "proposals"
+      ],
+      "forbiddenScopes": [
+        "logging",
+        "migrations",
+        "retention",
+        "telemetry"
+      ],
+      "rationale": "Went from 2 routes to 15 of 23 in the real run. Ceiled here so widening is measured rather than described: the interesting number is how far 'and' carries once the title no longer supplies it.",
+      "maxRoutes": 3
+    },
+    {
+      "id": "topical-forward-only",
+      "task": "why are there no down migrations",
+      "expectedScopes": [
+        "migrations"
+      ],
+      "rationale": "Names its scope: 'migrations' is the slug, so this scores with the signal off and is not a test of topical phrasing. Kept for the baseline, labelled so the 48% signal-off recall is not read as topical matching working better than it does."
+    },
+    {
+      "id": "topical-existing-database",
+      "task": "is this migration safe to apply to a database that already has data",
+      "expectedScopes": [
+        "migrations"
+      ],
+      "forbiddenScopes": [
+        "people-registry",
+        "proposals"
+      ],
+      "rationale": "Long realistic phrasing with many common words."
+    },
+    {
+      "id": "topical-telemetry-schema",
+      "task": "why is telemetry in a separate schema",
+      "expectedScopes": [
+        "telemetry"
+      ],
+      "rationale": "Also names its scope ('telemetry'), and scores with the signal off. Same caveat as topical-forward-only: the topical- prefix here describes the phrasing, not the mechanism."
+    },
+    {
+      "id": "topical-write-failure",
+      "task": "what happens if a telemetry write fails during retrieval",
+      "expectedScopes": [
+        "telemetry",
+        "routing"
+      ],
+      "rationale": "Genuinely spans two scopes."
+    },
+    {
+      "id": "template-decisions",
+      "task": "decisions",
+      "maxRoutes": 4,
+      "rationale": "Every scope has a Decisions heading. The term the frequency rule took from 23 routes to zero. Ceiled at 4 of 10 scopes: routing a bare template word to most of the workspace is the fan-out failure, and this is expected to exceed it today. The ceiling is here to keep that visible and to fail if it ever gets worse."
+    },
+    {
+      "id": "template-constraints",
+      "task": "what are the current constraints",
+      "maxRoutes": 4,
+      "rationale": "Template vocabulary in a realistic phrasing, ceiled for the same reason as template-decisions."
+    },
+    {
+      "id": "cross-scope-transport-logging",
+      "task": "log every request on the http transport",
+      "expectedScopes": [
+        "http-transport",
+        "logging"
+      ],
+      "rationale": "Two scope names, except that 'log' does not match 'logging' under whole-word matching -- logging is reached through the heading 'Log Output Redaction', and is missed entirely with the signal off. Kept as written because that gap is the measurement."
+    },
+    {
+      "id": "topical-no-match",
+      "task": "upgrade the kubernetes ingress controller",
+      "expectedScopes": [],
+      "maxRoutes": 0,
+      "rationale": "Nothing in this workspace is about this. Returning nothing is correct, and a signal that widens until this matches has gone too far."
+    },
+    {
+      "id": "topical-stdio",
+      "task": "does stdio work the same as http",
+      "expectedScopes": [
+        "anchor-mcp",
+        "http-transport"
+      ],
+      "rationale": "Parent and child, and the parent arrives by hop. Second hold on the relation-hop signal."
+    },
+    {
+      "id": "topical-tool-parity",
+      "task": "every tool has to work on both transports",
+      "expectedScopes": [
+        "anchor-mcp"
+      ],
+      "forbiddenScopes": [
+        "migrations",
+        "retention"
+      ],
+      "rationale": "Reached by relation hop, not by text: http-transport matches, and anchor-mcp is its parent. The constraint sentence is body content and record-lexical never reads body text. Pinned because it is the corpus's only hold on the relation-hop signal, which could otherwise be deleted outright with a green suite."
+    },
+    {
+      "id": "topical-conflict-detection",
+      "task": "detect conflicts between claims",
+      "expectedScopes": [
+        "claim-provenance"
+      ],
+      "forbiddenScopes": [
+        "logging",
+        "migrations"
+      ],
+      "rationale": "Reaches claim-provenance directly through the heading 'Conflict Detection Between Claims'. An earlier rationale said 'reached the right assertion', which this fixture cannot do: it holds zero assertions, and the density stamp on every report says so."
+    },
+    {
+      "id": "stopword-only-terms",
+      "task": "we are on to this and it is not the one",
+      "expectedScopes": [],
+      "maxRoutes": 0,
+      "rationale": "Every term is in the stopword list and every one appears in some heading. Measured: 0 candidates with the filter, 7 without. Deliberately not realistic phrasing -- it is a probe, and it is the only task here whose whole job is to fail loudly when the filter goes. Its predecessor was phrased realistically and was inert: 'why', 'when' and 'do' are deliberately NOT stopwords because they head real content, so it read 7 either way while its rationale claimed it detected the regression."
+    },
+    {
+      "id": "stopword-how-and-when",
+      "task": "how and when should this happen",
+      "expectedScopes": [],
+      "maxRoutes": 4,
+      "rationale": "Second probe with a different function-word mix, so a filter covering one word is not mistaken for a filter covering the class. Ceiling calibrated the same way."
+    }
+  ]
+}

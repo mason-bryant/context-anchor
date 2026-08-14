@@ -47,7 +47,14 @@ export type RoutingDiagnostics = {
  * Bound as a parameter rather than interpolated: values spliced into SQL are a habit that
  * outlives the constant that made them safe.
  */
-const INSTRUMENT_CONSUMERS = ["comparison-gate", "comparison-gate-record-lexical"];
+const INSTRUMENT_CONSUMERS = [
+  "comparison-gate",
+  "comparison-gate-record-lexical",
+  // The task corpus (T-50). Twenty-eight tasks per run, and one of them offers every scope in
+  // the workspace by design — counted as retrieval they answer "which routes are dead weight"
+  // with routes only ever offered by the instrument asking the question.
+  "routing-corpus",
+];
 
 /**
  * Applied at every site rather than to some of them -- seven predicates across four statements,
