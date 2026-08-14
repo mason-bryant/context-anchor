@@ -76,40 +76,25 @@ function normalizeReferencedPath(value: string): string {
  * alone reaching 15 of 23 scopes. Filtering here rather than in `taskTerms` keeps the baseline
  * this signal is measured against unchanged.
  *
- * Function words plus the verbs that scaffold task phrasing ("add X", "run Y"). The test is
- * whether a word is common in how people *phrase* tasks, not whether it is common in this
- * workspace: "milestone" is everywhere in these documents and is still topical, so it is
- * handled by the scope-frequency rule below rather than by being listed here. That distinction
- * is what keeps this list portable to a workspace about something else.
+ * Function words only. An earlier version also listed the verbs that scaffold task phrasing
+ * ("add X", "run Y", "get Z") and the question words, and measured better for it — 53 added
+ * routes across the corpus against 74 here. It was cut anyway, because those words demonstrably
+ * head real content: this very workspace holds "Why", "When to fall back to `cde local test`",
+ * "New Markdown Notes" and "MANDATORY: Use the Hot Test Daemon MCP". Filtering them silently
+ * removes a route nobody can see was removed, while leaving them in produces noise a reader can
+ * see and discount — the per-term counts in the reason make a stopword hit obvious. Between a
+ * quiet loss and a visible cost, take the visible one.
+ *
+ * A word that is common in *this corpus* but topical anywhere — "milestone", which heads every
+ * milestone document — is not a stopword and is not handled here. That needs a frequency rule
+ * measured over the workspace, which is deliberately not in this change.
  */
 const RECORD_LEXICAL_STOPWORDS = new Set([
   "the", "and", "or", "not", "but", "for", "of", "to", "in", "on", "at", "by", "with", "from",
   "as", "is", "are", "was", "were", "be", "been", "being", "it", "its", "this", "that", "these",
-  "those", "an", "do", "does", "did", "how", "what", "why", "when", "where", "which", "who",
-  "can", "will", "would", "should", "must", "may", "we", "our", "you", "your", "they", "their",
-  "add", "new", "use", "using", "used", "get", "set", "run", "make", "need", "want", "into",
-  "about", "after", "before", "then", "than", "so", "if", "all", "any", "some", "more", "most",
+  "those", "an", "a", "we", "our", "you", "your", "they", "their", "into", "about", "after",
+  "before", "then", "than", "so", "if", "all", "any", "some", "more", "most",
 ]);
-
-/**
- * A term reaching most of the workspace is not routing anybody anywhere.
- *
- * Stopwords are the words that are common in *language*; this is the rule for words that are
- * common in *this corpus*. "milestone goal ids" reached 19 of 23 scopes even with stopwords
- * filtered, because every milestone document carries a `Milestone -- X` heading — the term is
- * topical, and still useless as a route, because a signal that selects most of the workspace has
- * selected nothing.
- *
- * Measured against the whole workspace, never against what this caller may read. Using the
- * caller's grant slice made the threshold personal: a member granted three scopes got a limit of
- * one, so a term reaching two of their three was discarded and they were routed nowhere — the
- * zero-route failure this signal exists to fix, reintroduced for the callers who most need it,
- * while an owner asking the same question got an answer. The premise is about the workspace
- * being undiscriminating, and a caller's permissions do not change that.
- *
- * Expressed as a fraction rather than a count so it holds as the workspace grows.
- */
-const RECORD_LEXICAL_SCOPE_FRACTION = 0.5;
 
 /** How many matched titles a record-lexical reason quotes before summarising the remainder. */
 export const RECORD_LEXICAL_EXAMPLES = 3;
@@ -190,66 +175,6 @@ export function recordLexicalReason(group: {
   );
 }
 
-
-export type RecordLexicalGroup = {
-  scopeGuid: string;
-  termTitles: Map<string, Set<string>>;
-  source: string;
-  titles: string[];
-};
-
-/**
- * Drops terms that reached most of the workspace, and any group left with none.
- *
- * Stopwords cover words common in *language*; this covers words common in *this corpus*.
- * "milestone goal ids" reached 19 of 23 scopes with stopwords already filtered, because every
- * milestone document carries a `Milestone -- X` heading. The term is topical and still useless
- * as a route: a signal selecting most of the workspace has selected nothing.
- *
- * A group whose every term is undiscriminating is dropped rather than offered with a caveat. A
- * route justified by evidence that applies everywhere is one the reader must rule out by hand,
- * and volume is this signal's failure mode.
- *
- * Titles are recomputed from the surviving terms so the count and the quoted examples describe
- * the evidence that actually justified the route, not titles reached only by a discarded term.
- */
-export function discriminatingGroups(
-  groups: RecordLexicalGroup[],
-  workspaceScopeCount: number,
-): RecordLexicalGroup[] {
-  // Distinct scopes per term, not groups. Groups are keyed by scope AND source, so one scope
-  // whose assertion titles and section headings both match contributes two groups — counting
-  // those as two scopes made the effective threshold anywhere between a quarter and a half of
-  // the workspace depending on where records happen to live, and let authoring an assertion
-  // delete the route to its own scope without the term reaching anything new.
-  const scopesPerTerm = new Map<string, Set<string>>();
-  for (const group of groups) {
-    for (const term of group.termTitles.keys()) {
-      const reached = scopesPerTerm.get(term);
-      if (reached) {
-        reached.add(group.scopeGuid);
-      } else {
-        scopesPerTerm.set(term, new Set([group.scopeGuid]));
-      }
-    }
-  }
-  const limit = Math.max(1, Math.floor(workspaceScopeCount * RECORD_LEXICAL_SCOPE_FRACTION));
-
-  const kept: RecordLexicalGroup[] = [];
-  for (const group of groups) {
-    const termTitles = new Map(
-      [...group.termTitles].filter(([term]) => (scopesPerTerm.get(term)?.size ?? 0) <= limit),
-    );
-    if (termTitles.size === 0) {
-      continue;
-    }
-    const titles = group.titles.filter((title) =>
-      [...termTitles.values()].some((reached) => reached.has(title)),
-    );
-    kept.push({ ...group, termTitles, titles });
-  }
-  return kept;
-}
 
 /**
  * Longest matching prefix wins, matching `repository_mappings`' own documented rule. A
@@ -540,9 +465,7 @@ export async function selectRouteCandidates(
       }
     }
 
-    // The workspace's live scope count, not `readable.length`: see discriminatingGroups. The
-    // numerator is already grant-restricted by the ANY($2) predicate, so this leaks nothing.
-    for (const group of discriminatingGroups([...groups.values()], scopes.rows.length)) {
+    for (const group of groups.values()) {
       add(group.scopeGuid, { kind: "record-lexical", reason: recordLexicalReason(group) });
     }
   }
