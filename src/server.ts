@@ -2131,8 +2131,9 @@ the index when your workflow checks in that file.`,
           "is for records that should not be in the workspace at all — an import artefact, a duplicate, a claim " +
           "authored against the wrong scope. Prefer setAssertionStatus(retracted) for a claim that was merely " +
           "wrong: retrieval already excludes every non-active status, so a retracted claim is equally invisible " +
-          "to a reader, but it stays fetchable by guid, keeps its citations and lineage, and can be returned to " +
-          "active — none of which is true after this, which nothing reverses. Refused while a live supersedes " +
+          "to a reader either way, but it keeps its citations, lineage and associations and setAssertionStatus " +
+          "can bring it back — none of which is true after this, which nothing reverses. Refused while a live " +
+          "supersedes " +
           "relation involves the claim in either direction. Requires the database backend.",
         inputSchema: z.object({
           traceId: TraceIdSchema,

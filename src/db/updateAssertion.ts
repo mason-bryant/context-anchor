@@ -2,7 +2,11 @@ import { createHash } from "node:crypto";
 import type { Pool } from "pg";
 
 import { ASSERTION_KINDS, type AssertionKind } from "./createAssertion.js";
-import { type CommandHandler, type CommandTransaction } from "./commandHandler.js";
+import {
+  IdempotencyKeyReusedError,
+  type CommandHandler,
+  type CommandTransaction,
+} from "./commandHandler.js";
 import { assertValidSchemaName } from "./config.js";
 
 /**
@@ -40,18 +44,22 @@ export class NoAssertionChangesError extends Error {
 /**
  * A resubmitted edit whose earlier application has since been overwritten.
  *
- * Not a concurrency error: nothing raced. The default idempotency key is derived from the
+ * Not a concurrency error: nothing raced. The *derived* idempotency key is a function of the
  * target values, so re-applying wording this claim has held before matches the original command
  * and is treated as a retry of it. Silently reporting success there would tell a caller their
  * edit landed when the claim still holds someone else's.
+ *
+ * Raised only when the key was derived. A caller that supplied its own key is asserting "this is
+ * one command, delivered at most once", and an at-most-once redelivery is exactly what an
+ * explicit key is for — refusing it there would break the guarantee it was given for.
  */
 export class StaleIdempotentEditError extends Error {
   constructor(assertionGuid: string, fields: readonly string[]) {
     super(
-      `This edit to ${assertionGuid} matches an earlier command with the same idempotency key, ` +
-        `but ${fields.join(" and ")} no longer hold the requested value — a later edit replaced ` +
-        `it. Nothing was written. Supply an explicit idempotencyKey to re-apply this wording as ` +
-        `a new edit.`,
+      `This edit to ${assertionGuid} matches an earlier command with the same derived ` +
+        `idempotency key, but ${fields.join(" and ")} ${fields.length === 1 ? "does" : "do"} not ` +
+        `hold the requested value — a later edit replaced it. Nothing was written. Supply an ` +
+        `explicit idempotencyKey to re-apply this wording as a new edit.`,
     );
     this.name = "StaleIdempotentEditError";
   }
@@ -70,7 +78,14 @@ export type UpdateAssertionInput = {
   kind?: AssertionKind;
   /** Why the claim changed. Carried into `mutation_log`, where it is the only account of intent. */
   reason: string;
-  /** Optimistic concurrency: refuse if the claim moved since the caller read it. */
+  /**
+   * Optimistic concurrency: refuse if the claim moved since the caller read it.
+   *
+   * Not re-checked on a replay. The handler returns before the check when a key has already been
+   * accepted, and that is the right behaviour rather than an oversight: a retry carries the
+   * version the caller read *before* the first attempt, which the first attempt itself has since
+   * moved past, so checking it would fail every successful retry.
+   */
   expectedVersion?: number;
   idempotencyKey?: string;
 };
@@ -178,6 +193,21 @@ export async function updateAssertion(input: UpdateAssertionInput): Promise<Upda
     return { assertionGuid: input.assertionGuid, version, replayed: false, changed };
   }
 
+  // What the accepted command actually did, matched on the entry type. Idempotency keys are
+  // compared on (workspace, key) alone — not on command type — so a caller reusing one key
+  // across a batch lands here holding an unrelated acceptance. Value comparison cannot separate
+  // that from a legitimate redelivery whose effect a later edit overwrote: both leave the
+  // requested wording absent. This can.
+  const applied = await input.pool.query(
+    `SELECT 1 FROM "${schema}".mutation_log
+      WHERE workspace_guid = $1 AND command_guid = $2 AND entry_type = 'assertion.updated'
+      LIMIT 1`,
+    [input.workspaceGuid, command.commandGuid],
+  );
+  if (applied.rows.length === 0) {
+    throw new IdempotencyKeyReusedError("assertion.update", input.assertionGuid);
+  }
+
   // A replay applied nothing, so the values above were never written. Read the claim as it
   // actually stands rather than echoing what this call would have done.
   const settled = await input.pool.query<AssertionRow>(
@@ -197,11 +227,16 @@ export async function updateAssertion(input: UpdateAssertionInput): Promise<Upda
   // The stored values are what settle it. If every field this call named is already in place,
   // the earlier command's effect stands and this genuinely is a retry. If any differs, a later
   // edit overwrote it, and returning success here would report a change that is not there.
-  const notApplied = EDITABLE_FIELDS.filter(
-    (field) => input[field] !== undefined && input[field] !== row[field],
-  );
-  if (notApplied.length > 0) {
-    throw new StaleIdempotentEditError(input.assertionGuid, notApplied);
+  // Only for the derived key. An explicit key is the caller stating "this is one command,
+  // delivered at most once"; a redelivery arriving after someone else's edit is precisely what
+  // that guarantee covers, and refusing it would break the promise the key was given for.
+  if (input.idempotencyKey === undefined) {
+    const notApplied = EDITABLE_FIELDS.filter(
+      (field) => input[field] !== undefined && input[field] !== row[field],
+    );
+    if (notApplied.length > 0) {
+      throw new StaleIdempotentEditError(input.assertionGuid, notApplied);
+    }
   }
 
   return { assertionGuid: input.assertionGuid, version: row.version, replayed: true, changed: [] };

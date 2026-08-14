@@ -8,7 +8,11 @@ import {
   type CitationInput,
   QuoteNotFoundError,
 } from "./createAssertion.js";
-import { type CommandHandler, type CommandTransaction } from "./commandHandler.js";
+import {
+  IdempotencyKeyReusedError,
+  type CommandHandler,
+  type CommandTransaction,
+} from "./commandHandler.js";
 import { assertValidSchemaName } from "./config.js";
 
 /**
@@ -57,7 +61,13 @@ export type AddCitationInput = {
   reanchoredFromCitationGuid?: string;
   /** Why the evidence was added. Carried into `mutation_log`. */
   reason: string;
-  /** Optimistic concurrency: refuse if the claim moved since the caller read it. */
+  /**
+   * Optimistic concurrency: refuse if the claim moved since the caller read it.
+   *
+   * Not re-checked on a replay: the handler returns before the check once a key has been
+   * accepted, and a retry carries the version the caller read before the first attempt — which
+   * that attempt has since moved past — so checking it would fail every successful retry.
+   */
   expectedVersion?: number;
   idempotencyKey?: string;
 };
@@ -214,7 +224,9 @@ export async function addCitation(input: AddCitationInput): Promise<AddCitationR
   );
   const row = snapshot.rows[0];
   if (!row?.payload.citationGuid) {
-    throw new AssertionNotFoundError(input.assertionGuid);
+    // The key was accepted for some other command, so no citation was added under it. The claim
+    // itself is live; reporting it as missing would send the caller to author a duplicate.
+    throw new IdempotencyKeyReusedError("assertion.addCitation", input.assertionGuid);
   }
   return {
     citationGuid: row.payload.citationGuid,

@@ -8,7 +8,11 @@ import {
   AssertionNotFoundError as CitationAssertionNotFoundError,
 } from "../../src/db/addCitation.js";
 import { ensureBootstrap, type BootstrapResult } from "../../src/db/bootstrap.js";
-import { CommandHandler, ConcurrentModificationError } from "../../src/db/commandHandler.js";
+import {
+  CommandHandler,
+  ConcurrentModificationError,
+  IdempotencyKeyReusedError,
+} from "../../src/db/commandHandler.js";
 import { createAssertion, QuoteNotFoundError } from "../../src/db/createAssertion.js";
 import { createAssertionRelation } from "../../src/db/createAssertionRelation.js";
 import { importDocuments } from "../../src/db/importDocuments.js";
@@ -328,6 +332,51 @@ describe.runIf(await isTestDatabaseReachable())("assertion lifecycle, T3 (real P
     // commands.idempotency_key is btree-indexed and `content` is unbounded caller data, so an
     // embedded key fails at write time on the size of the claim rather than on anything about
     // the edit. Same contract setRecordScopes is held to.
+    it("refuses rather than reporting an edit that another command's key swallowed", async () => {
+      // Keyed off createAssertion, so the accepted command touched this same assertion and wrote
+      // a snapshot for it. Neither the entity nor the command guid separates the two; the entry
+      // type does.
+      const created = await createAssertion({
+        ...context(),
+        scopeSlug: "anchor-mcp",
+        kind: "decision",
+        title: "Bearer tokens are required",
+        content: "The transport requires one.",
+        citation: { blockGuid, exactQuote: "bearer token" },
+        idempotencyKey: "shared-request-key",
+      });
+
+      await expect(
+        updateAssertion({
+          ...context(),
+          assertionGuid: created.assertionGuid,
+          title: "Edited under a key that was already spent",
+          reason: "second use of the key",
+          idempotencyKey: "shared-request-key",
+        }),
+      ).rejects.toBeInstanceOf(IdempotencyKeyReusedError);
+      expect((await rowOf(created.assertionGuid)).title).toBe("Bearer tokens are required");
+    });
+
+    it("honours an explicit key as at-most-once, even once a later edit has moved past it", async () => {
+      const created = await author("Bearer tokens are required", "The transport requires one.");
+      const edit = (title: string, reason: string, idempotencyKey?: string) =>
+        updateAssertion({ ...context(), assertionGuid: created.assertionGuid, title, reason, idempotencyKey });
+
+      await edit("Requested by request-42", "first delivery", "request-42");
+      await edit("A newer human edit", "someone else, afterwards");
+
+      // The redelivery an explicit key exists to make safe. The stale-value guard applies to the
+      // derived key, whose meaning is "this wording, ever" — applying it here would refuse the
+      // exact case the caller asked to be protected from, and the remedy the error names (supply
+      // a key) is one they already followed.
+      const redelivered = await edit("Requested by request-42", "redelivery after a timeout", "request-42");
+      expect(redelivered.replayed).toBe(true);
+      expect(redelivered.changed).toEqual([]);
+      // And it must not resurrect the wording over the newer edit.
+      expect((await rowOf(created.assertionGuid)).title).toBe("A newer human edit");
+    });
+
     it("keeps the idempotency key bounded regardless of how long the claim is", async () => {
       const created = await author("Bearer tokens are required", "The transport requires one.");
       await updateAssertion({
@@ -364,7 +413,7 @@ describe.runIf(await isTestDatabaseReachable())("assertion lifecycle, T3 (real P
   });
 
   describe("retireAssertion", () => {
-    it("tombstones the claim and stops it routing", async () => {
+    it("tombstones the claim and retires its scope associations", async () => {
       const created = await author("Bearer tokens are required", "The transport requires one.");
 
       const result = await retireAssertion({
@@ -380,8 +429,9 @@ describe.runIf(await isTestDatabaseReachable())("assertion lifecycle, T3 (real P
       const settled = await rowOf(created.assertionGuid);
       expect(settled.retired_at).not.toBeNull();
 
-      // Membership lives in record_scopes, not on the assertion row. Leaving it live would keep
-      // the tombstone in every route that named its scope.
+      // Not what stops the claim being served: retrieval filters the assertion row itself, so
+      // the tombstone is excluded either way. These are retired because an association pointing
+      // at a tombstone asserts a membership with no member.
       expect(result.associationsRetired).toBe(1);
       const live = await pool.query(
         `SELECT 1 FROM "${schemaName}".record_scopes
@@ -461,6 +511,30 @@ describe.runIf(await isTestDatabaseReachable())("assertion lifecycle, T3 (real P
     });
 
     /**
+     * Guards the harness below, not the product. The pool proxy it uses has to stay usable for
+     * ordinary queries: Pool.query drives connect through its callback form, and an earlier
+     * version of the trap returned only a promise, which left every such caller waiting forever.
+     * retireAssertion reaches input.pool.query on its replay path, so a regression here would
+     * surface as a test that hangs rather than one that fails.
+     */
+    it("leaves a proxied pool usable for ordinary queries", async () => {
+      const passthrough = new Proxy(pool, {
+        get(target, property, receiver) {
+          if (property !== "connect") {
+            return Reflect.get(target, property, receiver) as unknown;
+          }
+          return (callback?: unknown) =>
+            typeof callback === "function"
+              ? (target.connect as (cb: unknown) => unknown)(callback)
+              : target.connect();
+        },
+      });
+
+      const answered = await passthrough.query<{ n: number }>("SELECT 1::int AS n");
+      expect(answered.rows[0]!.n).toBe(1);
+    });
+
+    /**
      * The supersession check reads assertion_relations, and nothing stops a relate from
      * inserting a row there afterwards. The target direction is caught for free — superseding
      * UPDATEs the target, so the two collide on the record_versions primary key — but the source
@@ -498,7 +572,14 @@ describe.runIf(await isTestDatabaseReachable())("assertion lifecycle, T3 (real P
           if (property !== "connect") {
             return Reflect.get(target, property, receiver) as unknown;
           }
-          return async () => {
+          return (callback?: unknown) => {
+            // Pool.connect has a callback form, and Pool.query uses it. A trap that only ever
+            // returns a promise leaves that caller waiting forever — which is not hypothetical
+            // here: retireAssertion reaches input.pool.query on its replay path.
+            if (typeof callback === "function") {
+              return (target.connect as (cb: unknown) => unknown)(callback);
+            }
+            return (async () => {
             const client = await target.connect();
             const realQuery = client.query.bind(client) as (...args: unknown[]) => Promise<unknown>;
             client.query = (async (...args: unknown[]) => {
@@ -507,7 +588,12 @@ describe.runIf(await isTestDatabaseReachable())("assertion lifecycle, T3 (real P
                 !interleaved &&
                 typeof args[args.length - 1] !== "function" &&
                 typeof text === "string" &&
-                text.includes("relation_type = 'supersedes'");
+                // Anchored on the command's own guard, not on the phrase: the invariant query at
+                // the end of this test also mentions the relation type, and a predicate that
+                // matched it would arm the interleave against the wrong statement.
+                text.includes("assertion_relations") &&
+                text.includes("relation_type = 'supersedes'") &&
+                text.includes("LIMIT 1");
               const result = await realQuery(...args);
               if (fires) {
                 interleaved = true;
@@ -532,6 +618,7 @@ describe.runIf(await isTestDatabaseReachable())("assertion lifecycle, T3 (real P
               return result;
             }) as typeof client.query;
             return client;
+            })();
           };
         },
       });
@@ -663,7 +750,9 @@ describe.runIf(await isTestDatabaseReachable())("assertion lifecycle, T3 (real P
           reason: "second use of the key",
           idempotencyKey: "shared-request-key",
         }),
-      ).rejects.toBeInstanceOf(RetireAssertionNotFoundError);
+        // Not "no such assertion": the claim is live and still routing, and an agent told it is
+        // gone authors a duplicate. The cause is the reused key, and the error says so.
+      ).rejects.toBeInstanceOf(IdempotencyKeyReusedError);
 
       // The point of the refusal: the claim must not be reported as removed while it is live
       // and still routing.
@@ -948,7 +1037,7 @@ describe.runIf(await isTestDatabaseReachable())("assertion lifecycle, T3 (real P
           reason: "second use of the key",
           idempotencyKey: "shared-request-key",
         }),
-      ).rejects.toBeInstanceOf(CitationAssertionNotFoundError);
+      ).rejects.toBeInstanceOf(IdempotencyKeyReusedError);
       expect(await citationsOf(created.assertionGuid)).toHaveLength(1);
       expect((await citationsOf(created.assertionGuid))[0]!.citation_guid).toBe(
         created.citationGuid,

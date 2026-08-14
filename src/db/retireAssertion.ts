@@ -1,6 +1,10 @@
 import type { Pool } from "pg";
 
-import { type CommandHandler, type CommandTransaction } from "./commandHandler.js";
+import {
+  IdempotencyKeyReusedError,
+  type CommandHandler,
+  type CommandTransaction,
+} from "./commandHandler.js";
 import { assertValidSchemaName } from "./config.js";
 
 /**
@@ -12,8 +16,10 @@ import { assertValidSchemaName } from "./config.js";
  * what survives and what can still be done.
  *
  * Retracted is reversible and keeps its record intact: the row, its citations, its relations
- * and its scope associations all stay live, it can still be fetched by guid, and
- * setAssertionStatus can return it to active.
+ * and its scope associations all stay live, and setAssertionStatus can return it to active — at
+ * which point retrieval serves it again. Nothing today fetches a non-active claim, so while it
+ * is retracted it is reachable only through history; what retraction preserves is the ability to
+ * bring it back, not a way to read it meanwhile.
  *
  * Retiring is terminal. It retires the scope associations and the non-supersession relations
  * with the claim, and no command reinstates any of them. It is for records that should not be
@@ -46,8 +52,9 @@ export class SupersessionLineageError extends Error {
     super(
       `Cannot retire ${assertionGuid} while a live supersedes relation involves it. Retiring it ` +
         `would leave the other claim's lineage pointing at a tombstone, or leave a claim marked ` +
-        `superseded with nothing superseding it. There is no way round this today: no command ` +
-        `retires a relation, so a supersession recorded in error locks both of its claims out ` +
+        `superseded with nothing superseding it. There is no way round this today: this command ` +
+        `retires the relations it finds, but it refuses before reaching them, and nothing else ` +
+        `retires a supersedes — so a supersession recorded in error locks both of its claims out ` +
         `of retirement permanently. Retract the claim instead — it is equally invisible to ` +
         `retrieval, and it leaves the lineage intact and reversible.`,
     );
@@ -67,7 +74,13 @@ export type RetireAssertionInput = {
    * thing left that explains the absence.
    */
   reason: string;
-  /** Optimistic concurrency: refuse if the claim moved since the caller read it. */
+  /**
+   * Optimistic concurrency: refuse if the claim moved since the caller read it.
+   *
+   * Not re-checked on a replay: the handler returns before the check once a key has been
+   * accepted, and a retry carries the version the caller read before the first attempt — which
+   * that attempt has since moved past — so checking it would fail every successful retry.
+   */
   expectedVersion?: number;
   idempotencyKey?: string;
 };
@@ -124,9 +137,11 @@ export async function retireAssertion(input: RetireAssertionInput): Promise<Reti
       }
       version = row.version;
 
-      // Membership is resolved from record_scopes, not from the assertion row. Leaving these
-      // live would keep the tombstone in every route that named its scope, which is the one
-      // outcome retiring is for.
+      // Not what stops the claim being served — retrieval filters the assertion row itself, so
+      // the tombstone is already excluded whether these are retired or not. They are retired
+      // because an association pointing at a tombstone is a row asserting a membership that no
+      // longer has a member, and every later reader of record_scopes would have to know to
+      // discount it.
       const associations = await tx.query<{ association_guid: string }>(
         `UPDATE "${schema}".record_scopes
             SET retired_at = now()
@@ -207,7 +222,10 @@ export async function retireAssertion(input: RetireAssertionInput): Promise<Reti
   );
   const row = snapshot.rows[0];
   if (!row) {
-    throw new AssertionNotFoundError(input.assertionGuid);
+    // The key was accepted for some other command. Saying "no such assertion" here would be
+    // false — it is live and still routing — and an agent told the claim is gone authors a
+    // duplicate.
+    throw new IdempotencyKeyReusedError("assertion.retire", input.assertionGuid);
   }
   return {
     assertionGuid: input.assertionGuid,

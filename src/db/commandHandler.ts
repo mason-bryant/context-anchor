@@ -44,6 +44,27 @@ export type CommandInput = {
   onReplayCheckComplete?: () => Promise<void>;
 };
 
+/**
+ * A command replayed under a key that belonged to a different command.
+ *
+ * Idempotency keys are matched on (workspace, key) alone — not on command type or entity — so a
+ * caller reusing one key across a batch lands in the replay branch holding an acceptance that
+ * did something else entirely. Reporting that as "no such record" is what the callers here used
+ * to do, and it is actively misleading: the record is live, and an agent told it is gone will
+ * author a duplicate.
+ */
+export class IdempotencyKeyReusedError extends Error {
+  constructor(commandType: string, entityGuid: string) {
+    super(
+      `The idempotency key given for ${commandType} on ${entityGuid} was already accepted for a ` +
+        `different command, so this one was treated as a replay and nothing was written. The ` +
+        `record is unchanged and still live. Idempotency keys identify one command, not one ` +
+        `request: give each command its own.`,
+    );
+    this.name = "IdempotencyKeyReusedError";
+  }
+}
+
 export type CommandResult = {
   commandGuid: string;
   version: number;

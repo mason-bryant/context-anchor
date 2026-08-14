@@ -82,7 +82,9 @@ export class SupersededByLiveRelationError extends Error {
   constructor(assertionGuid: string) {
     super(
       `Cannot change the standing of ${assertionGuid} while a live supersedes relation targets ` +
-        `it. Retire the relation first, or the claim's status and its lineage would disagree.`,
+        `it. Nothing retires a supersedes relation today, so this standing cannot be changed ` +
+        `while that relation stands — the claim's status and its lineage would otherwise ` +
+        `disagree.`,
     );
     this.name = "SupersededByLiveRelationError";
   }

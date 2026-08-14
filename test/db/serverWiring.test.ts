@@ -279,6 +279,9 @@ describe("listScopes tool registration", () => {
     // cannot work is worse than a missing one: an agent will call it and read the failure as a
     // fact about the workspace rather than about the configuration.
     expect(server._registeredTools.createAssertion).toBeUndefined();
+    expect(server._registeredTools.updateAssertion).toBeUndefined();
+    expect(server._registeredTools.retireAssertion).toBeUndefined();
+    expect(server._registeredTools.addCitation).toBeUndefined();
     expect(server._registeredTools.setAssertionStatus).toBeUndefined();
     expect(server._registeredTools.createAssertionRelation).toBeUndefined();
     expect(server._registeredTools.setRecordScopes).toBeUndefined();
@@ -310,6 +313,13 @@ describe("listScopes tool registration", () => {
     expect(server._registeredTools.setAssertionStatus).toBeDefined();
     expect(server._registeredTools.createAssertionRelation).toBeDefined();
     expect(server._registeredTools.setRecordScopes).toBeDefined();
+    // The other three of the design's seven. A claim could be authored and its standing changed
+    // but not edited, tombstoned or given a second citation, so the authoring pass could not be
+    // performed end to end. Listed here because a registration nothing asserts is a registration
+    // that can be deleted without a single test noticing.
+    expect(server._registeredTools.updateAssertion).toBeDefined();
+    expect(server._registeredTools.retireAssertion).toBeDefined();
+    expect(server._registeredTools.addCitation).toBeDefined();
 
     // Superseding is a relationship, not a standing. The command refuses it, but the tool must
     // not offer it either: an advertised option that can only ever fail sends an agent down a
