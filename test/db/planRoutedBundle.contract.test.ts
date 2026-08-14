@@ -505,7 +505,15 @@ describe.runIf(await isTestDatabaseReachable())("planRoutedBundle (real Postgres
         `SELECT route_budget FROM "${telemetrySchema}".retrieval_requests WHERE request_guid = $1`,
         [result.requestId],
       );
-      expect(stored.rows[0]?.route_budget).toEqual({ expanded: 3, listed: 7, recordsPerRoute: 4 });
+      // linksPerRoute included: the test's whole claim is that the *whole* budget is stored, so
+      // a new field that governs response size has to appear here or the assertion quietly stops
+      // meaning what its name says.
+      expect(stored.rows[0]?.route_budget).toEqual({
+        expanded: 3,
+        listed: 7,
+        recordsPerRoute: 4,
+        linksPerRoute: 5,
+      });
     });
 
     // Every timestamp for one request should agree; a fresh Date inside the impression write

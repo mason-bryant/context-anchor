@@ -538,6 +538,9 @@ export const UI_HTML = `<!doctype html>
                 <option value="agent">As an agent receives it</option>
                 <option value="full">Everything both sides can offer</option>
               </select>
+              <label for="compare-expanded">Expand top</label>
+              <input id="compare-expanded" type="number" min="0" max="25" step="1" placeholder="n"
+                     aria-label="How many routes return content; the rest return links">
               <button id="compare-run" type="button">Compare</button>
             </div>
             <div id="compare-error" class="compare-error" role="alert" aria-live="assertive" hidden></div>
@@ -12389,6 +12392,10 @@ export const UI_JS = `(function () {
       var query = "/api/db/comparison?task=" + encodeURIComponent(task) +
         (paths ? "&paths=" + encodeURIComponent(paths) : "") +
         "&disclosure=" + encodeURIComponent(disclosure);
+      // Left blank, the disclosure preset decides. Set, it wins -- including 0, which is the
+      // setting that asks for routes and links and no content at all.
+      var expanded = el("compare-expanded").value.trim();
+      if (expanded !== "") { query += "&expanded=" + encodeURIComponent(expanded); }
       el("compare-routed").innerHTML = "<p class=\\"empty\\">Running…</p>";
       el("compare-routed-lexical").innerHTML = "<p class=\\"empty\\">Running…</p>";
       el("compare-legacy").innerHTML = "<p class=\\"empty\\">Running…</p>";
@@ -12412,7 +12419,8 @@ export const UI_JS = `(function () {
         };
         note.textContent = (wording[shown] || shown) +
           (budget ? " Budget: listed " + budget.listed + ", expanded " + budget.expanded +
-            ", records per route " + budget.recordsPerRoute + "." : "");
+            " (the rest return links), records per route " + budget.recordsPerRoute +
+            ", links per route " + budget.linksPerRoute + "." : "");
         note.hidden = false;
 
         var panes = comparisonPanes(result);

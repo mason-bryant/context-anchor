@@ -129,8 +129,13 @@ describe.runIf(await isTestDatabaseReachable())("the comparison gate's HTTP rout
     requestId: string;
     candidateCount: number;
     appliedSignals: { recordLexical: boolean };
-    budget: { expanded: number; listed: number; recordsPerRoute: number };
-    routes: Array<{ routeKey: string; matchReasons: string[] }>;
+    budget: { expanded: number; listed: number; recordsPerRoute: number; linksPerRoute: number };
+    routes: Array<{
+      routeKey: string;
+      matchReasons: string[];
+      records?: unknown[];
+      recordLinks?: unknown[];
+    }>;
   };
   type Body = {
     routed?: Routed | null;
@@ -276,12 +281,22 @@ describe.runIf(await isTestDatabaseReachable())("the comparison gate's HTTP rout
     // exists to measure is exactly the case that hits the cap.
     expect(body.routed?.budget.listed).toBeGreaterThan(10);
 
-    // Raised with it. Only expanded routes carry records, and a route the signal adds carries
-    // only the weakest signal kind, so it sorts below every baseline route: at the default of
-    // two, both slots go to routes that did not change and every route actually under judgment
-    // renders with no records at all.
-    expect(body.routed?.budget.expanded).toBeGreaterThan(2);
+    // Expansion is no longer raised to compensate. The reason it used to be is worth keeping:
+    // only expanded routes carried records, and a route the signal adds carries the weakest
+    // signal kind so it sorts below every baseline route -- at the default of two, both slots
+    // went to routes that did not change and every route under judgment rendered with nothing
+    // at all. Links fix that at the source: a listed route now shows what it holds.
+    //
+    // So the default disclosure expands nothing, and the assertion is that a route under
+    // judgment is still legible rather than blank.
     expect(body.routed?.budget.expanded).toBe(body.routedRecordLexical?.budget.expanded);
+    expect(body.routed?.budget.expanded).toBe(0);
+
+    const listed = body.routedRecordLexical?.routes ?? [];
+    expect(listed.length).toBeGreaterThan(0);
+    expect(listed.every((route) => (route.records ?? []).length === 0)).toBe(true);
+    // The point of the change: nothing is expanded, and nothing is opaque either.
+    expect(listed.some((route) => (route.recordLinks ?? []).length > 0)).toBe(true);
   });
 
   // Express turns a repeated key into an array, and the hand-rolled parser this replaces read

@@ -152,12 +152,29 @@ export async function startHttpServer(
           res.status(400).json({ error: `disclosure must be one of: plan, agent, full` });
           return;
         }
-        const budget =
+        // `expanded` is the reader's, because it is the whole question. n routes come back with
+        // their content and the rest come back as links to it, so this is the dial between "tell
+        // me what exists" and "give me the top n". Absent, the disclosure preset picks it.
+        let expandedParam: number | undefined;
+        const rawExpanded = singleStringParam(req.query.expanded, "expanded");
+        if (rawExpanded !== undefined && rawExpanded !== "") {
+          expandedParam = Number(rawExpanded);
+          if (!Number.isInteger(expandedParam) || expandedParam < 0 || expandedParam > 25) {
+            res.status(400).json({ error: "expanded must be a whole number between 0 and 25" });
+            return;
+          }
+        }
+
+        const preset =
           disclosure === "plan"
             ? { listed: 25, expanded: 0 }
             : disclosure === "agent"
               ? undefined
               : { listed: 25, expanded: 8 };
+        const budget =
+          expandedParam === undefined
+            ? preset
+            : { listed: Math.max(preset?.listed ?? 10, expandedParam), expanded: expandedParam };
 
         // Identical inputs but for the one flag under test. Withholding anything else from
         // one side would show a difference the reader would attribute to recordLexical —

@@ -37,7 +37,7 @@ const SAMPLE_PLAN = {
   requestId: "00000000-0000-4000-8000-000000000000",
   plannerVersion: "routing-1.0.0",
   recomputedAt: "2026-08-10T00:00:00.000Z",
-  budget: { expanded: 2, listed: 10, recordsPerRoute: 25 },
+  budget: { expanded: 2, listed: 10, recordsPerRoute: 25, linksPerRoute: 5 },
   ranker: { id: "precedence", version: "1.0.0", deterministic: true, fellBack: false },
   candidateCount: 0,
   appliedSignals: { recordLexical: false },
