@@ -574,8 +574,10 @@ export async function loadRouteRecords(
     end_offset: number;
     ordinal: number;
   }>(
-    // DISTINCT ON keeps one row per stable key, taken from the highest revision number, so a
-    // reimported document contributes its current text rather than one row per revision.
+    // DISTINCT ON collapses a stable key that appears in several revisions of one document.
+    // It is NOT what keeps deleted content out — see the revision predicate below. That
+    // distinction is written twice because the belief that DISTINCT ON alone was sufficient is
+    // what produced the defect this query was fixed for.
     `SELECT DISTINCT ON (ss.stable_key)
             ss.section_guid, ss.revision_guid, dr.document_guid, sd.name AS document_name,
             ss.stable_key, ss.title, ss.heading_level, ss.start_offset, ss.end_offset, ss.ordinal
@@ -592,7 +594,25 @@ export async function loadRouteRecords(
         AND sd.retired_at IS NULL
       WHERE rs.workspace_guid = $1 AND rs.scope_guid = $2
         AND rs.retired_at IS NULL AND rs.record_type = 'section'
-      ORDER BY ss.stable_key, dr.revision_number DESC`,
+        -- Current revision only. DISTINCT ON takes the newest row per stable_key, which is not
+        -- the same thing: a heading a later commit deleted leaves a section whose stable_key
+        -- appears in no newer revision, so it is the only row for that key and survives the
+        -- dedupe untouched. Expansion would then serve a caller content the pinned commit does
+        -- not contain -- the same defect that had to be fixed in the record-lexical signal,
+        -- where taking the highest revision per key was demonstrably insufficient.
+        AND dr.revision_number = (
+          SELECT max(dr2.revision_number)
+            FROM "${schemaName}".document_revisions dr2
+           WHERE dr2.workspace_guid = dr.workspace_guid AND dr2.document_guid = dr.document_guid
+        )
+      -- document_guid breaks the tie, because revision_number alone does not. A stable key is
+      -- derived from the document path, while document identity includes the repository, so two
+      -- live documents can share a key and reach the same revision number -- and DISTINCT ON
+      -- would then pick either arbitrarily, making expansion output and contentFingerprint
+      -- differ between runs on unchanged data. Unreachable in this workspace today (no shared
+      -- keys exist); a fingerprint that moves without the content moving is worth foreclosing
+      -- rather than waiting to observe.
+      ORDER BY ss.stable_key, dr.revision_number DESC, dr.document_guid`,
     [workspaceGuid, scopeGuid],
   );
 

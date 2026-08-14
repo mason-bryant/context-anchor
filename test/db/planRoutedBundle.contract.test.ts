@@ -276,6 +276,48 @@ describe.runIf(await isTestDatabaseReachable())("planRoutedBundle (real Postgres
     expect(parent?.matchReasons.join(" ")).toMatch(/part of this scope/);
   });
 
+  it("does not expand a section a later commit deleted", async () => {
+    // Expansion dedupes with DISTINCT ON (stable_key) ORDER BY revision_number DESC, which
+    // takes the newest row per key but cannot drop a key absent from the current revision --
+    // a deleted heading leaves a section whose stable_key exists in no newer revision, so it
+    // is the only row for that key and survives. The same defect was fixed in the
+    // record-lexical signal, where the dedupe alone was demonstrably insufficient.
+    const baseline = await plan("anchor mcp", { budget: { expanded: 5, listed: 10, recordsPerRoute: 25 } });
+    const before = baseline.routes.map((r) => r.contentFingerprint);
+
+    await importDocuments({
+      pool,
+      schemaName,
+      handler: new CommandHandler(pool, schemaName),
+      workspaceGuid: bootstrap.workspaceGuid,
+      actorPrincipalGuid: bootstrap.ownerPrincipalGuid,
+      repository: "agent-context",
+      commitSha: "9".repeat(40),
+      files: [
+        {
+          path: "projects/anchor-mcp/anchor-mcp-project-context.md",
+          content: HTTP_DOC.replace("## Decisions", "## Retired heading"),
+        },
+      ],
+    });
+
+    const expanded = await plan("anchor mcp", { budget: { expanded: 5, listed: 10, recordsPerRoute: 25 } });
+    const headings = expanded.routes.flatMap((route) => (route.records ?? []).map((r) => r.heading ?? ""));
+
+    expect(headings).toContain("Retired heading");
+    expect(headings).not.toContain("Decisions");
+
+    // The fingerprint has to move, because it is the caller's only "did this route change"
+    // signal and a caller skips re-reading on the strength of it.
+    //
+    // Corroborating, not discriminating: contentFingerprint hashes stable keys and content, and
+    // the pre-fix answer differed from the baseline too -- it carried four sections rather than
+    // three, the stale one alongside its replacement -- so this assertion passes with the fix
+    // removed. Verified by isolating it. The heading assertions above are what catch the
+    // defect; this one states the invariant a future change must not break.
+    expect(expanded.routes.map((r) => r.contentFingerprint)).not.toEqual(before);
+  });
+
   it("returns no routes when nothing matches", async () => {
     expect((await plan("kubernetes helm chart")).routes).toEqual([]);
   });

@@ -20,6 +20,7 @@ import {
   setRecordScopes,
   CORRECTED_ASSOCIATION_TYPE,
   MEMBERSHIP_ENTITY_TYPE,
+  RecordNotFoundError,
   SectionStableKeyRequiredError,
   UnknownScopeError,
 } from "../../src/db/setRecordScopes.js";
@@ -665,6 +666,49 @@ describe.runIf(await isTestDatabaseReachable())("assertion writes, T3 slice 2 (r
 
     // An association to a retired scope is not a live membership; counting it would report a
     // scope as unchanged that nothing else in the codebase considers to exist.
+    it("refuses a stable key whose heading the current revision no longer contains", async () => {
+      // Correcting the routing of a deleted heading used to succeed: resolveOwner took the
+      // newest revision that ever held the key, which for a deleted heading is a revision that
+      // is no longer current. The write reported added and retired scopes, wrote a
+      // record.scopesChanged command, and routed nothing -- a silent no-op reported as success,
+      // which is the failure this codebase refuses for reportRecordUse and everywhere else.
+      const section = await pool.query<{ stable_key: string }>(
+        `SELECT stable_key FROM "${schemaName}".source_sections WHERE title = 'Current State' LIMIT 1`,
+      );
+      const stableKey = section.rows[0]!.stable_key;
+
+      // Re-import without that heading, so the key survives only in an older revision.
+      await importDocuments({
+        pool,
+        schemaName,
+        handler,
+        workspaceGuid: bootstrap.workspaceGuid,
+        actorPrincipalGuid: bootstrap.ownerPrincipalGuid,
+        repository: "agent-context",
+        commitSha: "b".repeat(40),
+        files: [
+          {
+            path: "projects/anchor-mcp/anchor-mcp-project-context.md",
+            content: DOC.replace("## Current State", "## Renamed State"),
+          },
+        ],
+      });
+
+      await expect(
+        setRecordScopes({
+          pool,
+          schemaName,
+          handler,
+          workspaceGuid: bootstrap.workspaceGuid,
+          actorPrincipalGuid: bootstrap.ownerPrincipalGuid,
+          recordType: "section",
+          stableKey,
+          scopeSlugs: ["security"],
+          reason: "correcting a heading that no longer exists",
+        }),
+      ).rejects.toThrow(RecordNotFoundError);
+    });
+
     it("ignores associations whose scope has been retired", async () => {
       const created = await author("Tokens are required", "The reading.");
       await pool.query(

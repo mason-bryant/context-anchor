@@ -271,9 +271,19 @@ async function resolveOwner(
        JOIN "${schema}".source_documents d
          ON d.workspace_guid = r.workspace_guid AND d.document_guid = r.document_guid
       WHERE s.workspace_guid = $1 AND s.stable_key = $2 AND d.retired_at IS NULL
-      -- A stable key spans every revision of its section, so take the newest owner rather
-      -- than whichever row the planner happens to return first. revision_number is monotonic
-      -- per document; imported_at is not, since a reimport can write several in one second.
+        -- Current revision only, not merely the newest revision that ever held this key.
+        -- Those differ exactly when a heading has been deleted: the key then appears in no
+        -- newer revision, so ORDER BY revision_number DESC still resolves it and the caller
+        -- corrects the routing of a section the pinned commit no longer contains. The write
+        -- succeeded, reported added and retired scopes, and routed nothing -- a silent no-op
+        -- reported as success, which is the failure this codebase refuses elsewhere.
+        AND r.revision_number = (
+          SELECT max(r2.revision_number)
+            FROM "${schema}".document_revisions r2
+           WHERE r2.workspace_guid = r.workspace_guid AND r2.document_guid = r.document_guid
+        )
+      -- Still ordered: one stable key can reach two live documents, and the tie has to break
+      -- the same way every time.
       ORDER BY r.revision_number DESC, r.revision_guid DESC
       LIMIT 1`,
     [input.workspaceGuid, input.stableKey],
