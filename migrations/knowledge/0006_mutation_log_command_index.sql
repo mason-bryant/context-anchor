@@ -1,0 +1,13 @@
+-- An index on the command a mutation_log entry came from.
+--
+-- The table was built to be read by scope and recency, which is what history queries ask for,
+-- and mutation_log_scope_recorded_idx serves those. The replay paths ask a different question:
+-- "what did the command holding this idempotency key actually do". They join mutation_log on
+-- command_guid to tell an accepted command's own entry from an unrelated one that happened to
+-- reuse the key, and with no index that join scans the workspace's entire history.
+--
+-- It is a replay-only path, so this is not on the hot road. But mutation_log only ever grows,
+-- and the cost of a scan grows with it: the query that costs nothing in a young workspace is
+-- the same query that costs the most in an old one, which is exactly the shape of problem that
+-- is invisible until it isn't.
+CREATE INDEX mutation_log_command_idx ON mutation_log (workspace_guid, command_guid);

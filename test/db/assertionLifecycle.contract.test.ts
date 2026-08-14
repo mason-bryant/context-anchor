@@ -358,6 +358,33 @@ describe.runIf(await isTestDatabaseReachable())("assertion lifecycle, T3 (real P
       expect((await rowOf(created.assertionGuid)).title).toBe("Bearer tokens are required");
     });
 
+    it("does not report an edit to one claim as covering an edit to another", async () => {
+      const first = await author("Bearer tokens are required", "The transport requires one.");
+      const second = await author("Sessions expire", "After an hour.");
+
+      await updateAssertion({
+        ...context(),
+        assertionGuid: first.assertionGuid,
+        title: "First claim, edited",
+        reason: "first use of the key",
+        idempotencyKey: "shared-request-key",
+      });
+
+      // Both commands are assertion.update, so the entry type alone does not separate them. A
+      // replay lookup that matched on type without the entity finds the first claim's entry and
+      // reports the second claim as already edited when it was never touched.
+      await expect(
+        updateAssertion({
+          ...context(),
+          assertionGuid: second.assertionGuid,
+          title: "Second claim, edited",
+          reason: "second use of the key",
+          idempotencyKey: "shared-request-key",
+        }),
+      ).rejects.toBeInstanceOf(IdempotencyKeyReusedError);
+      expect((await rowOf(second.assertionGuid)).title).toBe("Sessions expire");
+    });
+
     it("honours an explicit key as at-most-once, even once a later edit has moved past it", async () => {
       const created = await author("Bearer tokens are required", "The transport requires one.");
       const edit = (title: string, reason: string, idempotencyKey?: string) =>
@@ -1042,6 +1069,32 @@ describe.runIf(await isTestDatabaseReachable())("assertion lifecycle, T3 (real P
       expect((await citationsOf(created.assertionGuid))[0]!.citation_guid).toBe(
         created.citationGuid,
       );
+    });
+
+    it("reports the claim's current version on a replay, not the version it had when cited", async () => {
+      const created = await author("Bearer tokens are required", "The transport requires one.");
+      const cite = (reason: string) =>
+        addCitation({
+          ...context(),
+          assertionGuid: created.assertionGuid,
+          citation: { blockGuid: otherBlockGuid, exactQuote: "one hour" },
+          reason,
+        });
+
+      await cite("second source");
+      await updateAssertion({
+        ...context(),
+        assertionGuid: created.assertionGuid,
+        title: "Edited after the citation landed",
+        reason: "a later edit",
+      });
+
+      const replayed = await cite("second source, resubmitted after a timeout");
+      expect(replayed.replayed).toBe(true);
+      // The snapshot says 2. Returning that would have the caller feed a stale expectedVersion
+      // back and be refused for a conflict that only this return value created.
+      expect(replayed.version).toBe(3);
+      expect((await rowOf(created.assertionGuid)).version).toBe(3);
     });
 
     it("will not cite a tombstoned claim", async () => {

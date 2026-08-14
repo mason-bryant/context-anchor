@@ -222,9 +222,10 @@ export async function retireAssertion(input: RetireAssertionInput): Promise<Reti
   );
   const row = snapshot.rows[0];
   if (!row) {
-    // The key was accepted for some other command. Saying "no such assertion" here would be
-    // false — it is live and still routing — and an agent told the claim is gone authors a
-    // duplicate.
+    // The key was accepted for some other command, so this retire did not happen. "No such
+    // assertion" would be the wrong account of that — an agent told the claim is gone authors a
+    // duplicate — and this command cannot say what state the claim is in either, because the
+    // command that spent the key may have been a retire of its own.
     throw new IdempotencyKeyReusedError("assertion.retire", input.assertionGuid);
   }
   return {

@@ -321,6 +321,40 @@ describe("listScopes tool registration", () => {
     expect(server._registeredTools.retireAssertion).toBeDefined();
     expect(server._registeredTools.addCitation).toBeDefined();
 
+    // Registered is not wired. Each stub returns a shape only its own command produces, so a
+    // tool pointed at the wrong facade method is caught here rather than in production: swapping
+    // updateAssertion's handler for retireAssertionAsOwner otherwise passes every test in the
+    // repo, while the tool tombstones every claim it is called on.
+    const called = async (name: string, input: Record<string, unknown>) => {
+      const tool = server._registeredTools[name]!;
+      return (await tool.handler(tool.inputSchema!.parse(input))) as {
+        structuredContent: Record<string, unknown>;
+      };
+    };
+
+    const edited = await called("updateAssertion", {
+      assertionGuid: "11111111-1111-4111-8111-111111111111",
+      title: "A new title",
+      reason: "because",
+    });
+    expect(edited.structuredContent.changed).toEqual(["title"]);
+
+    const retired = await called("retireAssertion", {
+      assertionGuid: "11111111-1111-4111-8111-111111111111",
+      reason: "because",
+    });
+    expect(retired.structuredContent.associationsRetired).toBe(1);
+
+    const cited = await called("addCitation", {
+      assertionGuid: "11111111-1111-4111-8111-111111111111",
+      citation: {
+        blockGuid: "66666666-6666-4666-8666-666666666666",
+        exactQuote: "a quote",
+      },
+      reason: "because",
+    });
+    expect(cited.structuredContent.citationGuid).toBe("55555555-5555-4555-8555-555555555555");
+
     // Superseding is a relationship, not a standing. The command refuses it, but the tool must
     // not offer it either: an advertised option that can only ever fail sends an agent down a
     // path with no successful ending.

@@ -143,6 +143,16 @@ const ProposeChangeInputSchema = z.object({
   message: z.string().optional(),
 });
 const ProjectUpdateStatusesSchema = z.union([z.array(ProjectUpdateStatusSchema), JsonStringSchema]);
+/**
+ * A caller-supplied idempotency key.
+ *
+ * Bounded because `commands.idempotency_key` is btree-indexed and unique per workspace: an
+ * oversized key fails as a raw Postgres "index row size exceeds maximum", which tells the caller
+ * nothing about what they did wrong. The derived keys every command falls back to are hashed and
+ * comfortably inside this; the limit only ever binds on a key someone chose.
+ */
+const IdempotencyKeySchema = z.string().trim().min(1).max(200).optional();
+
 const TraceIdSchema = z
   .string()
   .trim()
@@ -2066,7 +2076,7 @@ the index when your workflow checks in that file.`,
             suffix: z.string().optional(),
             relation: z.enum(CITATION_RELATIONS).optional(),
           }),
-          idempotencyKey: z.string().trim().min(1).optional(),
+          idempotencyKey: IdempotencyKeySchema,
         }),
       },
       async ({ traceId: _traceId, ...input }) => jsonResult(await knowledgeDb.createAssertionAsOwner(input)),
@@ -2091,7 +2101,7 @@ the index when your workflow checks in that file.`,
           status: z.enum(SETTABLE_ASSERTION_STATUSES),
           reason: z.string().trim().min(1),
           expectedVersion: z.number().int().positive().optional(),
-          idempotencyKey: z.string().trim().min(1).optional(),
+          idempotencyKey: IdempotencyKeySchema,
         }),
       },
       async ({ traceId: _traceId, ...input }) => jsonResult(await knowledgeDb.setAssertionStatusAsOwner(input)),
@@ -2116,7 +2126,7 @@ the index when your workflow checks in that file.`,
           kind: z.enum(ASSERTION_KINDS).optional(),
           reason: z.string().trim().min(1),
           expectedVersion: z.number().int().positive().optional(),
-          idempotencyKey: z.string().trim().min(1).optional(),
+          idempotencyKey: IdempotencyKeySchema,
         }),
       },
       async ({ traceId: _traceId, ...input }) => jsonResult(await knowledgeDb.updateAssertionAsOwner(input)),
@@ -2140,7 +2150,7 @@ the index when your workflow checks in that file.`,
           assertionGuid: z.string().uuid(),
           reason: z.string().trim().min(1),
           expectedVersion: z.number().int().positive().optional(),
-          idempotencyKey: z.string().trim().min(1).optional(),
+          idempotencyKey: IdempotencyKeySchema,
         }),
       },
       async ({ traceId: _traceId, ...input }) => jsonResult(await knowledgeDb.retireAssertionAsOwner(input)),
@@ -2169,7 +2179,7 @@ the index when your workflow checks in that file.`,
           reanchoredFromCitationGuid: z.string().uuid().optional(),
           reason: z.string().trim().min(1),
           expectedVersion: z.number().int().positive().optional(),
-          idempotencyKey: z.string().trim().min(1).optional(),
+          idempotencyKey: IdempotencyKeySchema,
         }),
       },
       async ({ traceId: _traceId, ...input }) => jsonResult(await knowledgeDb.addCitationAsOwner(input)),
@@ -2190,7 +2200,7 @@ the index when your workflow checks in that file.`,
           targetAssertionGuid: z.string().uuid(),
           relationType: z.enum(RELATION_TYPES),
           rationale: z.string().trim().min(1).optional(),
-          idempotencyKey: z.string().trim().min(1).optional(),
+          idempotencyKey: IdempotencyKeySchema,
         }),
       },
       async ({ traceId: _traceId, ...input }) => jsonResult(await knowledgeDb.createAssertionRelationAsOwner(input)),
@@ -2213,7 +2223,7 @@ the index when your workflow checks in that file.`,
           stableKey: z.string().trim().min(1).optional(),
           scopeSlugs: z.array(z.string().trim().min(1)),
           reason: z.string().trim().min(1),
-          idempotencyKey: z.string().trim().min(1).optional(),
+          idempotencyKey: IdempotencyKeySchema,
         })
           // Each record kind has exactly one identity, and the command refuses the wrong one.
           // Refusing at the schema instead says so before a call is made, and names the field.

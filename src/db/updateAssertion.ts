@@ -193,16 +193,25 @@ export async function updateAssertion(input: UpdateAssertionInput): Promise<Upda
     return { assertionGuid: input.assertionGuid, version, replayed: false, changed };
   }
 
-  // What the accepted command actually did, matched on the entry type. Idempotency keys are
-  // compared on (workspace, key) alone — not on command type — so a caller reusing one key
-  // across a batch lands here holding an unrelated acceptance. Value comparison cannot separate
-  // that from a legitimate redelivery whose effect a later edit overwrote: both leave the
-  // requested wording absent. This can.
+  // What the accepted command actually did, matched on both the entry type and the entity.
+  // Idempotency keys are compared on (workspace, key) alone — not on command type or entity — so
+  // a caller reusing one key across a batch lands here holding an unrelated acceptance. Value
+  // comparison cannot separate that from a legitimate redelivery whose effect a later edit
+  // overwrote: both leave the requested wording absent.
+  //
+  // The entity half is not redundant with the entry type. Two edits to *different* claims under
+  // one key are both `assertion.updated`, so the type alone finds the first one's entry and
+  // reports the second claim as already edited when it was never touched.
   const applied = await input.pool.query(
-    `SELECT 1 FROM "${schema}".mutation_log
-      WHERE workspace_guid = $1 AND command_guid = $2 AND entry_type = 'assertion.updated'
+    `SELECT 1
+       FROM "${schema}".record_versions v
+       JOIN "${schema}".mutation_log m
+         ON m.workspace_guid = v.workspace_guid AND m.command_guid = v.command_guid
+        AND m.entry_type = 'assertion.updated'
+      WHERE v.workspace_guid = $1 AND v.entity_type = 'assertion' AND v.entity_guid = $2
+        AND v.command_guid = $3
       LIMIT 1`,
-    [input.workspaceGuid, command.commandGuid],
+    [input.workspaceGuid, input.assertionGuid, command.commandGuid],
   );
   if (applied.rows.length === 0) {
     throw new IdempotencyKeyReusedError("assertion.update", input.assertionGuid);

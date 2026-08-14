@@ -224,14 +224,27 @@ export async function addCitation(input: AddCitationInput): Promise<AddCitationR
   );
   const row = snapshot.rows[0];
   if (!row?.payload.citationGuid) {
-    // The key was accepted for some other command, so no citation was added under it. The claim
-    // itself is live; reporting it as missing would send the caller to author a duplicate.
+    // The key was accepted for some other command, so no citation was added under it. Reporting
+    // the claim as missing would send the caller to author a duplicate.
     throw new IdempotencyKeyReusedError("assertion.addCitation", input.assertionGuid);
   }
+  // The claim as it stands, not as it stood when the citation was added. The snapshot's version
+  // is a fact about that command; a caller feeding it back as expectedVersion after any later
+  // edit would be refused for a conflict that is only an artefact of what this returned.
+  const settled = await input.pool.query<{ version: number }>(
+    `SELECT version FROM "${schema}".assertions
+      WHERE workspace_guid = $1 AND assertion_guid = $2 AND retired_at IS NULL`,
+    [input.workspaceGuid, input.assertionGuid],
+  );
+  const live = settled.rows[0];
+  if (!live) {
+    throw new AssertionNotFoundError(input.assertionGuid);
+  }
+
   return {
     citationGuid: row.payload.citationGuid,
     assertionGuid: input.assertionGuid,
-    version: row.version,
+    version: live.version,
     replayed: true,
   };
 }
