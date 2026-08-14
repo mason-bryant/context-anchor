@@ -109,6 +109,16 @@ export type UpdateAssertionResult = {
   replayed: boolean;
   /** Which fields this call actually changed, in the order they are declared above. */
   changed: EditableField[];
+  /**
+   * Whether the claim is a tombstone now — not whether it was one when this command ran.
+   *
+   * Only ever true on a replay, and it is the fact a replay would otherwise hide. The derived key
+   * is content-addressed, so "already accepted" means this wording, ever, by anyone: a caller can
+   * be told their edit is in place without having written it, on a claim that has since been
+   * retired. Refusing instead would deny a write that did happen; saying nothing would leave them
+   * believing a tombstone carries their edit.
+   */
+  assertionRetired: boolean;
 };
 
 type AssertionRow = {
@@ -118,6 +128,8 @@ type AssertionRow = {
   version: number;
   owner_scope_guid: string;
 };
+
+type ReplayRow = AssertionRow & { retired_at: Date | null };
 
 export async function updateAssertion(input: UpdateAssertionInput): Promise<UpdateAssertionResult> {
   assertValidSchemaName(input.schemaName);
@@ -199,7 +211,13 @@ export async function updateAssertion(input: UpdateAssertionInput): Promise<Upda
   });
 
   if (!command.replayed) {
-    return { assertionGuid: input.assertionGuid, version, replayed: false, changed };
+    return {
+      assertionGuid: input.assertionGuid,
+      version,
+      replayed: false,
+      changed,
+      assertionRetired: false,
+    };
   }
 
   // What the accepted command actually did, matched on both the entry type and the entity.
@@ -233,8 +251,8 @@ export async function updateAssertion(input: UpdateAssertionInput): Promise<Upda
   // and the edit this replays did land — refusing here with "no live assertion" would deny a
   // write that happened, and does it hardest under an explicit key, which is the caller stating
   // "at most once" and being told their one delivery never occurred.
-  const settled = await input.pool.query<AssertionRow>(
-    `SELECT kind, title, content, version, owner_scope_guid FROM "${schema}".assertions
+  const settled = await input.pool.query<ReplayRow>(
+    `SELECT kind, title, content, version, owner_scope_guid, retired_at FROM "${schema}".assertions
       WHERE workspace_guid = $1 AND assertion_guid = $2`,
     [input.workspaceGuid, input.assertionGuid],
   );
@@ -250,10 +268,15 @@ export async function updateAssertion(input: UpdateAssertionInput): Promise<Upda
   // The stored values are what settle it. If every field this call named is already in place,
   // the earlier command's effect stands and this genuinely is a retry. If any differs, a later
   // edit overwrote it, and returning success here would report a change that is not there.
-  // Only for the derived key. An explicit key is the caller stating "this is one command,
-  // delivered at most once"; a redelivery arriving after someone else's edit is precisely what
-  // that guarantee covers, and refusing it would break the promise the key was given for.
-  if (input.idempotencyKey === undefined) {
+  // Only for the derived key, and only while the claim can still be edited.
+  //
+  // An explicit key is the caller stating "this is one command, delivered at most once"; a
+  // redelivery arriving after someone else's edit is precisely what that guarantee covers.
+  // And on a tombstone the refusal is not actionable in either case: its remedy is to re-apply
+  // the wording under a fresh key, which a retired claim will refuse. Raising it there would
+  // hand the caller a diagnosis whose only prescribed cure is guaranteed to fail. The tombstone
+  // is reported instead, which is the fact they actually need.
+  if (input.idempotencyKey === undefined && row.retired_at === null) {
     const notApplied = EDITABLE_FIELDS.filter(
       (field) => input[field] !== undefined && input[field] !== row[field],
     );
@@ -262,7 +285,13 @@ export async function updateAssertion(input: UpdateAssertionInput): Promise<Upda
     }
   }
 
-  return { assertionGuid: input.assertionGuid, version: row.version, replayed: true, changed: [] };
+  return {
+    assertionGuid: input.assertionGuid,
+    version: row.version,
+    replayed: true,
+    changed: [],
+    assertionRetired: row.retired_at !== null,
+  };
 }
 
 /**

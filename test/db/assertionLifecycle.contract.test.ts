@@ -295,6 +295,7 @@ describe.runIf(await isTestDatabaseReachable())("assertion lifecycle, T3 (real P
 
       expect(first.replayed).toBe(false);
       expect(second.replayed).toBe(true);
+      expect(second.assertionRetired).toBe(false);
       // A replay reports the claim as it stands, not what this call would have done.
       expect(second.version).toBe(2);
       expect(second.changed).toEqual([]);
@@ -443,6 +444,30 @@ describe.runIf(await isTestDatabaseReachable())("assertion lifecycle, T3 (real P
       const replayed = await edit("redelivery after a timeout");
       expect(replayed.replayed).toBe(true);
       expect(replayed.version).toBe(3);
+      expect(replayed.assertionRetired).toBe(true);
+    });
+
+    it("does not diagnose a stale edit on a tombstone, whose only remedy would fail", async () => {
+      const created = await author("Bearer tokens are required", "The transport requires one.");
+      const edit = (title: string, reason: string) =>
+        updateAssertion({ ...context(), assertionGuid: created.assertionGuid, title, reason });
+
+      await edit("Revision B", "first");
+      await edit("Revision A", "reverted");
+      await retireAssertion({
+        ...context(),
+        assertionGuid: created.assertionGuid,
+        reason: "imported twice",
+      });
+
+      // On a live claim this is StaleIdempotentEditError, whose remedy is to re-apply the wording
+      // under a fresh key. A retired claim refuses that, so raising it here would hand the caller
+      // a diagnosis whose only prescribed cure is guaranteed to fail. The tombstone is the fact
+      // they need, and it comes back on the result.
+      const replayed = await edit("Revision B", "re-applying B after the tombstone");
+      expect(replayed.replayed).toBe(true);
+      expect(replayed.assertionRetired).toBe(true);
+      expect(replayed.changed).toEqual([]);
     });
 
     it("will not edit a tombstoned claim", async () => {
@@ -1145,6 +1170,42 @@ describe.runIf(await isTestDatabaseReachable())("assertion lifecycle, T3 (real P
       const replayed = await cite("second source, resubmitted after a timeout");
       expect(replayed.replayed).toBe(true);
       expect(replayed.citationGuid).toBe(first.citationGuid);
+      // The key is content-addressed, so a match does not prove this caller wrote it. Reporting
+      // the replay without the standing would let someone who never wrote anything believe a
+      // tombstone now carries their evidence.
+      expect(replayed.assertionRetired).toBe(true);
+    });
+
+    it("snapshots the claim, not just the citation, so the next edit's prior value reads", async () => {
+      const created = await author("Bearer tokens are required", "The transport requires one.");
+      await addCitation({
+        ...context(),
+        assertionGuid: created.assertionGuid,
+        citation: { blockGuid: otherBlockGuid, exactQuote: "one hour" },
+        reason: "second source",
+      });
+      await updateAssertion({
+        ...context(),
+        assertionGuid: created.assertionGuid,
+        title: "Edited after the citation",
+        reason: "a later edit",
+      });
+
+      // record_versions payloads are fed forward as the next command's prior_value, which
+      // listScopeChanges serves verbatim. A payload of citation fields makes the "before" of an
+      // edit render as a citation record rather than as the claim's previous wording.
+      const prior = await pool.query<{ prior_value: Record<string, unknown> | null }>(
+        `SELECT prior_value FROM "${schemaName}".mutation_log
+          WHERE entry_type = 'assertion.updated' AND resulting_value->>'assertionGuid' = $1`,
+        [created.assertionGuid],
+      );
+      expect(prior.rows[0]!.prior_value).toMatchObject({
+        assertionGuid: created.assertionGuid,
+        title: "Bearer tokens are required",
+        content: "The transport requires one.",
+        kind: "decision",
+        status: "active",
+      });
     });
 
     it("will not cite a tombstoned claim", async () => {

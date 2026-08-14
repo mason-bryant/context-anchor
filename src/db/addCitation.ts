@@ -77,6 +77,16 @@ export type AddCitationResult = {
   assertionGuid: string;
   version: number;
   replayed: boolean;
+  /**
+   * Whether the claim is a tombstone now — not whether it was one when this command ran.
+   *
+   * Only ever true on a replay. The derived key is content-addressed, so "already accepted" means
+   * this quote on this block, ever, by anyone: a caller can be told their citation is in place
+   * without having written it, on a claim that has since been retired. Refusing would deny a
+   * write that did happen; saying nothing would leave them believing a tombstone carries their
+   * evidence.
+   */
+  assertionRetired: boolean;
 };
 
 export async function addCitation(input: AddCitationInput): Promise<AddCitationResult> {
@@ -121,7 +131,7 @@ export async function addCitation(input: AddCitationInput): Promise<AddCitationR
     entity: { entityType: "assertion", entityGuid: input.assertionGuid },
     expectedVersion: input.expectedVersion,
     apply: async (tx) => {
-      const current = await loadAssertion(tx, schema, input.workspaceGuid, input.assertionGuid);
+      const claim = await loadAssertion(tx, schema, input.workspaceGuid, input.assertionGuid);
       const block = await loadBlock(tx, schema, input.workspaceGuid, input.citation.blockGuid);
 
       if (input.reanchoredFromCitationGuid !== undefined) {
@@ -183,8 +193,16 @@ export async function addCitation(input: AddCitationInput): Promise<AddCitationR
       version = row.version;
 
       return {
+        // The claim's own fields lead, because this payload is the assertion's version snapshot
+        // and the handler feeds each snapshot forward as the next command's `prior_value` — which
+        // listScopeChanges serves verbatim. A payload carrying only citation fields makes the
+        // "before" of the next edit read as a citation record.
         resultingValue: {
           assertionGuid: input.assertionGuid,
+          kind: claim.kind,
+          title: claim.title,
+          content: claim.content,
+          status: claim.status,
           citationGuid,
           blockGuid: input.citation.blockGuid,
           relation,
@@ -192,13 +210,19 @@ export async function addCitation(input: AddCitationInput): Promise<AddCitationR
           reanchoredFromCitationGuid: input.reanchoredFromCitationGuid ?? null,
         },
         entryType: "assertion.citationAdded",
-        ownerScopeGuid: current.owner_scope_guid,
+        ownerScopeGuid: claim.owner_scope_guid,
       };
     },
   });
 
   if (!command.replayed) {
-    return { citationGuid, assertionGuid: input.assertionGuid, version, replayed: false };
+    return {
+      citationGuid,
+      assertionGuid: input.assertionGuid,
+      version,
+      replayed: false,
+      assertionRetired: false,
+    };
   }
 
   // A replay applied nothing, so the GUID minted above was never written. Return the citation
@@ -236,8 +260,8 @@ export async function addCitation(input: AddCitationInput): Promise<AddCitationR
   // did land — refusing the redelivery with "no live assertion" would deny a write that happened
   // and send the caller to add it again. What the claim's standing is now is a separate question
   // from what this command did.
-  const settled = await input.pool.query<{ version: number }>(
-    `SELECT version FROM "${schema}".assertions
+  const settled = await input.pool.query<{ version: number; retired_at: Date | null }>(
+    `SELECT version, retired_at FROM "${schema}".assertions
       WHERE workspace_guid = $1 AND assertion_guid = $2`,
     [input.workspaceGuid, input.assertionGuid],
   );
@@ -251,6 +275,7 @@ export async function addCitation(input: AddCitationInput): Promise<AddCitationR
     assertionGuid: input.assertionGuid,
     version: current.version,
     replayed: true,
+    assertionRetired: current.retired_at !== null,
   };
 }
 
@@ -282,9 +307,15 @@ async function loadAssertion(
   schema: string,
   workspaceGuid: string,
   assertionGuid: string,
-): Promise<{ owner_scope_guid: string }> {
-  const result = await tx.query<{ owner_scope_guid: string }>(
-    `SELECT owner_scope_guid FROM "${schema}".assertions
+): Promise<{ owner_scope_guid: string; kind: string; title: string; content: string; status: string }> {
+  const result = await tx.query<{
+    owner_scope_guid: string;
+    kind: string;
+    title: string;
+    content: string;
+    status: string;
+  }>(
+    `SELECT owner_scope_guid, kind, title, content, status FROM "${schema}".assertions
       WHERE workspace_guid = $1 AND assertion_guid = $2 AND retired_at IS NULL`,
     [workspaceGuid, assertionGuid],
   );

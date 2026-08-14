@@ -80,6 +80,7 @@ const WRITE_STUBS = {
     version: 2,
     replayed: false,
     changed: ["title" as const],
+    assertionRetired: false,
   }),
   retireAssertionAsOwner: async () => ({
     assertionGuid: "11111111-1111-4111-8111-111111111111",
@@ -93,6 +94,7 @@ const WRITE_STUBS = {
     assertionGuid: "11111111-1111-4111-8111-111111111111",
     version: 2,
     replayed: false,
+    assertionRetired: false,
   }),
   createAssertionRelationAsOwner: async () => ({
     relationGuid: "44444444-4444-4444-8444-444444444444",
