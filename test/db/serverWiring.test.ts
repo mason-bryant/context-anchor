@@ -350,12 +350,10 @@ describe("listScopes tool registration", () => {
     // tool pointed at the wrong facade method is caught here rather than in production: swapping
     // updateAssertion's handler for retireAssertionAsOwner otherwise passes every test in the
     // repo, while the tool tombstones every claim it is called on.
-    const called = async (name: string, input: Record<string, unknown>) => {
-      const tool = server._registeredTools[name]!;
-      return (await tool.handler(tool.inputSchema!.parse(input))) as {
+    const called = async (name: string, input: Record<string, unknown>) =>
+      (await callTool(server as unknown as ToolRegistry, name, input)) as {
         structuredContent: Record<string, unknown>;
       };
-    };
 
     const edited = await called("updateAssertion", {
       assertionGuid: "11111111-1111-4111-8111-111111111111",
