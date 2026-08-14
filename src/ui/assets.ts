@@ -532,9 +532,20 @@ export const UI_HTML = `<!doctype html>
               <input id="compare-task" type="text" placeholder="e.g. add rate limiting to the HTTP transport" aria-label="Task to compare">
               <label for="compare-paths">Referenced paths</label>
               <input id="compare-paths" type="text" placeholder="comma separated, optional" aria-label="Referenced paths">
+              <label for="compare-disclosure">Disclosure</label>
+              <select id="compare-disclosure" aria-label="How much of each answer to disclose">
+                <option value="plan" selected>Plan only &mdash; routes and reasons</option>
+                <option value="agent">As an agent receives it</option>
+                <option value="full">Everything both sides can offer</option>
+              </select>
               <button id="compare-run" type="button">Compare</button>
             </div>
             <div id="compare-error" class="compare-error" role="alert" aria-live="assertive" hidden></div>
+            <!-- Says which comparison is on screen and at what budget. Without it the pane ran at
+                 listed 25 / expanded 8 while reading as what an agent would get, which is up to
+                 three times the records and a different answer to the question a reader thinks
+                 they are asking. -->
+            <p id="compare-disclosure-note" class="compare-meta" hidden></p>
             <div class="compare-panes">
               <div class="compare-pane">
                 <h3>Routed <span id="compare-routed-meta" class="compare-meta"></span></h3>
@@ -12374,7 +12385,10 @@ export const UI_JS = `(function () {
         return;
       }
       var paths = el("compare-paths").value.trim();
-      var query = "/api/db/comparison?task=" + encodeURIComponent(task) + (paths ? "&paths=" + encodeURIComponent(paths) : "");
+      var disclosure = el("compare-disclosure").value;
+      var query = "/api/db/comparison?task=" + encodeURIComponent(task) +
+        (paths ? "&paths=" + encodeURIComponent(paths) : "") +
+        "&disclosure=" + encodeURIComponent(disclosure);
       el("compare-routed").innerHTML = "<p class=\\"empty\\">Running…</p>";
       el("compare-routed-lexical").innerHTML = "<p class=\\"empty\\">Running…</p>";
       el("compare-legacy").innerHTML = "<p class=\\"empty\\">Running…</p>";
@@ -12385,6 +12399,22 @@ export const UI_JS = `(function () {
         // independently, so one failing must not blank the two that answered -- a reader
         // judging results needs to know which pane is missing and why, and a wholesale error
         // screen would hide that two thirds of the comparison is on the page and valid.
+        // Read off the response rather than the control, so the note describes the answer on
+        // screen rather than what was asked for -- the two differ if the request failed partway
+        // or the endpoint ever defaults something.
+        var note = el("compare-disclosure-note");
+        var budget = (result.routed && result.routed.budget) || null;
+        var shown = result.disclosure || disclosure;
+        var wording = {
+          plan: "Plan only: routes and their reasons, no records, against the legacy planner's own plan. The symmetric comparison for judging routing.",
+          agent: "As an agent receives it: planRoutedBundle at its defaults, against the legacy plan with its anchors loaded.",
+          full: "Everything both sides can offer. More than an agent receives -- useful for seeing how far a signal widens an answer, not for judging what an agent would get."
+        };
+        note.textContent = (wording[shown] || shown) +
+          (budget ? " Budget: listed " + budget.listed + ", expanded " + budget.expanded +
+            ", records per route " + budget.recordsPerRoute + "." : "");
+        note.hidden = false;
+
         var panes = comparisonPanes(result);
         var paint = function (id, metaId, pane) {
           el(id).innerHTML = pane.html;
