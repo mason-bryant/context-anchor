@@ -321,6 +321,19 @@ describe("listScopes tool registration", () => {
     expect(server._registeredTools.retireAssertion).toBeDefined();
     expect(server._registeredTools.addCitation).toBeDefined();
 
+    // commands.idempotency_key is btree-indexed and unique per workspace, so an oversized key
+    // fails as a raw "index row size exceeds maximum" — a Postgres error about an index, handed
+    // to an agent that asked to write a claim. Refused at the schema instead, where the message
+    // names the field.
+    expect(() =>
+      server._registeredTools.updateAssertion!.inputSchema!.parse({
+        assertionGuid: "11111111-1111-4111-8111-111111111111",
+        title: "A new title",
+        reason: "because",
+        idempotencyKey: "k".repeat(201),
+      }),
+    ).toThrow();
+
     // Registered is not wired. Each stub returns a shape only its own command produces, so a
     // tool pointed at the wrong facade method is caught here rather than in production: swapping
     // updateAssertion's handler for retireAssertionAsOwner otherwise passes every test in the

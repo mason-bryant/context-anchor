@@ -228,9 +228,14 @@ export async function updateAssertion(input: UpdateAssertionInput): Promise<Upda
 
   // A replay applied nothing, so the values above were never written. Read the claim as it
   // actually stands rather than echoing what this call would have done.
+  //
+  // Not filtered to live claims, unlike the read inside apply. A tombstoned claim keeps its row,
+  // and the edit this replays did land — refusing here with "no live assertion" would deny a
+  // write that happened, and does it hardest under an explicit key, which is the caller stating
+  // "at most once" and being told their one delivery never occurred.
   const settled = await input.pool.query<AssertionRow>(
     `SELECT kind, title, content, version, owner_scope_guid FROM "${schema}".assertions
-      WHERE workspace_guid = $1 AND assertion_guid = $2 AND retired_at IS NULL`,
+      WHERE workspace_guid = $1 AND assertion_guid = $2`,
     [input.workspaceGuid, input.assertionGuid],
   );
   const row = settled.rows[0];

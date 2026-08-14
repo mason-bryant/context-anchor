@@ -231,20 +231,25 @@ export async function addCitation(input: AddCitationInput): Promise<AddCitationR
   // The claim as it stands, not as it stood when the citation was added. The snapshot's version
   // is a fact about that command; a caller feeding it back as expectedVersion after any later
   // edit would be refused for a conflict that is only an artefact of what this returned.
+  //
+  // Deliberately not filtered to live claims. A tombstoned claim keeps its row, and this citation
+  // did land — refusing the redelivery with "no live assertion" would deny a write that happened
+  // and send the caller to add it again. What the claim's standing is now is a separate question
+  // from what this command did.
   const settled = await input.pool.query<{ version: number }>(
     `SELECT version FROM "${schema}".assertions
-      WHERE workspace_guid = $1 AND assertion_guid = $2 AND retired_at IS NULL`,
+      WHERE workspace_guid = $1 AND assertion_guid = $2`,
     [input.workspaceGuid, input.assertionGuid],
   );
-  const live = settled.rows[0];
-  if (!live) {
+  const current = settled.rows[0];
+  if (!current) {
     throw new AssertionNotFoundError(input.assertionGuid);
   }
 
   return {
     citationGuid: row.payload.citationGuid,
     assertionGuid: input.assertionGuid,
-    version: live.version,
+    version: current.version,
     replayed: true,
   };
 }

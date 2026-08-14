@@ -420,6 +420,31 @@ describe.runIf(await isTestDatabaseReachable())("assertion lifecycle, T3 (real P
       expect(key.rows[0]!.idempotency_key.length).toBeLessThan(128);
     });
 
+    it("still reports the edit it made once the claim has been retired", async () => {
+      const created = await author("Bearer tokens are required", "The transport requires one.");
+      const edit = (reason: string) =>
+        updateAssertion({
+          ...context(),
+          assertionGuid: created.assertionGuid,
+          title: "Edited before the tombstone",
+          reason,
+          idempotencyKey: "request-42",
+        });
+
+      await edit("first delivery");
+      await retireAssertion({
+        ...context(),
+        assertionGuid: created.assertionGuid,
+        reason: "imported twice",
+      });
+
+      // Worst under an explicit key, which is the caller stating "at most once": refusing here
+      // tells them their one delivery never happened.
+      const replayed = await edit("redelivery after a timeout");
+      expect(replayed.replayed).toBe(true);
+      expect(replayed.version).toBe(3);
+    });
+
     it("will not edit a tombstoned claim", async () => {
       const created = await author("Bearer tokens are required", "The transport requires one.");
       await retireAssertion({
@@ -1097,6 +1122,31 @@ describe.runIf(await isTestDatabaseReachable())("assertion lifecycle, T3 (real P
       expect((await rowOf(created.assertionGuid)).version).toBe(3);
     });
 
+    it("still reports the citation it added once the claim has been retired", async () => {
+      const created = await author("Bearer tokens are required", "The transport requires one.");
+      const cite = (reason: string) =>
+        addCitation({
+          ...context(),
+          assertionGuid: created.assertionGuid,
+          citation: { blockGuid: otherBlockGuid, exactQuote: "one hour" },
+          reason,
+        });
+
+      const first = await cite("second source");
+      await retireAssertion({
+        ...context(),
+        assertionGuid: created.assertionGuid,
+        reason: "imported twice",
+      });
+
+      // The citation did land. Refusing the redelivery with "no live assertion" would deny a
+      // write that happened and send the caller to add it again — and a tombstoned claim keeps
+      // its row, so there is nothing to stop this answering.
+      const replayed = await cite("second source, resubmitted after a timeout");
+      expect(replayed.replayed).toBe(true);
+      expect(replayed.citationGuid).toBe(first.citationGuid);
+    });
+
     it("will not cite a tombstoned claim", async () => {
       const created = await author("Bearer tokens are required", "The transport requires one.");
       await retireAssertion({
@@ -1113,8 +1163,9 @@ describe.runIf(await isTestDatabaseReachable())("assertion lifecycle, T3 (real P
           reason: "should not land",
         }),
       ).rejects.toBeInstanceOf(CitationAssertionNotFoundError);
-      // The refusal happens after the insert, so what keeps a citation off a tombstone is the
-      // transaction rolling back — assert the row is absent rather than trusting the throw.
+      // Asserted rather than inferred from the throw: the refusal comes from the pre-read, which
+      // runs before the insert, so nothing should have been written to roll back in the first
+      // place. This is what says so.
       expect(await citationsOf(created.assertionGuid)).toHaveLength(1);
     });
   });

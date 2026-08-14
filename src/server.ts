@@ -148,8 +148,9 @@ const ProjectUpdateStatusesSchema = z.union([z.array(ProjectUpdateStatusSchema),
  *
  * Bounded because `commands.idempotency_key` is btree-indexed and unique per workspace: an
  * oversized key fails as a raw Postgres "index row size exceeds maximum", which tells the caller
- * nothing about what they did wrong. The derived keys every command falls back to are hashed and
- * comfortably inside this; the limit only ever binds on a key someone chose.
+ * nothing about what they did wrong. The derived key each of these commands falls back to is
+ * well inside this — the ones built from caller text hash it, the rest are guids and short
+ * literals — so the limit only ever binds on a key someone chose.
  */
 const IdempotencyKeySchema = z.string().trim().min(1).max(200).optional();
 
@@ -2114,7 +2115,8 @@ the index when your workflow checks in that file.`,
         description:
           "Change what a claim says. Any subset of title, content, and kind; fields left out keep their current " +
           "value, and fields resent unchanged are not counted as an edit — a version bump with no difference " +
-          "behind it makes the history less trustworthy, not more. Standing is not editable here: use " +
+          "behind it makes the history less trustworthy, not more, and a call in which nothing differs at all is " +
+          "refused rather than quietly accepted. Standing is not editable here: use " +
           "setAssertionStatus, so a reader can tell \"we no longer stand behind this\" from \"this now says " +
           "something else\". Citations are left alone; rewording a claim does not change where it came from. " +
           "Requires the database backend.",
