@@ -517,6 +517,19 @@ describe.runIf(await isTestDatabaseReachable())("assertion lifecycle, T3 (real P
           idempotencyKey: "shared-request-key",
         }),
       ).rejects.toBeInstanceOf(IdempotencyKeyReusedError);
+      // Named as a command, not an assertion. This branch has no assertion guid to give — the
+      // record was never written — and a bare guid in that sentence reads as one that exists.
+      await expect(
+        createAssertion({
+          ...context(),
+          scopeSlug: "anchor-mcp",
+          kind: "decision",
+          title: "A genuinely new claim",
+          content: "Which was never written.",
+          citation: { blockGuid, exactQuote: "bearer token" },
+          idempotencyKey: "shared-request-key",
+        }),
+      ).rejects.toThrow(/on command /);
 
       const claims = await pool.query(
         `SELECT 1 FROM "${schemaName}".assertions WHERE title = 'A genuinely new claim'`,

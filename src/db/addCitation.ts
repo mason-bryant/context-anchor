@@ -250,7 +250,7 @@ export async function addCitation(input: AddCitationInput): Promise<AddCitationR
   if (!row?.payload.citationGuid) {
     // The key was accepted for some other command, so no citation was added under it. Reporting
     // the claim as missing would send the caller to author a duplicate.
-    throw new IdempotencyKeyReusedError("assertion.addCitation", input.assertionGuid);
+    throw new IdempotencyKeyReusedError("assertion.addCitation", `assertion ${input.assertionGuid}`);
   }
   // The claim as it stands, not as it stood when the citation was added. The snapshot's version
   // is a fact about that command; a caller feeding it back as expectedVersion after any later

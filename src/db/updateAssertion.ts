@@ -241,7 +241,7 @@ export async function updateAssertion(input: UpdateAssertionInput): Promise<Upda
     [input.workspaceGuid, input.assertionGuid, command.commandGuid],
   );
   if (applied.rows.length === 0) {
-    throw new IdempotencyKeyReusedError("assertion.update", input.assertionGuid);
+    throw new IdempotencyKeyReusedError("assertion.update", `assertion ${input.assertionGuid}`);
   }
 
   // A replay applied nothing, so the values above were never written. Read the claim as it

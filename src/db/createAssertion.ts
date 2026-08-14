@@ -225,7 +225,7 @@ async function resolveReplayed(
   if (!row) {
     // Either the key was spent by a command that authored nothing, or the assertion it authored
     // is gone. Both mean there is no identifier to hand back, and inventing one would be worse.
-    throw new IdempotencyKeyReusedError("assertion.create", commandGuid);
+    throw new IdempotencyKeyReusedError("assertion.create", `command ${commandGuid}`);
   }
 
   return {

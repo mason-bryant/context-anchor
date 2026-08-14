@@ -57,9 +57,15 @@ export type CommandInput = {
  * one that confines itself to what raising it proves.
  */
 export class IdempotencyKeyReusedError extends Error {
-  constructor(commandType: string, entityGuid: string) {
+  /**
+   * `subject` is labelled by the caller rather than assumed to be an entity guid. The command
+   * that authors a record does not have one to name when it lands here — the record was never
+   * written — so it names its command instead, and a bare guid in the message would read as the
+   * assertion guid it is not.
+   */
+  constructor(commandType: string, subject: string) {
     super(
-      `The idempotency key given for ${commandType} on ${entityGuid} was already accepted for a ` +
+      `The idempotency key given for ${commandType} on ${subject} was already accepted for a ` +
         `different command, so this one was treated as a replay and nothing was written. ` +
         `Whatever that other command did stands; this one did nothing. Idempotency keys identify ` +
         `one command, not one request: give each command its own.`,

@@ -226,7 +226,7 @@ export async function retireAssertion(input: RetireAssertionInput): Promise<Reti
     // assertion" would be the wrong account of that — an agent told the claim is gone authors a
     // duplicate — and this command cannot say what state the claim is in either, because the
     // command that spent the key may have been a retire of its own.
-    throw new IdempotencyKeyReusedError("assertion.retire", input.assertionGuid);
+    throw new IdempotencyKeyReusedError("assertion.retire", `assertion ${input.assertionGuid}`);
   }
   return {
     assertionGuid: input.assertionGuid,
