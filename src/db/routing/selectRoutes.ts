@@ -574,8 +574,10 @@ export async function loadRouteRecords(
     end_offset: number;
     ordinal: number;
   }>(
-    // DISTINCT ON keeps one row per stable key, taken from the highest revision number, so a
-    // reimported document contributes its current text rather than one row per revision.
+    // DISTINCT ON collapses a stable key that appears in several revisions of one document.
+    // It is NOT what keeps deleted content out — see the revision predicate below. That
+    // distinction is written twice because the belief that DISTINCT ON alone was sufficient is
+    // what produced the defect this query was fixed for.
     `SELECT DISTINCT ON (ss.stable_key)
             ss.section_guid, ss.revision_guid, dr.document_guid, sd.name AS document_name,
             ss.stable_key, ss.title, ss.heading_level, ss.start_offset, ss.end_offset, ss.ordinal
