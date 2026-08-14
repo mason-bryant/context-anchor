@@ -28,6 +28,17 @@ type: context-anchor
 - Rate limiting belongs in the transport.
 `;
 
+/**
+ * Record-lexical reasons only. Scope-name matching emits `task term "x" matched scope slug`
+ * (or `title`/`alias` — the field that matched, not its value),
+ * which shares the "task term" prefix, so filtering on that alone mixes two signals — and
+ * `anchor-mcp` carries the alias `context-conductor`, so a task containing "context" really can
+ * produce both. A test asserting a term is absent from record-lexical evidence would then pass
+ * or fail on the wrong signal.
+ */
+const recordLexicalReasons = (routes: Array<{ matchReasons: string[] }>): string[] =>
+  routes.flatMap((route) => route.matchReasons).filter((reason) => / title[s]?[ :]/.test(reason));
+
 describe.runIf(await isTestDatabaseReachable())("planRoutedBundle (real Postgres)", () => {
   let pool: Pool;
   let schemaName: string;
@@ -166,9 +177,7 @@ describe.runIf(await isTestDatabaseReachable())("planRoutedBundle (real Postgres
       });
 
       const result = await plan("decisions", { recordLexical: true });
-      const reasons = result.routes.flatMap((route) =>
-        route.matchReasons.filter((reason) => reason.includes("task term")),
-      );
+      const reasons = recordLexicalReasons(result.routes);
 
       expect(reasons).toHaveLength(1);
       expect(reasons[0]).toContain("matched 4 distinct section titles");
@@ -201,9 +210,7 @@ describe.runIf(await isTestDatabaseReachable())("planRoutedBundle (real Postgres
       });
 
       const result = await plan("decisions logging", { recordLexical: true });
-      const reason = result.routes
-        .flatMap((route) => route.matchReasons)
-        .find((text) => text.includes("task term"))!;
+      const reason = recordLexicalReasons(result.routes)[0]!;
 
       expect(reason).toBeDefined();
       // A single heading matched by both terms, so the count is one either way — what changes is
@@ -213,6 +220,35 @@ describe.runIf(await isTestDatabaseReachable())("planRoutedBundle (real Postgres
       expect(reason).toContain('"decisions"');
       expect(reason).toContain('"logging"');
       expect(reason).toContain("task terms");
+    });
+
+    it("ignores stopwords, which otherwise route on function words alone", async () => {
+      // A corpus run found 50 of 118 added routes came from a single stopword, with "and" alone
+      // reaching 15 of 23 scopes. The heading has to CONTAIN the stopwords or the assertion holds
+      // whether or not they are filtered -- the default fixture headings contain none, so the
+      // first version of this test passed with the filter removed.
+      await importDocuments({
+        pool,
+        schemaName,
+        handler: new CommandHandler(pool, schemaName),
+        workspaceGuid: bootstrap.workspaceGuid,
+        actorPrincipalGuid: bootstrap.ownerPrincipalGuid,
+        repository: "agent-context",
+        commitSha: "d".repeat(40),
+        files: [
+          {
+            path: "projects/anchor-mcp/anchor-mcp-project-context.md",
+            content:
+              "---\nproject: anchor-mcp\ntype: context-anchor\n---\n\n# Anchor MCP\n\n" +
+              "## Rate limiting and the transport\n\nText.\n\n## Notes on the migration\n\nText.\n",
+          },
+        ],
+      });
+
+      const result = await plan("the and of to", { recordLexical: true });
+      const reasons = recordLexicalReasons(result.routes);
+
+      expect(reasons).toEqual([]);
     });
 
     // The restriction the whole signal rests on. Body matching would put most scopes in most

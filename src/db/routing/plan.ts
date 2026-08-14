@@ -11,7 +11,13 @@ import {
   type RouteRecord,
 } from "./selectRoutes.js";
 
-export const PLANNER_VERSION = "routing-1.0.0";
+// Bumped because selection changed, not because the code did. This string is written into every
+// retrieval_requests row and is the only thing making impressions comparable across runs. The
+// record-lexical stopword filter changes which routes selection produces, so leaving the version
+// alone would claim two materially different planners were the same — on the one field the
+// evaluation of this signal rests on. Deliberately no figure here: the measurement belongs beside
+// the code that produces it, and a number copied to a second place is a number that goes stale.
+export const PLANNER_VERSION = "routing-1.1.0";
 
 /** Expanded routes return their records; listed routes return counts and reasons only. */
 export type RouteBudget = {

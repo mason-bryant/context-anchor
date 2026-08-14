@@ -66,6 +66,38 @@ function normalizeReferencedPath(value: string): string {
   return value.trim().replace(/\\/g, "/").replace(/^\/+/, "");
 }
 
+/**
+ * Words that carry no topical meaning in a heading.
+ *
+ * `taskTerms` deliberately applies no stopword list — for scope-name matching it does not need
+ * one, because a scope is not called "and" and whole-word equality against a slug makes a
+ * function word harmless. Matching against every heading in the workspace is a different
+ * problem: a corpus run found **50 of 118 added routes came from a single stopword**, with "and"
+ * alone reaching 15 of 23 scopes. Filtering here rather than in `taskTerms` keeps the baseline
+ * this signal is measured against unchanged.
+ *
+ * Function words only. An earlier version also listed the verbs that scaffold task phrasing
+ * ("add X", "run Y", "get Z") and the question words, and measured better for it — 53 added
+ * routes across the corpus against 74 here. It was cut anyway, because those words demonstrably
+ * head real content: this very workspace holds "Why", "When to fall back to `cde local test`",
+ * "New Markdown Notes" and "MANDATORY: Use the Hot Test Daemon MCP". Filtering them silently
+ * removes a route nobody can see was removed, while leaving them in produces noise a reader can
+ * see and discount — the per-term counts in the reason make a stopword hit obvious. Between a
+ * quiet loss and a visible cost, take the visible one.
+ *
+ * A word that is common in *this corpus* but topical anywhere — "milestone", which heads every
+ * milestone document — is not a stopword and is not handled here. That needs a frequency rule
+ * measured over the workspace, which is deliberately not in this change.
+ */
+const RECORD_LEXICAL_STOPWORDS = new Set([
+  "the", "and", "or", "not", "but", "for", "of", "to", "in", "on", "at", "by", "with", "from",
+  "as", "is", "are", "was", "were", "be", "been", "being", "it", "its", "this", "that", "these",
+  // No single-letter entries: both the task and the heading tokenize on [a-z0-9]{2,}, so "a"
+  // could never arrive here and listing it would imply single letters are part of the model.
+  "those", "an", "we", "our", "you", "your", "they", "their", "into", "about", "after",
+  "before", "then", "than", "so", "if", "all", "any", "some", "more", "most",
+]);
+
 /** How many matched titles a record-lexical reason quotes before summarising the remainder. */
 export const RECORD_LEXICAL_EXAMPLES = 3;
 
@@ -73,14 +105,13 @@ export const RECORD_LEXICAL_EXAMPLES = 3;
  * The sentence a person reads to decide whether a record-lexical route belongs.
  *
  * Most offered routes are listed rather than expanded and carry no records at all, so this is
- * the entire evidence for them, and every part of it is shaped by one problem: `taskTerms`
- * applies no stopword list. "the", "to" and "add" are task terms like any other, and the tasks
- * this signal exists to rescue are ordinary phrasings that are full of them.
+ * the entire evidence for them. Each term therefore carries its own count.
  *
- * So each term carries its own count. A bare union of terms let a scope that matched one
- * relevant heading and four on "the" render as five-term evidence, which is stronger than what
- * the same scope produced before any of this — a reader could discount a standalone
- * `task term "the" matched...` at a glance.
+ * Stopwords no longer reach here, but ubiquitous topical words still do — a bare union of terms
+ * lets a scope that matched one relevant heading and four on a common word render as five-term
+ * evidence. The per-term breakdown is what makes that visible, and it is what exposed the
+ * stopword problem in the first place: before it, `task term "the" matched section title in this
+ * scope` and a genuine match were indistinguishable in the pane.
  *
  * And the examples are drawn from the titles reached by the *rarest* term first, not
  * alphabetically. Alphabetical order filled the quoted examples with stopword matches, so the
@@ -145,6 +176,7 @@ export function recordLexicalReason(group: {
     (remainder > 0 ? ` (+${String(remainder)} more)` : "")
   );
 }
+
 
 /**
  * Longest matching prefix wins, matching `repository_mappings`' own documented rule. A
@@ -407,7 +439,7 @@ export async function selectRouteCandidates(
       // evidence across several reasons by which task word happened to appear earliest in each
       // heading — a property with no bearing on relevance. A scope matching six of six headings
       // on a two-word task read as two unremarkable threes.
-      const hits = words.filter((word) => terms.has(word));
+      const hits = words.filter((word) => terms.has(word) && !RECORD_LEXICAL_STOPWORDS.has(word));
       if (hits.length === 0) {
         continue;
       }
@@ -421,9 +453,10 @@ export async function selectRouteCandidates(
       }
       held.titles.push(row.text);
       // Which titles each term reached, not merely which terms appeared somewhere in the scope.
-      // `taskTerms` applies no stopword list, so "the", "to" and "add" are terms like any other;
-      // without per-term attribution a scope that matched one relevant heading and four on "the"
-      // reads exactly like one that matched five relevant headings.
+      // Per-term attribution, because a scope that matched one relevant heading and four on a
+      // common word otherwise reads exactly like one that matched five relevant headings.
+      // Stopwords are filtered above, but ubiquitous topical words are not — that is what the
+      // scope-frequency rule handles, and it needs the per-term counts to do it.
       for (const hit of hits) {
         const seen = held.termTitles.get(hit);
         if (seen) {
