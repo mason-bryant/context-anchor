@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { ensureBootstrap, type BootstrapResult } from "../../src/db/bootstrap.js";
 import { CommandHandler } from "../../src/db/commandHandler.js";
+import { routingDiagnostics } from "../../src/db/comparison.js";
 import { telemetrySchemaNameFor } from "../../src/db/config.js";
 import { importDocuments } from "../../src/db/importDocuments.js";
 import {
@@ -373,8 +374,10 @@ describe.runIf(await isTestDatabaseReachable())("routing task corpus (real Postg
       "topical-write-failure": 1,
       "cross-scope-transport-logging": 1,
       "topical-stdio": 1,
-      // These two are reached only by relation hop from http-transport. Without them the hop
-      // signal can be deleted outright and nothing fails.
+      // topical-tool-parity and topical-stdio are what hold the relation-hop signal: both reach
+      // anchor-mcp only by hopping from http-transport, and disabling the hop drops recall to
+      // 85% and fails this. topical-conflict-detection is not one of them — it reaches
+      // claim-provenance directly through a heading, and that scope has no parent to hop to.
       "topical-tool-parity": 1,
       "topical-conflict-detection": 1,
     };
@@ -387,10 +390,19 @@ describe.runIf(await isTestDatabaseReachable())("routing task corpus (real Postg
     expect(judged.sort()).toEqual(Object.keys(expected).sort());
   });
 
-  it("pins the interpretation knob on the whole-workspace metric", () => {
-    // The metric that stops whole-workspace answers counting as rescues can be silenced by
-    // raising this alone: at 0.95 the count drops from 4 to 2 while every assertion about it
-    // still passes, because they are all relative.
+  it("pins the whole-workspace metric by its effect, not only its constant", async () => {
+    const off = await run(false);
+    const on = await run(true);
+
+    // Pinning the constant alone was not enough, and that is the third time this shape has come
+    // up here. Changing `>=` to `>` drops the count 4 to 3, and dropping the fraction out of the
+    // comparison altogether drops it to 2 — both with the constant untouched at 0.5 and both
+    // green, because every other assertion on this metric is relative and `off` is zero.
+    //
+    // So the counts are pinned outright. This is the counter-metric to the zero-route headline:
+    // without it a change that widens fan-out reads as a pure improvement.
+    expect(off.wholeWorkspaceCount).toBe(0);
+    expect(on.wholeWorkspaceCount).toBe(4);
     expect(WHOLE_WORKSPACE_FRACTION).toBe(0.5);
   });
   it("gives the lexical signal topical headings to reach, not only the shared template", async () => {
@@ -424,6 +436,29 @@ describe.runIf(await isTestDatabaseReachable())("routing task corpus (real Postg
       [bootstrap.workspaceGuid],
     );
     expect(shared.rows.map((row) => row.title)).toEqual([]);
+  });
+
+  it("keeps its own traffic out of the retrieval diagnostics", async () => {
+    // The tag alone excludes nothing: the exclusion lives in comparison.ts's exact list, and for
+    // one round the tag was set and the list did not mention it, so 28 requests an run were
+    // counted as real retrieval — one of them offering every scope in the workspace by design.
+    //
+    // Deleting either half passed all 3493 tests, because the diagnostics tests only exercise the
+    // two comparison-gate tags and this file never read telemetry. This is the assertion that
+    // makes the pair load-bearing.
+    await run(true);
+
+    const diagnostics = await routingDiagnostics(pool, telemetrySchema, bootstrap.workspaceGuid);
+    expect(diagnostics.totals.requests).toBe(0);
+    expect(diagnostics.totals.routesOffered).toBe(0);
+    expect(diagnostics.neverExpanded).toEqual([]);
+
+    // And the impressions really were written, so the zeros above are an exclusion rather than
+    // an empty table.
+    const impressions = await pool.query<{ n: string }>(
+      `SELECT count(*)::text AS n FROM "${telemetrySchema}".retrieval_route_impressions`,
+    );
+    expect(Number(impressions.rows[0]!.n)).toBeGreaterThan(0);
   });
 
   it("produces the same answer twice, so a difference between runs means a change", async () => {

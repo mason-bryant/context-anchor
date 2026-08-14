@@ -90,7 +90,13 @@ function render(report: CorpusReport, recordLexical: boolean): string {
   lines.push(
     `recall         ${report.meanRecall === undefined ? "not scored (fixture does not describe this workspace)" : pct(report.meanRecall)}`,
   );
-  lines.push(`forbidden hits ${String(report.forbiddenHitCount)} tasks`);
+  // Suppressed on an unscored run for the same reason as recall: forbidden sets name scopes from
+  // a fixture the target workspace does not have, so scoring is skipped and the count is a
+  // structural zero. Printed bare, an operator comparing a seeded run to a real one reads it as
+  // a precision win.
+  lines.push(
+    `forbidden hits ${report.scored ? `${String(report.forbiddenHitCount)} tasks` : "not scored"}`,
+  );
   lines.push(`over ceiling   ${String(report.overMaxRoutesCount)} tasks`);
   lines.push(`offered, empty ${String(report.offeredButEmptyCount)} tasks`);
   lines.push(`whole workspace ${String(report.wholeWorkspaceCount)} tasks`);

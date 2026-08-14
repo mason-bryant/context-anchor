@@ -11,7 +11,8 @@
     "Each scope also carries topical H3 headings alongside the shared template. Both halves are needed: the template reproduces the vocabulary that reaches every scope, and the topical headings give the record-lexical signal something to match. A fixture with only the template measures a workspace nobody has -- record-lexical never reads body text, so all the topical content would be invisible to it and the signal would score as useless.",
     "Six scopes carry headings built from function words ('Why We Require...', 'When And How...'). Without them the stopword filter could be deleted and this corpus would report an improvement -- the failure it was built to preserve would be undetectable in it.",
     "Two tasks are expected to fail and are pinned that way: topical-identity and topical-review-flow both miss on stemming ('resolve' vs 'Resolution', 'reviews' vs 'Review'). A corpus holding only tasks the code already satisfies measures nothing.",
-    "Forbidden sets name scopes the signal actually reaches, not scopes it was never going to. Drawn the easy way they are all satisfiable and the precision headline reads better than the truth: only 2 of 12 could ever fire before this."
+    "Forbidden sets name scopes the signal actually reaches, not scopes it was never going to. Drawn the easy way they are all satisfiable and the precision headline reads better than the truth: only 2 of 12 could ever fire before this.",
+    "Some topical- tasks reach their scope by its slug rather than by a heading, and say so in their rationale. The prefix describes the phrasing, not the mechanism, and the signal-off recall of 48% is mostly those."
   ],
   "scopes": [
     {
@@ -424,7 +425,7 @@
       "expectedScopes": [
         "routing"
       ],
-      "rationale": "Phrased as a question, which the stopword list must not strip to nothing."
+      "rationale": "Carried by 'ranker' and 'invent' matching the routing scope, not by the question word. An earlier rationale claimed it guarded the stopword list against stripping questions to nothing; it does not, and it passes with every question word filtered. stopword-only-terms is the task that guards the filter."
     },
     {
       "id": "topical-identity",
@@ -485,7 +486,7 @@
       "expectedScopes": [
         "migrations"
       ],
-      "rationale": "Topical."
+      "rationale": "Names its scope: 'migrations' is the slug, so this scores with the signal off and is not a test of topical phrasing. Kept for the baseline, labelled so the 48% signal-off recall is not read as topical matching working better than it does."
     },
     {
       "id": "topical-existing-database",
@@ -505,7 +506,7 @@
       "expectedScopes": [
         "telemetry"
       ],
-      "rationale": "Topical."
+      "rationale": "Also names its scope ('telemetry'), and scores with the signal off. Same caveat as topical-forward-only: the topical- prefix here describes the phrasing, not the mechanism."
     },
     {
       "id": "topical-write-failure",
@@ -575,7 +576,7 @@
         "logging",
         "migrations"
       ],
-      "rationale": "Reached the right assertion exactly in the real run."
+      "rationale": "Reaches claim-provenance directly through the heading 'Conflict Detection Between Claims'. An earlier rationale said 'reached the right assertion', which this fixture cannot do: it holds zero assertions, and the density stamp on every report says so."
     },
     {
       "id": "stopword-only-terms",

@@ -198,9 +198,9 @@ export async function runCorpus(input: CorpusRunInput): Promise<CorpusReport> {
       recordLexical: input.recordLexical,
       budget: input.budget,
       // Listed in comparison.ts's INSTRUMENT_CONSUMERS, which is what actually excludes these
-      // from the retrieval diagnostics. The tag alone excludes nothing — it was here for a
-      // round with the exclusion unwired, and 28 requests and 82 impressions per run were being
-      // counted as real retrieval.
+      // from the retrieval diagnostics. The tag alone excludes nothing — it was here for a round
+      // with the exclusion unwired, and every run's requests and impressions (28 and 75 on this
+      // fixture with the signal on) were being counted as real retrieval.
       consumer: "routing-corpus",
     });
 
