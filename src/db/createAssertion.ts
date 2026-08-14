@@ -2,7 +2,11 @@ import { createHash, randomUUID } from "node:crypto";
 
 import type { Pool } from "pg";
 
-import type { CommandHandler, CommandTransaction } from "./commandHandler.js";
+import {
+  IdempotencyKeyReusedError,
+  type CommandHandler,
+  type CommandTransaction,
+} from "./commandHandler.js";
 import { assertValidSchemaName } from "./config.js";
 
 /**
@@ -203,6 +207,14 @@ async function resolveReplayed(
        FROM "${schema}".record_versions v
        JOIN "${schema}".assertions a
          ON a.workspace_guid = v.workspace_guid AND a.assertion_guid = v.entity_guid
+       -- Matched on what the accepted command actually did. Idempotency keys are compared on
+       -- (workspace, key) alone, not on command type, so a caller reusing one key across a batch
+       -- lands here holding an unrelated acceptance — and every other assertion command writes a
+       -- record_versions row under entity_type 'assertion' too. Without this a spent key reports
+       -- a claim as already authored and hands back a citation guid from a different command.
+       JOIN "${schema}".mutation_log m
+         ON m.workspace_guid = v.workspace_guid AND m.command_guid = v.command_guid
+        AND m.entry_type = 'assertion.created'
       WHERE v.workspace_guid = $1 AND v.command_guid = $2 AND v.entity_type = 'assertion'
       ORDER BY v.version DESC
       LIMIT 1`,
@@ -211,11 +223,9 @@ async function resolveReplayed(
 
   const row = original.rows[0];
   if (!row) {
-    // The command was accepted but its assertion is gone — a retired or hard-removed record.
-    // Reporting that is better than inventing an identifier for it.
-    throw new Error(
-      `Command ${commandGuid} was already accepted, but no assertion from it remains to return.`,
-    );
+    // Either the key was spent by a command that authored nothing, or the assertion it authored
+    // is gone. Both mean there is no identifier to hand back, and inventing one would be worse.
+    throw new IdempotencyKeyReusedError("assertion.create", commandGuid);
   }
 
   return {

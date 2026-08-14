@@ -180,6 +180,7 @@ describe.runIf(await isTestDatabaseReachable())("assertion lifecycle, T3 (real P
 
       expect(result.changed).toEqual(["title", "kind"]);
       expect(result.replayed).toBe(false);
+      expect(result.assertionRetired).toBe(false);
 
       const settled = await rowOf(created.assertionGuid);
       expect(settled.title).toBe("Bearer tokens are required on the HTTP transport");
@@ -294,6 +295,7 @@ describe.runIf(await isTestDatabaseReachable())("assertion lifecycle, T3 (real P
       });
 
       expect(first.replayed).toBe(false);
+      expect(first.assertionRetired).toBe(false);
       expect(second.replayed).toBe(true);
       expect(second.assertionRetired).toBe(false);
       // A replay reports the claim as it stands, not what this call would have done.
@@ -486,6 +488,40 @@ describe.runIf(await isTestDatabaseReachable())("assertion lifecycle, T3 (real P
           reason: "should not land",
         }),
       ).rejects.toBeInstanceOf(UpdateAssertionNotFoundError);
+    });
+  });
+
+  describe("createAssertion", () => {
+    it("refuses rather than reporting a claim another command's key swallowed", async () => {
+      const created = await author("Bearer tokens are required", "The transport requires one.");
+      await updateAssertion({
+        ...context(),
+        assertionGuid: created.assertionGuid,
+        title: "Edited under a key that is about to be reused",
+        reason: "first use of the key",
+        idempotencyKey: "shared-request-key",
+      });
+
+      // The last of the family. Every assertion command writes a record_versions row under
+      // entity_type 'assertion', so matching on the command guid alone finds the edit's row and
+      // reports a claim as already authored — handing back a citation guid from a command that
+      // never made one.
+      await expect(
+        createAssertion({
+          ...context(),
+          scopeSlug: "anchor-mcp",
+          kind: "decision",
+          title: "A genuinely new claim",
+          content: "Which was never written.",
+          citation: { blockGuid, exactQuote: "bearer token" },
+          idempotencyKey: "shared-request-key",
+        }),
+      ).rejects.toBeInstanceOf(IdempotencyKeyReusedError);
+
+      const claims = await pool.query(
+        `SELECT 1 FROM "${schemaName}".assertions WHERE title = 'A genuinely new claim'`,
+      );
+      expect(claims.rowCount).toBe(0);
     });
   });
 
@@ -923,6 +959,7 @@ describe.runIf(await isTestDatabaseReachable())("assertion lifecycle, T3 (real P
       });
 
       expect(result.replayed).toBe(false);
+      expect(result.assertionRetired).toBe(false);
       const citations = await citationsOf(created.assertionGuid);
       expect(citations).toHaveLength(2);
       const added = citations.find((row) => row.citation_guid === result.citationGuid)!;
@@ -1009,7 +1046,12 @@ describe.runIf(await isTestDatabaseReachable())("assertion lifecycle, T3 (real P
         reason: "second source, resubmitted after a timeout",
       });
 
+      expect(first.assertionRetired).toBe(false);
       expect(second.replayed).toBe(true);
+      // Both paths asserted, because the write path hardcodes this and a hardcoded field that
+      // nothing reads is one that can be wrong in the direction that matters: an agent told the
+      // claim it just wrote is a tombstone abandons the edit or authors a duplicate.
+      expect(second.assertionRetired).toBe(false);
       // The GUID minted by the replayed call was never written; returning it would hand the
       // caller an identifier for a row that does not exist.
       expect(second.citationGuid).toBe(first.citationGuid);

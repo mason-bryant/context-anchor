@@ -243,16 +243,18 @@ export async function setAssertionStatus(
   // A replay applied nothing, so the values above were never written. Read the claim as it
   // actually stands rather than echoing what this call would have done.
   const settled = await input.pool.query<{ status: AssertionStatus; version: number }>(
-    // Same liveness filter as the write path, though nothing reaches it on a tombstone: the read
-    // before this command opens refuses a retired claim outright, so this branch only ever sees
-    // live ones. Kept as a belt on that brace rather than as the guard.
+    // Same liveness filter as the write path. The read before this command opens usually gets
+    // there first, but the two are separate pool queries with a whole command transaction
+    // between them, so a retire committing in that window lands here — and then this filter is
+    // the only guard, not a belt on someone else's brace.
     //
-    // Worth knowing that this makes the command answer differently from its siblings.
-    // updateAssertion and addCitation report a replay on a retired claim rather than refusing it
-    // — the write did land, and denying it would send the caller to repeat a write they already
-    // made — and carry `assertionRetired` so the standing is not hidden. That difference is in
-    // the eager read above, not here: setting the standing of a tombstone is not a thing to
-    // report on, it is a thing to refuse.
+    // In that window this command answers differently from its siblings: updateAssertion and
+    // addCitation report a replay on a retired claim rather than refusing it, because the write
+    // did land and denying it sends the caller to repeat a write they already made, and they
+    // carry `assertionRetired` so the standing is not hidden. Refusing is defensible here for a
+    // different reason — a status change is a decision about a claim that is still in play, and
+    // there is no standing worth reporting on a tombstone — but it is a divergence, not a
+    // consequence of the eager read.
     `SELECT status, version FROM "${input.schemaName}".assertions
       WHERE workspace_guid = $1 AND assertion_guid = $2 AND retired_at IS NULL`,
     [input.workspaceGuid, input.assertionGuid],

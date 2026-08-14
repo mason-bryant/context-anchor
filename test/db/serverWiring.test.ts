@@ -323,6 +323,16 @@ describe("listScopes tool registration", () => {
     expect(server._registeredTools.retireAssertion).toBeDefined();
     expect(server._registeredTools.addCitation).toBeDefined();
 
+    // Every field being optional describes "any subset", not "none of them". The command refuses
+    // an edit naming no fields, so a schema that accepts one advertises a call with no successful
+    // ending — the rule the superseded status is already held to two tools down.
+    expect(() =>
+      server._registeredTools.updateAssertion!.inputSchema!.parse({
+        assertionGuid: "11111111-1111-4111-8111-111111111111",
+        reason: "because",
+      }),
+    ).toThrow();
+
     // commands.idempotency_key is btree-indexed and unique per workspace, so an oversized key
     // fails as a raw "index row size exceeds maximum" — a Postgres error about an index, handed
     // to an agent that asked to write a claim. Refused at the schema instead, where the message

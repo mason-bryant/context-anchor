@@ -2051,9 +2051,10 @@ the index when your workflow checks in that file.`,
         jsonResult(await knowledgeDb.reportRecordUseAsOwner({ requestId, refs, useKind })),
     );
 
-    // T3's authoring surface. The design requires every capability to have a surface a person
-    // can drive; these four shipped as library functions reachable only from contract tests,
-    // which made the assertion pass the build order asks for impossible to actually perform.
+    // T3's authoring surface: all seven of the design's assertion operations. Every capability
+    // needs a surface a person can drive, and these shipped as library functions reachable only
+    // from contract tests, which made the authoring pass the build order asks for impossible to
+    // actually perform, whatever their tests said.
     server.registerTool(
       "createAssertion",
       {
@@ -2116,20 +2117,33 @@ the index when your workflow checks in that file.`,
           "Change what a claim says. Any subset of title, content, and kind; fields left out keep their current " +
           "value, and fields resent unchanged are not counted as an edit — a version bump with no difference " +
           "behind it makes the history less trustworthy, not more, and a call in which nothing differs at all is " +
-          "refused rather than quietly accepted. Standing is not editable here: use " +
+          "refused rather than quietly accepted. A resubmitted edit comes back with replayed set and changed " +
+          "empty, and with assertionRetired when the claim has since been tombstoned — a success-shaped result " +
+          "can describe a write someone else made, on a claim that is no longer there. Standing is not " +
+          "editable here: use " +
           "setAssertionStatus, so a reader can tell \"we no longer stand behind this\" from \"this now says " +
           "something else\". Citations are left alone; rewording a claim does not change where it came from. " +
           "Requires the database backend.",
-        inputSchema: z.object({
-          traceId: TraceIdSchema,
-          assertionGuid: z.string().uuid(),
-          title: z.string().trim().min(1).optional(),
-          content: z.string().trim().min(1).optional(),
-          kind: z.enum(ASSERTION_KINDS).optional(),
-          reason: z.string().trim().min(1),
-          expectedVersion: z.number().int().positive().optional(),
-          idempotencyKey: IdempotencyKeySchema,
-        }),
+        inputSchema: z
+          .object({
+            traceId: TraceIdSchema,
+            assertionGuid: z.string().uuid(),
+            title: z.string().trim().min(1).optional(),
+            content: z.string().trim().min(1).optional(),
+            kind: z.enum(ASSERTION_KINDS).optional(),
+            reason: z.string().trim().min(1),
+            expectedVersion: z.number().int().positive().optional(),
+            idempotencyKey: IdempotencyKeySchema,
+          })
+          // Every field being optional describes "any subset", not "none of them". The command
+          // refuses an edit naming no fields anyway; refusing at the schema says so before the
+          // call is made and names what is missing, which is the rule setRecordScopes and
+          // setAssertionStatus are already held to.
+          .refine(
+            (input) =>
+              input.title !== undefined || input.content !== undefined || input.kind !== undefined,
+            { message: "Name at least one of title, content, or kind to change." },
+          ),
       },
       async ({ traceId: _traceId, ...input }) => jsonResult(await knowledgeDb.updateAssertionAsOwner(input)),
     );
@@ -2169,7 +2183,9 @@ the index when your workflow checks in that file.`,
           "document, a source that disputes it, or a re-anchor after the text moved. The quote is verified " +
           "against the cited block before anything is written. Citations are additive — there is no delete, so a " +
           "citation that turned out to be wrong is corrected by adding the right one and naming the old one as " +
-          "the re-anchor source. Requires the database backend.",
+          "the re-anchor source. A resubmission of the same quote on the same block comes back with replayed " +
+          "set and the original citation's guid, and with assertionRetired when the claim has since been " +
+          "tombstoned. Requires the database backend.",
         inputSchema: z.object({
           traceId: TraceIdSchema,
           assertionGuid: z.string().uuid(),
