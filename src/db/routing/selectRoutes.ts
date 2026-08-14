@@ -605,7 +605,14 @@ export async function loadRouteRecords(
             FROM "${schemaName}".document_revisions dr2
            WHERE dr2.workspace_guid = dr.workspace_guid AND dr2.document_guid = dr.document_guid
         )
-      ORDER BY ss.stable_key, dr.revision_number DESC`,
+      -- document_guid breaks the tie, because revision_number alone does not. A stable key is
+      -- derived from the document path, while document identity includes the repository, so two
+      -- live documents can share a key and reach the same revision number -- and DISTINCT ON
+      -- would then pick either arbitrarily, making expansion output and contentFingerprint
+      -- differ between runs on unchanged data. Unreachable in this workspace today (no shared
+      -- keys exist); a fingerprint that moves without the content moving is worth foreclosing
+      -- rather than waiting to observe.
+      ORDER BY ss.stable_key, dr.revision_number DESC, dr.document_guid`,
     [workspaceGuid, scopeGuid],
   );
 
