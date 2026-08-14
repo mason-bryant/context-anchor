@@ -592,6 +592,17 @@ export async function loadRouteRecords(
         AND sd.retired_at IS NULL
       WHERE rs.workspace_guid = $1 AND rs.scope_guid = $2
         AND rs.retired_at IS NULL AND rs.record_type = 'section'
+        -- Current revision only. DISTINCT ON takes the newest row per stable_key, which is not
+        -- the same thing: a heading a later commit deleted leaves a section whose stable_key
+        -- appears in no newer revision, so it is the only row for that key and survives the
+        -- dedupe untouched. Expansion would then serve a caller content the pinned commit does
+        -- not contain -- the same defect that had to be fixed in the record-lexical signal,
+        -- where taking the highest revision per key was demonstrably insufficient.
+        AND dr.revision_number = (
+          SELECT max(dr2.revision_number)
+            FROM "${schemaName}".document_revisions dr2
+           WHERE dr2.workspace_guid = dr.workspace_guid AND dr2.document_guid = dr.document_guid
+        )
       ORDER BY ss.stable_key, dr.revision_number DESC`,
     [workspaceGuid, scopeGuid],
   );

@@ -251,6 +251,35 @@ describe.runIf(await isTestDatabaseReachable())("planRoutedBundle (real Postgres
       expect(reasons).toEqual([]);
     });
 
+    it("does not expand a section a later commit deleted", async () => {
+      // Expansion dedupes with DISTINCT ON (stable_key) ORDER BY revision_number DESC, which
+      // takes the newest row per key but cannot drop a key absent from the current revision --
+      // a deleted heading leaves a section whose stable_key exists in no newer revision, so it
+      // is the only row for that key and survives. The same defect was fixed in the
+      // record-lexical signal, where the dedupe alone was demonstrably insufficient.
+      await importDocuments({
+        pool,
+        schemaName,
+        handler: new CommandHandler(pool, schemaName),
+        workspaceGuid: bootstrap.workspaceGuid,
+        actorPrincipalGuid: bootstrap.ownerPrincipalGuid,
+        repository: "agent-context",
+        commitSha: "9".repeat(40),
+        files: [
+          {
+            path: "projects/anchor-mcp/anchor-mcp-project-context.md",
+            content: HTTP_DOC.replace("## Decisions", "## Retired heading"),
+          },
+        ],
+      });
+
+      const expanded = await plan("anchor mcp", { budget: { expanded: 5, listed: 10, recordsPerRoute: 25 } });
+      const headings = expanded.routes.flatMap((route) => (route.records ?? []).map((r) => r.heading ?? ""));
+
+      expect(headings).toContain("Retired heading");
+      expect(headings).not.toContain("Decisions");
+    });
+
     // The restriction the whole signal rests on. Body matching would put most scopes in most
     // answers, which reads like working and is far harder to notice than returning nothing —
     // so a word that appears only in prose must still route nowhere.
