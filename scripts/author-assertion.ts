@@ -1,6 +1,7 @@
 #!/usr/bin/env tsx
 import pg from "pg";
 
+import { COMPOSE_MANAGED_DATABASE_URL } from "../src/db/cliArgs.js";
 import { assertValidSchemaName } from "../src/db/config.js";
 import { CommandHandler } from "../src/db/commandHandler.js";
 import { ASSERTION_KINDS, createAssertion, type AssertionKind } from "../src/db/createAssertion.js";
@@ -65,7 +66,18 @@ function parseArgs(argv: string[]): Args {
     else if (arg === "--content") { args.content = take(index); index += 1; }
     else if (arg === "--block") { args.block = take(index); index += 1; }
     else if (arg === "--quote") { args.quote = take(index); index += 1; }
-    else if (arg === "--min-length") { args.minLength = Number(take(index)); index += 1; }
+    else if (arg === "--min-length") {
+      const raw = take(index);
+      const parsed = Number(raw);
+      // Checked here rather than left to Postgres. Unvalidated it reaches the query as NaN and
+      // comes back as `invalid input syntax for type integer` with a stack trace — the one place
+      // in this script where a mistake does not produce a sentence naming what was wrong.
+      if (!Number.isInteger(parsed) || parsed < 0) {
+        throw new Error(`--min-length needs a non-negative whole number, not ${JSON.stringify(raw)}.`);
+      }
+      args.minLength = parsed;
+      index += 1;
+    }
     else if (arg === "--help" || arg === "-h") {
       console.log(
         `Usage:\n` +
@@ -89,7 +101,7 @@ async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
   const schema = args.schema;
   const pool = new pg.Pool({
-    connectionString: process.env.DATABASE_URL ?? "postgres://anchor:anchor@127.0.0.1:55432/anchor_mcp",
+    connectionString: process.env.DATABASE_URL ?? COMPOSE_MANAGED_DATABASE_URL,
     max: 4,
   });
 
@@ -108,9 +120,18 @@ async function main(): Promise<void> {
         title: string | null;
         raw_content: string;
       }>(
+        // LEFT JOIN to sections, not INNER. `content_blocks.section_guid` is nullable, and the
+        // importer leaves it null for any content before a document's first heading — an
+        // ordinary Markdown shape. createAssertion has no section requirement, so those blocks
+        // are perfectly citable; an inner join made them invisible to the only tool an author
+        // uses, which is under-reporting the material rather than filtering it.
+        //
+        // Scopes are filtered to live ones because createAssertion refuses a retired scope. The
+        // two verbs disagreeing meant a listing could offer blocks that the write would then
+        // reject, which teaches an author to distrust the listing.
         `SELECT b.block_guid, ss.title, b.raw_content
            FROM "${schema}".content_blocks b
-           JOIN "${schema}".source_sections ss
+           LEFT JOIN "${schema}".source_sections ss
              ON ss.workspace_guid = b.workspace_guid AND ss.section_guid = b.section_guid
            JOIN "${schema}".document_revisions dr
              ON dr.workspace_guid = b.workspace_guid AND dr.revision_guid = b.revision_guid
@@ -119,17 +140,32 @@ async function main(): Promise<void> {
             AND d.retired_at IS NULL
            JOIN "${schema}".scopes s
              ON s.workspace_guid = d.workspace_guid AND s.scope_guid = d.owner_scope_guid
+            AND s.retired_at IS NULL
           WHERE b.workspace_guid = $1 AND s.scope_slug = $2
             AND length(b.raw_content) >= $3
             AND dr.revision_number = (
               SELECT max(dr2.revision_number) FROM "${schema}".document_revisions dr2
                WHERE dr2.workspace_guid = dr.workspace_guid AND dr2.document_guid = dr.document_guid
             )
-          ORDER BY ss.ordinal, b.ordinal`,
+          ORDER BY ss.ordinal NULLS FIRST, b.ordinal`,
         [workspaceGuid, args.scope, args.minLength],
       );
 
       if (blocks.rows.length === 0) {
+        // Told apart from a scope that exists and is empty. The audience is several authors
+        // working a list of slugs, and a typo that reads as "nothing to do here" is a scope
+        // quietly skipped rather than an error anybody sees.
+        const known = await pool.query(
+          `SELECT 1 FROM "${schema}".scopes
+            WHERE workspace_guid = $1 AND scope_slug = $2 AND retired_at IS NULL`,
+          [workspaceGuid, args.scope],
+        );
+        if (known.rows.length === 0) {
+          throw new Error(
+            `No live scope ${JSON.stringify(args.scope)} in ${schema}. Check the slug — this is ` +
+              `not the same as a scope with nothing to cite.`,
+          );
+        }
         console.log(`No blocks of at least ${String(args.minLength)} characters in scope ${args.scope}.`);
         return;
       }
