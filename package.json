@@ -56,7 +56,8 @@
     "dev:stdio": "tsx src/bin/anchor-mcp.ts --repo ./fixtures/demo-context",
     "dev:http": "tsx src/bin/anchor-mcp.ts --repo ./fixtures/demo-context --transport http --port 3333",
     "dev:http:watch": "tsx watch src/bin/anchor-mcp.ts --repo ./fixtures/demo-context --transport http --port 3333",
-    "corpus": "tsx scripts/routing-corpus.ts"
+    "corpus": "tsx scripts/routing-corpus.ts",
+    "author": "tsx scripts/author-assertion.ts"
   },
   "engines": {
     "node": ">=20.10"
