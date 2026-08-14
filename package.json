@@ -55,7 +55,8 @@
     "db:reset": "tsx scripts/db.ts reset",
     "dev:stdio": "tsx src/bin/anchor-mcp.ts --repo ./fixtures/demo-context",
     "dev:http": "tsx src/bin/anchor-mcp.ts --repo ./fixtures/demo-context --transport http --port 3333",
-    "dev:http:watch": "tsx watch src/bin/anchor-mcp.ts --repo ./fixtures/demo-context --transport http --port 3333"
+    "dev:http:watch": "tsx watch src/bin/anchor-mcp.ts --repo ./fixtures/demo-context --transport http --port 3333",
+    "corpus": "tsx scripts/routing-corpus.ts"
   },
   "engines": {
     "node": ">=20.10"
