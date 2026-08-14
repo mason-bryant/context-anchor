@@ -72,7 +72,12 @@ export default tseslint.config(
       "no-restricted-syntax": [
         "error",
         {
-          selector: "CallExpression[callee.property.name='handler']",
+          // Both access forms. `name` matches `tool.handler(...)`; `value` matches
+          // `tool["handler"](...)`, which bypasses the schema exactly as readily and which the
+          // dot form alone does not see. A rule that names one and claims both is the defect
+          // this whole change is about, one level up.
+          selector:
+            "CallExpression[callee.property.name='handler'], CallExpression[callee.property.value='handler']",
           message:
             "Invoke MCP tools through callTool from test/mcpToolHarness.ts, which parses input " +
             "through the registered schema. Calling .handler directly bypasses the surface.",
