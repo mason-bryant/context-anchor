@@ -50,6 +50,31 @@ export default tseslint.config(
     },
   },
   {
+    // Tools must be invoked through test/mcpToolHarness.ts, which parses input the way a
+    // client's request is parsed. Calling a handler with an object literal asserts nothing about
+    // the surface: handlers destructure whatever they are given, so the test passes unchanged
+    // when the field is deleted from the schema, and Zod strips undeclared keys. That gap hid a
+    // routing flag being unreachable on two consecutive PRs.
+    //
+    // A rule rather than a convention, because this repository has twice watched a fix's own
+    // coverage turn out narrower than the thing it covered — test/db/schemaLeakGuard.ts exists
+    // for the same reason. Converting the call sites fixed the instances; this is what stops the
+    // next one being written.
+    files: ["test/**/*.ts"],
+    ignores: ["test/mcpToolHarness.ts", "test/serverRequestLogging.test.ts"],
+    rules: {
+      "no-restricted-syntax": [
+        "error",
+        {
+          selector: "CallExpression[callee.property.name='handler']",
+          message:
+            "Invoke MCP tools through callTool from test/mcpToolHarness.ts, which parses input " +
+            "through the registered schema. Calling .handler directly bypasses the surface.",
+        },
+      ],
+    },
+  },
+  {
     files: ["src/ui/assets.ts"],
     rules: {
       "no-useless-escape": "off",
