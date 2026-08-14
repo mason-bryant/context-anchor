@@ -242,6 +242,14 @@ async function loadAssertion(
   workspaceGuid: string,
   assertionGuid: string,
 ): Promise<{ kind: string; title: string; status: string; owner_scope_guid: string }> {
+  // FOR UPDATE, and it is not decoration. The supersession check below reads
+  // assertion_relations, and nothing stops a relate from inserting a row there after that read
+  // — the target direction happens to be caught, because superseding UPDATEs the target and so
+  // collides on the record_versions primary key, but the *source* direction touches no row this
+  // command writes. Without a lock both could commit, leaving a tombstone as the live source of
+  // a supersedes and the claim it replaced marked superseded with nothing superseding it.
+  // createAssertionRelation takes the same lock on both of its endpoints, so one of the two
+  // waits and then sees the other's work.
   const result = await tx.query<{
     kind: string;
     title: string;
@@ -249,7 +257,8 @@ async function loadAssertion(
     owner_scope_guid: string;
   }>(
     `SELECT kind, title, status, owner_scope_guid FROM "${schema}".assertions
-      WHERE workspace_guid = $1 AND assertion_guid = $2 AND retired_at IS NULL`,
+      WHERE workspace_guid = $1 AND assertion_guid = $2 AND retired_at IS NULL
+        FOR UPDATE`,
     [workspaceGuid, assertionGuid],
   );
   const row = result.rows[0];

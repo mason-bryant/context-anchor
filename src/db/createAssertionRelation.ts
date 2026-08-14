@@ -91,6 +91,21 @@ export async function createAssertionRelation(
     reason: input.rationale ?? `record ${input.relationType}`,
     entity: { entityType: "assertion_relation", entityGuid: relationGuid },
     apply: async (tx, commandGuid) => {
+      // Both endpoints are locked before either is read, because retireAssertion refuses while a
+      // live supersedes involves a claim and it can only see relations that already exist. A
+      // relate that inserted one after that check would leave the invariant broken with both
+      // commands reporting success. Ordered by guid rather than by role: two relates on the same
+      // pair in opposite directions would otherwise take the same two locks in opposite orders,
+      // which is a deadlock. Locking says nothing about liveness — the reads below still refuse
+      // a retired claim.
+      await tx.query(
+        `SELECT assertion_guid FROM "${schema}".assertions
+          WHERE workspace_guid = $1 AND assertion_guid = ANY($2::uuid[])
+          ORDER BY assertion_guid
+            FOR UPDATE`,
+        [input.workspaceGuid, [input.sourceAssertionGuid, input.targetAssertionGuid]],
+      );
+
       const source = await loadAssertion(tx, schema, input.workspaceGuid, input.sourceAssertionGuid);
       const target = await loadAssertion(tx, schema, input.workspaceGuid, input.targetAssertionGuid);
 

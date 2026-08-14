@@ -325,6 +325,25 @@ describe.runIf(await isTestDatabaseReachable())("assertion lifecycle, T3 (real P
       expect((await rowOf(created.assertionGuid)).title).toBe("Revision B");
     });
 
+    // commands.idempotency_key is btree-indexed and `content` is unbounded caller data, so an
+    // embedded key fails at write time on the size of the claim rather than on anything about
+    // the edit. Same contract setRecordScopes is held to.
+    it("keeps the idempotency key bounded regardless of how long the claim is", async () => {
+      const created = await author("Bearer tokens are required", "The transport requires one.");
+      await updateAssertion({
+        ...context(),
+        assertionGuid: created.assertionGuid,
+        content: "x".repeat(20_000),
+        reason: "a very long claim",
+      });
+
+      const key = await pool.query<{ idempotency_key: string }>(
+        `SELECT idempotency_key FROM "${schemaName}".commands
+          WHERE command_type = 'assertion.update' ORDER BY accepted_at DESC LIMIT 1`,
+      );
+      expect(key.rows[0]!.idempotency_key.length).toBeLessThan(128);
+    });
+
     it("will not edit a tombstoned claim", async () => {
       const created = await author("Bearer tokens are required", "The transport requires one.");
       await retireAssertion({
@@ -439,6 +458,169 @@ describe.runIf(await isTestDatabaseReachable())("assertion lifecycle, T3 (real P
       ).rejects.toBeInstanceOf(SupersessionLineageError);
       expect((await rowOf(superseded.assertionGuid)).status).toBe("superseded");
       expect((await rowOf(replacement.assertionGuid)).retired_at).toBeNull();
+    });
+
+    /**
+     * The supersession check reads assertion_relations, and nothing stops a relate from
+     * inserting a row there afterwards. The target direction is caught for free — superseding
+     * UPDATEs the target, so the two collide on the record_versions primary key — but the source
+     * direction touches no row retire writes, so both can commit.
+     *
+     * Forced rather than raced. A test that passes because a scheduler happened to interleave is
+     * not a test, so the relate is driven from inside retire's own supersession check, which is
+     * the exact window the lock exists to close. The relate is given a short lock_timeout: with
+     * the locks in place it cannot acquire the row retire is holding and gives up, which is the
+     * correct outcome, not a flake.
+     *
+     * The assertion is the invariant itself rather than either command's result, because which
+     * one wins is not the point — that they cannot both win is.
+     */
+    it("cannot be outrun by a supersession recorded inside its own check", async () => {
+      const superseded = await author("Tokens are optional", "An early reading.");
+      const replacement = await author("Tokens are required", "The current reading.");
+
+      const impatient = new pg.Pool({
+        connectionString: TEST_DATABASE_URL,
+        max: 2,
+        options: "-c lock_timeout=400ms",
+      });
+      let interleaved = false;
+
+      // Wraps the pool retire runs on, so the relate lands between retire's supersession check
+      // and its write. Only the connect path needs wrapping: that is where the command's
+      // transaction comes from.
+      //
+      // The patch is one-shot and undoes itself. Pool.query drives a pooled client through the
+      // callback form, and a wrapper that returns a promise instead leaves that caller waiting
+      // forever — so the client must go back to the pool exactly as it came out.
+      const interleaving = new Proxy(pool, {
+        get(target, property, receiver) {
+          if (property !== "connect") {
+            return Reflect.get(target, property, receiver) as unknown;
+          }
+          return async () => {
+            const client = await target.connect();
+            const realQuery = client.query.bind(client) as (...args: unknown[]) => Promise<unknown>;
+            client.query = (async (...args: unknown[]) => {
+              const [text] = args;
+              const fires =
+                !interleaved &&
+                typeof args[args.length - 1] !== "function" &&
+                typeof text === "string" &&
+                text.includes("relation_type = 'supersedes'");
+              const result = await realQuery(...args);
+              if (fires) {
+                interleaved = true;
+                client.query = realQuery as typeof client.query;
+                await createAssertionRelation({
+                  pool: impatient,
+                  schemaName,
+                  handler: new CommandHandler(impatient, schemaName),
+                  workspaceGuid: bootstrap.workspaceGuid,
+                  actorPrincipalGuid: bootstrap.ownerPrincipalGuid,
+                  sourceAssertionGuid: replacement.assertionGuid,
+                  targetAssertionGuid: superseded.assertionGuid,
+                  relationType: "supersedes",
+                }).catch((error: unknown) => {
+                  // Losing the lock is the designed outcome. Anything else is a real failure and
+                  // must not be swallowed into a passing test.
+                  if (!/lock timeout|deadlock/i.test(String(error))) {
+                    throw error;
+                  }
+                });
+              }
+              return result;
+            }) as typeof client.query;
+            return client;
+          };
+        },
+      });
+
+      try {
+        await retireAssertion({
+          pool: interleaving,
+          schemaName,
+          handler: new CommandHandler(interleaving, schemaName),
+          workspaceGuid: bootstrap.workspaceGuid,
+          actorPrincipalGuid: bootstrap.ownerPrincipalGuid,
+          assertionGuid: replacement.assertionGuid,
+          reason: "retiring while a supersession is being recorded",
+        }).catch((error: unknown) => {
+          // Either command may lose; a refusal here is a correct outcome.
+          if (!/lock timeout|deadlock|Concurrent modification/i.test(String(error))) {
+            throw error;
+          }
+        });
+      } finally {
+        await impatient.end();
+      }
+
+      expect(interleaved, "the interleave never fired, so this test proved nothing").toBe(true);
+
+      // The invariant both other assertion commands already defend: a superseded standing must
+      // have a live supersedes relation behind it. Retire's cascade would retire a relation it
+      // did not know about, leaving exactly the state setAssertionStatus refuses to create.
+      const orphaned = await pool.query<{ assertion_guid: string }>(
+        `SELECT a.assertion_guid
+           FROM "${schemaName}".assertions a
+          WHERE a.status = 'superseded'
+            AND NOT EXISTS (
+              SELECT 1 FROM "${schemaName}".assertion_relations r
+               WHERE r.workspace_guid = a.workspace_guid
+                 AND r.target_assertion_guid = a.assertion_guid
+                 AND r.relation_type = 'supersedes' AND r.retired_at IS NULL
+            )`,
+      );
+      expect(
+        orphaned.rows,
+        "a claim is marked superseded with no live supersedes relation behind it",
+      ).toEqual([]);
+    });
+
+    /** The other half of the same lock: createAssertionRelation must take it on both endpoints. */
+    it("cannot record a supersession naming a claim whose row is locked", async () => {
+      const superseded = await author("Tokens are optional", "An early reading.");
+      const replacement = await author("Tokens are required", "The current reading.");
+
+      const holder = new pg.Client({ connectionString: TEST_DATABASE_URL });
+      await holder.connect();
+      const impatient = new pg.Pool({
+        connectionString: TEST_DATABASE_URL,
+        max: 2,
+        options: "-c lock_timeout=400ms",
+      });
+      try {
+        await holder.query("BEGIN");
+        // FOR NO KEY UPDATE, deliberately, on the *source*. A plain FOR UPDATE here would prove
+        // nothing: inserting the relation takes a FOR KEY SHARE on both endpoints for the
+        // foreign keys, which FOR UPDATE already conflicts with, so the relate would block
+        // whether or not it takes a lock of its own. FOR NO KEY UPDATE is compatible with
+        // FOR KEY SHARE and conflicts only with the explicit FOR UPDATE this command now takes.
+        await holder.query(
+          `SELECT assertion_guid FROM "${schemaName}".assertions
+            WHERE workspace_guid = $1 AND assertion_guid = $2 FOR NO KEY UPDATE`,
+          [bootstrap.workspaceGuid, replacement.assertionGuid],
+        );
+
+        await expect(
+          createAssertionRelation({
+            pool: impatient,
+            schemaName,
+            handler: new CommandHandler(impatient, schemaName),
+            workspaceGuid: bootstrap.workspaceGuid,
+            actorPrincipalGuid: bootstrap.ownerPrincipalGuid,
+            sourceAssertionGuid: replacement.assertionGuid,
+            targetAssertionGuid: superseded.assertionGuid,
+            relationType: "supersedes",
+          }),
+        ).rejects.toThrow(/lock timeout/i);
+      } finally {
+        await holder.query("ROLLBACK");
+        await holder.end();
+        await impatient.end();
+      }
+
+      expect((await rowOf(superseded.assertionGuid)).status).toBe("active");
     });
 
     it("reports what the accepted command did when a retire is resubmitted", async () => {

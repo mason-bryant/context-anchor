@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type { Pool } from "pg";
 
 import { ASSERTION_KINDS, type AssertionKind } from "./createAssertion.js";
@@ -117,9 +118,16 @@ export async function updateAssertion(input: UpdateAssertionInput): Promise<Upda
     origin: "mcp",
     // Keyed on the target values rather than on the reason: setting a claim to the same wording
     // twice is a retry, and rewording the justification does not make it a second edit.
+    //
+    // Hashed, not embedded. `commands.idempotency_key` is btree-indexed, and `content` is
+    // unbounded caller data — a long enough claim would fail at write time on the index entry
+    // size rather than on anything about the edit. createAssertion and addCitation hash for the
+    // same reason.
     idempotencyKey:
       input.idempotencyKey ??
-      `assertion.update:${input.assertionGuid}:${JSON.stringify([input.title, input.content, input.kind])}`,
+      `assertion.update:${input.assertionGuid}:${createHash("sha256")
+        .update(JSON.stringify([input.title ?? null, input.content ?? null, input.kind ?? null]))
+        .digest("hex")}`,
     reason: input.reason,
     entity: { entityType: "assertion", entityGuid: input.assertionGuid },
     expectedVersion: input.expectedVersion,
