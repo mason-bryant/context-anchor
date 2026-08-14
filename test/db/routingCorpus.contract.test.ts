@@ -10,7 +10,13 @@ import { ensureBootstrap, type BootstrapResult } from "../../src/db/bootstrap.js
 import { CommandHandler } from "../../src/db/commandHandler.js";
 import { telemetrySchemaNameFor } from "../../src/db/config.js";
 import { importDocuments } from "../../src/db/importDocuments.js";
-import { corpusDocument, runCorpus, type Corpus, type CorpusReport } from "../../src/db/routing/corpus.js";
+import {
+  corpusDocument,
+  runCorpus,
+  WHOLE_WORKSPACE_FRACTION,
+  type Corpus,
+  type CorpusReport,
+} from "../../src/db/routing/corpus.js";
 import {
   dropAllSchemas,
   isTestDatabaseReachable,
@@ -230,14 +236,23 @@ describe.runIf(await isTestDatabaseReachable())("routing task corpus (real Postg
     const byId = new Map(on.results.map((result) => [result.id, result]));
 
     // The founding purpose of this corpus, and it does not follow from the headline. Delete the
-    // stopword filter and zero-route drops 11% to 4% and recall rises 91% to 96% — the corpus
-    // reports the regression as an improvement. Only precision moves the other way: forbidden
-    // hits 2 to 6, ceilings 2 to 7. These are the assertions that fire.
+    // stopword filter and both silence and recall get BETTER — the corpus reports the regression
+    // as an improvement. Only precision moves the other way, which is why these assertions are on
+    // ceilings and forbidden sets rather than on the headline numbers.
     //
-    // Calibrated to what the filter delivers rather than to an ideal. "why", "when" and "how"
-    // are deliberately not stopwords — they head real content — so these probes measure the
-    // marginal reach of the words that are: "and", "we", "this".
-    for (const id of ["stopword-why-and-when", "stopword-how-and-when"]) {
+    // stopword-only-terms is built entirely from words in the filter's own list, each of which
+    // appears in some heading: 0 candidates with the filter, 7 without. Its predecessor read 7
+    // either way while claiming to detect exactly this, because "why", "when" and "do" are
+    // deliberately not stopwords — they head real content.
+    // The ceilings themselves, pinned in the fixture. Without this, deleting the filter is fixed
+    // by editing one integer upward — a green change indistinguishable from restoring the
+    // filter, and the cheaper of the two to make. A probe whose bar moves is not a probe.
+    const ceilings = Object.fromEntries(
+      corpus.tasks.filter((task) => task.id.startsWith("stopword-")).map((task) => [task.id, task.maxRoutes]),
+    );
+    expect(ceilings).toEqual({ "stopword-only-terms": 0, "stopword-how-and-when": 4 });
+
+    for (const id of ["stopword-only-terms", "stopword-how-and-when"]) {
       expect(byId.get(id)?.overMaxRoutes, `${id} spread past its ceiling`).toBe(false);
     }
 
@@ -248,7 +263,11 @@ describe.runIf(await isTestDatabaseReachable())("routing task corpus (real Postg
     expect(overCeiling.sort()).toEqual(["template-constraints", "template-decisions"]);
 
     const forbidden = on.results.filter((result) => result.forbiddenHits.length > 0).map((r) => r.id);
-    expect(forbidden.sort()).toEqual(["topical-existing-database", "topical-session-expiry"]);
+    expect(forbidden.sort()).toEqual([
+      "topical-bearer-token",
+      "topical-existing-database",
+      "topical-session-expiry",
+    ]);
   });
 
   it("counts answers that cover the workspace, which the zero-route rate hides", async () => {
@@ -319,32 +338,61 @@ describe.runIf(await isTestDatabaseReachable())("routing task corpus (real Postg
     expect(judged.length).toBeLessThan(on.taskCount);
   });
 
-  it("pins the topical expectations the lexical signal is supposed to satisfy", async () => {
+  it("pins every judged task, not a chosen five", async () => {
     const on = await run(true);
     const byId = new Map(on.results.map((result) => [result.id, result]));
 
-    // Without these, renaming the fixture's topical headings moves the headline from 91% to 76%
-    // and nothing fails: the only pinned tasks name their scope in the task text, so they match
-    // on the slug and never exercise record-lexical at all.
-    for (const id of [
-      "topical-bearer-token",
-      "topical-secrets-in-logs",
-      "topical-quote-resolve",
-      "topical-ranker",
-      "topical-conflict-detection",
-    ]) {
-      expect(byId.get(id)?.recall, `${id} stopped reaching its scope through a heading`).toBe(1);
-    }
+    // The whole vector. Pinning a handful left everything else free: renaming "Ninety Day
+    // Thinning" moved recall 91% to 89% with a green suite, and renaming one heading added in
+    // the last round moved it to 87% and took a task silent. Brittle on purpose -- this is a
+    // regression instrument, and a change that moves any of these should force a read rather
+    // than be absorbed into an average.
+    //
+    // The two zeroes are pinned in the other direction. Matching is whole-word with no stemming,
+    // so "resolve" misses "Identity Resolution" and "reviews" misses "Review Before Apply". If
+    // either starts passing, something real changed.
+    const expected: Record<string, number> = {
+      "scope-named-transport": 1,
+      "scope-named-logging": 1,
+      "topical-retention": 1,
+      "topical-bearer-token": 1,
+      "topical-session-expiry": 1,
+      "topical-secrets-in-logs": 1,
+      "topical-citation": 1,
+      "topical-quote-resolve": 1,
+      "topical-thinning": 1,
+      "topical-ranker": 1,
+      "topical-reorder-drop": 1,
+      "topical-identity": 0,
+      "scope-named-people": 1,
+      "topical-review-flow": 0,
+      "scope-named-proposals": 1,
+      "topical-forward-only": 1,
+      "topical-existing-database": 1,
+      "topical-telemetry-schema": 1,
+      "topical-write-failure": 1,
+      "cross-scope-transport-logging": 1,
+      "topical-stdio": 1,
+      // These two are reached only by relation hop from http-transport. Without them the hop
+      // signal can be deleted outright and nothing fails.
+      "topical-tool-parity": 1,
+      "topical-conflict-detection": 1,
+    };
 
-    // And the two expected to fail, pinned in the other direction. Matching is whole-word with
-    // no stemming, so "resolve" misses "Identity Resolution" and "reviews" misses "Review Before
-    // Apply". If either starts passing, something real changed and the corpus should say so
-    // rather than quietly absorb it into a better-looking mean.
-    for (const id of ["topical-identity", "topical-review-flow"]) {
-      expect(byId.get(id)?.recall, `${id} now matches; stemming appeared, update the corpus`).toBe(0);
-    }
+    const actual = Object.fromEntries(Object.keys(expected).map((id) => [id, byId.get(id)?.recall]));
+    expect(actual).toEqual(expected);
+
+    // Every judged task appears above, so one added without an expectation cannot slip past.
+    const judged = on.results.filter((result) => result.recall !== undefined).map((r) => r.id);
+    expect(judged.sort()).toEqual(Object.keys(expected).sort());
   });
 
+  it("pins the interpretation knob on the whole-workspace metric", () => {
+    // The metric that stops whole-workspace answers counting as rescues can be silenced by
+    // raising this alone: at 0.95 the count drops from 4 to 2 while every assertion about it
+    // still passes, because they are all relative.
+    expect(WHOLE_WORKSPACE_FRACTION).toBe(0.5);
+  });
   it("gives the lexical signal topical headings to reach, not only the shared template", async () => {
     // The fixture needs both halves and it is easy to build only one. record-lexical matches
     // headings and assertion titles and never body text, so a fixture whose only headings were

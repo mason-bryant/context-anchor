@@ -24,6 +24,10 @@ import { corpusDocument, runCorpus, type Corpus, type CorpusReport } from "../sr
  * detail the test only asserts over.
  *
  * `--schema <name>` runs the same tasks against a workspace that already exists — the real one.
+ * It reads the knowledge schema but **writes telemetry**: planning is what is being measured and
+ * every plan records an impression. Those rows are tagged `routing-corpus` and excluded from the
+ * retrieval diagnostics by comparison.ts, which is the only thing that keeps a corpus run from
+ * answering "which routes are dead weight" with its own traffic.
  * That run is unscored, because the corpus's expectations name scopes that workspace never had
  * and a recall of zero from a mismatched fixture reads exactly like a retrieval failure. What
  * survives is the zero-route rate and the fan-out, which are properties of the selection code

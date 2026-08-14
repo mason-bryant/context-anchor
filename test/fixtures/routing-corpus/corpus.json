@@ -10,7 +10,8 @@
     "Each scope owns projects/<scope>/<scope>.md, because the importer derives a document's scope from its path. Ten documents under one project would import as one scope, and the fan-out this corpus measures would have nothing to fan out across.",
     "Each scope also carries topical H3 headings alongside the shared template. Both halves are needed: the template reproduces the vocabulary that reaches every scope, and the topical headings give the record-lexical signal something to match. A fixture with only the template measures a workspace nobody has -- record-lexical never reads body text, so all the topical content would be invisible to it and the signal would score as useless.",
     "Six scopes carry headings built from function words ('Why We Require...', 'When And How...'). Without them the stopword filter could be deleted and this corpus would report an improvement -- the failure it was built to preserve would be undetectable in it.",
-    "Two tasks are expected to fail and are pinned that way: topical-identity and topical-review-flow both miss on stemming ('resolve' vs 'Resolution', 'reviews' vs 'Review'). A corpus holding only tasks the code already satisfies measures nothing."
+    "Two tasks are expected to fail and are pinned that way: topical-identity and topical-review-flow both miss on stemming ('resolve' vs 'Resolution', 'reviews' vs 'Review'). A corpus holding only tasks the code already satisfies measures nothing.",
+    "Forbidden sets name scopes the signal actually reaches, not scopes it was never going to. Drawn the easy way they are all satisfiable and the precision headline reads better than the truth: only 2 of 12 could ever fire before this."
   ],
   "scopes": [
     {
@@ -341,9 +342,11 @@
         "http-transport"
       ],
       "forbiddenScopes": [
+        "claim-provenance",
         "logging",
-        "retention",
-        "migrations"
+        "migrations",
+        "proposals",
+        "retention"
       ],
       "rationale": "Names no scope. The heading text is the only route in. This is the T-45 shape."
     },
@@ -366,6 +369,7 @@
         "logging"
       ],
       "forbiddenScopes": [
+        "claim-provenance",
         "migrations",
         "proposals"
       ],
@@ -409,6 +413,7 @@
       ],
       "forbiddenScopes": [
         "logging",
+        "migrations",
         "people-registry"
       ],
       "rationale": "Topical, names a decision."
@@ -530,7 +535,7 @@
         "http-transport",
         "logging"
       ],
-      "rationale": "Two scope names in one task; both must survive ranking into the listed budget."
+      "rationale": "Two scope names, except that 'log' does not match 'logging' under whole-word matching -- logging is reached through the heading 'Log Output Redaction', and is missed entirely with the signal off. Kept as written because that gap is the measurement."
     },
     {
       "id": "topical-no-match",
@@ -546,7 +551,7 @@
         "anchor-mcp",
         "http-transport"
       ],
-      "rationale": "Parent and child scope, both relevant."
+      "rationale": "Parent and child, and the parent arrives by hop. Second hold on the relation-hop signal."
     },
     {
       "id": "topical-tool-parity",
@@ -558,7 +563,7 @@
         "migrations",
         "retention"
       ],
-      "rationale": "Topical restatement of a constraint."
+      "rationale": "Reached by relation hop, not by text: http-transport matches, and anchor-mcp is its parent. The constraint sentence is body content and record-lexical never reads body text. Pinned because it is the corpus's only hold on the relation-hop signal, which could otherwise be deleted outright with a green suite."
     },
     {
       "id": "topical-conflict-detection",
@@ -573,11 +578,11 @@
       "rationale": "Reached the right assertion exactly in the real run."
     },
     {
-      "id": "stopword-why-and-when",
-      "task": "why and when do we do this",
+      "id": "stopword-only-terms",
+      "task": "we are on to this and it is not the one",
       "expectedScopes": [],
-      "maxRoutes": 7,
-      "rationale": "Function words only. Note that 'why' and 'when' are deliberately NOT stopwords -- they head real content -- so this probe measures the marginal reach of the words that are: 'and', 'we', 'this'. The ceiling is calibrated to what the filter delivers today, so deleting the filter pushes it over. Without a probe like this the filter can be removed and this corpus reports an improvement: silence and recall both get better, and only precision collapses."
+      "maxRoutes": 0,
+      "rationale": "Every term is in the stopword list and every one appears in some heading. Measured: 0 candidates with the filter, 7 without. Deliberately not realistic phrasing -- it is a probe, and it is the only task here whose whole job is to fail loudly when the filter goes. Its predecessor was phrased realistically and was inert: 'why', 'when' and 'do' are deliberately NOT stopwords because they head real content, so it read 7 either way while its rationale claimed it detected the regression."
     },
     {
       "id": "stopword-how-and-when",

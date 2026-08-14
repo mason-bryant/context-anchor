@@ -197,9 +197,10 @@ export async function runCorpus(input: CorpusRunInput): Promise<CorpusReport> {
       task: task.task,
       recordLexical: input.recordLexical,
       budget: input.budget,
-      // Named so these impressions can be excluded from retrieval diagnostics. A thousand
-      // impressions from a corpus run would otherwise answer "which routes are dead weight"
-      // with routes only ever offered by the instrument asking the question.
+      // Listed in comparison.ts's INSTRUMENT_CONSUMERS, which is what actually excludes these
+      // from the retrieval diagnostics. The tag alone excludes nothing — it was here for a
+      // round with the exclusion unwired, and 28 requests and 82 impressions per run were being
+      // counted as real retrieval.
       consumer: "routing-corpus",
     });
 
@@ -268,7 +269,13 @@ function scopeSlugOf(routeKey: string): string {
   return lastColon === -1 ? routeKey : routeKey.slice(lastColon + 1);
 }
 
-/** At or above this share of routable scopes, an answer is the workspace rather than a route. */
+/**
+ * At or above this share of routable scopes, an answer is the workspace rather than a route.
+ *
+ * Exported and pinned by a test. It is an interpretation knob on the metric that exists to stop
+ * whole-workspace answers being counted as rescues, so raising it quietly is a way to make that
+ * metric report nothing while every assertion about it still passes.
+ */
 export const WHOLE_WORKSPACE_FRACTION = 0.5;
 
 function summarise(
