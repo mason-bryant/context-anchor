@@ -75,6 +75,27 @@ const WRITE_STUBS = {
     replayed: false,
     changed: true,
   }),
+  updateAssertionAsOwner: async () => ({
+    assertionGuid: "11111111-1111-4111-8111-111111111111",
+    version: 2,
+    replayed: false,
+    changed: ["title" as const],
+    assertionRetired: false,
+  }),
+  retireAssertionAsOwner: async () => ({
+    assertionGuid: "11111111-1111-4111-8111-111111111111",
+    version: 2,
+    replayed: false,
+    associationsRetired: 1,
+    relationsRetired: 0,
+  }),
+  addCitationAsOwner: async () => ({
+    citationGuid: "55555555-5555-4555-8555-555555555555",
+    assertionGuid: "11111111-1111-4111-8111-111111111111",
+    version: 2,
+    replayed: false,
+    assertionRetired: false,
+  }),
   createAssertionRelationAsOwner: async () => ({
     relationGuid: "44444444-4444-4444-8444-444444444444",
     relationType: "contradicts" as const,
@@ -260,6 +281,9 @@ describe("listScopes tool registration", () => {
     // cannot work is worse than a missing one: an agent will call it and read the failure as a
     // fact about the workspace rather than about the configuration.
     expect(server._registeredTools.createAssertion).toBeUndefined();
+    expect(server._registeredTools.updateAssertion).toBeUndefined();
+    expect(server._registeredTools.retireAssertion).toBeUndefined();
+    expect(server._registeredTools.addCitation).toBeUndefined();
     expect(server._registeredTools.setAssertionStatus).toBeUndefined();
     expect(server._registeredTools.createAssertionRelation).toBeUndefined();
     expect(server._registeredTools.setRecordScopes).toBeUndefined();
@@ -291,6 +315,68 @@ describe("listScopes tool registration", () => {
     expect(server._registeredTools.setAssertionStatus).toBeDefined();
     expect(server._registeredTools.createAssertionRelation).toBeDefined();
     expect(server._registeredTools.setRecordScopes).toBeDefined();
+    // The other three of the design's seven. A claim could be authored and its standing changed
+    // but not edited, tombstoned or given a second citation, so the authoring pass could not be
+    // performed end to end. Listed here because a registration nothing asserts is a registration
+    // that can be deleted without a single test noticing.
+    expect(server._registeredTools.updateAssertion).toBeDefined();
+    expect(server._registeredTools.retireAssertion).toBeDefined();
+    expect(server._registeredTools.addCitation).toBeDefined();
+
+    // Every field being optional describes "any subset", not "none of them". The command refuses
+    // an edit naming no fields, so a schema that accepts one advertises a call with no successful
+    // ending — the rule the superseded status is already held to two tools down.
+    expect(() =>
+      server._registeredTools.updateAssertion!.inputSchema!.parse({
+        assertionGuid: "11111111-1111-4111-8111-111111111111",
+        reason: "because",
+      }),
+    ).toThrow();
+
+    // commands.idempotency_key is btree-indexed and unique per workspace, so an oversized key
+    // fails as a raw "index row size exceeds maximum" — a Postgres error about an index, handed
+    // to an agent that asked to write a claim. Refused at the schema instead, where the message
+    // names the field.
+    expect(() =>
+      server._registeredTools.updateAssertion!.inputSchema!.parse({
+        assertionGuid: "11111111-1111-4111-8111-111111111111",
+        title: "A new title",
+        reason: "because",
+        idempotencyKey: "k".repeat(201),
+      }),
+    ).toThrow();
+
+    // Registered is not wired. Each stub returns a shape only its own command produces, so a
+    // tool pointed at the wrong facade method is caught here rather than in production: swapping
+    // updateAssertion's handler for retireAssertionAsOwner otherwise passes every test in the
+    // repo, while the tool tombstones every claim it is called on.
+    const called = async (name: string, input: Record<string, unknown>) =>
+      (await callTool(server as unknown as ToolRegistry, name, input)) as {
+        structuredContent: Record<string, unknown>;
+      };
+
+    const edited = await called("updateAssertion", {
+      assertionGuid: "11111111-1111-4111-8111-111111111111",
+      title: "A new title",
+      reason: "because",
+    });
+    expect(edited.structuredContent.changed).toEqual(["title"]);
+
+    const retired = await called("retireAssertion", {
+      assertionGuid: "11111111-1111-4111-8111-111111111111",
+      reason: "because",
+    });
+    expect(retired.structuredContent.associationsRetired).toBe(1);
+
+    const cited = await called("addCitation", {
+      assertionGuid: "11111111-1111-4111-8111-111111111111",
+      citation: {
+        blockGuid: "66666666-6666-4666-8666-666666666666",
+        exactQuote: "a quote",
+      },
+      reason: "because",
+    });
+    expect(cited.structuredContent.citationGuid).toBe("55555555-5555-4555-8555-555555555555");
 
     // Superseding is a relationship, not a standing. The command refuses it, but the tool must
     // not offer it either: an advertised option that can only ever fail sends an agent down a

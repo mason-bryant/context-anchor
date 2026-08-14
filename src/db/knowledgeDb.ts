@@ -24,6 +24,9 @@ import {
   type Person,
   type ProjectMapping,
 } from "./importDocuments.js";
+import { addCitation, type AddCitationInput, type AddCitationResult } from "./addCitation.js";
+import { retireAssertion, type RetireAssertionInput, type RetireAssertionResult } from "./retireAssertion.js";
+import { updateAssertion, type UpdateAssertionInput, type UpdateAssertionResult } from "./updateAssertion.js";
 import { createAssertion, type CreateAssertionInput, type CreateAssertionResult } from "./createAssertion.js";
 import {
   createAssertionRelation,
@@ -182,6 +185,24 @@ export class KnowledgeDatabase {
     input: Omit<SetAssertionStatusInput, "pool" | "schemaName" | "handler" | "workspaceGuid" | "actorPrincipalGuid">,
   ): Promise<SetAssertionStatusResult> {
     return setAssertionStatus({ ...this.writeContext(), ...input });
+  }
+
+  async updateAssertionAsOwner(
+    input: Omit<UpdateAssertionInput, "pool" | "schemaName" | "handler" | "workspaceGuid" | "actorPrincipalGuid">,
+  ): Promise<UpdateAssertionResult> {
+    return updateAssertion({ ...this.writeContext(), ...input });
+  }
+
+  async retireAssertionAsOwner(
+    input: Omit<RetireAssertionInput, "pool" | "schemaName" | "handler" | "workspaceGuid" | "actorPrincipalGuid">,
+  ): Promise<RetireAssertionResult> {
+    return retireAssertion({ ...this.writeContext(), ...input });
+  }
+
+  async addCitationAsOwner(
+    input: Omit<AddCitationInput, "pool" | "schemaName" | "handler" | "workspaceGuid" | "actorPrincipalGuid">,
+  ): Promise<AddCitationResult> {
+    return addCitation({ ...this.writeContext(), ...input });
   }
 
   async createAssertionRelationAsOwner(

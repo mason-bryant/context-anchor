@@ -22,6 +22,9 @@ import {
   type SetAssertionStatusResult,
 } from "./db/setAssertionStatus.js";
 import type { CreateAssertionInput, CreateAssertionResult } from "./db/createAssertion.js";
+import type { UpdateAssertionInput, UpdateAssertionResult } from "./db/updateAssertion.js";
+import type { RetireAssertionInput, RetireAssertionResult } from "./db/retireAssertion.js";
+import type { AddCitationInput, AddCitationResult } from "./db/addCitation.js";
 import {
   RELATION_TYPES,
   type CreateAssertionRelationInput,
@@ -140,6 +143,17 @@ const ProposeChangeInputSchema = z.object({
   message: z.string().optional(),
 });
 const ProjectUpdateStatusesSchema = z.union([z.array(ProjectUpdateStatusSchema), JsonStringSchema]);
+/**
+ * A caller-supplied idempotency key.
+ *
+ * Bounded because `commands.idempotency_key` is btree-indexed and unique per workspace: an
+ * oversized key fails as a raw Postgres "index row size exceeds maximum", which tells the caller
+ * nothing about what they did wrong. The derived key each of these commands falls back to is
+ * well inside this — the ones built from caller text hash it, the rest are guids and short
+ * literals — so the limit only ever binds on a key someone chose.
+ */
+const IdempotencyKeySchema = z.string().trim().min(1).max(200).optional();
+
 const TraceIdSchema = z
   .string()
   .trim()
@@ -192,6 +206,9 @@ export type KnowledgeDatabaseTool = {
   // them drift silently — the same class of gap that let these tools be missing entirely.
   createAssertionAsOwner(input: OwnerWrite<CreateAssertionInput>): Promise<CreateAssertionResult>;
   setAssertionStatusAsOwner(input: OwnerWrite<SetAssertionStatusInput>): Promise<SetAssertionStatusResult>;
+  updateAssertionAsOwner(input: OwnerWrite<UpdateAssertionInput>): Promise<UpdateAssertionResult>;
+  retireAssertionAsOwner(input: OwnerWrite<RetireAssertionInput>): Promise<RetireAssertionResult>;
+  addCitationAsOwner(input: OwnerWrite<AddCitationInput>): Promise<AddCitationResult>;
   createAssertionRelationAsOwner(
     input: OwnerWrite<CreateAssertionRelationInput>,
   ): Promise<CreateAssertionRelationResult>;
@@ -2034,9 +2051,10 @@ the index when your workflow checks in that file.`,
         jsonResult(await knowledgeDb.reportRecordUseAsOwner({ requestId, refs, useKind })),
     );
 
-    // T3's authoring surface. The design requires every capability to have a surface a person
-    // can drive; these four shipped as library functions reachable only from contract tests,
-    // which made the assertion pass the build order asks for impossible to actually perform.
+    // T3's authoring surface: all seven of the design's assertion operations. Every capability
+    // needs a surface a person can drive, and these shipped as library functions reachable only
+    // from contract tests, which made the authoring pass the build order asks for impossible to
+    // actually perform, whatever their tests said.
     server.registerTool(
       "createAssertion",
       {
@@ -2060,7 +2078,7 @@ the index when your workflow checks in that file.`,
             suffix: z.string().optional(),
             relation: z.enum(CITATION_RELATIONS).optional(),
           }),
-          idempotencyKey: z.string().trim().min(1).optional(),
+          idempotencyKey: IdempotencyKeySchema,
         }),
       },
       async ({ traceId: _traceId, ...input }) => jsonResult(await knowledgeDb.createAssertionAsOwner(input)),
@@ -2085,10 +2103,106 @@ the index when your workflow checks in that file.`,
           status: z.enum(SETTABLE_ASSERTION_STATUSES),
           reason: z.string().trim().min(1),
           expectedVersion: z.number().int().positive().optional(),
-          idempotencyKey: z.string().trim().min(1).optional(),
+          idempotencyKey: IdempotencyKeySchema,
         }),
       },
       async ({ traceId: _traceId, ...input }) => jsonResult(await knowledgeDb.setAssertionStatusAsOwner(input)),
+    );
+
+    server.registerTool(
+      "updateAssertion",
+      {
+        title: "Update Assertion",
+        description:
+          "Change what a claim says. Any subset of title, content, and kind; fields left out keep their current " +
+          "value, and fields resent unchanged are not counted as an edit — a version bump with no difference " +
+          "behind it makes the history less trustworthy, not more, and a call in which nothing differs at all is " +
+          "refused rather than quietly accepted. A resubmitted edit comes back with replayed set and changed " +
+          "empty, and with assertionRetired when the claim has since been tombstoned — a success-shaped result " +
+          "can describe a write someone else made, on a claim that is no longer there. Standing is not " +
+          "editable here: use " +
+          "setAssertionStatus, so a reader can tell \"we no longer stand behind this\" from \"this now says " +
+          "something else\". Citations are left alone; rewording a claim does not change where it came from. " +
+          "Requires the database backend.",
+        inputSchema: z
+          .object({
+            traceId: TraceIdSchema,
+            assertionGuid: z.string().uuid(),
+            title: z.string().trim().min(1).optional(),
+            content: z.string().trim().min(1).optional(),
+            kind: z.enum(ASSERTION_KINDS).optional(),
+            reason: z.string().trim().min(1),
+            expectedVersion: z.number().int().positive().optional(),
+            idempotencyKey: IdempotencyKeySchema,
+          })
+          // Every field being optional describes "any subset", not "none of them". The command
+          // refuses an edit naming no fields anyway; refusing at the schema says so before the
+          // call is made and names what is missing, which is the rule setRecordScopes and
+          // setAssertionStatus are already held to.
+          .refine(
+            (input) =>
+              input.title !== undefined || input.content !== undefined || input.kind !== undefined,
+            { message: "Name at least one of title, content, or kind to change." },
+          ),
+      },
+      async ({ traceId: _traceId, ...input }) => jsonResult(await knowledgeDb.updateAssertionAsOwner(input)),
+    );
+
+    server.registerTool(
+      "retireAssertion",
+      {
+        title: "Retire Assertion",
+        description:
+          "Tombstone a claim, and retire its scope associations and its non-supersession relations with it. This " +
+          "is for records that should not be in the workspace at all — an import artefact, a duplicate, a claim " +
+          "authored against the wrong scope. Prefer setAssertionStatus(retracted) for a claim that was merely " +
+          "wrong: retrieval already excludes every non-active status, so a retracted claim is equally invisible " +
+          "to a reader either way, but it keeps its lineage and its scope associations and setAssertionStatus " +
+          "can bring it back, none of which is true after this — this retires both and nothing reverses it. " +
+          "Citations survive either way: they record where the text came from, which removing the claim does " +
+          "not make untrue. Refused while a live " +
+          "supersedes " +
+          "relation involves the claim in either direction. Requires the database backend.",
+        inputSchema: z.object({
+          traceId: TraceIdSchema,
+          assertionGuid: z.string().uuid(),
+          reason: z.string().trim().min(1),
+          expectedVersion: z.number().int().positive().optional(),
+          idempotencyKey: IdempotencyKeySchema,
+        }),
+      },
+      async ({ traceId: _traceId, ...input }) => jsonResult(await knowledgeDb.retireAssertionAsOwner(input)),
+    );
+
+    server.registerTool(
+      "addCitation",
+      {
+        title: "Add Citation",
+        description:
+          "Bind an existing claim to a further piece of source text: the same claim evidenced in a second " +
+          "document, a source that disputes it, or a re-anchor after the text moved. The quote is verified " +
+          "against the cited block before anything is written. Citations are additive — there is no delete, so a " +
+          "citation that turned out to be wrong is corrected by adding the right one and naming the old one as " +
+          "the re-anchor source. A resubmission of the same quote on the same block comes back with replayed " +
+          "set and the original citation's guid, and with assertionRetired when the claim has since been " +
+          "tombstoned. Requires the database backend.",
+        inputSchema: z.object({
+          traceId: TraceIdSchema,
+          assertionGuid: z.string().uuid(),
+          citation: z.object({
+            blockGuid: z.string().uuid(),
+            exactQuote: z.string().min(1),
+            prefix: z.string().optional(),
+            suffix: z.string().optional(),
+            relation: z.enum(CITATION_RELATIONS).optional(),
+          }),
+          reanchoredFromCitationGuid: z.string().uuid().optional(),
+          reason: z.string().trim().min(1),
+          expectedVersion: z.number().int().positive().optional(),
+          idempotencyKey: IdempotencyKeySchema,
+        }),
+      },
+      async ({ traceId: _traceId, ...input }) => jsonResult(await knowledgeDb.addCitationAsOwner(input)),
     );
 
     server.registerTool(
@@ -2106,7 +2220,7 @@ the index when your workflow checks in that file.`,
           targetAssertionGuid: z.string().uuid(),
           relationType: z.enum(RELATION_TYPES),
           rationale: z.string().trim().min(1).optional(),
-          idempotencyKey: z.string().trim().min(1).optional(),
+          idempotencyKey: IdempotencyKeySchema,
         }),
       },
       async ({ traceId: _traceId, ...input }) => jsonResult(await knowledgeDb.createAssertionRelationAsOwner(input)),
@@ -2129,7 +2243,7 @@ the index when your workflow checks in that file.`,
           stableKey: z.string().trim().min(1).optional(),
           scopeSlugs: z.array(z.string().trim().min(1)),
           reason: z.string().trim().min(1),
-          idempotencyKey: z.string().trim().min(1).optional(),
+          idempotencyKey: IdempotencyKeySchema,
         })
           // Each record kind has exactly one identity, and the command refuses the wrong one.
           // Refusing at the schema instead says so before a call is made, and names the field.
