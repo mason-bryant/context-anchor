@@ -92,7 +92,9 @@ function normalizeReferencedPath(value: string): string {
 const RECORD_LEXICAL_STOPWORDS = new Set([
   "the", "and", "or", "not", "but", "for", "of", "to", "in", "on", "at", "by", "with", "from",
   "as", "is", "are", "was", "were", "be", "been", "being", "it", "its", "this", "that", "these",
-  "those", "an", "a", "we", "our", "you", "your", "they", "their", "into", "about", "after",
+  // No single-letter entries: both the task and the heading tokenize on [a-z0-9]{2,}, so "a"
+  // could never arrive here and listing it would imply single letters are part of the model.
+  "those", "an", "we", "our", "you", "your", "they", "their", "into", "about", "after",
   "before", "then", "than", "so", "if", "all", "any", "some", "more", "most",
 ]);
 
@@ -103,7 +105,7 @@ export const RECORD_LEXICAL_EXAMPLES = 3;
  * The sentence a person reads to decide whether a record-lexical route belongs.
  *
  * Most offered routes are listed rather than expanded and carry no records at all, so this is
- * the entire evidence for them, so each term carries its own count.
+ * the entire evidence for them. Each term therefore carries its own count.
  *
  * Stopwords no longer reach here, but ubiquitous topical words still do — a bare union of terms
  * lets a scope that matched one relevant heading and four on a common word render as five-term

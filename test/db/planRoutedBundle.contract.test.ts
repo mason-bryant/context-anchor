@@ -29,7 +29,8 @@ type: context-anchor
 `;
 
 /**
- * Record-lexical reasons only. Scope-name matching emits `task term "x" matched scope <slug>`,
+ * Record-lexical reasons only. Scope-name matching emits `task term "x" matched scope slug`
+ * (or `title`/`alias` — the field that matched, not its value),
  * which shares the "task term" prefix, so filtering on that alone mixes two signals — and
  * `anchor-mcp` carries the alias `context-conductor`, so a task containing "context" really can
  * produce both. A test asserting a term is absent from record-lexical evidence would then pass
