@@ -289,7 +289,8 @@ describe("MCP request logging", () => {
     const { logger, events } = requestLoggerForTest();
     const server = createAnchorMcpServer(service, { requestLogger: logger });
 
-    await toolForTest(server, "readAnchor").handler(parseToolInput(toolForTest(server, "readAnchor"), { name: "shared/example.md" }), {});
+    const readAnchor = toolForTest(server, "readAnchor");
+    await readAnchor.handler(parseToolInput(readAnchor, { name: "shared/example.md" }), {});
 
     expect(events).toHaveLength(1);
     expect(events[0]).toMatchObject({
@@ -310,8 +311,9 @@ describe("MCP request logging", () => {
     const { logger, events } = requestLoggerForTest();
     const server = createAnchorMcpServer(service, { requestLogger: logger });
 
+    const readAnchorTool = toolForTest(server, "readAnchor");
     await expect(
-      toolForTest(server, "readAnchor").handler(parseToolInput(toolForTest(server, "readAnchor"), { name: "shared/example.md" }), {}),
+      readAnchorTool.handler(parseToolInput(readAnchorTool, { name: "shared/example.md" }), {}),
     ).rejects.toThrow(
       "read failed",
     );

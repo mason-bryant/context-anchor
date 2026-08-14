@@ -60,6 +60,12 @@ export default tseslint.config(
     // coverage turn out narrower than the thing it covered — test/db/schemaLeakGuard.ts exists
     // for the same reason. Converting the call sites fixed the instances; this is what stops the
     // next one being written.
+    //
+    // Two files are exempt, and neither exemption is a judgement that the rule does not apply:
+    // mcpToolHarness.ts is the harness itself, and serverRequestLogging.test.ts parses through
+    // an equivalent local helper while its thirteen call sites await conversion (T-56). Naming
+    // that here rather than letting the rule's wording imply an enforcement it does not yet
+    // have — an overstated guard is how this repository has been misled before.
     files: ["test/**/*.ts"],
     ignores: ["test/mcpToolHarness.ts", "test/serverRequestLogging.test.ts"],
     rules: {
