@@ -307,11 +307,14 @@ describe.runIf(await isTestDatabaseReachable())("planRoutedBundle (real Postgres
     expect(headings).toContain("Retired heading");
     expect(headings).not.toContain("Decisions");
 
-    // The fingerprint has to move too. Before the fix it did not: the deleted section's bytes
-    // were unchanged, so hashing the same records produced the same value, and
-    // contentFingerprint -- the caller's only "did this route move" signal -- reported no
-    // change while the answer had changed. A fingerprint that lies is worse than none, because
-    // a caller skips re-reading on the strength of it.
+    // The fingerprint has to move, because it is the caller's only "did this route change"
+    // signal and a caller skips re-reading on the strength of it.
+    //
+    // Corroborating, not discriminating: contentFingerprint hashes stable keys and content, and
+    // the pre-fix answer differed from the baseline too -- it carried four sections rather than
+    // three, the stale one alongside its replacement -- so this assertion passes with the fix
+    // removed. Verified by isolating it. The heading assertions above are what catch the
+    // defect; this one states the invariant a future change must not break.
     expect(expanded.routes.map((r) => r.contentFingerprint)).not.toEqual(before);
   });
 
