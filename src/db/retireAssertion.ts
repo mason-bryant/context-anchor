@@ -6,14 +6,21 @@ import { assertValidSchemaName } from "./config.js";
 /**
  * Tombstoning a claim (T3).
  *
- * Distinct from `setAssertionStatus("retracted")`, and the difference is not cosmetic.
- * Retracting says "we no longer stand behind this" — the claim stays in the workspace, keeps
- * routing to anyone who asks for it, and remains the answer to "what did we used to think".
- * Retiring says the record should not be in the workspace at all: an import artefact, a
- * duplicate, a claim authored against the wrong scope. A retired claim stops being returned.
+ * Distinct from `setAssertionStatus("retracted")`, but be precise about how. Neither is
+ * returned by retrieval: both routing queries in selectRoutes.ts filter `status = 'active'`,
+ * so a retracted claim is exactly as invisible to a reader as a tombstone. The difference is
+ * what survives and what can still be done.
  *
- * Prefer retraction. A reader who finds a retracted claim learns something; a reader who finds
- * nothing learns nothing, and cannot tell an absent claim from one that was removed.
+ * Retracted is reversible and keeps its record intact: the row, its citations, its relations
+ * and its scope associations all stay live, it can still be fetched by guid, and
+ * setAssertionStatus can return it to active.
+ *
+ * Retiring is terminal. It retires the scope associations and the non-supersession relations
+ * with the claim, and no command reinstates any of them. It is for records that should not be
+ * in the workspace at all — an import artefact, a duplicate, a claim authored against the
+ * wrong scope — not for claims that turned out to be wrong.
+ *
+ * Prefer retraction for a claim that was wrong, because it is undoable and this is not.
  */
 
 export class AssertionNotFoundError extends Error {
@@ -39,8 +46,10 @@ export class SupersessionLineageError extends Error {
     super(
       `Cannot retire ${assertionGuid} while a live supersedes relation involves it. Retiring it ` +
         `would leave the other claim's lineage pointing at a tombstone, or leave a claim marked ` +
-        `superseded with nothing superseding it. Resolve the supersession first — or retract the ` +
-        `claim instead of retiring it, which keeps the lineage readable.`,
+        `superseded with nothing superseding it. There is no way round this today: no command ` +
+        `retires a relation, so a supersession recorded in error locks both of its claims out ` +
+        `of retirement permanently. Retract the claim instead — it is equally invisible to ` +
+        `retrieval, and it leaves the lineage intact and reversible.`,
     );
     this.name = "SupersessionLineageError";
   }
@@ -78,8 +87,10 @@ export async function retireAssertion(input: RetireAssertionInput): Promise<Reti
   const schema = input.schemaName;
 
   let version = 0;
-  let associationsRetired = 0;
-  let relationsRetired = 0;
+  // Identities, not counts. `mutation_log` is the only account of what a tombstone took with
+  // it, and "one relation disappeared" cannot answer which conflict stopped being visible.
+  let retiredAssociations: string[] = [];
+  let retiredRelations: string[] = [];
 
   const command = await input.handler.execute({
     workspaceGuid: input.workspaceGuid,
@@ -116,7 +127,7 @@ export async function retireAssertion(input: RetireAssertionInput): Promise<Reti
       // Membership is resolved from record_scopes, not from the assertion row. Leaving these
       // live would keep the tombstone in every route that named its scope, which is the one
       // outcome retiring is for.
-      const associations = await tx.query(
+      const associations = await tx.query<{ association_guid: string }>(
         `UPDATE "${schema}".record_scopes
             SET retired_at = now()
           WHERE workspace_guid = $1 AND record_type = 'assertion' AND record_guid = $2
@@ -124,13 +135,13 @@ export async function retireAssertion(input: RetireAssertionInput): Promise<Reti
         RETURNING association_guid`,
         [input.workspaceGuid, input.assertionGuid],
       );
-      associationsRetired = associations.rows.length;
+      retiredAssociations = associations.rows.map((row) => row.association_guid);
 
       // Supersession is refused above, so what is left here is `contradicts`, `split_from` and
       // `merged_from` — observations about the claim rather than standing conferred on another
       // one. Retiring them is safe in a way retiring a supersedes is not: a surviving conflict
       // against a tombstone would surface a contradiction the reader cannot go and look at.
-      const relations = await tx.query(
+      const relations = await tx.query<{ relation_guid: string }>(
         `UPDATE "${schema}".assertion_relations
             SET retired_at = now()
           WHERE workspace_guid = $1
@@ -139,7 +150,7 @@ export async function retireAssertion(input: RetireAssertionInput): Promise<Reti
         RETURNING relation_guid`,
         [input.workspaceGuid, input.assertionGuid],
       );
-      relationsRetired = relations.rows.length;
+      retiredRelations = relations.rows.map((row) => row.relation_guid);
 
       return {
         // Citations are left as they stand. They are declared immutable by the schema — no
@@ -151,8 +162,10 @@ export async function retireAssertion(input: RetireAssertionInput): Promise<Reti
           kind: current.kind,
           title: current.title,
           status: current.status,
-          associationsRetired,
-          relationsRetired,
+          retiredAssociations,
+          retiredRelations,
+          associationsRetired: retiredAssociations.length,
+          relationsRetired: retiredRelations.length,
         },
         entryType: "assertion.retired",
         ownerScopeGuid: current.owner_scope_guid,
@@ -165,21 +178,32 @@ export async function retireAssertion(input: RetireAssertionInput): Promise<Reti
       assertionGuid: input.assertionGuid,
       version,
       replayed: false,
-      associationsRetired,
-      relationsRetired,
+      associationsRetired: retiredAssociations.length,
+      relationsRetired: retiredRelations.length,
     };
   }
 
   // A replay applied nothing. The claim is already a tombstone, so it cannot be re-read from
   // the live table; the accepted command's own snapshot is the only account of what it did.
+  // Matched on what the command actually did, not merely on which entity it touched.
+  // Idempotency keys are compared on (workspace, key) alone — not on command type — so a caller
+  // that reuses one key across a batch lands here holding some *other* command's acceptance.
+  // That other command wrote a snapshot for this same assertion under this same command guid,
+  // so filtering on the entity or on the command guid both still find a row: the only thing
+  // that separates them is the entry type. Without this a reused key reports a claim as removed
+  // while it is live and still routing.
   const snapshot = await input.pool.query<{
     version: number;
     payload: { associationsRetired?: number; relationsRetired?: number };
   }>(
-    `SELECT version, payload FROM "${schema}".record_versions
-      WHERE workspace_guid = $1 AND entity_type = 'assertion' AND entity_guid = $2
-      ORDER BY version DESC LIMIT 1`,
-    [input.workspaceGuid, input.assertionGuid],
+    `SELECT v.version, v.payload
+       FROM "${schema}".record_versions v
+       JOIN "${schema}".mutation_log m
+         ON m.workspace_guid = v.workspace_guid AND m.command_guid = v.command_guid
+        AND m.entry_type = 'assertion.retired'
+      WHERE v.workspace_guid = $1 AND v.entity_type = 'assertion' AND v.entity_guid = $2
+        AND v.command_guid = $3`,
+    [input.workspaceGuid, input.assertionGuid, command.commandGuid],
   );
   const row = snapshot.rows[0];
   if (!row) {

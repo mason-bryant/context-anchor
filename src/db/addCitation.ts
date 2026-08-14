@@ -89,12 +89,23 @@ export async function addCitation(input: AddCitationInput): Promise<AddCitationR
     commandType: "assertion.addCitation",
     origin: "mcp",
     // Content-keyed like createAssertion: citing the same quote in the same block for the same
-    // claim twice is a retry. The same quote found in a *different* block is a second source
-    // and gets its own key, which is why the block is in the digest.
+    // claim twice is a retry. Every field that makes one citation different from another is in
+    // the digest, because a field left out is a write this command will silently drop — a
+    // resubmission that adds the re-anchor source, or the prefix and suffix that let a quote be
+    // re-found after the text moves, would otherwise match the earlier key and never land.
     idempotencyKey:
       input.idempotencyKey ??
       `assertion.addCitation:${input.assertionGuid}:${createHash("sha256")
-        .update(`${input.citation.blockGuid}\u0000${input.citation.exactQuote}\u0000${relation}`)
+        .update(
+          [
+            input.citation.blockGuid,
+            input.citation.exactQuote,
+            relation,
+            input.citation.prefix ?? "",
+            input.citation.suffix ?? "",
+            input.reanchoredFromCitationGuid ?? "",
+          ].join("\u0000"),
+        )
         .digest("hex")}`,
     reason: input.reason,
     entity: { entityType: "assertion", entityGuid: input.assertionGuid },
@@ -183,13 +194,22 @@ export async function addCitation(input: AddCitationInput): Promise<AddCitationR
   // A replay applied nothing, so the GUID minted above was never written. Return the citation
   // the accepted command actually recorded rather than an identifier for a row that does not
   // exist.
+  // Matched on the entry type, not merely on the entity or the command guid. Idempotency keys
+  // are compared on (workspace, key) alone, so a caller reusing one key across a batch lands
+  // here holding another command's acceptance — and createAssertion's snapshot for this same
+  // assertion also carries a `citationGuid`, so a payload-shape check would hand back the
+  // creation's citation and report a citation that was never added.
   const snapshot = await input.pool.query<{
     version: number;
     payload: { citationGuid?: string };
   }>(
-    `SELECT version, payload FROM "${schema}".record_versions
-      WHERE workspace_guid = $1 AND entity_type = 'assertion' AND entity_guid = $2
-        AND command_guid = $3`,
+    `SELECT v.version, v.payload
+       FROM "${schema}".record_versions v
+       JOIN "${schema}".mutation_log m
+         ON m.workspace_guid = v.workspace_guid AND m.command_guid = v.command_guid
+        AND m.entry_type = 'assertion.citationAdded'
+      WHERE v.workspace_guid = $1 AND v.entity_type = 'assertion' AND v.entity_guid = $2
+        AND v.command_guid = $3`,
     [input.workspaceGuid, input.assertionGuid, command.commandGuid],
   );
   const row = snapshot.rows[0];

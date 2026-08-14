@@ -20,6 +20,7 @@ import {
 import {
   updateAssertion,
   NoAssertionChangesError,
+  StaleIdempotentEditError,
   AssertionNotFoundError as UpdateAssertionNotFoundError,
 } from "../../src/db/updateAssertion.js";
 import {
@@ -296,6 +297,34 @@ describe.runIf(await isTestDatabaseReachable())("assertion lifecycle, T3 (real P
       expect((await rowOf(created.assertionGuid)).version).toBe(2);
     });
 
+    it("refuses to report success when the replayed edit has since been overwritten", async () => {
+      const created = await author("Bearer tokens are required", "The transport requires one.");
+      const edit = (title: string, reason: string) =>
+        updateAssertion({ ...context(), assertionGuid: created.assertionGuid, title, reason });
+
+      await edit("Revision B", "first");
+      await edit("Revision A", "reverted");
+
+      // The default key is derived from the target wording, so this matches the first command
+      // and applies nothing. Reporting a replay would tell the caller their edit landed while
+      // the claim still reads "Revision A".
+      await expect(edit("Revision B", "re-applying B")).rejects.toBeInstanceOf(
+        StaleIdempotentEditError,
+      );
+      expect((await rowOf(created.assertionGuid)).title).toBe("Revision A");
+
+      // And the escape the error names actually works.
+      const forced = await updateAssertion({
+        ...context(),
+        assertionGuid: created.assertionGuid,
+        title: "Revision B",
+        reason: "re-applying B under its own key",
+        idempotencyKey: "deliberately-distinct",
+      });
+      expect(forced.replayed).toBe(false);
+      expect((await rowOf(created.assertionGuid)).title).toBe("Revision B");
+    });
+
     it("will not edit a tombstoned claim", async () => {
       const created = await author("Bearer tokens are required", "The transport requires one.");
       await retireAssertion({
@@ -433,6 +462,88 @@ describe.runIf(await isTestDatabaseReachable())("assertion lifecycle, T3 (real P
       expect(second.version).toBe(first.version);
     });
 
+    it("refuses rather than reporting a retire that another command's key swallowed", async () => {
+      const created = await author("Bearer tokens are required", "The transport requires one.");
+      // Idempotency keys are matched on (workspace, key) alone — not on command type — so a
+      // caller reusing one key across a batch makes this retire replay someone else's command.
+      await updateAssertion({
+        ...context(),
+        assertionGuid: created.assertionGuid,
+        title: "Edited under a shared key",
+        reason: "first use of the key",
+        idempotencyKey: "shared-request-key",
+      });
+
+      await expect(
+        retireAssertion({
+          ...context(),
+          assertionGuid: created.assertionGuid,
+          reason: "second use of the key",
+          idempotencyKey: "shared-request-key",
+        }),
+      ).rejects.toBeInstanceOf(RetireAssertionNotFoundError);
+
+      // The point of the refusal: the claim must not be reported as removed while it is live
+      // and still routing.
+      const settled = await rowOf(created.assertionGuid);
+      expect(settled.retired_at).toBeNull();
+      const live = await pool.query(
+        `SELECT 1 FROM "${schemaName}".record_scopes
+          WHERE record_type = 'assertion' AND record_guid = $1 AND retired_at IS NULL`,
+        [created.assertionGuid],
+      );
+      expect(live.rowCount).toBe(1);
+    });
+
+    it("names what it took with the claim, not just how many", async () => {
+      const first = await author("Bearer tokens are required", "The transport requires one.");
+      const second = await author("Bearer tokens are optional", "It does not require one.");
+      const relation = await createAssertionRelation({
+        ...context(),
+        sourceAssertionGuid: second.assertionGuid,
+        targetAssertionGuid: first.assertionGuid,
+        relationType: "contradicts",
+      });
+
+      await retireAssertion({
+        ...context(),
+        assertionGuid: first.assertionGuid,
+        reason: "authored against the wrong scope",
+      });
+
+      // "One relation disappeared" cannot answer which conflict stopped being visible, and the
+      // mutation log is the only account left once the rows are retired.
+      const snapshot = await pool.query<{
+        payload: { retiredRelations?: string[]; retiredAssociations?: string[] };
+      }>(
+        `SELECT payload FROM "${schemaName}".record_versions
+          WHERE entity_type = 'assertion' AND entity_guid = $1 AND version = 2`,
+        [first.assertionGuid],
+      );
+      expect(snapshot.rows[0]!.payload.retiredRelations).toEqual([relation.relationGuid]);
+      expect(snapshot.rows[0]!.payload.retiredAssociations).toHaveLength(1);
+    });
+
+    it("refuses when the claim moved since the caller read it", async () => {
+      const created = await author("Bearer tokens are required", "The transport requires one.");
+      await updateAssertion({
+        ...context(),
+        assertionGuid: created.assertionGuid,
+        title: "Someone else got here first",
+        reason: "first writer",
+      });
+
+      await expect(
+        retireAssertion({
+          ...context(),
+          assertionGuid: created.assertionGuid,
+          reason: "written against a stale reading",
+          expectedVersion: 1,
+        }),
+      ).rejects.toBeInstanceOf(ConcurrentModificationError);
+      expect((await rowOf(created.assertionGuid)).retired_at).toBeNull();
+    });
+
     it("will not tombstone a claim that is already a tombstone under a different key", async () => {
       const created = await author("Bearer tokens are required", "The transport requires one.");
       await retireAssertion({
@@ -556,6 +667,110 @@ describe.runIf(await isTestDatabaseReachable())("assertion lifecycle, T3 (real P
       expect(second.citationGuid).toBe(first.citationGuid);
       expect(await citationsOf(created.assertionGuid)).toHaveLength(2);
       expect((await rowOf(created.assertionGuid)).version).toBe(2);
+    });
+
+    it("treats a resubmission that adds a re-anchor source as a different citation", async () => {
+      const created = await author("Bearer tokens are required", "The transport requires one.");
+      const plain = await addCitation({
+        ...context(),
+        assertionGuid: created.assertionGuid,
+        citation: { blockGuid: otherBlockGuid, exactQuote: "one hour" },
+        reason: "second source",
+      });
+
+      // The workflow the tool prescribes: realise the chain should have been recorded, and
+      // resubmit naming the citation this one replaces. A digest that omitted the re-anchor
+      // source would match the call above and drop this write silently.
+      const chained = await addCitation({
+        ...context(),
+        assertionGuid: created.assertionGuid,
+        citation: { blockGuid: otherBlockGuid, exactQuote: "one hour" },
+        reanchoredFromCitationGuid: created.citationGuid,
+        reason: "recording the chain that was missed",
+      });
+
+      expect(chained.replayed).toBe(false);
+      expect(chained.citationGuid).not.toBe(plain.citationGuid);
+      const citations = await citationsOf(created.assertionGuid);
+      expect(citations.map((row) => row.reanchored_from_citation_guid)).toContain(
+        created.citationGuid,
+      );
+    });
+
+    it("treats a resubmission that adds re-find context as a different citation", async () => {
+      const created = await author("Bearer tokens are required", "The transport requires one.");
+      const plain = await addCitation({
+        ...context(),
+        assertionGuid: created.assertionGuid,
+        citation: { blockGuid: otherBlockGuid, exactQuote: "one hour" },
+        reason: "second source",
+      });
+      const withContext = await addCitation({
+        ...context(),
+        assertionGuid: created.assertionGuid,
+        citation: {
+          blockGuid: otherBlockGuid,
+          exactQuote: "one hour",
+          prefix: "Sessions expire after ",
+          suffix: " of inactivity.",
+        },
+        reason: "prefix and suffix let the quote be re-found after the text moves",
+      });
+
+      expect(withContext.replayed).toBe(false);
+      expect(withContext.citationGuid).not.toBe(plain.citationGuid);
+    });
+
+    it("refuses when the claim moved since the caller read it", async () => {
+      const created = await author("Bearer tokens are required", "The transport requires one.");
+      await updateAssertion({
+        ...context(),
+        assertionGuid: created.assertionGuid,
+        title: "Someone else got here first",
+        reason: "first writer",
+      });
+
+      await expect(
+        addCitation({
+          ...context(),
+          assertionGuid: created.assertionGuid,
+          citation: { blockGuid: otherBlockGuid, exactQuote: "one hour" },
+          reason: "written against a stale reading",
+          expectedVersion: 1,
+        }),
+      ).rejects.toBeInstanceOf(ConcurrentModificationError);
+      expect(await citationsOf(created.assertionGuid)).toHaveLength(1);
+    });
+
+    it("refuses rather than returning a citation another command's key swallowed", async () => {
+      // Keyed off createAssertion deliberately. Its snapshot for this same assertion also
+      // carries a `citationGuid`, so a replay lookup that matched on the entity or the command
+      // alone would find it and hand back the *creation's* citation, reporting a citation that
+      // was never added. An updateAssertion key would be caught by the payload shape instead,
+      // and would not discriminate this.
+      const created = await createAssertion({
+        ...context(),
+        scopeSlug: "anchor-mcp",
+        kind: "decision",
+        title: "Bearer tokens are required",
+        content: "The transport requires one.",
+        citation: { blockGuid, exactQuote: "bearer token" },
+        idempotencyKey: "shared-request-key",
+      });
+
+      await expect(
+        addCitation({
+          ...context(),
+          assertionGuid: created.assertionGuid,
+          citation: { blockGuid: otherBlockGuid, exactQuote: "one hour" },
+          reason: "second use of the key",
+          idempotencyKey: "shared-request-key",
+        }),
+      ).rejects.toBeInstanceOf(CitationAssertionNotFoundError);
+      expect(await citationsOf(created.assertionGuid)).toHaveLength(1);
+      expect((await citationsOf(created.assertionGuid))[0]!.citation_guid).toBe(
+        created.citationGuid,
+      );
     });
 
     it("will not cite a tombstoned claim", async () => {

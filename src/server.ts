@@ -2127,12 +2127,13 @@ the index when your workflow checks in that file.`,
       {
         title: "Retire Assertion",
         description:
-          "Tombstone a claim: it stops routing and stops being returned. This is for records that should not be " +
-          "in the workspace at all — an import artefact, a duplicate, a claim authored against the wrong scope. " +
-          "Prefer setAssertionStatus(retracted) for a claim that was simply wrong: a reader who finds a retracted " +
-          "claim learns something, and a reader who finds nothing cannot tell an absent claim from a removed one. " +
-          "Refused while a live supersedes relation involves the claim, which would leave lineage pointing at a " +
-          "tombstone. Requires the database backend.",
+          "Tombstone a claim, and retire its scope associations and its non-supersession relations with it. This " +
+          "is for records that should not be in the workspace at all — an import artefact, a duplicate, a claim " +
+          "authored against the wrong scope. Prefer setAssertionStatus(retracted) for a claim that was merely " +
+          "wrong: retrieval already excludes every non-active status, so a retracted claim is equally invisible " +
+          "to a reader, but it stays fetchable by guid, keeps its citations and lineage, and can be returned to " +
+          "active — none of which is true after this, which nothing reverses. Refused while a live supersedes " +
+          "relation involves the claim in either direction. Requires the database backend.",
         inputSchema: z.object({
           traceId: TraceIdSchema,
           assertionGuid: z.string().uuid(),

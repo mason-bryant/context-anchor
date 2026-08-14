@@ -36,6 +36,26 @@ export class NoAssertionChangesError extends Error {
   }
 }
 
+/**
+ * A resubmitted edit whose earlier application has since been overwritten.
+ *
+ * Not a concurrency error: nothing raced. The default idempotency key is derived from the
+ * target values, so re-applying wording this claim has held before matches the original command
+ * and is treated as a retry of it. Silently reporting success there would tell a caller their
+ * edit landed when the claim still holds someone else's.
+ */
+export class StaleIdempotentEditError extends Error {
+  constructor(assertionGuid: string, fields: readonly string[]) {
+    super(
+      `This edit to ${assertionGuid} matches an earlier command with the same idempotency key, ` +
+        `but ${fields.join(" and ")} no longer hold the requested value — a later edit replaced ` +
+        `it. Nothing was written. Supply an explicit idempotencyKey to re-apply this wording as ` +
+        `a new edit.`,
+    );
+    this.name = "StaleIdempotentEditError";
+  }
+}
+
 export type UpdateAssertionInput = {
   pool: Pool;
   schemaName: string;
@@ -152,8 +172,8 @@ export async function updateAssertion(input: UpdateAssertionInput): Promise<Upda
 
   // A replay applied nothing, so the values above were never written. Read the claim as it
   // actually stands rather than echoing what this call would have done.
-  const settled = await input.pool.query<{ version: number }>(
-    `SELECT version FROM "${schema}".assertions
+  const settled = await input.pool.query<AssertionRow>(
+    `SELECT kind, title, content, version, owner_scope_guid FROM "${schema}".assertions
       WHERE workspace_guid = $1 AND assertion_guid = $2 AND retired_at IS NULL`,
     [input.workspaceGuid, input.assertionGuid],
   );
@@ -161,6 +181,21 @@ export async function updateAssertion(input: UpdateAssertionInput): Promise<Upda
   if (!row) {
     throw new AssertionNotFoundError(input.assertionGuid);
   }
+
+  // The key is content-addressed, which means it says "this wording, ever" — not "this wording,
+  // now". Edit to B, edit back to A, then edit to B again and the third call matches the first
+  // and applies nothing, leaving the claim on A while the caller is told it succeeded.
+  //
+  // The stored values are what settle it. If every field this call named is already in place,
+  // the earlier command's effect stands and this genuinely is a retry. If any differs, a later
+  // edit overwrote it, and returning success here would report a change that is not there.
+  const notApplied = EDITABLE_FIELDS.filter(
+    (field) => input[field] !== undefined && input[field] !== row[field],
+  );
+  if (notApplied.length > 0) {
+    throw new StaleIdempotentEditError(input.assertionGuid, notApplied);
+  }
+
   return { assertionGuid: input.assertionGuid, version: row.version, replayed: true, changed: [] };
 }
 
