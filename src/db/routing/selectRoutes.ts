@@ -182,6 +182,77 @@ export function recordLexicalReason(group: {
  * Longest matching prefix wins, matching `repository_mappings`' own documented rule. A
  * prefix only matches on a path *segment* boundary, so `app` does not claim `application/`.
  */
+/**
+ * Below this many routable scopes the frequency rule does not apply.
+ *
+ * The rule drops a term reaching more than half the workspace. In a small workspace that is
+ * indistinguishable from "reaching two scopes", so `floor(3 * 0.5)` is 1 and a term in two of
+ * three scopes is discarded — reproducing the zero-route failure this signal exists to fix, and
+ * doing it hardest exactly where there is least else to match. "Most of the workspace" only
+ * means something once there is a workspace to be most of.
+ */
+export const RECORD_LEXICAL_MIN_SCOPES = 8;
+
+/** A term reaching more than this fraction of routable scopes is not routing anybody anywhere. */
+export const RECORD_LEXICAL_SCOPE_FRACTION = 0.5;
+
+export type RecordLexicalGroup = {
+  scopeGuid: string;
+  termTitles: Map<string, Set<string>>;
+  source: string;
+  titles: string[];
+};
+
+/**
+ * Drops terms that reach most of the workspace, and any group left with none.
+ *
+ * Stopwords cover words common in *language*. This covers words common in *this corpus*:
+ * "milestone" heads every milestone document and reached 19 of 23 scopes with stopwords already
+ * filtered. The term is topical and still useless as a route, because a signal selecting most of
+ * the workspace has selected nothing.
+ *
+ * `reachByTerm` is measured across the whole workspace and `routableScopeCount` counts scopes
+ * that hold records — the two have to describe one population or the threshold means nothing.
+ * Getting that wrong is the reason this rule was written twice and withdrawn once. Measuring the
+ * numerator against the caller's grants made the rule personal: a member granted three scopes got
+ * a limit of one and was routed nowhere, while an owner asking the same question got an answer.
+ * Then measuring the denominator against every live scope made it inert instead, because a
+ * grant-restricted numerator can never exceed a workspace-sized limit — and counting record-less
+ * scopes let declaring a code-area mapping, which says nothing about any heading, switch the rule
+ * off entirely.
+ *
+ * A group whose every term is undiscriminating is dropped rather than offered with a caveat: a
+ * route justified by evidence that applies everywhere is one the reader must rule out by hand,
+ * and volume is this signal's failure mode. Surviving titles are recomputed from the surviving
+ * terms, so the count and the quoted examples describe the evidence that actually justified the
+ * route.
+ */
+export function discriminatingGroups(
+  groups: RecordLexicalGroup[],
+  reachByTerm: Map<string, number>,
+  routableScopeCount: number,
+): RecordLexicalGroup[] {
+  if (routableScopeCount < RECORD_LEXICAL_MIN_SCOPES) {
+    return groups;
+  }
+  const limit = Math.max(1, Math.floor(routableScopeCount * RECORD_LEXICAL_SCOPE_FRACTION));
+
+  const kept: RecordLexicalGroup[] = [];
+  for (const group of groups) {
+    const termTitles = new Map(
+      [...group.termTitles].filter(([term]) => (reachByTerm.get(term) ?? 0) <= limit),
+    );
+    if (termTitles.size === 0) {
+      continue;
+    }
+    const titles = group.titles.filter((title) =>
+      [...termTitles.values()].some((reached) => reached.has(title)),
+    );
+    kept.push({ ...group, termTitles, titles });
+  }
+  return kept;
+}
+
 export function pathMatch(
   referencedPaths: string[],
   mappings: Array<{ scope_guid: string; repository: string; path_prefix: string }>,
@@ -467,7 +538,64 @@ export async function selectRouteCandidates(
       }
     }
 
-    for (const group of groups.values()) {
+    // Reach is measured across the WHOLE workspace, not the caller's slice, because the question
+    // is whether a term discriminates *here* — and a caller's permissions do not change that.
+    // Counted in SQL as an aggregate rather than by fetching every title: the groups above are
+    // deliberately restricted to readable scopes so per-request work scales with what the caller
+    // may receive, and lifting that restriction to compute a count would give the whole rule the
+    // cost it was designed to avoid. One row per task term comes back.
+    //
+    // Whole-word matching mirrors the application-side rule above (\m and \M are Postgres word
+    // boundaries). Terms are [a-z0-9]{2,} by construction, so none can carry regex syntax.
+    const searchTerms = [...terms];
+    const reach = await pool.query<{ term: string; scopes: string; routable: string }>(
+      `WITH routable AS (
+         SELECT DISTINCT scope_guid
+           FROM "${schemaName}".record_scopes
+          WHERE workspace_guid = $1 AND retired_at IS NULL
+       ),
+       titles AS (
+         SELECT rs.scope_guid, a.title AS text
+           FROM "${schemaName}".assertions a
+           JOIN "${schemaName}".record_scopes rs
+             ON rs.workspace_guid = a.workspace_guid AND rs.record_type = 'assertion'
+            AND rs.record_guid = a.assertion_guid AND rs.retired_at IS NULL
+          WHERE a.workspace_guid = $1 AND a.retired_at IS NULL AND a.status = 'active'
+          UNION
+         SELECT rs.scope_guid, ss.title AS text
+           FROM "${schemaName}".source_sections ss
+           JOIN "${schemaName}".document_revisions dr
+             ON dr.workspace_guid = ss.workspace_guid AND dr.revision_guid = ss.revision_guid
+           JOIN "${schemaName}".source_documents d
+             ON d.workspace_guid = dr.workspace_guid AND d.document_guid = dr.document_guid
+            AND d.retired_at IS NULL
+           JOIN "${schemaName}".record_scopes rs
+             ON rs.workspace_guid = ss.workspace_guid AND rs.record_type = 'section'
+            AND rs.stable_key = ss.stable_key AND rs.retired_at IS NULL
+          WHERE ss.workspace_guid = $1
+            AND dr.revision_number = (
+              SELECT max(dr2.revision_number)
+                FROM "${schemaName}".document_revisions dr2
+               WHERE dr2.workspace_guid = dr.workspace_guid AND dr2.document_guid = dr.document_guid
+            )
+       )
+       SELECT t.term,
+              count(DISTINCT titles.scope_guid) AS scopes,
+              (SELECT count(*) FROM routable) AS routable
+         FROM unnest($2::text[]) AS t(term)
+         -- Doubled backslashes deliberately. This is a JS template literal, and a lone backslash
+         -- before m is not a recognised escape, so JavaScript drops it and Postgres receives the
+         -- pattern "mTERMM" instead of a word-boundary match. Caught by running the query
+         -- directly: every term came back with a reach of zero, which would have left the rule
+         -- silently inert and every ubiquitous term routing exactly as before.
+        LEFT JOIN titles ON titles.text ~* ('\\m' || t.term || '\\M')
+        GROUP BY t.term`,
+      [input.workspaceGuid, searchTerms],
+    );
+    const reachByTerm = new Map(reach.rows.map((row) => [row.term, Number(row.scopes)]));
+    const routableScopeCount = Number(reach.rows[0]?.routable ?? 0);
+
+    for (const group of discriminatingGroups([...groups.values()], reachByTerm, routableScopeCount)) {
       add(group.scopeGuid, { kind: "record-lexical", reason: recordLexicalReason(group) });
     }
   }

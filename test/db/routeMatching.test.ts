@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 
 import {
   contentFingerprint,
+  discriminatingGroups,
+  RECORD_LEXICAL_MIN_SCOPES,
   lexicalMatch,
   pathMatch,
   RECORD_LEXICAL_EXAMPLES,
@@ -273,3 +275,64 @@ describe("recordLexicalReason", () => {
   });
 });
 
+/**
+ * The rule that stops a topical-but-ubiquitous term routing everywhere. Written twice and
+ * withdrawn once, because both times the numerator and the denominator described different
+ * populations — so each case below is a defect that shipped, not a hypothetical.
+ */
+describe("discriminatingGroups", () => {
+  const group = (scopeGuid: string, termTitles: Record<string, string[]>) => ({
+    scopeGuid,
+    source: "section",
+    termTitles: new Map(Object.entries(termTitles).map(([t, titles]) => [t, new Set(titles)])),
+    titles: [...new Set(Object.values(termTitles).flat())],
+  });
+  const reach = (counts: Record<string, number>) => new Map(Object.entries(counts));
+
+  it("drops a term that reaches most of the workspace", () => {
+    const groups = [group("a", { milestone: ["Milestone -- A"] })];
+
+    expect(discriminatingGroups(groups, reach({ milestone: 19 }), 23)).toEqual([]);
+  });
+
+  it("keeps a confined term and strips the ubiquitous one from the same group", () => {
+    const groups = [group("a", { milestone: ["Milestone -- A"], provenance: ["Claim provenance"] })];
+
+    const kept = discriminatingGroups(groups, reach({ milestone: 19, provenance: 1 }), 23);
+    expect(kept).toHaveLength(1);
+    expect([...kept[0]!.termTitles.keys()]).toEqual(["provenance"]);
+    // The title the discarded term alone reached goes with it, so the count describes what
+    // actually justified the route.
+    expect(kept[0]!.titles).toEqual(["Claim provenance"]);
+  });
+
+  it("does not apply at all below the minimum workspace size", () => {
+    // At three scopes the limit would be one, so a term in two of three is discarded --
+    // reproducing the zero-route failure this signal exists to fix, hardest where there is
+    // least else to match.
+    const groups = [group("a", { retention: ["Retention policy"] })];
+
+    expect(discriminatingGroups(groups, reach({ retention: 2 }), 3)).toHaveLength(1);
+    expect(RECORD_LEXICAL_MIN_SCOPES).toBeGreaterThan(3);
+  });
+
+  it("measures the denominator in routable scopes, not every live scope", () => {
+    // Declaring code-area mappings mints scopes that hold no records. Counting them inflated the
+    // denominator and switched the rule off: a term in 8 of 8 record-bearing scopes survived
+    // because the workspace also held 9 empty ones.
+    const groups = [group("a", { decisions: ["Decisions"] })];
+
+    expect(discriminatingGroups(groups, reach({ decisions: 8 }), 8)).toEqual([]);
+    // Same term, same reach, denominator inflated by record-less scopes: it would survive.
+    expect(discriminatingGroups(groups, reach({ decisions: 8 }), 17)).toHaveLength(1);
+  });
+
+  it("judges a term the same way for every caller, whatever they can read", () => {
+    // The reach map is workspace-wide by construction, so a member granted three scopes gets the
+    // same verdict as an owner. Measuring reach against the caller's grants made a term in two of
+    // their three scopes undiscriminating and routed them nowhere.
+    const groups = [group("a", { retention: ["Retention policy"] })];
+
+    expect(discriminatingGroups(groups, reach({ retention: 2 }), 23)).toHaveLength(1);
+  });
+});

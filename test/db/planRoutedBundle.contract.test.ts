@@ -251,6 +251,39 @@ describe.runIf(await isTestDatabaseReachable())("planRoutedBundle (real Postgres
       expect(reasons).toEqual([]);
     });
 
+    it("drops a term that reaches most of the workspace, and keeps a confined one", async () => {
+      // Pins the CALL SITE. Last time the rule had five unit tests and could still be deleted
+      // from selectRouteCandidates with every suite green, because nothing exercised the wiring.
+      //
+      // "context" is put in a heading of every scope the fixture has; "provenance" in one.
+      const shared = (title: string) =>
+        "---\nproject: anchor-mcp\ntype: context-anchor\n---\n\n# Doc\n\n## " + title + "\n\nText.\n";
+      const files = [
+        { path: "projects/anchor-mcp/anchor-mcp-project-context.md", content: shared("Context and provenance") },
+        ...Array.from({ length: 9 }, (_, i) => ({
+          path: `projects/anchor-mcp/milestones/m${String(i)}.md`,
+          content: shared(`Context notes ${String(i)}`),
+        })),
+      ];
+      await importDocuments({
+        pool,
+        schemaName,
+        handler: new CommandHandler(pool, schemaName),
+        workspaceGuid: bootstrap.workspaceGuid,
+        actorPrincipalGuid: bootstrap.ownerPrincipalGuid,
+        repository: "agent-context",
+        commitSha: "7".repeat(40),
+        files,
+      });
+
+      const result = await plan("context provenance", { recordLexical: true });
+      const reasons = recordLexicalReasons(result.routes);
+
+      expect(reasons.length).toBeGreaterThan(0);
+      expect(reasons.join(" ")).not.toContain('"context"');
+      expect(reasons.join(" ")).toContain('"provenance"');
+    });
+
     // The restriction the whole signal rests on. Body matching would put most scopes in most
     // answers, which reads like working and is far harder to notice than returning nothing —
     // so a word that appears only in prose must still route nowhere.
