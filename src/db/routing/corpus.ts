@@ -82,6 +82,14 @@ export type CorpusTaskResult = {
   /** Records actually returned inside the expanded budget. A route offered is not a caller served. */
   recordsReturned: number;
   /**
+   * Records the offered routes hold, whether or not the budget delivered them.
+   *
+   * Distinct from recordsReturned because disclosure is the caller's choice: with the default of
+   * `expanded: 0` nothing is delivered, so a measure of what routing *found* cannot be taken from
+   * what was sent.
+   */
+  recordsAvailable: number;
+  /**
    * Routes the ranker produced before the listed budget clipped them.
    *
    * Fan-out has to be measured here or it saturates: with a listed budget of ten, a task
@@ -128,7 +136,13 @@ export type CorpusReport = {
   forbiddenHitCount: number;
   /** Tasks that exceeded their own route ceiling. */
   overMaxRoutesCount: number;
-  /** Tasks offered at least one route but returned no records inside the budget. */
+  /**
+   * Tasks offered at least one route where those routes hold nothing at all.
+   *
+   * Counted from what the routes contain, not from what the budget delivered. Disclosure is the
+   * caller's choice and the default delivers nothing, so counting deliveries would report every
+   * task as empty and turn a gate criterion into a constant.
+   */
   offeredButEmptyCount: number;
   /**
    * What an answer costs, across the corpus.
@@ -250,6 +264,11 @@ function scoreTask(task: CorpusTask, plan: PlanResult, scored: boolean): CorpusT
   // caller who received nothing was not served by it.
   const recordsReturned = plan.routes.reduce((total, route) => total + (route.records?.length ?? 0), 0);
 
+  // What the offered routes hold, whether or not the budget delivered any of it. Needed since
+  // `expanded` defaults to 0: "returned no records" became true of every task by construction,
+  // and offeredButEmptyCount reported 23 of 28 on a workspace where the routes were fine.
+  const recordsAvailable = plan.routes.reduce((total, route) => total + route.recordCount, 0);
+
   const expected = scored ? (task.expectedScopes ?? []) : [];
   const missing = expected.filter((scope) => !offered.has(scope));
   const forbiddenHits = scored
@@ -259,6 +278,7 @@ function scoreTask(task: CorpusTask, plan: PlanResult, scored: boolean): CorpusT
   return {
     id: task.id,
     task: task.task,
+    recordsAvailable,
     offeredScopes,
     offeredRouteKeys,
     // Undefined rather than 1 when nothing was expected. A task with no recorded judgement
@@ -337,7 +357,7 @@ function summarise(
     forbiddenHitCount: results.filter((result) => result.forbiddenHits.length > 0).length,
     overMaxRoutesCount: results.filter((result) => result.overMaxRoutes).length,
     offeredButEmptyCount: results.filter(
-      (result) => result.offeredScopes.length > 0 && result.recordsReturned === 0,
+      (result) => result.offeredScopes.length > 0 && result.recordsAvailable === 0,
     ).length,
     cost: summariseCost(results),
     wholeWorkspaceCount: results.filter(

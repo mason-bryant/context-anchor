@@ -40,7 +40,10 @@ const corpusPath = path.resolve(scriptDir, "../test/fixtures/routing-corpus/corp
 type Args = { seed: boolean; schema: string | undefined; recordLexical: boolean; json: boolean };
 
 function parseArgs(argv: string[]): Args {
-  const args: Args = { seed: false, schema: undefined, recordLexical: false, json: false };
+  // Defaults to the planner's own setting, which is on. It used to default to false and pass
+  // that explicitly, so once the signal became the default a bare `npm run corpus` measured a
+  // configuration the product no longer ships.
+  const args: Args = { seed: false, schema: undefined, recordLexical: true, json: false };
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
     if (arg === "--seed") {
@@ -52,14 +55,16 @@ function parseArgs(argv: string[]): Args {
       index += 1;
     } else if (arg === "--record-lexical") {
       args.recordLexical = true;
+    } else if (arg === "--no-record-lexical") {
+      args.recordLexical = false;
     } else if (arg === "--json") {
       args.json = true;
     } else if (arg === "--help" || arg === "-h") {
       console.log(
         `Usage:\n` +
-          `  npm run corpus -- --seed [--record-lexical] [--json]\n` +
+          `  npm run corpus -- --seed [--no-record-lexical] [--json]\n` +
           `      Seed a throwaway schema from the corpus fixture and score it.\n` +
-          `  npm run corpus -- --schema <name> [--record-lexical] [--json]\n` +
+          `  npm run corpus -- --schema <name> [--no-record-lexical] [--json]\n` +
           `      Run the same tasks against an existing workspace. Unscored: the corpus's\n` +
           `      expectations name scopes that workspace does not have.\n`,
       );

@@ -44,7 +44,28 @@ export type RouteBudget = {
 };
 
 export const DEFAULT_ROUTE_BUDGET: RouteBudget = {
-  expanded: 2,
+  /**
+   * Nothing delivered by default: routes and links, and the caller expands what it wants.
+   *
+   * This was 2, which contradicted the thing the design calls its first goal. Progressive
+   * disclosure means reachable rather than present, and a default that ships two routes' content
+   * unasked is content-by-default with disclosure available on request -- the opposite arrangement.
+   *
+   * It is also what makes reach affordable. Measured on the real workspace over the four
+   * worst-behaved corpus tasks, cost is almost entirely expansion rather than routing:
+   *
+   *   expanded 0 -> mean 1KB, worst 3KB
+   *   expanded 1 -> mean 3KB, worst 10KB
+   *   expanded 2 -> mean 17KB, worst 65KB
+   *
+   * A route matched for a weak reason costs a line of JSON here. At 2 it cost tens of kilobytes
+   * of prose, which is what made record-lexical's noise look unaffordable when the noise was
+   * never the expensive part.
+   *
+   * The cost is a second call for a caller that wants content immediately. That is the trade,
+   * and it is the caller's to make per request.
+   */
+  expanded: 0,
   listed: 10,
   recordsPerRoute: 25,
   linksPerRoute: 5,
@@ -363,7 +384,9 @@ export async function planRoutedBundle(
     // candidates (A3 permits dropping, only not inventing) is reported as having dropped them
     // instead of inflating the count with routes that were never offerable.
     candidateCount: outcome.routes.length,
-    appliedSignals: { recordLexical: input.recordLexical === true },
+    // Reports what ran, so a response is self-describing about which signals produced it. Reads
+    // the same way as the switch in selectRoutes: on unless the caller said otherwise.
+    appliedSignals: { recordLexical: input.recordLexical !== false },
     routes,
   };
 }
