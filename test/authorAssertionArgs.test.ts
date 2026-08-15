@@ -110,6 +110,16 @@ describe("author-assertion argument parsing", () => {
     expect(parseArgs(create()).kind).toBe("decision");
   });
 
+  it("names a missing authoring flag before anything opens a connection", () => {
+    // A typo answered with a database round trip is a slower, noisier failure than the mistake.
+    expect(() => parseArgs(["--scope", "abac", "--kind", "decision", "--title", "t"])).toThrow(
+      /--content is required to create an assertion/,
+    );
+    expect(() => parseArgs(create().filter((t) => t !== "--quote" && t !== "a quote"))).toThrow(
+      /--quote is required/,
+    );
+  });
+
   it("does not demand authoring fields when only listing", () => {
     // --list is a read. Requiring a block guid to look at a scope's material would make the
     // listing useless for deciding what to cite.

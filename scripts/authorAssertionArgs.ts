@@ -207,6 +207,21 @@ export function parseArgs(argv: string[]): Args {
   if (args.quote !== undefined && args.quote.length === 0) {
     throw new Error("--quote cannot be empty.");
   }
+
+  // Required flags checked here, not after a pool is opened and a workspace queried. A missing
+  // --quote is a typo, and answering a typo with a database round trip makes the failure slower
+  // and noisier than the mistake.
+  for (const [flag, value] of [
+    ["--kind", args.kind],
+    ["--title", args.title],
+    ["--content", args.content],
+    ["--block", args.block],
+    ["--quote", args.quote],
+  ] as const) {
+    if (value === undefined) {
+      throw new Error(`${flag} is required to create an assertion. See --help.`);
+    }
+  }
   if (args.block !== undefined && !UUID_PATTERN.test(args.block)) {
     throw new Error(`--block ${JSON.stringify(args.block)} is not a uuid.`);
   }

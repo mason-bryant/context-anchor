@@ -121,15 +121,6 @@ async function main(): Promise<void> {
       return;
     }
 
-    for (const [flag, value] of [
-      ["--kind", args.kind],
-      ["--title", args.title],
-      ["--content", args.content],
-      ["--block", args.block],
-      ["--quote", args.quote],
-    ] as const) {
-      if (value === undefined) throw new Error(`${flag} is required to create an assertion.`);
-    }
 
     const owner = await pool.query<{ principal_guid: string }>(
       `SELECT principal_guid FROM "${schema}".workspace_memberships
