@@ -81,6 +81,18 @@ describe("author-assertion argument parsing", () => {
     expect(() => parseArgs(create().map((t) => (t === BLOCK ? "not-a-uuid" : t)))).toThrow(/is not a uuid/);
   });
 
+  it("trims title and content but never the quote", () => {
+    // The key is a hash of title and content, so an untrimmed title is a different command
+    // writing a second assertion that a retry never converges on. The quote is the opposite
+    // case: it must match the block byte for byte, and reshaping it silently is the failure
+    // the citation check exists to prevent.
+    const args = parseArgs(create().map((t) =>
+      t === "a title" ? "  a title  " : t === "a quote" ? "  a quote  " : t,
+    ));
+    expect(args.title).toBe("a title");
+    expect(args.quote).toBe("  a quote  ");
+  });
+
   it("does not demand authoring fields when only listing", () => {
     // --list is a read. Requiring a block guid to look at a scope's material would make the
     // listing useless for deciding what to cite.

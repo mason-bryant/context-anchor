@@ -167,14 +167,23 @@ export function parseArgs(argv: string[]): Args {
     return args;
   }
 
+  // Trimmed, not merely checked for blankness. The MCP surface trims these, and the default
+  // idempotency key is a hash of title and content -- so `--title " a "` here and `--title "a"`
+  // there are two different commands writing two assertions, and a retry of one never converges
+  // on the other. Same text, same claim, same key.
+  args.title = args.title?.trim();
+  args.content = args.content?.trim();
   for (const [flag, value] of [
     ["--title", args.title],
     ["--content", args.content],
   ] as const) {
-    if (value !== undefined && value.trim().length === 0) {
+    if (value !== undefined && value.length === 0) {
       throw new Error(`${flag} cannot be blank.`);
     }
   }
+
+  // --quote is deliberately NOT trimmed. It has to match the block byte for byte, and a citation
+  // whose quote was silently reshaped is the failure the whole verification exists to prevent.
   if (args.block !== undefined && !UUID_PATTERN.test(args.block)) {
     throw new Error(`--block ${JSON.stringify(args.block)} is not a uuid.`);
   }
