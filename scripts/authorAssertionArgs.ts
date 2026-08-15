@@ -64,9 +64,13 @@ export function parseArgs(argv: string[]): Args {
     quote: undefined,
     minLength: 40,
   };
-  // How many tokens a flag consumed: one when its value is attached with `=`, two when the value
-  // is the next token. Advancing by a fixed one swallowed the argument after every inline flag,
-  // which is how `--title=x --content=y` silently lost the content.
+  // The EXTRA tokens a flag consumed beyond itself: 0 when its value is attached with `=`, 1
+  // when the value is the next token. The loop's own `index += 1` supplies the rest, so a flag
+  // advances by one or two in total -- but this function returns 0 or 1, and saying "one or two"
+  // here would invite a reader to double-count and "fix" the code back to the bug it replaced.
+  //
+  // That bug: advancing by a fixed 1 swallowed the argument after every inline flag, so
+  // `--title=x --content=y` lost the content and blamed --content for being absent.
   const step = (index: number): number => (inline.has(index) ? 0 : 1);
   const take = (index: number): string => {
     // An inline `=value` wins and is never ambiguous, whatever it contains.
