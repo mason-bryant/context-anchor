@@ -33,7 +33,16 @@ export type RecordedQuestion = {
   routesOffered: number;
   routesExpanded: number;
   recordUses: number;
-  /** The routes offered, best position first, so a reader sees the answer beside the question. */
+  /**
+   * The routes offered, best position first, so a reader sees the answer beside the question.
+   *
+   * `recordCount` is a number and not `number | null`, though the column is nullable: NULL means
+   * "a shadow ordering offered this route and the authoritative answer did not, so nothing was
+   * loaded for it" (telemetry migration 0002), and this query returns only non-shadow rows. Every
+   * non-shadow impression is written from the planned routes, each of which carries its own count.
+   * Pinned by a test, because that is a claim about a different file and would otherwise rot into
+   * a UI rendering "null record(s)".
+   */
   routes: Array<{ routeKey: string; position: number; expanded: boolean; recordCount: number }>;
 };
 

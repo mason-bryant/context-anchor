@@ -146,7 +146,14 @@ describe.runIf(await isTestDatabaseReachable())("recorded questions (real Postgr
       deterministic: true,
       // Delegates to the real ranker and reverses it: a shadow must return RankedRoute, and
       // hand-building those here would test my construction rather than the query.
-      rank: async (candidates) => (await defaultRanker.rank(candidates)).reverse(),
+      // offeredPosition is reassigned after the reverse. The ranker contract requires it to equal
+      // the array index, and a stale one makes rankWithFallback swallow the error and rank with
+      // the default instead -- which still writes shadow rows, so a test asserting only that they
+      // exist passes while never exercising a second ranker at all. It did, for a review round.
+      rank: async (candidates) =>
+        (await defaultRanker.rank(candidates))
+          .reverse()
+          .map((route, index) => ({ ...route, offeredPosition: index })),
     };
     const planned = await planRoutedBundle(
       pool,
@@ -161,9 +168,11 @@ describe.runIf(await isTestDatabaseReachable())("recorded questions (real Postgr
       { shadowRankers: [reversed] },
     );
 
+    // ranker_id is named, not merely is_shadow: when a shadow ranker breaks its contract the
+    // default ranks in its place and still writes shadow rows under ranker_id 'precedence'.
     const shadowRows = await pool.query<{ n: string }>(
       `SELECT count(*)::text AS n FROM "${telemetrySchema}".retrieval_route_impressions
-        WHERE request_guid = $1 AND is_shadow = true`,
+        WHERE request_guid = $1 AND is_shadow = true AND ranker_id = 'reversed'`,
       [planned.requestId],
     );
     expect(Number(shadowRows.rows[0]!.n)).toBeGreaterThan(0);
@@ -171,6 +180,55 @@ describe.runIf(await isTestDatabaseReachable())("recorded questions (real Postgr
     const [question] = await list();
     expect(question?.routesOffered).toBe(planned.routes.length);
     expect(question?.routes).toHaveLength(planned.routes.length);
+  });
+
+  it("never reports an unknown record count, because it reads only the authoritative rows", async () => {
+    // record_count is nullable: NULL means a shadow ordering offered a route the answer did not,
+    // so nothing was loaded for it, and 0 there would read as "the route was empty" (telemetry
+    // migration 0002). RecordedQuestion types recordCount as `number` on the strength of this
+    // query filtering is_shadow = false -- a claim about a different file, pinned here.
+    //
+    // listed: 1 is what makes the NULL happen at all. With both routes offered, the shadow ranker
+    // sees the same set and every key has a count; slicing to one leaves the reversed ranker
+    // offering the route the answer skipped. expanded: 0 alongside it because listed is raised to
+    // expanded, and expanded defaults to 2 -- asking for listed: 1 on its own quietly gets 2 back.
+    const reversed: Ranker = {
+      id: "reversed",
+      version: "1.0.0",
+      deterministic: true,
+      rank: async (candidates) =>
+        (await defaultRanker.rank(candidates))
+          .reverse()
+          .map((route, index) => ({ ...route, offeredPosition: index })),
+    };
+    const planned = await planRoutedBundle(
+      pool,
+      schemaName,
+      telemetrySchema,
+      {
+        workspaceGuid: bootstrap.workspaceGuid,
+        principalGuid: bootstrap.ownerPrincipalGuid,
+        role: "owner",
+        task: "anchor mcp http transport",
+        budget: { listed: 1, expanded: 0 },
+      },
+      { shadowRankers: [reversed] },
+    );
+    expect(planned.routes).toHaveLength(1);
+
+    // The NULL exists, so this test is exercising the case rather than describing it.
+    const unknown = await pool.query<{ n: string }>(
+      `SELECT count(*)::text AS n FROM "${telemetrySchema}".retrieval_route_impressions
+        WHERE request_guid = $1 AND record_count IS NULL AND ranker_id = 'reversed'`,
+      [planned.requestId],
+    );
+    expect(Number(unknown.rows[0]!.n)).toBeGreaterThan(0);
+
+    const [question] = await list();
+    expect(question?.routes).toHaveLength(1);
+    for (const route of question?.routes ?? []) {
+      expect(route.recordCount).toBeTypeOf("number");
+    }
   });
 
   it("excludes the instruments unless asked, because they are nobody's questions", async () => {
