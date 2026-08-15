@@ -51,8 +51,6 @@ export type ScopeSummary = {
   aliases: string[];
 };
 
-/** Guarded before a guid lookup so a non-uuid slug never reaches Postgres as a uuid cast. */
-
 export class ScopeNotFoundError extends Error {
   constructor(scope: string) {
     super(`No scope matched ${JSON.stringify(scope)} in this workspace (looked up by slug, then by guid).`);
@@ -250,6 +248,7 @@ export class KnowledgeDatabase {
       return bySlug.rows[0].scope_guid;
     }
 
+    // Guarded before the guid lookup so a non-uuid slug never reaches Postgres as a uuid cast.
     if (isGuid(scope)) {
       const byGuid = await this.pool.query<{ scope_guid: string }>(
         `SELECT scope_guid FROM "${this.schemaName}".scopes
