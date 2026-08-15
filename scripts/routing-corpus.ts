@@ -62,11 +62,17 @@ function parseArgs(argv: string[]): Args {
     } else if (arg === "--help" || arg === "-h") {
       console.log(
         `Usage:\n` +
-          `  npm run corpus -- --seed [--no-record-lexical] [--json]\n` +
+          `  npm run corpus -- --seed [signal flags] [--json]\n` +
           `      Seed a throwaway schema from the corpus fixture and score it.\n` +
-          `  npm run corpus -- --schema <name> [--no-record-lexical] [--json]\n` +
+          `  npm run corpus -- --schema <name> [signal flags] [--json]\n` +
           `      Run the same tasks against an existing workspace. Unscored: the corpus's\n` +
-          `      expectations name scopes that workspace does not have.\n`,
+          `      expectations name scopes that workspace does not have.\n` +
+          `\n` +
+          `Signal flags:\n` +
+          `  --no-record-lexical   Match scope slugs, titles and aliases only. The baseline\n` +
+          `                        the signal is measured against; 86% of tasks return nothing.\n` +
+          `  --record-lexical      Also match assertion titles and section headings. This is\n` +
+          `                        the default, so the flag is only needed to be explicit.\n`,
       );
       process.exit(0);
     }
