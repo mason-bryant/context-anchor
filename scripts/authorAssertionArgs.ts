@@ -115,15 +115,27 @@ export function parseArgs(argv: string[]): Args {
     if (attached !== undefined) {
       return attached;
     }
+    const flag = argv[index]!;
     const value = argv[index + 1];
-    // Otherwise missing only when the next token is a flag this command knows. `--quote
-    // '-- a comment'` is a legal quote and used to be rejected as a missing value. A value that
-    // is *exactly* a flag name is ambiguous in this form and needs `--quote=--list`.
-    if (value === undefined || KNOWN_FLAGS.has(value)) {
+    if (value === undefined) {
+      throw new Error(`${flag} needs a value. If the value is itself a flag name, use ${flag}=<value>.`);
+    }
+
+    // A bare dash-leading token is not a value for a structured flag. Accepting one meant a typo
+    // was swallowed as content: `--title --typo-flag` authored an assertion actually titled
+    // "--typo-flag", and where positions differed the parser blamed some later token for being
+    // unknown -- the "wrong argument named" failure this module exists to avoid.
+    //
+    // --quote is the exception, because the text it cites really does start with dashes: a SQL
+    // comment, a Markdown rule, a diff line. Everything else takes `=` for such a value.
+    if (value.startsWith("--") && flag !== "--quote") {
       throw new Error(
-        `${argv[index]!} needs a value. If the value is itself a flag name, use ` +
-          `${argv[index]!}=<value>.`,
+        `${flag} was given ${JSON.stringify(value)}, which looks like a flag. If it is the ` +
+          `value, use ${flag}=${value}.`,
       );
+    }
+    if (KNOWN_FLAGS.has(value)) {
+      throw new Error(`${flag} needs a value. If the value is itself a flag name, use ${flag}=<value>.`);
     }
     return value;
   };

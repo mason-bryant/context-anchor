@@ -70,8 +70,26 @@ describe("author-assertion argument parsing", () => {
   });
 
   it("refuses a flag with no value, and says how to pass one that looks like a flag", () => {
-    expect(() => parseArgs(["--scope", "abac", "--title", "--content", "x"])).toThrow(/--title needs a value/);
-    expect(() => parseArgs(["--scope", "abac", "--title", "--content", "x"])).toThrow(/--title=<value>/);
+    // Nothing after it at all.
+    expect(() => parseArgs(["--scope", "abac", "--title"])).toThrow(/--title needs a value/);
+    expect(() => parseArgs(["--scope", "abac", "--title"])).toThrow(/--title=<value>/);
+
+    // Followed by something flag-shaped: named specifically, because "needs a value" would
+    // leave a reader looking for a missing argument rather than the one they mistyped.
+    expect(() => parseArgs(["--scope", "abac", "--title", "--content", "x"])).toThrow(
+      /--title was given "--content", which looks like a flag/,
+    );
+  });
+
+  it("does not swallow a typo'd flag as a value", () => {
+    // `--title --typo-flag` authored an assertion actually titled "--typo-flag", and where the
+    // positions differed the parser blamed a later token for being unknown -- the wrong-argument
+    // failure this module exists to avoid.
+    expect(() => asCreate(create().map((t) => (t === "a title" ? "--typo-flag" : t)))).toThrow(
+      /--title was given "--typo-flag", which looks like a flag/,
+    );
+    // And the escape it names actually works.
+    expect(asCreate(["--scope", "abac", "--kind", "decision", "--title=--typo-flag", "--content", "c", "--block", BLOCK, "--quote", "q"]).title).toBe("--typo-flag");
   });
 
   it("refuses an unknown argument rather than dropping it", () => {
