@@ -3,7 +3,7 @@ import path from "node:path";
 
 import type { AnchorSchemaMode, FileLoggingConfig, LoggingConfig, RequestLoggingConfig, ServerConfig, TraceLoggingConfig } from "../types.js";
 import { ANCHOR_SCHEMA_MODES } from "../types.js";
-import { assertValidDatabaseUrl, resolveDatabaseConfig, type DatabaseConfig } from "../db/config.js";
+import { assertValidDatabaseUrl, resolveDatabaseConfig, type DatabaseConfig, type TelemetryRetentionSettings } from "../db/config.js";
 import { parseDbCliArgs, type DbCliArgs } from "../db/cliArgs.js";
 import { expandHome } from "../utils/path.js";
 import { DEFAULT_GRAPH_SCORING_ENABLED, DEFAULT_GRAPH_SCORING_MAX_BOOST, clampGraphScoringMaxBoost } from "../graph/proximity.js";
@@ -74,7 +74,7 @@ Config file
 
 Config-file only (no flag or variable)
   logging                       file, requests, and traces blocks
-  database                      poolSize and schemaName
+  database                      poolSize, schemaName, storeTaskText, telemetryRetention
 
 Every flag above has an environment equivalent except --no-auto-sync,
 --no-push-on-write, and --migration-warn-only, which are flags only:
@@ -554,7 +554,49 @@ function databaseConfigValue(value: unknown, key: string): DatabaseConfig | unde
   return resolveDatabaseConfig({
     poolSize: numberConfigValue(value.poolSize, `${key}.poolSize`),
     schemaName: stringConfigValue(value.schemaName, `${key}.schemaName`),
+    // storeTaskText was missing here from the day it shipped. The type carried it, the server
+    // honoured it, and the config file — the only place an operator can set a workspace-level
+    // policy — silently dropped it, so `storeTaskText: false` was accepted and did nothing.
+    // A setting that exists to let someone refuse to retain their questions is a bad one to
+    // read only from a type declaration.
+    storeTaskText: booleanConfigValue(value.storeTaskText, `${key}.storeTaskText`),
+    telemetryRetention: telemetryRetentionConfigValue(
+      value.telemetryRetention,
+      `${key}.telemetryRetention`,
+    ),
   });
+}
+
+function telemetryRetentionConfigValue(
+  value: unknown,
+  key: string,
+): Partial<TelemetryRetentionSettings> | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (!isRecord(value)) {
+    throw new Error(`Expected config field ${key} to be an object`);
+  }
+
+  // Absent fields are omitted, not passed as undefined. resolveDatabaseConfig merges this over
+  // the defaults with a spread, and a spread copies an explicitly-undefined key — so a config
+  // naming only intervalHours would blank both windows and leave the policy unresolvable. The
+  // key has to be missing, not present and empty.
+  const settings: Partial<TelemetryRetentionSettings> = {};
+  const taskTextDays = numberConfigValue(value.taskTextDays, `${key}.taskTextDays`);
+  if (taskTextDays !== undefined) {
+    settings.taskTextDays = taskTextDays;
+  }
+  const requestDays = numberConfigValue(value.requestDays, `${key}.requestDays`);
+  if (requestDays !== undefined) {
+    settings.requestDays = requestDays;
+  }
+  const intervalHours = numberConfigValue(value.intervalHours, `${key}.intervalHours`);
+  if (intervalHours !== undefined) {
+    settings.intervalHours = intervalHours;
+  }
+  return settings;
 }
 
 function booleanConfigValue(value: unknown, key: string): boolean | undefined {

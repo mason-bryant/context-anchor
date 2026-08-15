@@ -1,3 +1,9 @@
+import {
+  assertUsableRetentionPolicy,
+  DEFAULT_TELEMETRY_RETENTION,
+  type TelemetryRetentionPolicy,
+} from "./telemetryRetention.js";
+
 export type DatabaseConfig = {
   poolSize: number;
   schemaName: string;
@@ -9,6 +15,19 @@ export type DatabaseConfig = {
    * control never would. Off here means off for the workspace regardless of what a caller asks.
    */
   storeTaskText: boolean;
+  /**
+   * How long telemetry is kept, and how often the thinning runs (T-41).
+   *
+   * `intervalHours: 0` disables the in-process schedule for an operator who would rather drive
+   * `anchor-mcp db thin` from cron. It does not disable retention as a policy — the windows still
+   * apply whenever a pass runs — which is why it is a separate number from the two day counts
+   * rather than an `enabled` flag that would read as though nothing were ever removed.
+   */
+  telemetryRetention: TelemetryRetentionSettings;
+};
+
+export type TelemetryRetentionSettings = TelemetryRetentionPolicy & {
+  intervalHours: number;
 };
 
 export const DEFAULT_DATABASE_POOL_SIZE = 10;
@@ -19,9 +38,22 @@ export const DEFAULT_DATABASE_SCHEMA_NAME = "knowledge";
  * for: a hash groups identical questions and shows nobody what was asked.
  *
  * The retrieval path does not read it back and never has — this is a diagnostics decision, not
- * a change to how routing works. It does accrue, and nothing thins telemetry yet (T-41).
+ * a change to how routing works. What bounds the accrual is `telemetryRetention`.
  */
 export const DEFAULT_STORE_TASK_TEXT = true;
+
+/**
+ * Ninety days of readable questions, a year of countable ones, thinned every six hours.
+ *
+ * Six rather than twenty-four so that a window is at most a few hours stale, and so an operator
+ * watching a fresh install sees the job work rather than having to trust that it will tomorrow.
+ * The pass is bounded work over an indexed timestamp, and on a workspace inside its window it
+ * deletes nothing and logs nothing.
+ */
+export const DEFAULT_TELEMETRY_RETENTION_SETTINGS: TelemetryRetentionSettings = {
+  ...DEFAULT_TELEMETRY_RETENTION,
+  intervalHours: 6,
+};
 
 /**
  * Telemetry lives in its own schema so retention can thin it without ever holding write
@@ -110,6 +142,7 @@ export type PartialDatabaseConfig = {
   poolSize?: number;
   schemaName?: string;
   storeTaskText?: boolean;
+  telemetryRetention?: Partial<TelemetryRetentionSettings>;
 };
 
 export function resolveDatabaseConfig(partial: PartialDatabaseConfig | undefined): DatabaseConfig {
@@ -121,5 +154,25 @@ export function resolveDatabaseConfig(partial: PartialDatabaseConfig | undefined
   const schemaName = partial?.schemaName ?? DEFAULT_DATABASE_SCHEMA_NAME;
   assertValidSchemaName(schemaName);
 
-  return { poolSize, schemaName, storeTaskText: partial?.storeTaskText ?? DEFAULT_STORE_TASK_TEXT };
+  const telemetryRetention: TelemetryRetentionSettings = {
+    ...DEFAULT_TELEMETRY_RETENTION_SETTINGS,
+    ...partial?.telemetryRetention,
+  };
+  // Refused here rather than at the first pass, six hours after a server started clean. A
+  // retention policy that cannot do what it says is a startup error: the operator is present to
+  // read it, and the alternative is discovering it from data that was kept too long.
+  assertUsableRetentionPolicy(telemetryRetention);
+  if (!Number.isInteger(telemetryRetention.intervalHours) || telemetryRetention.intervalHours < 0) {
+    throw new Error(
+      `Invalid telemetry retention intervalHours "${String(telemetryRetention.intervalHours)}": ` +
+        `expected a non-negative integer (0 disables the in-process schedule).`,
+    );
+  }
+
+  return {
+    poolSize,
+    schemaName,
+    storeTaskText: partial?.storeTaskText ?? DEFAULT_STORE_TASK_TEXT,
+    telemetryRetention,
+  };
 }

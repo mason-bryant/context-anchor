@@ -42,7 +42,7 @@ export async function startHttpServer(
   }
 
   const runtime = await createAnchorRuntime(config, runtimeOptions);
-  runtime.startAutoSync();
+  runtime.startBackgroundJobs();
   runtime.logger.info("http server starting", {
     host: options.host,
     port: options.port,
@@ -527,7 +527,7 @@ export async function startHttpServer(
       server.once("error", reject);
     });
   } catch (error) {
-    runtime.stopAutoSync();
+    runtime.stopBackgroundJobs();
     runtime.logger.error("http server failed to start", {
       host: options.host,
       port: options.port,
@@ -547,7 +547,7 @@ export async function startHttpServer(
 
   runtime.logger.info("http server listening", { host: options.host, port: options.port });
   server.once("close", () => {
-    runtime.stopAutoSync();
+    runtime.stopBackgroundJobs();
     runtime.logger.info("http server closed", { host: options.host, port: options.port });
     // allSettled, matching the bind-failure path: nothing awaits this, so a rejecting
     // close (a pool already ended, a logger transport gone) would otherwise surface as an

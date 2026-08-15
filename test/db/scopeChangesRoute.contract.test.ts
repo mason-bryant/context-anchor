@@ -6,6 +6,8 @@ import path from "node:path";
 
 import type { Pool } from "pg";
 import pg from "pg";
+
+import { DEFAULT_TELEMETRY_RETENTION_SETTINGS } from "../../src/db/config.js";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { ensureBootstrap, type BootstrapResult } from "../../src/db/bootstrap.js";
@@ -67,7 +69,15 @@ describe.runIf(await isTestDatabaseReachable())("GET /api/db/scope-changes (real
         migrationWarnOnly: false,
         staleAfterDays: 45,
         graphScoring: { enabled: false, maxBoost: 8 },
-        database: { poolSize: 3, schemaName, storeTaskText: true },
+        database: {
+          poolSize: 3,
+          schemaName,
+          storeTaskText: true,
+          // These tests build a full config rather than calling resolveDatabaseConfig, so the
+          // retention schedule has to be named. 0 hours: they assert on server lifecycle and a
+          // background pass would be an unrelated query racing their assertions.
+          telemetryRetention: { ...DEFAULT_TELEMETRY_RETENTION_SETTINGS, intervalHours: 0 },
+        },
       },
       { host: "127.0.0.1", port: 0, authToken: TOKEN, stateless: true },
       { databaseUrl: TEST_DATABASE_URL },

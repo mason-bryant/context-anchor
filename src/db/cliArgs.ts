@@ -3,9 +3,9 @@ import { readFileSync } from "node:fs";
 import { CliUsageError } from "../cli/errors.js";
 import { assertValidSchemaName, DEFAULT_DATABASE_SCHEMA_NAME, redactDatabaseUrl } from "./config.js";
 
-export type DbCliCommand = "up" | "down" | "status" | "migrate" | "psql" | "reset" | "import";
+export type DbCliCommand = "up" | "down" | "status" | "migrate" | "psql" | "reset" | "import" | "thin";
 
-const KNOWN_COMMANDS: readonly DbCliCommand[] = ["up", "down", "status", "migrate", "psql", "reset", "import"];
+const KNOWN_COMMANDS: readonly DbCliCommand[] = ["up", "down", "status", "migrate", "psql", "reset", "import", "thin"];
 
 /**
  * `db start`/`db stop` mirror the server's own start/stop, which is how the unified CLI

@@ -19,6 +19,7 @@ describe("parseDbCliArgs", () => {
     expect(parseDbCliArgs(["status"])).toEqual({ command: "status" });
     expect(parseDbCliArgs(["migrate"])).toEqual({ command: "migrate" });
     expect(parseDbCliArgs(["psql"])).toEqual({ command: "psql" });
+    expect(parseDbCliArgs(["thin"])).toEqual({ command: "thin" });
   });
 
   it("parses reset with the required --yes flag", () => {
