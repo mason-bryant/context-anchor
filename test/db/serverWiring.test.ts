@@ -61,6 +61,10 @@ const SAMPLE_SCOPES: ScopeSummary[] = [
  * writes only need to exist — spreading them keeps adding a method from touching every stub.
  */
 const WRITE_STUBS = {
+  // A read, but stubbed here with the writes for the same reason they are: these cases exercise
+  // advertisement rather than behaviour, and spreading one object keeps adding a facade method
+  // from touching every stub.
+  recordedQuestionsForOwner: async () => [],
   createAssertionAsOwner: async () => ({
     assertionGuid: "11111111-1111-4111-8111-111111111111",
     citationGuid: "22222222-2222-4222-8222-222222222222",

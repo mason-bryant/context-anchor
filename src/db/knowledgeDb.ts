@@ -5,6 +5,7 @@ import type { Pool } from "pg";
 import type { AppLogger } from "../logger.js";
 import { resolveScopeAccess, type WorkspaceRole } from "./access.js";
 import { parseChangeWindow } from "./changeWindow.js";
+import { recordedQuestions, type QuestionsQuery, type RecordedQuestion } from "./questions.js";
 import { CommandHandler } from "./commandHandler.js";
 import { isGuid } from "./guids.js";
 import type { ScopeDeclaration } from "./scopeRegistry.js";
@@ -231,6 +232,21 @@ export class KnowledgeDatabase {
     input: Omit<SetRecordScopesInput, "pool" | "schemaName" | "handler" | "workspaceGuid" | "actorPrincipalGuid">,
   ): Promise<SetRecordScopesResult> {
     return setRecordScopes({ ...this.writeContext(), ...input });
+  }
+
+  /**
+   * The questions this workspace was asked, as the bootstrapped owner.
+   *
+   * Reads telemetry rather than knowledge, so it can never affect what routing returns — the
+   * design keeps usage data diagnostic until a ranker deliberately reads a named snapshot.
+   */
+  async recordedQuestionsForOwner(
+    query: Omit<QuestionsQuery, "workspaceGuid">,
+  ): Promise<RecordedQuestion[]> {
+    return recordedQuestions(this.pool, this.telemetrySchemaName, {
+      ...query,
+      workspaceGuid: this.bootstrap.workspaceGuid,
+    });
   }
 
   /** T4's read, as the bootstrapped owner. `scope` may be a slug or a guid. */

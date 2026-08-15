@@ -268,6 +268,58 @@ export async function startHttpServer(
     })();
   });
 
+  // The questions agents asked, and what came back. UI-only for the same reason the comparison
+  // gate is: an agent reading its own past questions cannot tell whether the answers were good,
+  // because it never saw what it was not given.
+  app.get("/api/db/questions", auth, (req: Request, res: Response) => {
+    void (async () => {
+      const knowledgeDb = runtime.knowledgeDb;
+      if (!knowledgeDb) {
+        res.status(503).json({ error: "Database backend is not configured" });
+        return;
+      }
+
+      let limit: number | undefined;
+      let includeInstruments = false;
+      let withTextOnly = false;
+      try {
+        // Parsed with the same helper as every other query param here, so a repeated key is a
+        // 400 rather than being silently read as "not supplied".
+        const limitParam = singleStringParam(req.query.limit, "limit");
+        if (limitParam !== undefined) {
+          limit = Number(limitParam);
+          if (!Number.isInteger(limit) || limit <= 0) {
+            res.status(400).json({ error: "limit must be a positive integer" });
+            return;
+          }
+        }
+        includeInstruments = singleStringParam(req.query.instruments, "instruments") === "true";
+        withTextOnly = singleStringParam(req.query.withText, "withText") === "true";
+      } catch (error) {
+        res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
+        return;
+      }
+
+      try {
+        const questions = await knowledgeDb.recordedQuestionsForOwner({
+          ...(limit === undefined ? {} : { limit }),
+          includeInstruments,
+          withTextOnly,
+        });
+        res.json({
+          questions,
+          // Said on the response rather than left to the reader to infer from nulls. Task text
+          // was opt-in before 2026-08-15, so early rows carry only a hash — and a list of
+          // hashes with no explanation reads as a bug rather than as history.
+          withoutText: questions.filter((question) => question.taskText === null).length,
+        });
+      } catch (error) {
+        runtime.logger.error("questions request failed", { error: errorMetadata(error) });
+        res.status(500).json({ error: error instanceof Error ? error.message : String(error) });
+      }
+    })();
+  });
+
   app.get("/api/db/routing-diagnostics", auth, (req: Request, res: Response) => {
     void (async () => {
       const knowledgeDb = runtime.knowledgeDb;

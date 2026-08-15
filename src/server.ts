@@ -22,6 +22,7 @@ import {
   type SetAssertionStatusResult,
 } from "./db/setAssertionStatus.js";
 import type { CreateAssertionInput, CreateAssertionResult } from "./db/createAssertion.js";
+import type { RecordedQuestion } from "./db/questions.js";
 import type { UpdateAssertionInput, UpdateAssertionResult } from "./db/updateAssertion.js";
 import type { RetireAssertionInput, RetireAssertionResult } from "./db/retireAssertion.js";
 import type { AddCitationInput, AddCitationResult } from "./db/addCitation.js";
@@ -214,6 +215,11 @@ export type KnowledgeDatabaseTool = {
   ): Promise<CreateAssertionRelationResult>;
   setRecordScopesAsOwner(input: OwnerWrite<SetRecordScopesInput>): Promise<SetRecordScopesResult>;
   listScopeChangesForOwner(input: { scope: string; since?: string; limit?: number }): Promise<ScopeChange[]>;
+  recordedQuestionsForOwner(input: {
+    limit?: number;
+    includeInstruments?: boolean;
+    withTextOnly?: boolean;
+  }): Promise<RecordedQuestion[]>;
   importDocumentsAsOwner(input: {
     repository: string;
     commitSha: string;
