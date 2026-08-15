@@ -2,7 +2,9 @@ import { randomUUID } from "node:crypto";
 
 import type { Pool } from "pg";
 
-import { assertValidSchemaName } from "./config.js";
+// The leaf module, not config.js: importing config here made the two cyclic, and config
+// builds its retention defaults at module scope from a const in this file.
+import { assertValidSchemaName } from "./schemaName.js";
 
 /**
  * Thinning the telemetry schema (T-41).

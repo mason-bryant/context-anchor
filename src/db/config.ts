@@ -1,3 +1,7 @@
+// Re-exported, so the couple of dozen existing importers keep reaching it here. It lives in a
+// leaf module now because config and telemetryRetention had begun importing each other.
+export { assertValidSchemaName } from "./schemaName.js";
+import { assertValidSchemaName } from "./schemaName.js";
 import {
   assertUsableRetentionPolicy,
   DEFAULT_TELEMETRY_RETENTION,
@@ -64,22 +68,6 @@ export function telemetrySchemaNameFor(schemaName: string): string {
   return `${schemaName}_telemetry`;
 }
 
-/**
- * Schema names are interpolated directly into DDL (`CREATE SCHEMA "<name>"`,
- * `SET LOCAL search_path TO "<name>"`) because Postgres has no parameterized-identifier
- * placeholder. This is the only thing standing between a config value and SQL injection
- * into the search path, so it is deliberately strict: lowercase ASCII, digits, and
- * underscores only, not starting with a digit.
- */
-const SCHEMA_NAME_PATTERN = /^[a-z_][a-z0-9_]*$/;
-
-export function assertValidSchemaName(schemaName: string): void {
-  if (!SCHEMA_NAME_PATTERN.test(schemaName)) {
-    throw new Error(
-      `Invalid database schemaName "${schemaName}": expected lowercase letters, digits, and underscores, not starting with a digit.`,
-    );
-  }
-}
 
 const DATABASE_URL_PATTERN = /^postgres(?:ql)?:\/\//i;
 

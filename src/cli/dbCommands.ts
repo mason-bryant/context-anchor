@@ -144,6 +144,18 @@ async function printStatus(context: DbCommandContext): Promise<void> {
 }
 
 /**
+ * Postgres codes for "that schema or table does not exist": 3F000 invalid_schema_name and
+ * 42P01 undefined_table.
+ *
+ * Matched on the code rather than the message, which is localized and reworded between server
+ * versions -- a substring check would start swallowing nothing, or everything, on an upgrade.
+ */
+function isMissingRelationError(error: unknown): boolean {
+  const code = (error as { code?: unknown } | null)?.code;
+  return code === "3F000" || code === "42P01";
+}
+
+/**
  * The half of T-41 that is not the deleting: making the absence of retention visible.
  *
  * For as long as nothing ran the pass, nothing said so. An operator reading the telemetry tables
@@ -165,10 +177,18 @@ async function printRetentionStatus(
   let status: TelemetryRetentionStatus;
   try {
     status = await telemetryRetentionStatus(pool, telemetrySchema, policy);
-  } catch {
-    // An unmigrated or absent telemetry schema is already reported above, in the line that says
-    // so plainly. Repeating it here as a retention failure would describe a migration problem as
-    // a retention problem and send the operator after the wrong thing.
+  } catch (error) {
+    // Only the two errors that mean "the schema is not there yet", which the migration lines
+    // above already report plainly — repeating that as a retention failure would describe a
+    // migration problem as a retention problem and send the operator after the wrong thing.
+    //
+    // Everything else is said out loud. This began as a bare `catch {}`, which also swallowed
+    // permission errors, a dropped connection, and any bug in the query itself: `db status` would
+    // print no retention line at all, and the one command an operator runs to find out whether
+    // retention is happening would answer by omission.
+    if (!isMissingRelationError(error)) {
+      log(`retention: status unavailable — ${error instanceof Error ? error.message : String(error)}`);
+    }
     return;
   }
 
