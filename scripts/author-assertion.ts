@@ -76,25 +76,59 @@ function parseArgs(argv: string[]): Args {
     quote: undefined,
     minLength: 40,
   };
+  // How many tokens a flag consumed: one when its value is attached with `=`, two when the value
+  // is the next token. Advancing by a fixed one swallowed the argument after every inline flag,
+  // which is how `--title=x --content=y` silently lost the content.
+  const step = (index: number): number => (inline.has(index) ? 0 : 1);
   const take = (index: number): string => {
+    // An inline `=value` wins and is never ambiguous, whatever it contains.
+    const attached = inline.get(index);
+    if (attached !== undefined) {
+      return attached;
+    }
     const value = argv[index + 1];
-    // Missing only when the next token is a flag this command knows. `--quote '-- a comment'`
-    // is a legal quote and used to be rejected as a missing value.
+    // Otherwise missing only when the next token is a flag this command knows. `--quote
+    // '-- a comment'` is a legal quote and used to be rejected as a missing value. A value that
+    // is *exactly* a flag name is ambiguous in this form and needs `--quote=--list`.
     if (value === undefined || KNOWN_FLAGS.has(value)) {
-      throw new Error(`${argv[index]!} needs a value.`);
+      throw new Error(
+        `${argv[index]!} needs a value. If the value is itself a flag name, use ` +
+          `${argv[index]!}=<value>.`,
+      );
     }
     return value;
   };
+  // `--flag=value` is read inline rather than split into two tokens. Splitting was the first
+  // attempt and it defeats the purpose: `--quote=--list` became `--quote` followed by `--list`,
+  // which is precisely the ambiguity the `=` form exists to remove.
+  //
+  // Space-separated, a value identical to a flag name cannot be told from the flag itself, so
+  // `=` is how you cite text that happens to be exactly one of these tokens. Split on the first
+  // `=` only, since a quote may contain more.
+  const inline = new Map<number, string>();
+  const names: string[] = argv.map((raw, index) => {
+    const eq = raw.startsWith("--") ? raw.indexOf("=") : -1;
+    if (eq <= 2) {
+      return raw;
+    }
+    inline.set(index, raw.slice(eq + 1));
+    return raw.slice(0, eq);
+  });
+  argv = names;
+
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
-    if (arg === "--list") args.list = true;
-    else if (arg === "--schema") { args.schema = take(index); index += 1; }
-    else if (arg === "--scope") { args.scope = take(index); index += 1; }
-    else if (arg === "--kind") { args.kind = take(index) as AssertionKind; index += 1; }
-    else if (arg === "--title") { args.title = take(index); index += 1; }
-    else if (arg === "--content") { args.content = take(index); index += 1; }
-    else if (arg === "--block") { args.block = take(index); index += 1; }
-    else if (arg === "--quote") { args.quote = take(index); index += 1; }
+    if (arg === "--list") {
+      if (inline.has(index)) throw new Error("--list takes no value.");
+      args.list = true;
+    }
+    else if (arg === "--schema") { args.schema = take(index); index += step(index); }
+    else if (arg === "--scope") { args.scope = take(index); index += step(index); }
+    else if (arg === "--kind") { args.kind = take(index) as AssertionKind; index += step(index); }
+    else if (arg === "--title") { args.title = take(index); index += step(index); }
+    else if (arg === "--content") { args.content = take(index); index += step(index); }
+    else if (arg === "--block") { args.block = take(index); index += step(index); }
+    else if (arg === "--quote") { args.quote = take(index); index += step(index); }
     else if (arg === "--min-length") {
       const raw = take(index);
       const parsed = Number(raw);
@@ -105,7 +139,7 @@ function parseArgs(argv: string[]): Args {
         throw new Error(`--min-length needs a non-negative whole number, not ${JSON.stringify(raw)}.`);
       }
       args.minLength = parsed;
-      index += 1;
+      index += step(index);
     }
     else if (arg === "--help" || arg === "-h") {
       console.log(
@@ -116,7 +150,9 @@ function parseArgs(argv: string[]): Args {
           `      --block <guid> --quote "exact text from the block"\n` +
           `      Write one assertion with one citation. Refuses if the quote is not in the block.\n\n` +
           `  kinds: ${ASSERTION_KINDS.join(", ")}\n` +
-          `  --schema defaults to anchor_real.\n`,
+          `  --schema defaults to anchor_real.\n` +
+          `  --flag=value is accepted too, and is required when a value is exactly a flag name,\n` +
+          `  e.g. --quote=--list\n`,
       );
       process.exit(0);
     } else {
