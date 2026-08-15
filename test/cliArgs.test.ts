@@ -502,7 +502,7 @@ describe("CLI args — databaseUrl", () => {
   });
 });
 
-describe("CLI args — config.database (poolSize, schemaName)", () => {
+describe("CLI args — config.database", () => {
   it("is undefined when no database config is supplied", () => {
     expect(parseCliArgs([], {}, NO_CONFIG).config.database).toBeUndefined();
   });
@@ -513,14 +513,76 @@ describe("CLI args — config.database (poolSize, schemaName)", () => {
     await writeFile(configPath, JSON.stringify({ database: { poolSize: 4, schemaName: "knowledge_dev" } }), "utf8");
 
     const options = parseCliArgs(["--config", configPath], {});
-    // storeTaskText comes through resolved too: a config block that named only poolSize and
-    // schemaName still carries the retention decision, and asserting the whole object is what
-    // makes a silently-added or silently-dropped setting visible here.
+    // The unnamed settings come through resolved: a block naming only poolSize and schemaName
+    // still carries the retention decisions, and asserting the whole object is what makes a
+    // silently-added setting visible here.
     expect(options.config.database).toEqual({
       poolSize: 4,
       schemaName: "knowledge_dev",
       storeTaskText: true,
+      telemetryRetention: { taskTextDays: 90, requestDays: 365, intervalHours: 6 },
     });
+  });
+
+  it("reads every database setting from the config file, not only the two it started with", async () => {
+    // Written over the whole block rather than one field at a time, because the failure this
+    // replaces was not a wrong value: `storeTaskText` was in the type, honoured by the server,
+    // and never read from the file at all. It was accepted and silently ignored from the day it
+    // shipped — and the assertion above did not catch it, because no test ever put it in a file.
+    const tmpDir = await mkdtemp(path.join(os.tmpdir(), "anchor-mcp-config-"));
+    const configPath = path.join(tmpDir, "anchor-mcp.config.json");
+    await writeFile(
+      configPath,
+      JSON.stringify({
+        database: {
+          poolSize: 7,
+          schemaName: "knowledge_dev",
+          storeTaskText: false,
+          telemetryRetention: { taskTextDays: 30, requestDays: 120, intervalHours: 12 },
+        },
+      }),
+      "utf8",
+    );
+
+    expect(parseCliArgs(["--config", configPath], {}).config.database).toEqual({
+      poolSize: 7,
+      schemaName: "knowledge_dev",
+      storeTaskText: false,
+      telemetryRetention: { taskTextDays: 30, requestDays: 120, intervalHours: 12 },
+    });
+  });
+
+  it("keeps the default windows when the config names only the interval", async () => {
+    // The realistic edit, from an operator moving the schedule to cron. The merge is a spread,
+    // and a spread copies an explicitly-undefined key — so reading each field as
+    // `value.x` and passing it through unconditionally would blank both windows here.
+    const tmpDir = await mkdtemp(path.join(os.tmpdir(), "anchor-mcp-config-"));
+    const configPath = path.join(tmpDir, "anchor-mcp.config.json");
+    await writeFile(
+      configPath,
+      JSON.stringify({ database: { telemetryRetention: { intervalHours: 0 } } }),
+      "utf8",
+    );
+
+    expect(parseCliArgs(["--config", configPath], {}).config.database?.telemetryRetention).toEqual({
+      taskTextDays: 90,
+      requestDays: 365,
+      intervalHours: 0,
+    });
+  });
+
+  it("refuses a config-file retention policy that cannot take effect", async () => {
+    // Refused at startup, where the operator is present to read it. The alternative is finding
+    // out from telemetry that was kept longer than the number they wrote.
+    const tmpDir = await mkdtemp(path.join(os.tmpdir(), "anchor-mcp-config-"));
+    const configPath = path.join(tmpDir, "anchor-mcp.config.json");
+    await writeFile(
+      configPath,
+      JSON.stringify({ database: { telemetryRetention: { taskTextDays: 90, requestDays: 30 } } }),
+      "utf8",
+    );
+
+    expect(() => parseCliArgs(["--config", configPath], {})).toThrow(/is below taskTextDays/);
   });
 
   it("defaults poolSize and schemaName when the database block is empty", async () => {
@@ -533,6 +595,7 @@ describe("CLI args — config.database (poolSize, schemaName)", () => {
       poolSize: 10,
       schemaName: "knowledge",
       storeTaskText: true,
+      telemetryRetention: { taskTextDays: 90, requestDays: 365, intervalHours: 6 },
     });
   });
 

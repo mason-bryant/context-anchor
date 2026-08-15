@@ -9,7 +9,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { ensureBootstrap } from "../../src/db/bootstrap.js";
 import { CommandHandler } from "../../src/db/commandHandler.js";
-import { telemetrySchemaNameFor } from "../../src/db/config.js";
+import { DEFAULT_TELEMETRY_RETENTION_SETTINGS, telemetrySchemaNameFor } from "../../src/db/config.js";
 import { importDocuments } from "../../src/db/importDocuments.js";
 import { AnchorRepository } from "../../src/git/repo.js";
 import { startHttpServer } from "../../src/http/server.js";
@@ -96,7 +96,15 @@ describe.runIf(await isTestDatabaseReachable())("the comparison gate's HTTP rout
         migrationWarnOnly: false,
         staleAfterDays: 45,
         graphScoring: { enabled: false, maxBoost: 8 },
-        database: { poolSize: 3, schemaName, storeTaskText: true },
+        database: {
+          poolSize: 3,
+          schemaName,
+          storeTaskText: true,
+          // These tests build a full config rather than calling resolveDatabaseConfig, so the
+          // retention schedule has to be named. 0 hours: they assert on server lifecycle and a
+          // background pass would be an unrelated query racing their assertions.
+          telemetryRetention: { ...DEFAULT_TELEMETRY_RETENTION_SETTINGS, intervalHours: 0 },
+        },
       },
       { host: "127.0.0.1", port: 0, authToken: TOKEN, stateless: true },
       { databaseUrl: TEST_DATABASE_URL },

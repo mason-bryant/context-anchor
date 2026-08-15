@@ -12,6 +12,12 @@ import { CliUsageError } from "./errors.js";
 import { collectRepositorySnapshot } from "./repositorySnapshot.js";
 import { redactDatabaseUrl, telemetrySchemaNameFor } from "../db/config.js";
 import { getMigrationStatus, runMigrations } from "../db/migrate.js";
+import {
+  DEFAULT_TELEMETRY_RETENTION,
+  telemetryRetentionStatus,
+  type TelemetryRetentionPolicy,
+  type TelemetryRetentionStatus,
+} from "../db/telemetryRetention.js";
 
 /**
  * Package root, resolving correctly both from `src/` under tsx and from `dist/` in an
@@ -31,6 +37,8 @@ export type DbCommandContext = {
   schemaName: string;
   /** Anchor repository to import from; only `db import` reads it. */
   repoPath?: string;
+  /** The server's retention windows, so `db thin` and `db status` apply the configured policy. */
+  telemetryRetention?: TelemetryRetentionPolicy;
   log?: (message: string) => void;
 };
 
@@ -128,8 +136,100 @@ async function printStatus(context: DbCommandContext): Promise<void> {
         log(`  pending: ${file.filename}`);
       }
     }
+
+    await printRetentionStatus(pool, context, log);
   } finally {
     await pool.end();
+  }
+}
+
+/**
+ * Postgres codes for "that schema or table does not exist": 3F000 invalid_schema_name and
+ * 42P01 undefined_table.
+ *
+ * Matched on the code rather than the message, which is localized and reworded between server
+ * versions -- a substring check would start swallowing nothing, or everything, on an upgrade.
+ */
+function isMissingRelationError(error: unknown): boolean {
+  const code = (error as { code?: unknown } | null)?.code;
+  return code === "3F000" || code === "42P01";
+}
+
+/**
+ * The half of T-41 that is not the deleting: making the absence of retention visible.
+ *
+ * For as long as nothing ran the pass, nothing said so. An operator reading the telemetry tables
+ * saw rows, which is also what a working retention pass leaves behind, so "never thinned" and
+ * "thinned on schedule" looked identical from outside.
+ *
+ * Both lines are needed. The last run alone cannot tell a job that is keeping up from one that
+ * ran once at boot and stopped; the backlog alone cannot tell a job that has never run from one
+ * that ran a minute ago against a quiet workspace.
+ */
+async function printRetentionStatus(
+  pool: pg.Pool,
+  context: DbCommandContext,
+  log: (message: string) => void,
+): Promise<void> {
+  const telemetrySchema = telemetrySchemaNameFor(context.schemaName);
+  const policy = context.telemetryRetention ?? DEFAULT_TELEMETRY_RETENTION;
+
+  let status: TelemetryRetentionStatus;
+  try {
+    status = await telemetryRetentionStatus(pool, telemetrySchema, policy);
+  } catch (error) {
+    // Only the two errors that mean "the schema is not there yet", which the migration lines
+    // above already report plainly — repeating that as a retention failure would describe a
+    // migration problem as a retention problem and send the operator after the wrong thing.
+    //
+    // Everything else is said out loud. This began as a bare `catch {}`, which also swallowed
+    // permission errors, a dropped connection, and any bug in the query itself: `db status` would
+    // print no retention line at all, and the one command an operator runs to find out whether
+    // retention is happening would answer by omission.
+    if (!isMissingRelationError(error)) {
+      log(`retention: status unavailable — ${error instanceof Error ? error.message : String(error)}`);
+    }
+    return;
+  }
+
+  log(`retention: task text ${String(policy.taskTextDays)}d, requests ${String(policy.requestDays)}d`);
+  log(
+    status.lastRanAt
+      ? `  last run: ${status.lastRanAt}  (redacted ${String(status.lastTaskTextRedacted ?? 0)}, deleted ${String(status.lastRequestsDeleted ?? 0)})`
+      : `  last run: never`,
+  );
+  log(
+    `  past window now: ${String(status.taskTextPastWindow)} task text, ${String(status.requestsPastWindow)} request(s)`,
+  );
+}
+
+/**
+ * Runs the telemetry retention pass once and reports what it removed (T-41).
+ *
+ * The server schedules this itself, so the command is not how retention normally happens. It
+ * exists for the operator who set `intervalHours: 0` to drive it from cron, and for the one who
+ * wants to see the windows applied now rather than take the schedule on trust.
+ *
+ * Reads the policy from config rather than accepting flags. A one-off pass with a hand-typed
+ * window would delete rows by a rule the running server does not share, and "how long is
+ * telemetry kept" would have two answers.
+ */
+async function thinTelemetryNow(context: DbCommandContext): Promise<void> {
+  const log = context.log ?? console.log;
+  const db = await createKnowledgeDatabase(context.databaseUrl, { schemaName: context.schemaName });
+  try {
+    const policy = context.telemetryRetention ?? DEFAULT_TELEMETRY_RETENTION;
+    const report = await db.thinTelemetry(policy);
+    log(`policy: task text ${String(policy.taskTextDays)}d, requests ${String(policy.requestDays)}d`);
+    log(`redacted: ${String(report.taskTextRedacted)} task text  deleted: ${String(report.requestsDeleted)} request(s)`);
+    // Said explicitly. Zero is the expected result on a workspace inside its window, and it is
+    // also what a pass pointed at the wrong schema returns -- so the two need telling apart.
+    if (report.taskTextRedacted === 0 && report.requestsDeleted === 0) {
+      log(`Nothing was past its window: no telemetry in ${db.telemetrySchemaName} is old enough to thin.`);
+    }
+    log(`took ${String(report.durationMs)}ms`);
+  } finally {
+    await db.close();
   }
 }
 
@@ -229,6 +329,10 @@ export async function runDbCommand(args: DbCliArgs, context: DbCommandContext): 
     }
     case "import": {
       await importRepository(args.allowDirty, context);
+      break;
+    }
+    case "thin": {
+      await thinTelemetryNow(context);
       break;
     }
     case "reset": {

@@ -5,6 +5,8 @@ import path from "node:path";
 
 import type { Pool } from "pg";
 import pg from "pg";
+
+import { DEFAULT_TELEMETRY_RETENTION_SETTINGS } from "../../src/db/config.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createTestSchemas, dropRegisteredSchemas, isTestDatabaseReachable, TEST_DATABASE_URL } from "./testDatabase.js";
@@ -61,7 +63,15 @@ describe.runIf(await isTestDatabaseReachable())("createAnchorRuntime pool cleanu
           migrationWarnOnly: false,
           staleAfterDays: 45,
           graphScoring: { enabled: false, maxBoost: 8 },
-          database: { poolSize: 3, schemaName, storeTaskText: true },
+          database: {
+            poolSize: 3,
+            schemaName,
+            storeTaskText: true,
+            // These tests build a full config rather than calling resolveDatabaseConfig, so the
+            // retention schedule has to be named. 0 hours: they assert on server lifecycle and a
+            // background pass would be an unrelated query racing their assertions.
+            telemetryRetention: { ...DEFAULT_TELEMETRY_RETENTION_SETTINGS, intervalHours: 0 },
+          },
         },
         { databaseUrl: taggedUrl },
       ),

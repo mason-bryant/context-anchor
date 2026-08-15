@@ -1,5 +1,7 @@
 import { AnchorService } from "./anchorService.js";
 import { createKnowledgeDatabase, type KnowledgeDatabase } from "./db/knowledgeDb.js";
+import { DEFAULT_TELEMETRY_RETENTION_SETTINGS } from "./db/config.js";
+import { TelemetryRetentionJob } from "./db/telemetryRetentionJob.js";
 import { AutoSync } from "./git/autoSync.js";
 import { AnchorRepository } from "./git/repo.js";
 import { createAppLogger, createRequestLogger, type AppLogger, type RequestLogger } from "./logger.js";
@@ -21,8 +23,24 @@ export type AnchorRuntime = {
   traceRatings: TraceRatingsStore;
   /** Undefined when no databaseUrl was supplied — the server serves Git-backed tools only. */
   knowledgeDb?: KnowledgeDatabase;
-  startAutoSync(): void;
-  stopAutoSync(): void;
+  /**
+   * Undefined without a database, since there is no telemetry schema to thin.
+   *
+   * Present but unscheduled when `intervalHours` is 0: the operator drives it from cron, and
+   * `start()` returns without arming a timer. Configured and scheduled are separate questions,
+   * and collapsing them here would leave no handle for a caller that wants to run a pass now.
+   * This comment previously claimed the field was undefined in that case, which the code has
+   * never done.
+   */
+  telemetryRetention?: TelemetryRetentionJob;
+  /**
+   * Starts every background job the transports own: the auto-sync pull and the telemetry
+   * retention pass. One pair rather than one per job, because these were called from five places
+   * across two transports and a second pair would have failed silently at whichever site nobody
+   * remembered. Renaming the existing one made TypeScript find them all.
+   */
+  startBackgroundJobs(): void;
+  stopBackgroundJobs(): void;
 };
 
 export async function createAnchorRuntime(
@@ -104,6 +122,19 @@ async function initializeRuntime(
     // duplicate check + commit (see AnchorService.runExclusiveWrite).
     const autoSync = new AutoSync(repo, config.syncIntervalMs, logger, (fn) => service.runExclusiveWrite(fn));
 
+    // Only with a database to thin. Built here rather than inside KnowledgeDatabase because a
+    // scheduled job is a property of a running server, and `db import` opens the same class
+    // without wanting a timer attached to it.
+    const retentionSettings = config.database?.telemetryRetention ?? DEFAULT_TELEMETRY_RETENTION_SETTINGS;
+    const telemetryRetention = knowledgeDb
+      ? new TelemetryRetentionJob(
+          knowledgeDb,
+          retentionSettings,
+          retentionSettings.intervalHours * 60 * 60 * 1000,
+          logger,
+        )
+      : undefined;
+
     return buildRuntime({
       config,
       repo,
@@ -116,6 +147,7 @@ async function initializeRuntime(
       traceIndex,
       traceRatings,
       knowledgeDb,
+      telemetryRetention,
     });
   } catch (error) {
     // Best-effort and settled, so a close failure cannot mask the real error.
@@ -136,6 +168,7 @@ function buildRuntime(parts: {
   traceIndex: TraceIndex;
   traceRatings: TraceRatingsStore;
   knowledgeDb: KnowledgeDatabase | undefined;
+  telemetryRetention: TelemetryRetentionJob | undefined;
 }): AnchorRuntime {
   const { config, autoSync } = parts;
   return {
@@ -149,13 +182,19 @@ function buildRuntime(parts: {
     traceIndex: parts.traceIndex,
     traceRatings: parts.traceRatings,
     knowledgeDb: parts.knowledgeDb,
-    startAutoSync() {
+    telemetryRetention: parts.telemetryRetention,
+    startBackgroundJobs() {
       if (config.autoSync) {
         autoSync.start();
       }
+      // No `config` gate of its own: the schedule is off when intervalHours is 0, and start()
+      // already returns for a non-positive interval. A second flag here would be a way for the
+      // two to disagree.
+      parts.telemetryRetention?.start();
     },
-    stopAutoSync() {
+    stopBackgroundJobs() {
       autoSync.stop();
+      parts.telemetryRetention?.stop();
     },
   };
 }

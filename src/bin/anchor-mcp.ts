@@ -60,6 +60,10 @@ async function db(options: CliOptions): Promise<void> {
     databaseUrl: options.databaseUrl ?? COMPOSE_MANAGED_DATABASE_URL,
     schemaName: options.config.database?.schemaName ?? DEFAULT_DATABASE_SCHEMA_NAME,
     repoPath: options.config.repoPath,
+    // From the same config the server reads, so `db thin` applies the windows the running
+    // server applies. A CLI with its own defaults would give "how long is telemetry kept" two
+    // answers, and the operator would find out from data that outlived the one they set.
+    telemetryRetention: options.config.database?.telemetryRetention,
   });
 }
 
@@ -156,14 +160,14 @@ async function serve(options: CliOptions): Promise<void> {
   }
 
   const runtime = await createAnchorRuntime(options.config, { logger, databaseUrl: options.databaseUrl });
-  runtime.startAutoSync();
+  runtime.startBackgroundJobs();
   const transport = new StdioServerTransport();
   await runtime.mcpServer.connect(transport);
   logger.info("stdio transport connected");
 
   const shutdown = async () => {
     logger.info("anchor-mcp shutting down");
-    runtime.stopAutoSync();
+    runtime.stopBackgroundJobs();
     await runtime.mcpServer.close();
     await runtime.knowledgeDb?.close();
     await runtime.requestLogger.close();

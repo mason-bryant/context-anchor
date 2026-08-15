@@ -6,6 +6,14 @@ import type { AppLogger } from "../logger.js";
 import { resolveScopeAccess, type WorkspaceRole } from "./access.js";
 import { parseChangeWindow } from "./changeWindow.js";
 import { recordedQuestions, type QuestionsQuery, type RecordedQuestion } from "./questions.js";
+import {
+  DEFAULT_TELEMETRY_RETENTION,
+  telemetryRetentionStatus,
+  thinTelemetry,
+  type TelemetryRetentionPolicy,
+  type TelemetryRetentionReport,
+  type TelemetryRetentionStatus,
+} from "./telemetryRetention.js";
 import { CommandHandler } from "./commandHandler.js";
 import { isGuid } from "./guids.js";
 import type { ScopeDeclaration } from "./scopeRegistry.js";
@@ -232,6 +240,26 @@ export class KnowledgeDatabase {
     input: Omit<SetRecordScopesInput, "pool" | "schemaName" | "handler" | "workspaceGuid" | "actorPrincipalGuid">,
   ): Promise<SetRecordScopesResult> {
     return setRecordScopes({ ...this.writeContext(), ...input });
+  }
+
+  /**
+   * Applies the telemetry retention windows (T-41).
+   *
+   * On the facade rather than reached through a pool from outside, so retention goes through the
+   * same boundary as every other database operation and cannot quietly grow into a caller that
+   * writes to the knowledge schema -- the separation the two-schema split exists to enforce.
+   */
+  async thinTelemetry(
+    policy: TelemetryRetentionPolicy = DEFAULT_TELEMETRY_RETENTION,
+  ): Promise<TelemetryRetentionReport> {
+    return thinTelemetry(this.pool, this.telemetrySchemaName, policy);
+  }
+
+  /** Whether retention is actually happening: when it last ran, and what is past its window. */
+  async telemetryRetentionStatus(
+    policy: TelemetryRetentionPolicy = DEFAULT_TELEMETRY_RETENTION,
+  ): Promise<TelemetryRetentionStatus> {
+    return telemetryRetentionStatus(this.pool, this.telemetrySchemaName, policy);
   }
 
   /**

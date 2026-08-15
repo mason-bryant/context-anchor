@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   DEFAULT_DATABASE_POOL_SIZE,
   DEFAULT_DATABASE_SCHEMA_NAME,
+  DEFAULT_TELEMETRY_RETENTION_SETTINGS,
   assertValidDatabaseUrl,
   assertValidSchemaName,
   redactDatabaseUrl,
@@ -17,7 +18,52 @@ describe("resolveDatabaseConfig", () => {
       // On by default, and asserted rather than assumed: this one flipped, and a default that
       // decides whether questions are retained should not move without a test noticing.
       storeTaskText: true,
+      // Ninety days of readable questions, a year of countable ones. Asserted rather than
+      // assumed for the same reason storeTaskText is: this is the only bound on a table that
+      // grows on every routed request, and it should not move without a test noticing.
+      telemetryRetention: { taskTextDays: 90, requestDays: 365, intervalHours: 6 },
     });
+  });
+
+  it("takes retention settings one at a time, keeping the defaults for the rest", () => {
+    // A partial block must not blank the fields it omits. Supplying intervalHours alone -- the
+    // realistic edit, from an operator moving to cron -- would otherwise silently drop both
+    // windows to undefined and take retention with them.
+    expect(resolveDatabaseConfig({ telemetryRetention: { intervalHours: 0 } }).telemetryRetention).toEqual({
+      taskTextDays: 90,
+      requestDays: 365,
+      intervalHours: 0,
+    });
+  });
+
+  it("refuses a request window below the task-text window", () => {
+    // Not merely odd: rows would be deleted before their text window elapsed, so taskTextDays
+    // could never take effect at any value. An operator who wrote 90 there stated an intention,
+    // and making it silently unreachable is worse than refusing to start.
+    expect(() =>
+      resolveDatabaseConfig({ telemetryRetention: { taskTextDays: 90, requestDays: 30 } }),
+    ).toThrow(/requestDays \(30\) is below taskTextDays \(90\)/);
+  });
+
+  it("refuses day counts that are not positive integers", () => {
+    expect(() => resolveDatabaseConfig({ telemetryRetention: { taskTextDays: 0 } })).toThrow(
+      /taskTextDays "0"/,
+    );
+    expect(() => resolveDatabaseConfig({ telemetryRetention: { requestDays: 1.5 } })).toThrow(
+      /requestDays "1.5"/,
+    );
+    expect(() => resolveDatabaseConfig({ telemetryRetention: { taskTextDays: -1 } })).toThrow(
+      /taskTextDays "-1"/,
+    );
+  });
+
+  it("accepts a zero interval but refuses a negative one", () => {
+    // Zero is meaningful -- it hands the schedule to cron -- so it cannot be validated the same
+    // way as the day counts, which have no useful zero.
+    expect(resolveDatabaseConfig({ telemetryRetention: { intervalHours: 0 } })).toBeTruthy();
+    expect(() => resolveDatabaseConfig({ telemetryRetention: { intervalHours: -1 } })).toThrow(
+      /intervalHours "-1"/,
+    );
   });
 
   it("lets an operator turn task-text retention off for the whole workspace", () => {
@@ -32,6 +78,7 @@ describe("resolveDatabaseConfig", () => {
       poolSize: 4,
       schemaName: "knowledge_test",
       storeTaskText: true,
+      telemetryRetention: DEFAULT_TELEMETRY_RETENTION_SETTINGS,
     });
   });
 
@@ -40,6 +87,7 @@ describe("resolveDatabaseConfig", () => {
       poolSize: 20,
       schemaName: DEFAULT_DATABASE_SCHEMA_NAME,
       storeTaskText: true,
+      telemetryRetention: DEFAULT_TELEMETRY_RETENTION_SETTINGS,
     });
   });
 
