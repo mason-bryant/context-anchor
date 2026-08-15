@@ -377,6 +377,15 @@ describe("UI browser assets", () => {
     expect(UI_HTML).toContain('data-tab="detail" type="button" disabled');
   });
 
+  it("makes the questions tab reachable from a URL, not only from a click", () => {
+    // The tab pushed `view=questions` into the URL while validTab still rejected it, so a
+    // reload or a back button landed somewhere else. A tab that cannot be linked to is a tab
+    // nobody can send anyone, and nothing noticed for a whole review round.
+    expect(UI_HTML).toContain('data-tab="questions"');
+    expect(UI_JS).toContain('value === "questions"');
+    expect(UI_JS).toContain('view: "questions"');
+  });
+
   it("includes the planner tab, controls, and output regions", () => {
     expect(UI_HTML).toContain('data-tab="planner"');
     expect(UI_HTML).toContain('id="planner-task"');

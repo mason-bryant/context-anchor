@@ -3900,7 +3900,7 @@ export const UI_JS = `(function () {
   }
 
   function validTab(value) {
-    return value === "root" || value === "planner" || value === "tasks" || value === "traces" || value === "coverage" || value === "compare" || value === "graph" || value === "people" || value === "teams" || value === "mappings" || value === "review" || value === "detail" ? value : null;
+    return value === "root" || value === "planner" || value === "tasks" || value === "traces" || value === "coverage" || value === "compare" || value === "questions" || value === "graph" || value === "people" || value === "teams" || value === "mappings" || value === "review" || value === "detail" ? value : null;
   }
 
   function validRootMode(value) {
