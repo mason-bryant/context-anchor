@@ -114,12 +114,9 @@ describe.runIf(await isTestDatabaseReachable())("route records never overlap (re
     // Its span begins at its own heading line, so once descendants are excluded its content is
     // that line and nothing more -- the title repeated, which `heading` already carries. It would
     // spend a slot in recordsPerRoute that a record with something to say could have had.
-    await pool.query(
-      `UPDATE "${schemaName}".document_revisions SET content = replace(content,
-         E'## Current State\\n\\nThe server runs over two transports.\\n', E'## Current State\\n')`,
-    );
-    // Re-derived offsets are what the importer writes, so the edit above is not enough on its
-    // own; re-import at a new commit and read the current revision.
+    // Re-imported at a new commit rather than edited in place: offsets and content_hash are the
+    // importer's to derive, and an UPDATE that rewrote the text without them would build a row
+    // production cannot produce -- then test the reader against a state that never occurs.
     await importDocuments({
       pool,
       schemaName,
@@ -141,6 +138,36 @@ describe.runIf(await isTestDatabaseReachable())("route records never overlap (re
     expect(loaded.map((record) => record.heading)).not.toContain("Current State");
     // Its children are still there, so nothing became unreachable by dropping it.
     expect(loaded.map((record) => record.heading)).toContain("Architecture");
+  });
+
+  it("drops a bare heading written with a tab, which the parser accepts as a heading", async () => {
+    // The parser matches `#{1,6}\s+`, so a tab separates a heading just as a space does. A
+    // second pattern written with a literal space made this a heading everywhere except in the
+    // emptiness test, so the record survived holding nothing but its own title. Raised in review
+    // on baca485; there is one pattern now, exported from the parser.
+    await importDocuments({
+      pool,
+      schemaName,
+      handler: new CommandHandler(pool, schemaName),
+      workspaceGuid: bootstrap.workspaceGuid,
+      actorPrincipalGuid: bootstrap.ownerPrincipalGuid,
+      repository: "agent-context",
+      commitSha: "t".repeat(40),
+      files: [
+        {
+          path: "projects/anchor-mcp/anchor-mcp-project-context.md",
+          content: DOC.replace(
+            "## Current State\n\nThe server runs over two transports.\n",
+            "##\tCurrent State\n",
+          ),
+        },
+      ],
+      scopes: [{ scope: "anchor-mcp", title: "Anchor MCP", kind: "domain", locators: [] }],
+    });
+
+    const loaded = await records();
+    expect(loaded.map((record) => record.heading)).toContain("Architecture");
+    expect(loaded.map((record) => record.heading)).not.toContain("Current State");
   });
 
   it("covers the document's prose exactly once across the route", async () => {

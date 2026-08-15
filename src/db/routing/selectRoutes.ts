@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import type { Pool } from "pg";
 
 import { resolveScopeAccess, type WorkspaceRole } from "../access.js";
+import { HEADING } from "../markdownStructure.js";
 import type { MatchSignal, RouteCandidate } from "./ranker.js";
 
 /**
@@ -673,9 +674,24 @@ export async function loadRouteRecords(
  *
  * Only the first line, and only when it is a heading: a record whose prose happens to open with a
  * markdown heading of its own is not empty, and stripping every leading heading would eat it.
+ *
+ * Tested with the parser's own HEADING pattern rather than a second one written here. The
+ * duplicate used a literal space where the parser uses `\s+`, so a heading written with a tab was
+ * a heading everywhere except here -- it kept a record holding nothing but its own title, and
+ * spent a recordsPerRoute slot on it.
+ *
+ * The non-heading branch is unreachable from loadRouteRecords, whose records always begin at
+ * their own heading line; a mutation disabling it passes every test. Kept because this reads as
+ * a general predicate about content, and the alternative silently drops the first line of
+ * anything else that is ever passed to it.
  */
 function hasProseOfItsOwn(content: string): boolean {
-  return content.replace(/^#{1,6} [^\n]*\n?/, "").trim().length > 0;
+  const newline = content.indexOf("\n");
+  const firstLine = newline === -1 ? content : content.slice(0, newline);
+  if (!HEADING.test(firstLine)) {
+    return content.trim().length > 0;
+  }
+  return newline === -1 ? false : content.slice(newline + 1).trim().length > 0;
 }
 
 type SectionSpan = {
