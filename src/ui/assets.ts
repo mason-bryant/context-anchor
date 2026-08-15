@@ -12000,6 +12000,17 @@ export const UI_JS = `(function () {
             return "<li><strong>" + escapeHtml(label) + "</strong> " + escapeHtml((record.content || "").slice(0, 240)) + "</li>";
           })
           .join("");
+        // Links render too, or the change is invisible exactly where it is being judged: a route
+        // the caller did not expand would show its count and nothing else, which is the state
+        // this whole model exists to replace. Rendered in their own list so a reader can see at a
+        // glance which routes handed over content and which handed over addresses.
+        var links = (route.recordLinks || [])
+          .map(function (link) {
+            var label = link.ref.type === "assertion" ? link.kind || "assertion" : "section";
+            return "<li><strong>" + escapeHtml(label) + "</strong> " + escapeHtml(link.heading || "(untitled)") +
+              (link.status && link.status !== "active" ? " <em>" + escapeHtml(link.status) + "</em>" : "") + "</li>";
+          })
+          .join("");
         return (
           "<article class=\\"compare-route" + (isNew ? " compare-route-new" : "") + "\\">" +
           "<h4>" + escapeHtml(route.routeKey) + (isNew ? " <span class=\\"badge\\">ADDED</span>" : "") +
@@ -12010,6 +12021,7 @@ export const UI_JS = `(function () {
           "</ul>" +
           "<p class=\\"compare-count\\">" + route.recordCount + " record(s)" + (route.recordsTruncated ? ", truncated" : "") + "</p>" +
           (records ? "<ul class=\\"compare-records\\">" + records + "</ul>" : "") +
+          (links ? "<p class=\\"compare-count\\">links to read next:</p><ul class=\\"compare-records\\">" + links + "</ul>" : "") +
           "</article>"
         );
       })
@@ -12410,7 +12422,10 @@ export const UI_JS = `(function () {
         // screen rather than what was asked for -- the two differ if the request failed partway
         // or the endpoint ever defaults something.
         var note = el("compare-disclosure-note");
-        var budget = (result.routed && result.routed.budget) || null;
+        // Either pane's budget: they are given identical budgets by construction, and reading
+        // only the first meant a failure there blanked the line while an answer sat on screen.
+        var budget = (result.routed && result.routed.budget) ||
+          (result.routedRecordLexical && result.routedRecordLexical.budget) || null;
         var shown = result.disclosure || disclosure;
         var wording = {
           plan: "Plan only: routes and their reasons, no records, against the legacy planner's own plan. The symmetric comparison for judging routing.",

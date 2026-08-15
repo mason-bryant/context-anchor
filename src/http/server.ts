@@ -237,9 +237,17 @@ export async function startHttpServer(
         res.json({
           task,
           // Echoed so the pane can say which comparison the reader is looking at. A gate that
-          // silently runs at a non-default budget shows an answer no agent would receive, and
-          // a reader judging "would an agent do well here" cannot tell.
-          disclosure,
+          // silently runs at a non-default budget shows an answer no agent would receive, and a
+          // reader judging "would an agent do well here" cannot tell.
+          //
+          // Reported as "custom" once an explicit `expanded` has moved it off the preset, rather
+          // than echoing a name the answer contradicts: `disclosure=plan&expanded=3` returns
+          // records, and calling that "plan only" is the same class of mislabelling this
+          // endpoint was rebuilt to fix.
+          disclosure:
+            expandedParam !== undefined && expandedParam !== (preset?.expanded ?? DEFAULT_ROUTE_BUDGET.expanded)
+              ? "custom"
+              : disclosure,
           routed: settled(routed),
           routedRecordLexical: settled(routedRecordLexical),
           legacy: settled(legacy),
