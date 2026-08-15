@@ -175,7 +175,10 @@ export async function startHttpServer(
         const budget =
           expandedParam === undefined
             ? preset
-            : { listed: Math.max(preset?.listed ?? 10, expandedParam), expanded: expandedParam };
+            : {
+                listed: Math.max(preset?.listed ?? DEFAULT_ROUTE_BUDGET.listed, expandedParam),
+                expanded: expandedParam,
+              };
         // What the routed side will actually do, which is what the legacy side has to match.
         // Undefined budget means the planner's own default, so the number has to come from there
         // rather than being assumed to be zero.
