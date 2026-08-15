@@ -12432,7 +12432,7 @@ export const UI_JS = `(function () {
           (result.routedRecordLexical && result.routedRecordLexical.budget) || null;
         var shown = result.disclosure || disclosure;
         var wording = {
-          plan: "Plan only: routes, their reasons, and a link per record -- no record content -- against the legacy planner's own plan. The symmetric comparison for judging routing.",
+          plan: "Plan only: routes, their reasons, and up to linksPerRoute links each -- no record content -- against the legacy planner's own plan. The symmetric comparison for judging routing.",
           agent: "As an agent receives it: planRoutedBundle at its defaults, against the legacy plan with its anchors loaded.",
           full: "Everything both sides can offer. More than an agent receives -- useful for seeing how far a signal widens an answer, not for judging what an agent would get.",
           // The server reports this once an explicit expand-top has moved the request off a

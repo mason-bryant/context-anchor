@@ -1970,8 +1970,8 @@ the index when your workflow checks in that file.`,
           "moved. Expansion is stateless: pass the task again with routeKeys to expand a route the budget listed. " +
           "Only the top budget.expanded routes return records with content; every other listed route returns " +
           "recordLinks -- a typed ref, heading, kind and status per record, and no content -- so choosing what " +
-          "to read costs one listing rather than a payload. budget.expanded may be 0, which lists everything and " +
-          "returns no content at all. " +
+          "to read costs one listing rather than a payload. budget.expanded may be 0, which returns no content at " +
+          "all -- listing is still bounded by budget.listed, which expanded does not change. " +
           "Requires the database backend.",
         inputSchema: z.object({
           traceId: TraceIdSchema,

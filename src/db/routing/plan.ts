@@ -226,8 +226,9 @@ export async function planRoutedBundle(
   // of an impression would disagree with the budget stored beside it.
   const merged = { ...DEFAULT_ROUTE_BUDGET, ...input.budget };
   // listed is raised to expanded, never the reverse: expanded 0 is a legitimate and now
-  // supported request — every route listed, none of them delivered — and clamping it upward
-  // would silently refuse the one setting that asks for pure disclosure.
+  // supported request — nothing delivered, and as many routes listed as `listed` allows — and
+  // clamping it upward would silently refuse the one setting that asks for pure disclosure.
+  // `expanded` bounds delivery only; how many routes are offered stays `listed`'s business.
   const budget: RouteBudget = { ...merged, listed: Math.max(merged.listed, merged.expanded) };
   const candidates = await selectRouteCandidates(pool, schemaName, input);
 
