@@ -390,6 +390,53 @@ describe.runIf(await isTestDatabaseReachable())("routing task corpus (real Postg
     expect(judged.sort()).toEqual(Object.keys(expected).sort());
   });
 
+  it("measures what an answer costs, and moves when the answer grows", async () => {
+    // The gate's seventh criterion. Every other measure asks whether the right things came back;
+    // none asked what they cost, so the gate could have passed a design returning thirty thousand
+    // tokens for one question -- the failure the product exists to prevent.
+    const listed = await runCorpus({
+      pool,
+      schemaName,
+      telemetrySchemaName: telemetrySchema,
+      workspaceGuid: bootstrap.workspaceGuid,
+      principalGuid: bootstrap.ownerPrincipalGuid,
+      role: "owner",
+      corpus,
+      recordLexical: true,
+      budget: { expanded: 0 },
+    });
+    const expanded = await runCorpus({
+      pool,
+      schemaName,
+      telemetrySchemaName: telemetrySchema,
+      workspaceGuid: bootstrap.workspaceGuid,
+      principalGuid: bootstrap.ownerPrincipalGuid,
+      role: "owner",
+      corpus,
+      recordLexical: true,
+      budget: { expanded: 5 },
+    });
+
+    // Counted on the whole response, not on the records inside it. At expanded 0 there are no
+    // records at all, so a records-only measure reports two characters for an answer that really
+    // costs kilobytes -- conditions, match reasons and links are context the caller pays for.
+    // `> 0` passed that mutation happily; this does not.
+    expect(listed.results.every((result) => result.recordsReturned === 0)).toBe(true);
+    expect(listed.cost.meanChars).toBeGreaterThan(500);
+    expect(listed.cost.worstTaskId).not.toBe("");
+
+    // And responsive: delivering content costs more than listing it. A cost metric that does not
+    // move when the answer grows is decoration.
+    expect(expanded.cost.meanChars).toBeGreaterThan(listed.cost.meanChars);
+    expect(expanded.cost.worstChars).toBeGreaterThan(listed.cost.worstChars);
+
+    // The worst case is named, because a mean hides the single task that returns a whole domain
+    // scope -- and that is the answer a caller actually has to live with.
+    const worst = expanded.results.find((result) => result.id === expanded.cost.worstTaskId);
+    expect(worst?.responseChars).toBe(expanded.cost.worstChars);
+    expect(Math.max(...expanded.results.map((r) => r.responseChars))).toBe(expanded.cost.worstChars);
+  });
+
   it("pins the whole-workspace metric by its effect, not only its constant", async () => {
     const off = await run(false);
     const on = await run(true);

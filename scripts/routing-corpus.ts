@@ -100,6 +100,11 @@ function render(report: CorpusReport, recordLexical: boolean): string {
   lines.push(`over ceiling   ${String(report.overMaxRoutesCount)} tasks`);
   lines.push(`offered, empty ${String(report.offeredButEmptyCount)} tasks`);
   lines.push(`whole workspace ${String(report.wholeWorkspaceCount)} tasks`);
+  const kb = (chars: number): string => `${(chars / 1024).toFixed(0)}KB`;
+  lines.push(
+    `cost           mean ${kb(report.cost.meanChars)}, worst ${kb(report.cost.worstChars)} ` +
+      `(${report.cost.worstTaskId})`,
+  );
   lines.push("");
 
   // Per task, because the aggregate is what hid the stopword problem for four review rounds.
@@ -115,7 +120,8 @@ function render(report: CorpusReport, recordLexical: boolean): string {
     ].filter((mark) => mark.length > 0);
 
     lines.push(
-      `${result.id.padEnd(width)}  ${String(result.candidateCount).padStart(2)} cand  ` +
+      `${result.id.padEnd(width)}  ${String(Math.round(result.responseChars / 1024)).padStart(3)}KB  ` +
+        `${String(result.candidateCount).padStart(2)} cand  ` +
         `${String(result.offeredScopes.length).padStart(2)} routes  ` +
         `${String(result.recordsReturned).padStart(3)} records  ${marks.join("; ")}`,
     );

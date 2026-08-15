@@ -63,7 +63,21 @@ export type PlanInput = {
   budget?: Partial<RouteBudget>;
   traceId?: string;
   consumer?: string;
-  /** Opt-in: expansion is stateless and the server never reads the task back. */
+  /**
+   * Whether to retain the task text on the telemetry row. **Defaults to on.**
+   *
+   * It was opt-in, on the argument that nothing on the server reads the task back. That argument
+   * is about the retrieval path and it still holds — expansion is stateless, and this is never an
+   * input to recomputation. What it does not cover is diagnostics: a stored `task_hash` groups
+   * identical questions and can never show anyone what was asked, so a workspace that keeps only
+   * hashes cannot answer "what are agents asking us, and did we answer well" at all.
+   *
+   * Set false per request to withhold one, or turn it off for the whole workspace with
+   * `database.storeTaskText`. Off, only the hash is written and the column stays null.
+   *
+   * **This accrues.** Nothing thins telemetry today — the ninety-day retention this design
+   * promises is specified and unbuilt (T-41) — so text stored now stays until that exists.
+   */
   storeTaskText?: boolean;
   /**
    * Match task terms against assertion titles and section headings as well as scope names.
@@ -376,8 +390,9 @@ async function recordRequest(
       input.workspaceGuid,
       input.principalGuid,
       input.traceId ?? null,
-      // Opt-in, because nothing on the server ever needs to read it back.
-      input.storeTaskText === true ? input.task : null,
+      // On unless refused. `!== false` rather than `=== true`: absent means the default, and the
+      // default is now to keep it. A caller that means to withhold one says so.
+      input.storeTaskText !== false ? input.task : null,
       createHash("sha256").update(input.task).digest("hex"),
       PLANNER_VERSION,
       outcome.ranker.id,

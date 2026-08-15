@@ -5,6 +5,7 @@ import type { Pool } from "pg";
 import type { AppLogger } from "../logger.js";
 import { resolveScopeAccess, type WorkspaceRole } from "./access.js";
 import { parseChangeWindow } from "./changeWindow.js";
+import { recordedQuestions, type QuestionsQuery, type RecordedQuestion } from "./questions.js";
 import { CommandHandler } from "./commandHandler.js";
 import { isGuid } from "./guids.js";
 import type { ScopeDeclaration } from "./scopeRegistry.js";
@@ -37,7 +38,12 @@ import {
 import { setAssertionStatus, type SetAssertionStatusInput, type SetAssertionStatusResult } from "./setAssertionStatus.js";
 import { setRecordScopes, type SetRecordScopesInput, type SetRecordScopesResult } from "./setRecordScopes.js";
 import { listScopeChanges, type ScopeChange } from "./scopeChanges.js";
-import { resolveDatabaseConfig, type PartialDatabaseConfig, telemetrySchemaNameFor } from "./config.js";
+import {
+  DEFAULT_STORE_TASK_TEXT,
+  resolveDatabaseConfig,
+  telemetrySchemaNameFor,
+  type PartialDatabaseConfig,
+} from "./config.js";
 import { type BootstrapResult, ensureBootstrap } from "./bootstrap.js";
 import { getMigrationStatus } from "./migrate.js";
 import { createDatabasePool } from "./pool.js";
@@ -88,6 +94,12 @@ export class KnowledgeDatabase {
     public readonly schemaVersion: number | undefined = undefined,
     /** Sibling schema holding retrieval telemetry; separated for retention, migrated in lockstep. */
     public readonly telemetrySchemaName: string = telemetrySchemaNameFor(schemaName),
+    /**
+     * Whether this workspace retains task text at all. An operator's answer, and it overrides
+     * a caller's — a per-request flag cannot express "this workspace does not keep questions",
+     * because every client would have to agree and traffic you do not control never will.
+     */
+    public readonly storeTaskText: boolean = DEFAULT_STORE_TASK_TEXT,
   ) {}
 
   async listScopes(input: { workspaceGuid: string; principalGuid: string; role: WorkspaceRole }): Promise<ScopeSummary[]> {
@@ -118,6 +130,10 @@ export class KnowledgeDatabase {
       this.telemetrySchemaName,
       {
         ...input,
+        // The operator's setting can only ever withhold. Off for the workspace means off
+        // whatever a caller asks; on leaves the choice with the caller, who may still refuse
+        // to have one particular question kept.
+        storeTaskText: this.storeTaskText === false ? false : input.storeTaskText,
         workspaceGuid: this.bootstrap.workspaceGuid,
         principalGuid: this.bootstrap.ownerPrincipalGuid,
         // Single-operator release: the authenticated caller is the workspace owner, who is
@@ -216,6 +232,21 @@ export class KnowledgeDatabase {
     input: Omit<SetRecordScopesInput, "pool" | "schemaName" | "handler" | "workspaceGuid" | "actorPrincipalGuid">,
   ): Promise<SetRecordScopesResult> {
     return setRecordScopes({ ...this.writeContext(), ...input });
+  }
+
+  /**
+   * The questions this workspace was asked, as the bootstrapped owner.
+   *
+   * Reads telemetry rather than knowledge, so it can never affect what routing returns — the
+   * design keeps usage data diagnostic until a ranker deliberately reads a named snapshot.
+   */
+  async recordedQuestionsForOwner(
+    query: Omit<QuestionsQuery, "workspaceGuid">,
+  ): Promise<RecordedQuestion[]> {
+    return recordedQuestions(this.pool, this.telemetrySchemaName, {
+      ...query,
+      workspaceGuid: this.bootstrap.workspaceGuid,
+    });
   }
 
   /** T4's read, as the bootstrapped owner. `scope` may be a slug or a guid. */
@@ -378,7 +409,14 @@ export async function createKnowledgeDatabase(
       workspaceGuid: bootstrap.workspaceGuid,
     });
 
-    return new KnowledgeDatabase(pool, resolvedConfig.schemaName, bootstrap, status.currentVersion, telemetrySchemaName);
+    return new KnowledgeDatabase(
+      pool,
+      resolvedConfig.schemaName,
+      bootstrap,
+      status.currentVersion,
+      telemetrySchemaName,
+      resolvedConfig.storeTaskText,
+    );
   } catch (error) {
     await pool.end().catch(() => {});
     throw error;

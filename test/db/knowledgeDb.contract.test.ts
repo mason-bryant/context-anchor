@@ -6,9 +6,16 @@ import pg from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { ensureBootstrap } from "../../src/db/bootstrap.js";
+import { telemetrySchemaNameFor } from "../../src/db/config.js";
 import { KnowledgeDatabase } from "../../src/db/knowledgeDb.js";
 import { runMigrations } from "../../src/db/migrate.js";
-import { dropRegisteredSchemas, isTestDatabaseReachable, TEST_DATABASE_URL, testSchemaName } from "./testDatabase.js";
+import {
+  dropRegisteredSchemas,
+  isTestDatabaseReachable,
+  migrateAllSchemas,
+  TEST_DATABASE_URL,
+  testSchemaName,
+} from "./testDatabase.js";
 
 const REAL_MIGRATIONS_DIR = path.resolve(import.meta.dirname, "../../migrations/knowledge");
 
@@ -60,6 +67,45 @@ describe.runIf(await isTestDatabaseReachable())("bootstrap + KnowledgeDatabase.l
       [first.workspaceGuid],
     );
     expect(scopeCount.rows[0]!.n).toBe(1);
+  });
+
+  /**
+   * The one thing the operator setting exists for, and it was untested: without this, removing
+   * the override from the facade left every test green while a workspace that had said "do not
+   * keep our questions" kept them.
+   */
+  it("an operator's refusal to retain task text overrides the caller's request", async () => {
+    const bootstrap = await ensureBootstrap(pool, { schemaName, workspaceSlug: "no-task-text-workspace" });
+    const telemetrySchema = telemetrySchemaNameFor(schemaName);
+    // This file migrates the knowledge schema only; the telemetry sibling is where the request
+    // rows land, so this test needs it too.
+    await migrateAllSchemas(pool, schemaName);
+
+    const withheld = new KnowledgeDatabase(pool, schemaName, bootstrap, undefined, telemetrySchema, false);
+    // The caller asks for it explicitly. The workspace still refuses.
+    const refused = await withheld.planRoutedBundleAsOwner({ task: "anchor mcp", storeTaskText: true });
+
+    const kept = new KnowledgeDatabase(pool, schemaName, bootstrap, undefined, telemetrySchema, true);
+    const stored = await kept.planRoutedBundleAsOwner({ task: "anchor mcp" });
+
+    const textOf = async (requestId: string): Promise<string | null> => {
+      const row = await pool.query<{ task_text: string | null }>(
+        `SELECT task_text FROM "${telemetrySchema}".retrieval_requests WHERE request_guid = $1`,
+        [requestId],
+      );
+      return row.rows[0]?.task_text ?? null;
+    };
+
+    expect(await textOf(refused.requestId)).toBeNull();
+    expect(await textOf(stored.requestId)).toBe("anchor mcp");
+
+    // And the setting can only ever WITHHOLD. With retention on for the workspace, a caller that
+    // refuses one question is still refused -- an operator's "we keep questions" is permission,
+    // not compulsion, and forcing it on would silently overrule a caller withholding a sensitive
+    // one. Asserted because `this.storeTaskText` in place of the conditional passes everything
+    // above.
+    const callerRefused = await kept.planRoutedBundleAsOwner({ task: "anchor mcp", storeTaskText: false });
+    expect(await textOf(callerRefused.requestId)).toBeNull();
   });
 
   it("owner sees the default scope with no grant row needed", async () => {

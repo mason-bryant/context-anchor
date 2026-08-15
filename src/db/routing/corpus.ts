@@ -90,6 +90,20 @@ export type CorpusTaskResult = {
    * acts on it.
    */
   candidateCount: number;
+  /**
+   * What the answer cost, in characters of serialized response.
+   *
+   * Every other measure here asks whether the right things came back; none asked what they cost,
+   * and a gate blind to size can pass a design returning thirty thousand tokens for one
+   * question — the failure the product exists to prevent. Counted on the response as a caller
+   * receives it, not on the records alone, because match reasons and route metadata are context
+   * the caller pays for too.
+   *
+   * Characters rather than tokens: tokens depend on a tokenizer this codebase does not own, and
+   * a number that drifts with someone else's model is a poor regression signal. Roughly four
+   * characters to a token if a reader wants the conversion.
+   */
+  responseChars: number;
 };
 
 export type CorpusReport = {
@@ -116,6 +130,14 @@ export type CorpusReport = {
   overMaxRoutesCount: number;
   /** Tasks offered at least one route but returned no records inside the budget. */
   offeredButEmptyCount: number;
+  /**
+   * What an answer costs, across the corpus.
+   *
+   * The gate's seventh criterion. `worst` matters as much as `mean`: an average hides the single
+   * task that returns a whole domain scope, and it is the worst answer a caller actually has to
+   * live with.
+   */
+  cost: { meanChars: number; worstChars: number; worstTaskId: string };
   /**
    * Tasks whose candidates covered most of the workspace.
    *
@@ -249,6 +271,9 @@ function scoreTask(task: CorpusTask, plan: PlanResult, scored: boolean): CorpusT
     overMaxRoutes: task.maxRoutes !== undefined && plan.candidateCount > task.maxRoutes,
     recordsReturned,
     candidateCount: plan.candidateCount,
+    // The whole plan as serialized to a caller. Route metadata and match reasons are part of
+    // what an answer costs, so measuring only the records would understate it.
+    responseChars: JSON.stringify(plan).length,
   };
 }
 
@@ -278,6 +303,22 @@ function scopeSlugOf(routeKey: string): string {
  */
 export const WHOLE_WORKSPACE_FRACTION = 0.5;
 
+function summariseCost(results: CorpusTaskResult[]): CorpusReport["cost"] {
+  if (results.length === 0) {
+    return { meanChars: 0, worstChars: 0, worstTaskId: "" };
+  }
+  const worst = results.reduce((most, result) =>
+    result.responseChars > most.responseChars ? result : most,
+  );
+  return {
+    meanChars: Math.round(
+      results.reduce((total, result) => total + result.responseChars, 0) / results.length,
+    ),
+    worstChars: worst.responseChars,
+    worstTaskId: worst.id,
+  };
+}
+
 function summarise(
   results: CorpusTaskResult[],
   scored: boolean,
@@ -298,6 +339,7 @@ function summarise(
     offeredButEmptyCount: results.filter(
       (result) => result.offeredScopes.length > 0 && result.recordsReturned === 0,
     ).length,
+    cost: summariseCost(results),
     wholeWorkspaceCount: results.filter(
       (result) =>
         routableScopes > 0 && result.candidateCount >= routableScopes * WHOLE_WORKSPACE_FRACTION,

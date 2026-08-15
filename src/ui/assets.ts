@@ -141,6 +141,7 @@ export const UI_HTML = `<!doctype html>
             <button class="tab" data-tab="traces" type="button"><span class="icon-label"><svg class="icon" aria-hidden="true"><use href="#icon-plan"></use></svg><span>Traces</span></span></button>
             <button class="tab" data-tab="coverage" type="button"><span class="icon-label"><svg class="icon" aria-hidden="true"><use href="#icon-object-graph"></use></svg><span>Coverage</span></span></button>
             <button class="tab" data-tab="compare" type="button"><span class="icon-label"><svg class="icon" aria-hidden="true"><use href="#icon-object-graph"></use></svg><span>Compare</span></span></button>
+            <button class="tab" data-tab="questions" type="button"><span class="icon-label"><svg class="icon" aria-hidden="true"><use href="#icon-plan"></use></svg><span>Questions</span></span></button>
             <button class="tab" data-tab="graph" type="button"><span class="icon-label"><svg class="icon" aria-hidden="true"><use href="#icon-object-graph"></use></svg><span>Graph</span></span></button>
             <button class="tab" data-tab="detail" type="button" disabled><span class="icon-label"><svg class="icon" aria-hidden="true"><use href="#icon-anchor"></use></svg><span>Selected Anchor</span></span></button>
           </nav>
@@ -518,6 +519,29 @@ export const UI_HTML = `<!doctype html>
                 <tbody id="traces-dry-rows"></tbody>
               </table>
             </div>
+          </section>
+
+          <section id="questions-view" class="view">
+            <div class="view-header">
+              <div>
+                <h2>Questions</h2>
+                <p>What agents actually asked, and what came back. The diagnostics answer "which routes are dead weight" across all traffic; this answers "was this question answered well", which is the one you can only judge by reading the question. Re-run any of them in Compare at whatever disclosure you like.</p>
+              </div>
+              <div class="view-actions"><button id="questions-refresh" type="button">Refresh</button></div>
+            </div>
+            <div class="compare-controls">
+              <label for="questions-limit">Show</label>
+              <input id="questions-limit" type="number" min="1" max="500" step="10" value="50" aria-label="How many questions to list">
+              <label for="questions-instruments">Include instruments</label>
+              <input id="questions-instruments" type="checkbox" aria-label="Include the corpus and comparison gate">
+              <label for="questions-withtext">Only ones with text</label>
+              <input id="questions-withtext" type="checkbox" aria-label="Only questions whose text was recorded">
+            </div>
+            <!-- Said on the page, because a list of hashes with no explanation reads as a bug
+                 rather than as history: task text was opt-in until 2026-08-15. -->
+            <p id="questions-note" class="compare-meta" hidden></p>
+            <div id="questions-error" class="compare-error" role="alert" aria-live="assertive" hidden></div>
+            <div id="questions-list"></div>
           </section>
 
           <section id="compare-view" class="view">
@@ -3876,7 +3900,7 @@ export const UI_JS = `(function () {
   }
 
   function validTab(value) {
-    return value === "root" || value === "planner" || value === "tasks" || value === "traces" || value === "coverage" || value === "compare" || value === "graph" || value === "people" || value === "teams" || value === "mappings" || value === "review" || value === "detail" ? value : null;
+    return value === "root" || value === "planner" || value === "tasks" || value === "traces" || value === "coverage" || value === "compare" || value === "questions" || value === "graph" || value === "people" || value === "teams" || value === "mappings" || value === "review" || value === "detail" ? value : null;
   }
 
   function validRootMode(value) {
@@ -6004,6 +6028,89 @@ export const UI_JS = `(function () {
     }
     state.pendingAnchor = null;
     showTab("compare");
+  }
+
+  function showQuestionsView(options) {
+    var opts = options || {};
+    if (!opts.skipLocationUpdate) {
+      updateLocationFromState({ anchor: null, view: "questions", history: "push" });
+    }
+    state.pendingAnchor = null;
+    showTab("questions");
+    void loadQuestions();
+  }
+
+  function renderQuestions(payload) {
+    var questions = payload.questions || [];
+    if (questions.length === 0) {
+      return "<p class=\\"empty\\">No questions recorded yet.</p>";
+    }
+    return questions
+      .map(function (question) {
+        // A question with no recorded text says so in place of the text, rather than showing a
+        // bare hash. The hash is still offered, because identical questions share one and that
+        // is the only thing grouping them when the text is gone.
+        var asked = question.taskText
+          ? "<strong>" + escapeHtml(question.taskText) + "</strong>"
+          : "<em>text not recorded &mdash; asked before retention was on, or withheld by the caller</em>" +
+            " <code>" + escapeHtml(question.taskHash.slice(0, 12)) + "</code>";
+        var routes = (question.routes || [])
+          .map(function (route) {
+            return "<li>" + escapeHtml(route.routeKey) +
+              (route.expanded ? " <em>expanded</em>" : " <em>listed</em>") +
+              " <span class=\\"compare-count\\">" + route.recordCount + " record(s)</span></li>";
+          })
+          .join("");
+        var silent = question.routesOffered === 0
+          ? " <span class=\\"badge\\">NO ROUTES</span>"
+          : "";
+        var budget = question.routeBudget
+          ? " &middot; budget listed " + question.routeBudget.listed + ", expanded " + question.routeBudget.expanded
+          : "";
+        return (
+          "<article class=\\"compare-route\\">" +
+          "<h4>" + asked + silent + "</h4>" +
+          "<p class=\\"compare-applies\\">" + escapeHtml(new Date(question.askedAt).toLocaleString()) +
+          (question.consumer ? " &middot; " + escapeHtml(question.consumer) : "") +
+          " &middot; " + escapeHtml(question.ranker.id) + " " + escapeHtml(question.ranker.version) +
+          budget + "</p>" +
+          "<p class=\\"compare-count\\">" + question.routesOffered + " offered, " +
+          question.routesExpanded + " expanded, " + question.recordUses + " used</p>" +
+          (routes ? "<ul class=\\"compare-records\\">" + routes + "</ul>" : "") +
+          (question.taskText
+            ? "<button type=\\"button\\" class=\\"questions-rerun\\" data-task=\\"" +
+              escapeHtml(question.taskText) + "\\">Re-run in Compare</button>"
+            : "") +
+          "</article>"
+        );
+      })
+      .join("");
+  }
+
+  async function loadQuestions() {
+    var errorBox = el("questions-error");
+    var note = el("questions-note");
+    errorBox.hidden = true;
+    note.hidden = true;
+    el("questions-list").innerHTML = "<p class=\\"empty\\">Loading…</p>";
+
+    var query = "/api/db/questions?limit=" + encodeURIComponent(el("questions-limit").value || "50");
+    if (el("questions-instruments").checked) { query += "&instruments=true"; }
+    if (el("questions-withtext").checked) { query += "&withText=true"; }
+
+    try {
+      var payload = await api(query);
+      el("questions-list").innerHTML = renderQuestions(payload);
+      if (payload.withoutText > 0) {
+        note.textContent = payload.withoutText + " of " + payload.questions.length +
+          " have no recorded text. Task text was opt-in until 2026-08-15; those rows kept only a hash.";
+        note.hidden = false;
+      }
+    } catch (error) {
+      errorBox.textContent = error && error.message ? error.message : String(error);
+      errorBox.hidden = false;
+      el("questions-list").innerHTML = "";
+    }
   }
 
   function showGraphView(options) {
@@ -11791,6 +11898,8 @@ export const UI_JS = `(function () {
       showCoverageView({ skipLocationUpdate: true });
     } else if (state.activeTab === "compare") {
       showCompareView({ skipLocationUpdate: true });
+    } else if (state.activeTab === "questions") {
+      showQuestionsView({ skipLocationUpdate: true });
     } else if (state.activeTab === "graph") {
       showGraphView({ skipLocationUpdate: true });
     } else if (state.activeTab === "people") {
@@ -12272,6 +12381,10 @@ export const UI_JS = `(function () {
           showCompareView();
           return;
         }
+        if (button.dataset.tab === "questions") {
+          showQuestionsView();
+          return;
+        }
         if (button.dataset.tab === "graph") {
           showGraphView();
           return;
@@ -12467,6 +12580,24 @@ export const UI_JS = `(function () {
       if (event.key === "Enter") { void runComparison(); }
     });
     el("compare-diagnostics-refresh").addEventListener("click", function () { void loadDiagnostics(); });
+
+    el("questions-refresh").addEventListener("click", function () { void loadQuestions(); });
+    for (const control of ["questions-limit", "questions-instruments", "questions-withtext"]) {
+      el(control).addEventListener("change", function () { void loadQuestions(); });
+    }
+    // Delegated, because the rows are rebuilt on every load and per-row listeners would be
+    // rebound each time or leak.
+    el("questions-list").addEventListener("click", function (event) {
+      var button = event.target && event.target.closest ? event.target.closest(".questions-rerun") : null;
+      if (!button) { return; }
+      // Hands the question to Compare rather than answering it here. Re-running means planning
+      // it again at whatever disclosure the reader chooses, which is what Compare is for --
+      // and it recomputes against the current build, so the answer can differ from the one
+      // recorded, which is the whole point of asking again.
+      el("compare-task").value = button.getAttribute("data-task") || "";
+      showCompareView();
+      void runComparison();
+    });
 
     el("coverage-refresh").addEventListener("click", function () {
       state.coverage = null;

@@ -79,7 +79,7 @@ describe.runIf(await isTestDatabaseReachable())("startHttpServer bind-failure cl
           migrationWarnOnly: false,
           staleAfterDays: 45,
           graphScoring: { enabled: false, maxBoost: 8 },
-          database: { poolSize: 3, schemaName },
+          database: { poolSize: 3, schemaName, storeTaskText: true },
         },
         { host: "127.0.0.1", port: address.port, authToken: TOKEN, stateless: true },
         { databaseUrl: taggedUrl },

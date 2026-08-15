@@ -67,7 +67,7 @@ describe.runIf(await isTestDatabaseReachable())("GET /api/db/scope-changes (real
         migrationWarnOnly: false,
         staleAfterDays: 45,
         graphScoring: { enabled: false, maxBoost: 8 },
-        database: { poolSize: 3, schemaName },
+        database: { poolSize: 3, schemaName, storeTaskText: true },
       },
       { host: "127.0.0.1", port: 0, authToken: TOKEN, stateless: true },
       { databaseUrl: TEST_DATABASE_URL },
