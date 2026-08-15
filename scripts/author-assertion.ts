@@ -16,9 +16,10 @@ import { ASSERTION_KINDS, createAssertion, type AssertionKind } from "../src/db/
  * names, which is a claim about provenance rather than provenance.
  *
  * So this offers exactly two verbs. `--list` shows a scope's blocks with their guids and text,
- * which is the material. `--create` writes one assertion with one citation, and refuses if the
- * quote is not found in the block byte for byte. Nothing here can author without provenance,
- * which is the property the whole store is for.
+ * which is the material. Without `--list`, the same command writes one assertion with one
+ * citation and refuses if the quote is not found in the block byte for byte — there is no
+ * `--create` flag, and this comment claimed one for a while. Nothing here can author without
+ * provenance, which is the property the whole store is for.
  *
  * Idempotency is content-derived by createAssertion, so re-running the same authoring command is
  * a retry rather than a duplicate — which matters when several agents work a scope list and one
@@ -106,11 +107,23 @@ async function main(): Promise<void> {
   });
 
   try {
-    const workspace = await pool.query<{ workspace_guid: string }>(
-      `SELECT workspace_guid FROM "${schema}".workspaces ORDER BY workspace_slug LIMIT 1`,
+    // Refuses rather than guessing. The sibling corpus script does the same, and the stakes are
+    // higher here: that one reads, this one writes assertions, so picking the wrong workspace
+    // authors real claims into the wrong place and nothing in the output would say so.
+    const workspaces = await pool.query<{ workspace_guid: string; workspace_slug: string }>(
+      `SELECT workspace_guid, workspace_slug FROM "${schema}".workspaces ORDER BY workspace_slug`,
     );
-    const workspaceGuid = workspace.rows[0]?.workspace_guid;
-    if (workspaceGuid === undefined) throw new Error(`Schema ${schema} holds no workspace.`);
+    if (workspaces.rows.length === 0) {
+      throw new Error(`Schema ${schema} holds no workspace.`);
+    }
+    if (workspaces.rows.length > 1) {
+      throw new Error(
+        `Schema ${schema} holds ${String(workspaces.rows.length)} workspaces ` +
+          `(${workspaces.rows.map((row) => row.workspace_slug).join(", ")}). This command writes ` +
+          `assertions and will not guess which one you meant.`,
+      );
+    }
+    const workspaceGuid = workspaces.rows[0]!.workspace_guid;
 
     if (args.list) {
       // Current revision only. A block from a superseded revision still has a row, and citing it
@@ -170,8 +183,11 @@ async function main(): Promise<void> {
         return;
       }
       for (const row of blocks.rows) {
+        // Printed exactly as stored, not trimmed. createAssertion matches the quote against the
+        // untrimmed raw_content, so a listing that trims its edges can show text that cannot be
+        // copied back as a citation — the one thing this listing exists to make possible.
         console.log(`\n--- block ${row.block_guid}  [section: ${row.title ?? "(untitled)"}]`);
-        console.log(row.raw_content.trim());
+        console.log(row.raw_content);
       }
       console.log(`\n${String(blocks.rows.length)} blocks in ${args.scope}.`);
       return;
