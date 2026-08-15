@@ -93,8 +93,24 @@ export async function startHttpServer(
 
       let task: string | undefined;
       let referencedPaths: string[] = [];
+      // Parsed here with the others, not further down beside the planner calls. singleStringParam
+      // throws on a repeated key, and down there the throw was caught by the block that answers
+      // 500 — so `?disclosure=plan&disclosure=agent`, a caller mistake, read as a server fault.
+      let disclosure = "plan";
+      let expandedParam: number | undefined;
       try {
         task = singleStringParam(req.query.task, "task");
+        disclosure = singleStringParam(req.query.disclosure, "disclosure") ?? "plan";
+        if (!["plan", "agent", "full"].includes(disclosure)) {
+          throw new Error("disclosure must be one of: plan, agent, full");
+        }
+        const rawExpanded = singleStringParam(req.query.expanded, "expanded");
+        if (rawExpanded !== undefined && rawExpanded !== "") {
+          expandedParam = Number(rawExpanded);
+          if (!Number.isInteger(expandedParam) || expandedParam < 0 || expandedParam > 25) {
+            throw new Error("expanded must be a whole number between 0 and 25");
+          }
+        }
         // Parsed like every other query param on this surface rather than by hand: a repeated
         // `paths` key arrives as an array, and the hand-rolled check treated that as "no paths
         // at all" — silently discarding the strongest signal the caller supplied, on the one
@@ -148,24 +164,9 @@ export async function startHttpServer(
         // `expanded` is raised with it, because the default ranker sorts record-lexical last,
         // so a route the signal adds on title evidence alone sorts below every baseline route —
         // both expanded slots went to answers nobody is judging.
-        const disclosure = singleStringParam(req.query.disclosure, "disclosure") ?? "plan";
-        if (!["plan", "agent", "full"].includes(disclosure)) {
-          res.status(400).json({ error: `disclosure must be one of: plan, agent, full` });
-          return;
-        }
         // `expanded` is the reader's, because it is the whole question. n routes come back with
         // their content and the rest come back as links to it, so this is the dial between "tell
         // me what exists" and "give me the top n". Absent, the disclosure preset picks it.
-        let expandedParam: number | undefined;
-        const rawExpanded = singleStringParam(req.query.expanded, "expanded");
-        if (rawExpanded !== undefined && rawExpanded !== "") {
-          expandedParam = Number(rawExpanded);
-          if (!Number.isInteger(expandedParam) || expandedParam < 0 || expandedParam > 25) {
-            res.status(400).json({ error: "expanded must be a whole number between 0 and 25" });
-            return;
-          }
-        }
-
         const preset =
           disclosure === "plan"
             ? { listed: 25, expanded: 0 }
