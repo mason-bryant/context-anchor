@@ -6,6 +6,8 @@ import { NodeStreamableHTTPServerTransport } from "@modelcontextprotocol/node";
 import cors from "cors";
 import type { NextFunction, Request, Response } from "express";
 
+import type { AnchorService } from "../anchorService.js";
+import { DEFAULT_ROUTE_BUDGET } from "../db/routing/plan.js";
 import { errorMetadata, type AppLogger } from "../logger.js";
 import { createAnchorRuntime } from "../runtime.js";
 import { createAnchorMcpServer } from "../server.js";
@@ -91,8 +93,24 @@ export async function startHttpServer(
 
       let task: string | undefined;
       let referencedPaths: string[] = [];
+      // Parsed here with the others, not further down beside the planner calls. singleStringParam
+      // throws on a repeated key, and down there the throw was caught by the block that answers
+      // 500 — so `?disclosure=plan&disclosure=agent`, a caller mistake, read as a server fault.
+      let disclosure = "plan";
+      let expandedParam: number | undefined;
       try {
         task = singleStringParam(req.query.task, "task");
+        disclosure = singleStringParam(req.query.disclosure, "disclosure") ?? "plan";
+        if (!["plan", "agent", "full"].includes(disclosure)) {
+          throw new Error("disclosure must be one of: plan, agent, full");
+        }
+        const rawExpanded = singleStringParam(req.query.expanded, "expanded");
+        if (rawExpanded !== undefined && rawExpanded !== "") {
+          expandedParam = Number(rawExpanded);
+          if (!Number.isInteger(expandedParam) || expandedParam < 0 || expandedParam > 25) {
+            throw new Error("expanded must be a whole number between 0 and 25");
+          }
+        }
         // Parsed like every other query param on this surface rather than by hand: a repeated
         // `paths` key arrives as an array, and the hand-rolled check treated that as "no paths
         // at all" — silently discarding the strongest signal the caller supplied, on the one
@@ -127,25 +145,45 @@ export async function startHttpServer(
         // answers side by side. Both run on every request rather than behind a toggle: the
         // comparison only means anything for the same task, and a reader who has to reload
         // with a flag is comparing two readings instead of one.
-        // Raised above the default 10, because this workspace holds 23 scopes and the case
-        // worth judging is the one where the signal matches most of them. At the default the
-        // pane saturates: a 14-scope widening and a 40-scope widening both render as ten
-        // routes, so the instrument reports every blowout as the same size — and the size is
-        // the thing being measured. Records load for every offered route, not only expanded
-        // ones, so this is genuinely more work per request; acceptable here because the gate
-        // is human-paced and UI-only, and not a default worth giving agent traffic.
-        // `expanded` is raised with `listed`, not left at the default of 2.
+        // How much of each answer to disclose, and it is the reader's choice rather than this
+        // endpoint's. The three levels answer different questions and the pane was previously
+        // stuck on the third while looking like the second.
         //
-        // Only expanded routes carry records, and the default ranker sorts on distinct signal
-        // kind count then strongest kind, with record-lexical last in SIGNAL_KINDS. A route the
-        // signal adds on title evidence alone therefore sorts below every baseline route, so
-        // both expanded slots went to routes that did not change — the pane showed full records
-        // for the answers nobody is judging and a single sentence for the ones they are.
+        //   plan  — routes and their reasons, no records, against the legacy planner's own
+        //           plan. The only symmetric comparison for judging *routing*, because both
+        //           sides are then answering "which context would you pick".
+        //   agent — exactly what planRoutedBundle hands an agent at its defaults, against the
+        //           legacy plan with its anchors actually loaded. Symmetric, and the honest
+        //           answer to "would an agent get a good answer".
+        //   full  — everything both sides can offer. What this pane used to do unconditionally.
         //
-        // Records load for every offered route regardless, so raising `expanded` costs transfer
-        // rather than queries. Human-paced and UI-only, and deliberately not a default for
-        // agent traffic.
-        const budget = { listed: 25, expanded: 8 };
+        // `full` raises `listed` above the default 10 because this workspace holds 23 scopes
+        // and the case worth judging is the one where the signal matches most of them: at the
+        // default the pane saturates and a 14-scope widening and a 40-scope widening both
+        // render as ten routes, so the instrument reports every blowout as the same size.
+        // `expanded` is raised with it, because the default ranker sorts record-lexical last,
+        // so a route the signal adds on title evidence alone sorts below every baseline route —
+        // both expanded slots went to answers nobody is judging.
+        // `expanded` is the reader's, because it is the whole question. n routes come back with
+        // their content and the rest come back as links to it, so this is the dial between "tell
+        // me what exists" and "give me the top n". Absent, the disclosure preset picks it.
+        const preset =
+          disclosure === "plan"
+            ? { listed: 25, expanded: 0 }
+            : disclosure === "agent"
+              ? undefined
+              : { listed: 25, expanded: 8 };
+        const budget =
+          expandedParam === undefined
+            ? preset
+            : {
+                listed: Math.max(preset?.listed ?? DEFAULT_ROUTE_BUDGET.listed, expandedParam),
+                expanded: expandedParam,
+              };
+        // What the routed side will actually do, which is what the legacy side has to match.
+        // Undefined budget means the planner's own default, so the number has to come from there
+        // rather than being assumed to be zero.
+        const effectiveExpanded = budget?.expanded ?? DEFAULT_ROUTE_BUDGET.expanded;
 
         // Identical inputs but for the one flag under test. Withholding anything else from
         // one side would show a difference the reader would attribute to recordLexical —
@@ -153,11 +191,16 @@ export async function startHttpServer(
         // would look worse for a reason that has nothing to do with the signal. The same
         // argument the legacy baseline gets, applied between the two routed panes.
         const [routed, routedRecordLexical, legacy] = await Promise.allSettled([
-          knowledgeDb.planRoutedBundleAsOwner({ task, referencedPaths, budget, consumer: "comparison-gate" }),
           knowledgeDb.planRoutedBundleAsOwner({
             task,
             referencedPaths,
-            budget,
+            ...(budget ? { budget } : {}),
+            consumer: "comparison-gate",
+          }),
+          knowledgeDb.planRoutedBundleAsOwner({
+            task,
+            referencedPaths,
+            ...(budget ? { budget } : {}),
             recordLexical: true,
             // Tagged apart from the signal-off call so the two remain separable in telemetry.
             // routingDiagnostics excludes both by this prefix, so neither counts as real
@@ -165,7 +208,16 @@ export async function startHttpServer(
             // told apart later if anyone wants to read the gate's own traffic deliberately.
             consumer: "comparison-gate-record-lexical",
           }),
-          runtime.service.planContextBundle({ task, filePaths: referencedPaths }),
+          // The legacy side, taken to the same depth. At `plan` this is the planner alone,
+          // which is what the pane always showed — and comparing that against routed answers
+          // carrying expanded records made routed look richer on every task regardless of
+          // whether it routed well. The planner returns a *suggested* loadContext call rather
+          // than content, so matching the depth means making that call.
+          // Given the *effective* expansion, not the preset name. `disclosure=agent&expanded=25`
+          // asks the routed side for full content on every route; a legacy side still pinned to
+          // the agent preset's excerpts would look thinner for a reason that has nothing to do
+          // with routing, which is the asymmetry this endpoint was rebuilt to remove.
+          legacyBundle(runtime.service, task, referencedPaths, effectiveExpanded, disclosure),
         ]);
 
         // Settled rather than all: the record-lexical call is the newest and heaviest query
@@ -188,6 +240,18 @@ export async function startHttpServer(
 
         res.json({
           task,
+          // Echoed so the pane can say which comparison the reader is looking at. A gate that
+          // silently runs at a non-default budget shows an answer no agent would receive, and a
+          // reader judging "would an agent do well here" cannot tell.
+          //
+          // Reported as "custom" once an explicit `expanded` has moved it off the preset, rather
+          // than echoing a name the answer contradicts: `disclosure=plan&expanded=3` returns
+          // records, and calling that "plan only" is the same class of mislabelling this
+          // endpoint was rebuilt to fix.
+          disclosure:
+            expandedParam !== undefined && expandedParam !== (preset?.expanded ?? DEFAULT_ROUTE_BUDGET.expanded)
+              ? "custom"
+              : disclosure,
           routed: settled(routed),
           routedRecordLexical: settled(routedRecordLexical),
           legacy: settled(legacy),
@@ -486,6 +550,56 @@ function safeTokenCompare(provided: string, expected: string): boolean {
     return false;
   }
   return timingSafeEqual(a, b);
+}
+
+/**
+ * The legacy answer at the requested disclosure depth.
+ *
+ * `planContextBundle` returns a plan — included anchors, why each was chosen, and a *suggested*
+ * `loadContext` call. It never returns content. So a pane that put that plan beside routed
+ * answers carrying expanded records was comparing a plan against a plan plus its content, and
+ * routed looked richer on every task whether or not it had routed well.
+ *
+ * At `plan` the two sides are both plans. Above that the suggestion is followed, which is what
+ * an agent driving the legacy path would do next.
+ */
+async function legacyBundle(
+  service: AnchorService,
+  task: string,
+  filePaths: string[],
+  expanded: number,
+  disclosure: string,
+): Promise<Record<string, unknown>> {
+  const plan = await service.planContextBundle({ task, filePaths });
+  // Keyed on what the routed side is doing, not on the preset that was asked for. Expanding
+  // nothing on one side and loading anchors on the other is not a comparison.
+  if (expanded === 0) {
+    return { ...plan };
+  }
+
+  // The planner's own suggested call, not a rebuilt one. It carries parameters the plan chose --
+  // maxBytes above all, which is the legacy path's response-size bound -- and rebuilding from
+  // `included` silently dropped every one of them, letting the baseline load past the bound its
+  // own planner set. That distorts the comparison in the baseline's favour and ignores the
+  // bounded-response requirement on the side that already had one.
+  const suggested = plan.loadContext;
+  if (suggested === undefined || suggested.names.length === 0) {
+    return { ...plan };
+  }
+
+  // Only the depth is overridden, because depth is the axis under comparison. `task` is kept
+  // from the suggestion so excerpting picks sections relevant to it rather than the head of each
+  // anchor — withholding it would hand the baseline a worse answer for a reason that has nothing
+  // to do with routing. Full bodies once the routed side is expanding more than an agent would
+  // by default, since above that line the reader has deliberately asked both sides for
+  // everything.
+  const loaded = await service.loadContext({
+    ...suggested,
+    includeContent:
+      disclosure === "full" || expanded > DEFAULT_ROUTE_BUDGET.expanded ? "full" : "excerpt",
+    task,
+  });
+  return { ...plan, bundle: loaded };
 }
 
 function bearerAuth(expectedToken: string) {

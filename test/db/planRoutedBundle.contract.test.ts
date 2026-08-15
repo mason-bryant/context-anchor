@@ -358,6 +358,76 @@ describe.runIf(await isTestDatabaseReachable())("planRoutedBundle (real Postgres
     expect(second.routes.find((route) => route.routeKey === listed!.routeKey)?.expanded).toBe(true);
   });
 
+  /**
+   * The invariant this whole disclosure model rests on, and nothing pinned it.
+   *
+   * A link that carries record text is not a link — it is the payload the caller declined,
+   * arriving under a name that says it did not. Citations matter as much as content here: a
+   * citation quotes the exact source the claim was drawn from, so shipping them with a link
+   * would hand over the evidence while pretending to withhold the claim.
+   */
+  it("never puts record content or citations in a link, at any expansion", async () => {
+    let seenLinks = 0;
+    for (const expanded of [0, 1, 2]) {
+      const result = await plan("anchor mcp http transport rate limiting", {
+        budget: { expanded, listed: 10, recordsPerRoute: 5, linksPerRoute: 3 },
+      });
+
+      // Counted across settings rather than demanded at each: this fixture is small enough that
+      // a high `expanded` can leave no route unexpanded, and a per-setting demand would fail on
+      // the fixture's size rather than on the property.
+      const links = result.routes.flatMap((route) => route.recordLinks ?? []);
+      seenLinks += links.length;
+
+      // Every unexpanded route that HOLDS records carries links -- the absence of a payload must
+      // not be the absence of an answer, which is what a bare recordCount used to be. A route
+      // matching on its scope name while holding nothing is a real and different case, and it
+      // has nothing to link to.
+      for (const route of result.routes.filter((each) => !each.expanded && each.recordCount > 0)) {
+        expect((route.recordLinks ?? []).length, `${route.routeKey} holds ${String(route.recordCount)} records and listed none`).toBeGreaterThan(0);
+      }
+
+      for (const link of links) {
+        const keys = Object.keys(link);
+        expect(keys, `a link leaked content at expanded ${String(expanded)}`).not.toContain("content");
+        expect(keys, `a link leaked citations at expanded ${String(expanded)}`).not.toContain("citations");
+      }
+
+      // And the other half of the same claim: a route that WAS expanded still carries content,
+      // so a passing test cannot mean "links are clean because nothing has anything".
+      const expandedRoutes = result.routes.filter((route) => route.expanded);
+      expect(expandedRoutes).toHaveLength(Math.min(expanded, result.routes.length));
+      for (const route of expandedRoutes) {
+        // Same caveat as above: a route can match on its scope name and hold nothing, and
+        // expanding it correctly returns an empty list rather than links.
+        if (route.recordCount > 0) {
+          expect(route.records ?? []).not.toHaveLength(0);
+        }
+        expect(route.recordLinks, `${route.routeKey} was expanded and still sent links`).toBeUndefined();
+      }
+    }
+
+    // Not vacuous: some setting above must actually have produced links to inspect.
+    expect(seenLinks, "no links were produced at any setting, so nothing was checked").toBeGreaterThan(0);
+  });
+
+  it("bounds links by linksPerRoute, not by recordsPerRoute", async () => {
+    // These are separate numbers on purpose, and were the same one for a while. Set far apart so
+    // a regression to the old behaviour is unambiguous rather than a coincidence of defaults.
+    const result = await plan("anchor mcp http transport rate limiting", {
+      budget: { expanded: 0, listed: 10, recordsPerRoute: 25, linksPerRoute: 2 },
+    });
+
+    for (const route of result.routes) {
+      expect((route.recordLinks ?? []).length).toBeLessThanOrEqual(2);
+      // Truncation is reported against the bound that actually applied.
+      if (route.recordCount > 2) {
+        expect(route.recordsTruncated, `${route.routeKey} hid records without saying so`).toBe(true);
+      }
+    }
+    expect(result.routes.some((route) => (route.recordLinks ?? []).length === 2)).toBe(true);
+  });
+
   it("reports an unresolvable route key rather than returning it empty", async () => {
     const result = await plan("anchor mcp", { routeKeys: ["scope:domain:does-not-exist"] });
 
@@ -505,7 +575,15 @@ describe.runIf(await isTestDatabaseReachable())("planRoutedBundle (real Postgres
         `SELECT route_budget FROM "${telemetrySchema}".retrieval_requests WHERE request_guid = $1`,
         [result.requestId],
       );
-      expect(stored.rows[0]?.route_budget).toEqual({ expanded: 3, listed: 7, recordsPerRoute: 4 });
+      // linksPerRoute included: the test's whole claim is that the *whole* budget is stored, so
+      // a new field that governs response size has to appear here or the assertion quietly stops
+      // meaning what its name says.
+      expect(stored.rows[0]?.route_budget).toEqual({
+        expanded: 3,
+        listed: 7,
+        recordsPerRoute: 4,
+        linksPerRoute: 5,
+      });
     });
 
     // Every timestamp for one request should agree; a fresh Date inside the impression write

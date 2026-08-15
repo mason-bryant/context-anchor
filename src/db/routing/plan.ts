@@ -29,9 +29,26 @@ export type RouteBudget = {
    * expanding one route can return the entire corpus.
    */
   recordsPerRoute: number;
+  /**
+   * Links returned per listed route, bounded separately from records.
+   *
+   * Bounding links by recordsPerRoute was wrong and measurably so: 25 is a reasonable slice of
+   * content for a route the caller asked to expand, and a terrible one for every route it did
+   * not. At expanded 0 across 23 scopes that is 575 links and 139KB — a listing that costs more
+   * than the two expanded records it replaced.
+   *
+   * Low by default because a link list is for choosing, not for reading. `recordsTruncated`
+   * says when there are more, and the route's own recordCount says how many.
+   */
+  linksPerRoute: number;
 };
 
-export const DEFAULT_ROUTE_BUDGET: RouteBudget = { expanded: 2, listed: 10, recordsPerRoute: 25 };
+export const DEFAULT_ROUTE_BUDGET: RouteBudget = {
+  expanded: 2,
+  listed: 10,
+  recordsPerRoute: 25,
+  linksPerRoute: 5,
+};
 
 export type PlanInput = {
   workspaceGuid: string;
@@ -69,6 +86,32 @@ export type PlanInput = {
 /** What a caller supplies; identity and role are the facade's to decide, never the caller's. */
 export type PlanRequest = Omit<PlanInput, "workspaceGuid" | "principalGuid" | "role">;
 
+/**
+ * A record a route holds, addressable but not delivered.
+ *
+ * This is the "reachable rather than present" half of progressive disclosure. Everything here
+ * is already loaded to compute the route's fingerprint, so a link costs nothing extra to send
+ * and 158 times less than the record it points at — measured on a real domain scope: 663
+ * characters of labels against 104,521 of content across 25 records.
+ *
+ * `heading` carries the assertion's title for an assertion, and the section heading for a
+ * section. Both are written to be read out of context, which is what makes them enough to
+ * decide on: "A pending proposal is not project truth" tells a caller whether to fetch the
+ * claim without spending the claim.
+ *
+ * A distinct type rather than RouteRecord with an optional `content`, because an absent field
+ * reads as an empty record, and the one thing a link must never look like is a record that
+ * turned out to have nothing in it.
+ */
+export type RouteRecordLink = {
+  ref: RouteRecord["ref"];
+  documentName?: string;
+  heading?: string;
+  headingLevel?: number;
+  kind?: string;
+  status?: string;
+};
+
 export type PlannedRoute = {
   routeKey: string;
   appliesWhen: string;
@@ -77,6 +120,19 @@ export type PlannedRoute = {
   recordCount: number;
   expanded: boolean;
   records?: RouteRecord[];
+  /**
+   * The records this route holds, as links, when it was listed rather than expanded.
+   *
+   * Present when a route was listed rather than expanded *and* resolved to a real scope. A
+   * route reported `unavailable` — a stale key the caller asked to expand — also carries
+   * `expanded: false` and has nothing to link to, so "exactly when expanded is false" was
+   * wrong, and wrong in the direction that makes a consumer trust an absent field.
+   *
+   * Expanding costs a round trip through expandRoutes, which is stateless — the caller supplies
+   * the task again — so a link is a real address rather than a promise the server has to
+   * remember.
+   */
+  recordLinks?: RouteRecordLink[];
   /** True when the route holds more records than the budget returned, so a caller knows the slice is partial. */
   recordsTruncated?: boolean;
   /** Present only when a requested route key resolved to nothing. */
@@ -133,6 +189,23 @@ function appliesWhen(route: RankedRoute): string {
 }
 
 /**
+ * A record reduced to what a caller needs in order to decide whether to fetch it.
+ *
+ * Citations are dropped with the content they cite: a quote is evidence for a claim, and
+ * sending the evidence while withholding the claim is the wrong half.
+ */
+function toLink(record: RouteRecord): RouteRecordLink {
+  return {
+    ref: record.ref,
+    ...(record.documentName === undefined ? {} : { documentName: record.documentName }),
+    ...(record.heading === undefined ? {} : { heading: record.heading }),
+    ...(record.headingLevel === undefined ? {} : { headingLevel: record.headingLevel }),
+    ...(record.kind === undefined ? {} : { kind: record.kind }),
+    ...(record.status === undefined ? {} : { status: record.status }),
+  };
+}
+
+/**
  * Plans a routed bundle: select, rank, resolve membership, expand within budget, record.
  *
  * Stateless in the strong sense — the caller resupplies the task on expansion and the
@@ -152,6 +225,10 @@ export async function planRoutedBundle(
   // more routes than the response and the telemetry claim were offered, so a later reading
   // of an impression would disagree with the budget stored beside it.
   const merged = { ...DEFAULT_ROUTE_BUDGET, ...input.budget };
+  // listed is raised to expanded, never the reverse: expanded 0 is a legitimate and now
+  // supported request — nothing delivered, and as many routes listed as `listed` allows — and
+  // clamping it upward would silently refuse the one setting that asks for pure disclosure.
+  // `expanded` bounds delivery only; how many routes are offered stays `listed`'s business.
   const budget: RouteBudget = { ...merged, listed: Math.max(merged.listed, merged.expanded) };
   const candidates = await selectRouteCandidates(pool, schemaName, input);
 
@@ -192,7 +269,21 @@ export async function planRoutedBundle(
       // queries, so there is now only one.
       recordCount: records.length,
       expanded,
-      ...(expanded ? { records: returned, recordsTruncated: records.length > returned.length } : {}),
+      // Content for the routes the caller chose to expand; addresses for the rest. A listed
+      // route used to carry a count and nothing else, which made the count the only thing a
+      // caller could reason about and left expanding a route a guess about what was inside it.
+      //
+      // Each slice honours its own bound: records by recordsPerRoute, links by linksPerRoute.
+      // Not the same number, and the difference is the whole reason linksPerRoute exists -- 25
+      // is a reasonable slice of content for a route the caller asked to expand and a terrible
+      // one for every route it did not. This comment previously said both honoured
+      // recordsPerRoute, which would have led a reader to "fix" the code toward the bug.
+      ...(expanded
+        ? { records: returned, recordsTruncated: records.length > returned.length }
+        : {
+            recordLinks: records.slice(0, budget.linksPerRoute).map(toLink),
+            recordsTruncated: records.length > budget.linksPerRoute,
+          }),
     };
   });
 
