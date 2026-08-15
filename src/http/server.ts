@@ -573,19 +573,24 @@ async function legacyBundle(
     return { ...plan };
   }
 
-  const names = plan.included.map((anchor: { name: string }) => anchor.name);
-  if (names.length === 0) {
+  // The planner's own suggested call, not a rebuilt one. It carries parameters the plan chose --
+  // maxBytes above all, which is the legacy path's response-size bound -- and rebuilding from
+  // `included` silently dropped every one of them, letting the baseline load past the bound its
+  // own planner set. That distorts the comparison in the baseline's favour and ignores the
+  // bounded-response requirement on the side that already had one.
+  const suggested = plan.loadContext;
+  if (suggested === undefined || suggested.names.length === 0) {
     return { ...plan };
   }
 
-  // Excerpts at `agent`, full bodies at `full`, mirroring what each level asks of the routed
-  // side. `task` is passed so excerpting picks sections relevant to it rather than the head of
-  // each anchor — withholding it would hand the baseline a worse answer for a reason that has
-  // nothing to do with routing.
-  // Full bodies once the routed side is expanding more than an agent would by default, since
-  // above that line the reader has deliberately asked both sides for everything.
+  // Only the depth is overridden, because depth is the axis under comparison. `task` is kept
+  // from the suggestion so excerpting picks sections relevant to it rather than the head of each
+  // anchor — withholding it would hand the baseline a worse answer for a reason that has nothing
+  // to do with routing. Full bodies once the routed side is expanding more than an agent would
+  // by default, since above that line the reader has deliberately asked both sides for
+  // everything.
   const loaded = await service.loadContext({
-    names,
+    ...suggested,
     includeContent:
       disclosure === "full" || expanded > DEFAULT_ROUTE_BUDGET.expanded ? "full" : "excerpt",
     task,
