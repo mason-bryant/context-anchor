@@ -184,14 +184,6 @@ function appliesWhen(route: RankedRoute): string {
 }
 
 /**
- * Plans a routed bundle: select, rank, resolve membership, expand within budget, record.
- *
- * Stateless in the strong sense — the caller resupplies the task on expansion and the
- * server retains nothing between calls. `requestId` is a telemetry correlation token only
- * and is never an input to recomputation, which is what lets task text stay opt-in and
- * makes current permissions apply automatically.
- */
-/**
  * A record reduced to what a caller needs in order to decide whether to fetch it.
  *
  * Citations are dropped with the content they cite: a quote is evidence for a claim, and
@@ -208,6 +200,14 @@ function toLink(record: RouteRecord): RouteRecordLink {
   };
 }
 
+/**
+ * Plans a routed bundle: select, rank, resolve membership, expand within budget, record.
+ *
+ * Stateless in the strong sense — the caller resupplies the task on expansion and the
+ * server retains nothing between calls. `requestId` is a telemetry correlation token only
+ * and is never an input to recomputation, which is what lets task text stay opt-in and
+ * makes current permissions apply automatically.
+ */
 export async function planRoutedBundle(
   pool: Pool,
   schemaName: string,
