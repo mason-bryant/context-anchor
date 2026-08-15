@@ -38,6 +38,32 @@ type Args = {
   minLength: number;
 };
 
+/**
+ * Every flag this command accepts.
+ *
+ * Named so two things can be decided by lookup rather than by shape. A value is only "missing"
+ * if the next token is a flag *this command knows* — testing for a leading `--` instead made it
+ * impossible to quote text that begins with dashes, which is ordinary in the material being
+ * cited: a SQL comment, a Markdown rule, a diff line. The whole job here is quoting source text
+ * byte for byte, so a parser that refuses a legal quote is refusing the job.
+ *
+ * And an argument that is not in this set is a typo. Silently ignoring it in a command that
+ * writes to the database means a dropped flag becomes an assertion nobody asked for.
+ */
+const KNOWN_FLAGS = new Set([
+  "--list",
+  "--schema",
+  "--scope",
+  "--kind",
+  "--title",
+  "--content",
+  "--block",
+  "--quote",
+  "--min-length",
+  "--help",
+  "-h",
+]);
+
 function parseArgs(argv: string[]): Args {
   const args: Args = {
     schema: "anchor_real",
@@ -52,7 +78,9 @@ function parseArgs(argv: string[]): Args {
   };
   const take = (index: number): string => {
     const value = argv[index + 1];
-    if (value === undefined || value.startsWith("--")) {
+    // Missing only when the next token is a flag this command knows. `--quote '-- a comment'`
+    // is a legal quote and used to be rejected as a missing value.
+    if (value === undefined || KNOWN_FLAGS.has(value)) {
       throw new Error(`${argv[index]!} needs a value.`);
     }
     return value;
@@ -91,6 +119,13 @@ function parseArgs(argv: string[]): Args {
           `  --schema defaults to anchor_real.\n`,
       );
       process.exit(0);
+    } else {
+      // Fails rather than ignoring. A typo'd flag in a command that writes is a value silently
+      // dropped, and the write still happens -- with the wrong content, or under a default the
+      // author never chose.
+      throw new Error(
+        `Unknown argument ${JSON.stringify(arg)}. Known flags: ${[...KNOWN_FLAGS].join(", ")}.`,
+      );
     }
   }
   assertValidSchemaName(args.schema);
