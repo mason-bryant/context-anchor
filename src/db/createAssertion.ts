@@ -83,6 +83,23 @@ export class ScopeNotFoundForAssertionError extends Error {
   }
 }
 
+/**
+ * A citation naming a block from a superseded revision.
+ *
+ * Distinct from BlockNotFoundError: the block exists, and pointing at it is exactly the mistake
+ * -- it holds text from a revision the workspace has moved past, so a caller told "not found"
+ * would go looking for a typo in a guid that resolves perfectly well.
+ */
+export class StaleBlockError extends Error {
+  constructor(public readonly blockGuid: string) {
+    super(
+      `Block ${blockGuid} belongs to a superseded revision of its document. Cite a block from the ` +
+        `current revision: the text this one holds is not text the workspace now contains.`,
+    );
+    this.name = "StaleBlockError";
+  }
+}
+
 export class BlockNotFoundError extends Error {
   constructor(blockGuid: string) {
     super(`No content block ${blockGuid} in this workspace to cite.`);
@@ -257,14 +274,35 @@ async function loadBlock(
   tx: CommandTransaction,
   input: CreateAssertionInput,
 ): Promise<{ raw_content: string }> {
-  const result = await tx.query<{ raw_content: string }>(
-    `SELECT raw_content FROM "${input.schemaName}".content_blocks
-      WHERE workspace_guid = $1 AND block_guid = $2`,
+  const result = await tx.query<{ raw_content: string; is_current: boolean }>(
+    // content_blocks are revision-scoped and re-minted on every import, so a block_guid alone
+    // identifies text in *some* revision rather than text the workspace currently holds. Selecting
+    // by guid with no revision test let a claim be authored against a passage a later commit had
+    // already rewritten -- provenance that was wrong the moment it was written, and which
+    // selected_content_hash exists to detect but nothing read.
+    `SELECT cb.raw_content,
+            dr.revision_number = (
+              SELECT max(dr2.revision_number)
+                FROM "${input.schemaName}".document_revisions dr2
+               WHERE dr2.workspace_guid = dr.workspace_guid
+                 AND dr2.document_guid = dr.document_guid
+            ) AS is_current
+       FROM "${input.schemaName}".content_blocks cb
+       JOIN "${input.schemaName}".document_revisions dr
+         ON dr.workspace_guid = cb.workspace_guid AND dr.revision_guid = cb.revision_guid
+      WHERE cb.workspace_guid = $1 AND cb.block_guid = $2`,
     [input.workspaceGuid, input.citation.blockGuid],
   );
   const row = result.rows[0];
   if (!row) {
     throw new BlockNotFoundError(input.citation.blockGuid);
+  }
+  // Refused rather than accepted-and-marked, which is what the read path does for a citation
+  // that went stale after the fact. The two are different situations: a claim whose source moved
+  // later is history worth keeping and re-anchoring, while one authored against text the pinned
+  // commit does not contain is simply wrong, and the author is present to be told so.
+  if (!row.is_current) {
+    throw new StaleBlockError(input.citation.blockGuid);
   }
   return row;
 }

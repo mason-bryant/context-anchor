@@ -9,11 +9,13 @@ import { CommandHandler } from "../../src/db/commandHandler.js";
 import { telemetrySchemaNameFor } from "../../src/db/config.js";
 import {
   BlockNotFoundError,
+  StaleBlockError,
   createAssertion,
   QuoteNotFoundError,
   ScopeNotFoundForAssertionError,
 } from "../../src/db/createAssertion.js";
 import { importDocuments } from "../../src/db/importDocuments.js";
+import { loadRouteRecords } from "../../src/db/routing/selectRoutes.js";
 import { planRoutedBundle } from "../../src/db/routing/plan.js";
 import { dropAllSchemas, isTestDatabaseReachable, migrateAllSchemas, TEST_DATABASE_URL, testSchemaName } from "./testDatabase.js";
 
@@ -154,6 +156,82 @@ describe.runIf(await isTestDatabaseReachable())("createAssertion (real Postgres)
     await expect(
       author({ citation: { blockGuid: randomUUID(), exactQuote: "anything" } }),
     ).rejects.toThrow(BlockNotFoundError);
+  });
+
+  it("marks a citation whose source moved after the claim was written, rather than dropping it", async () => {
+    // The read-path half of T-53. Authoring against superseded text is refused; a citation that
+    // goes stale *later* is a different situation -- the claim is still a claim, and its source
+    // needs re-anchoring rather than deleting. Same rule associations already use for a heading
+    // rename: retained and reported as orphaned, never silently retired.
+    const created = await author();
+
+    const scope = await pool.query<{ scope_guid: string }>(
+      `SELECT scope_guid FROM "${schemaName}".scopes WHERE scope_slug = 'anchor-mcp'`,
+    );
+    const before = await loadRouteRecords(pool, schemaName, bootstrap.workspaceGuid, scope.rows[0]!.scope_guid);
+    const liveCitation = before.find((r) => r.ref.guid === created.assertionGuid)?.citations?.[0];
+    expect(liveCitation?.stale).toBe(false);
+
+    await importDocuments({
+      pool,
+      schemaName,
+      handler,
+      workspaceGuid: bootstrap.workspaceGuid,
+      actorPrincipalGuid: bootstrap.ownerPrincipalGuid,
+      repository: "agent-context",
+      commitSha: "c".repeat(40),
+      files: [
+        {
+          path: "projects/anchor-mcp/anchor-mcp-project-context.md",
+          content: DOC.replace("requires a bearer token", "requires an API key"),
+        },
+      ],
+      scopes: [{ scope: "anchor-mcp", title: "Anchor MCP", kind: "domain", locators: [] }],
+    });
+
+    const after = await loadRouteRecords(pool, schemaName, bootstrap.workspaceGuid, scope.rows[0]!.scope_guid);
+    const record = after.find((r) => r.ref.guid === created.assertionGuid);
+    // Still served, still carrying its quote -- and now saying the quote is not current.
+    expect(record?.citations).toHaveLength(1);
+    expect(record?.citations?.[0]?.quote).toBe("requires a bearer token");
+    expect(record?.citations?.[0]?.stale).toBe(true);
+  });
+
+  it("refuses a block from a revision the workspace has moved past", async () => {
+    // content_blocks are revision-scoped and re-minted on every import, so a block_guid alone
+    // names text in *some* revision rather than text the workspace holds now. Selecting by guid
+    // with no revision test let a claim be authored against a passage a later commit had already
+    // rewritten -- provenance wrong the moment it was written (T-53).
+    //
+    // Refused rather than marked, unlike the read path: a citation that goes stale later is
+    // history worth re-anchoring, while one authored against superseded text is simply wrong and
+    // the author is present to be told.
+    await importDocuments({
+      pool,
+      schemaName,
+      handler,
+      workspaceGuid: bootstrap.workspaceGuid,
+      actorPrincipalGuid: bootstrap.ownerPrincipalGuid,
+      repository: "agent-context",
+      commitSha: "b".repeat(40),
+      files: [
+        {
+          path: "projects/anchor-mcp/anchor-mcp-project-context.md",
+          content: DOC.replace("requires a bearer token", "requires an API key"),
+        },
+      ],
+      scopes: [{ scope: "anchor-mcp", title: "Anchor MCP", kind: "domain", locators: [] }],
+    });
+
+    // The block still resolves -- that is the point. A caller told "not found" would go hunting
+    // for a typo in a guid that is perfectly valid.
+    const still = await pool.query(
+      `SELECT 1 FROM "${schemaName}".content_blocks WHERE workspace_guid = $1 AND block_guid = $2`,
+      [bootstrap.workspaceGuid, blockGuid],
+    );
+    expect(still.rowCount).toBe(1);
+
+    await expect(author()).rejects.toThrow(StaleBlockError);
     await expect(author({ scopeSlug: "no-such-scope" })).rejects.toThrow(ScopeNotFoundForAssertionError);
 
     // "Writing nothing" has to mean all three tables, not just the one: a citation or an
