@@ -61,7 +61,7 @@ describe.runIf(await isTestDatabaseReachable())("createAnchorRuntime pool cleanu
           migrationWarnOnly: false,
           staleAfterDays: 45,
           graphScoring: { enabled: false, maxBoost: 8 },
-          database: { poolSize: 3, schemaName },
+          database: { poolSize: 3, schemaName, storeTaskText: true },
         },
         { databaseUrl: taggedUrl },
       ),

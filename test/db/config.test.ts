@@ -14,13 +14,24 @@ describe("resolveDatabaseConfig", () => {
     expect(resolveDatabaseConfig(undefined)).toEqual({
       poolSize: DEFAULT_DATABASE_POOL_SIZE,
       schemaName: DEFAULT_DATABASE_SCHEMA_NAME,
+      // On by default, and asserted rather than assumed: this one flipped, and a default that
+      // decides whether questions are retained should not move without a test noticing.
+      storeTaskText: true,
     });
+  });
+
+  it("lets an operator turn task-text retention off for the whole workspace", () => {
+    // The per-request flag cannot express this: every client would have to agree, and traffic
+    // from one you do not control never will.
+    expect(resolveDatabaseConfig({ storeTaskText: false }).storeTaskText).toBe(false);
+    expect(resolveDatabaseConfig({ storeTaskText: true }).storeTaskText).toBe(true);
   });
 
   it("keeps an explicit poolSize and schemaName", () => {
     expect(resolveDatabaseConfig({ poolSize: 4, schemaName: "knowledge_test" })).toEqual({
       poolSize: 4,
       schemaName: "knowledge_test",
+      storeTaskText: true,
     });
   });
 
@@ -28,6 +39,7 @@ describe("resolveDatabaseConfig", () => {
     expect(resolveDatabaseConfig({ poolSize: 20 })).toEqual({
       poolSize: 20,
       schemaName: DEFAULT_DATABASE_SCHEMA_NAME,
+      storeTaskText: true,
     });
   });
 

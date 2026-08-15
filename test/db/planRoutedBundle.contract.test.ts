@@ -506,8 +506,10 @@ describe.runIf(await isTestDatabaseReachable())("planRoutedBundle (real Postgres
         [result.requestId],
       );
       expect(requests.rows[0]).toMatchObject({ ranker_id: "precedence", ranker_deterministic: true });
-      // Opt-in, because expansion is stateless and nothing reads the task back.
-      expect(requests.rows[0]?.task_text).toBeNull();
+      // Kept by default now. Expansion is still stateless and nothing reads this back — that
+      // argument was about the retrieval path and still holds. It never covered diagnostics: a
+      // hash groups identical questions and shows nobody what was asked.
+      expect(requests.rows[0]?.task_text).toBe("anchor mcp http transport rate limiting");
       expect(requests.rows[0]?.task_hash).toHaveLength(64);
 
       const impressions = await pool.query<{ route_key: string; offered_position: number }>(
@@ -612,14 +614,36 @@ describe.runIf(await isTestDatabaseReachable())("planRoutedBundle (real Postgres
       }
     });
 
-    it("stores the task text only when asked", async () => {
-      const result = await plan("add rate limiting", { storeTaskText: true });
+    it("stores the task text unless the caller withholds it", async () => {
+      const taskTextOf = async (requestId: string): Promise<string | null> => {
+        const stored = await pool.query<{ task_text: string | null }>(
+          `SELECT task_text FROM "${telemetrySchema}".retrieval_requests WHERE request_guid = $1`,
+          [requestId],
+        );
+        return stored.rows[0]?.task_text ?? null;
+      };
 
-      const stored = await pool.query<{ task_text: string }>(
-        `SELECT task_text FROM "${telemetrySchema}".retrieval_requests WHERE request_guid = $1`,
-        [result.requestId],
+      // Absent means the default, and the default is to keep it.
+      expect(await taskTextOf((await plan("add rate limiting")).requestId)).toBe("add rate limiting");
+      expect(await taskTextOf((await plan("add rate limiting", { storeTaskText: true })).requestId)).toBe(
+        "add rate limiting",
       );
-      expect(stored.rows[0]?.task_text).toBe("add rate limiting");
+
+      // A caller can still refuse one question. `!== false` rather than `=== true` is what makes
+      // the difference between "not specified" and "specified off" mean something.
+      expect(await taskTextOf((await plan("add rate limiting", { storeTaskText: false })).requestId)).toBeNull();
+    });
+
+    it("always records the hash, whether or not the text is kept", async () => {
+      // The hash is what groups identical questions, and it is the only thing a workspace that
+      // withholds text has left. Storing neither would make a refusal erase the request.
+      const withheld = await plan("add rate limiting", { storeTaskText: false });
+      const stored = await pool.query<{ task_text: string | null; task_hash: string }>(
+        `SELECT task_text, task_hash FROM "${telemetrySchema}".retrieval_requests WHERE request_guid = $1`,
+        [withheld.requestId],
+      );
+      expect(stored.rows[0]?.task_text).toBeNull();
+      expect(stored.rows[0]?.task_hash).toHaveLength(64);
     });
 
     // The mechanism that turns the count-versus-strength question into a measurement.

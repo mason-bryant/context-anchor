@@ -1,10 +1,27 @@
 export type DatabaseConfig = {
   poolSize: number;
   schemaName: string;
+  /**
+   * Whether routed requests retain their task text for diagnostics. Defaults to on.
+   *
+   * An operator-level setting because the per-request flag cannot express "this workspace keeps
+   * its questions" — every caller would have to agree, and traffic from a client you do not
+   * control never would. Off here means off for the workspace regardless of what a caller asks.
+   */
+  storeTaskText: boolean;
 };
 
 export const DEFAULT_DATABASE_POOL_SIZE = 10;
 export const DEFAULT_DATABASE_SCHEMA_NAME = "knowledge";
+
+/**
+ * Task text is kept by default, because the alternative cannot answer the question it exists
+ * for: a hash groups identical questions and shows nobody what was asked.
+ *
+ * The retrieval path does not read it back and never has — this is a diagnostics decision, not
+ * a change to how routing works. It does accrue, and nothing thins telemetry yet (T-41).
+ */
+export const DEFAULT_STORE_TASK_TEXT = true;
 
 /**
  * Telemetry lives in its own schema so retention can thin it without ever holding write
@@ -92,6 +109,7 @@ export function redactDatabaseUrl(databaseUrl: string): string {
 export type PartialDatabaseConfig = {
   poolSize?: number;
   schemaName?: string;
+  storeTaskText?: boolean;
 };
 
 export function resolveDatabaseConfig(partial: PartialDatabaseConfig | undefined): DatabaseConfig {
@@ -103,5 +121,5 @@ export function resolveDatabaseConfig(partial: PartialDatabaseConfig | undefined
   const schemaName = partial?.schemaName ?? DEFAULT_DATABASE_SCHEMA_NAME;
   assertValidSchemaName(schemaName);
 
-  return { poolSize, schemaName };
+  return { poolSize, schemaName, storeTaskText: partial?.storeTaskText ?? DEFAULT_STORE_TASK_TEXT };
 }
