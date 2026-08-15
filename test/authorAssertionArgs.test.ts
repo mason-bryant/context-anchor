@@ -93,6 +93,14 @@ describe("author-assertion argument parsing", () => {
     expect(args.quote).toBe("  a quote  ");
   });
 
+  it("refuses an empty quote, but allows a whitespace one", () => {
+    // Empty reaches createAssertion as "the quoted text does not appear in block X" -- true, and
+    // a poor account of having passed nothing. Whitespace is different: it is in the block too,
+    // so a quote made of it can be legitimate and must not be swept up by the same check.
+    expect(() => parseArgs(create().map((t) => (t === "a quote" ? "" : t)))).toThrow(/--quote cannot be empty/);
+    expect(() => parseArgs(create().map((t) => (t === "a quote" ? "   " : t)))).not.toThrow();
+  });
+
   it("does not demand authoring fields when only listing", () => {
     // --list is a read. Requiring a block guid to look at a scope's material would make the
     // listing useless for deciding what to cite.

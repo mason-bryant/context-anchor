@@ -188,6 +188,14 @@ export function parseArgs(argv: string[]): Args {
 
   // --quote is deliberately NOT trimmed. It has to match the block byte for byte, and a citation
   // whose quote was silently reshaped is the failure the whole verification exists to prevent.
+  //
+  // Empty is refused here rather than downstream, matching the MCP surface's min(1). An empty
+  // quote reaches createAssertion and comes back as "the quoted text does not appear in block
+  // X" -- true, and a poor account of having passed nothing. Length, not blankness: a quote of
+  // pure whitespace can be legitimate, since whitespace is in the block too.
+  if (args.quote !== undefined && args.quote.length === 0) {
+    throw new Error("--quote cannot be empty.");
+  }
   if (args.block !== undefined && !UUID_PATTERN.test(args.block)) {
     throw new Error(`--block ${JSON.stringify(args.block)} is not a uuid.`);
   }
