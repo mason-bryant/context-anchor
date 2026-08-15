@@ -23,7 +23,12 @@ export type ParsedMarkdown = {
   blocks: ParsedBlock[];
 };
 
-const HEADING = /^(#{1,6})\s+(.*)$/;
+/**
+ * Exported so anything deciding "is this line a heading" uses the parser's own answer.
+ * A second copy of this pattern elsewhere drifts: one written with a literal space missed
+ * headings separated by a tab, which the sections table had already recorded as headings.
+ */
+export const HEADING = /^(#{1,6})\s+(.*)$/;
 
 /**
  * Fence handling follows the same rules as src/storage/markdown.ts: a fence closes only on
