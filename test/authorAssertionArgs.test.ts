@@ -92,6 +92,16 @@ describe("author-assertion argument parsing", () => {
     expect(asCreate(["--scope", "abac", "--kind", "decision", "--title=--typo-flag", "--content", "c", "--block", BLOCK, "--quote", "q"]).title).toBe("--typo-flag");
   });
 
+  it("refuses a lone dashed word as a quote, but not dashed prose", () => {
+    // `--quote --min-lenght 5` took the typo as the quote and then blamed "5" for being
+    // unknown. Whitespace separates cited prose from a mistyped flag; `=` takes either.
+    expect(() => asCreate(create().map((t) => (t === "a quote" ? "--min-lenght" : t)))).toThrow(
+      /--quote was given "--min-lenght", which looks like a flag/,
+    );
+    expect(asCreate(create().map((t) => (t === "a quote" ? "-- a sql comment" : t))).quote).toBe("-- a sql comment");
+    expect(asCreate(["--scope", "abac", "--kind", "decision", "--title", "t", "--content", "c", "--block", BLOCK, "--quote=--min-lenght"]).quote).toBe("--min-lenght");
+  });
+
   it("refuses an unknown argument rather than dropping it", () => {
     // In a command that writes, a typo'd flag is a value silently discarded while the write
     // still happens.

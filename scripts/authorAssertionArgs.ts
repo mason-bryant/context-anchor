@@ -126,9 +126,13 @@ export function parseArgs(argv: string[]): Args {
     // "--typo-flag", and where positions differed the parser blamed some later token for being
     // unknown -- the "wrong argument named" failure this module exists to avoid.
     //
-    // --quote is the exception, because the text it cites really does start with dashes: a SQL
-    // comment, a Markdown rule, a diff line. Everything else takes `=` for such a value.
-    if (value.startsWith("--") && flag !== "--quote") {
+    // --quote is the near-exception, because the text it cites really does start with dashes: a
+    // SQL comment, a Markdown rule, a diff line. But a lone dashed word is a mistyped flag, not
+    // a quote -- `--quote --min-lenght 5` took "--min-lenght" as the quote and then blamed "5"
+    // for being unknown. Whitespace is what separates the two: cited prose has some, a flag has
+    // none. Either way `--quote=<value>` takes anything.
+    const looksLikeALoneFlag = value.startsWith("--") && !/\s/.test(value);
+    if (looksLikeALoneFlag) {
       throw new Error(
         `${flag} was given ${JSON.stringify(value)}, which looks like a flag. If it is the ` +
           `value, use ${flag}=${value}.`,
