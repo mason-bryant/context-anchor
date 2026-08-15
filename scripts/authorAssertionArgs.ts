@@ -1,5 +1,6 @@
 import { ASSERTION_KINDS, type AssertionKind } from "../src/db/createAssertion.js";
 import { assertValidSchemaName } from "../src/db/config.js";
+import { isGuid } from "../src/db/guids.js";
 
 /**
  * Argument parsing for the authoring CLI, in its own module so it can be tested.
@@ -74,9 +75,6 @@ type PartialArgs = {
  * And an argument that is not in this set is a typo. Silently ignoring it in a command that
  * writes to the database means a dropped flag becomes an assertion nobody asked for.
  */
-/** Same shape the rest of the codebase uses for a record guid. */
-const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
 const KNOWN_FLAGS = new Set([
   "--list",
   "--schema",
@@ -263,7 +261,7 @@ export function parseArgs(argv: string[]): Args {
       throw new Error(`${flag} is required to create an assertion. See --help.`);
     }
   }
-  if (args.block !== undefined && !UUID_PATTERN.test(args.block)) {
+  if (args.block !== undefined && !isGuid(args.block)) {
     throw new Error(`--block ${JSON.stringify(args.block)} is not a uuid.`);
   }
 
