@@ -632,6 +632,10 @@ export async function loadRouteRecords(
   );
   const contentByRevision = new Map(revisions.rows.map((row) => [row.revision_guid, row.content]));
 
+  // Where each section's own prose ends: at its first descendant, or at its own end when it has
+  // none. See ownProseEnd for why records carry only their own prose.
+  const ownEnd = ownProseEnd(sections.rows);
+
   return [
     ...assertionRecords,
     ...sections.rows
@@ -646,10 +650,108 @@ export async function loadRouteRecords(
       documentName: row.document_name,
       heading: row.title,
       headingLevel: row.heading_level,
-      content: (contentByRevision.get(row.revision_guid) ?? "").slice(row.start_offset, row.end_offset),
+      content: (contentByRevision.get(row.revision_guid) ?? "").slice(
+        row.start_offset,
+        ownEnd.get(row.section_guid) ?? row.end_offset,
+      ),
     }))
+    // A heading with no prose of its own is dropped. Its span starts at its own heading line, so
+    // once descendants are excluded its content is that line and nothing else -- the title
+    // repeated, which `heading` already carries -- and it would occupy a slot in recordsPerRoute
+    // that a record with something to say could have. Its children are in the route beside it.
+    //
+    // Judged by removing the heading line rather than by a length threshold: "### Closed\n\nNone."
+    // is three words of real content, and any cutoff big enough to drop bare headings would take
+    // it too.
+    .filter((record) => hasProseOfItsOwn(record.content))
     .sort((left, right) => left.ref.stableKey.localeCompare(right.ref.stableKey)),
   ];
+}
+
+/**
+ * Whether a section's content is more than the heading line it begins with.
+ *
+ * Only the first line, and only when it is a heading: a record whose prose happens to open with a
+ * markdown heading of its own is not empty, and stripping every leading heading would eat it.
+ */
+function hasProseOfItsOwn(content: string): boolean {
+  return content.replace(/^#{1,6} [^\n]*\n?/, "").trim().length > 0;
+}
+
+type SectionSpan = {
+  section_guid: string;
+  revision_guid: string;
+  start_offset: number;
+  end_offset: number;
+};
+
+/**
+ * Where each section's own prose ends, so that no record contains another (T-57).
+ *
+ * Sections are nested, and a route offered them all as peers: on the real workspace,
+ * `scope:domain:anchor-mcp` held 270 sections whose spans summed to 486,680 characters over about
+ * 150,000 characters of actual text, and 241 of the roadmap's 242 sections were wholly inside
+ * another. A default expansion returned 104,521 characters of which only 46,875 was text not
+ * already present elsewhere in the same response — the document, then one of its chapters again,
+ * then that chapter's sections again. The 25-record cap could not help, because it was slicing a
+ * list whose entries overlapped.
+ *
+ * A section's content is therefore its span up to its first descendant. Every character of the
+ * document still appears exactly once across the route, and no record is a sub-range of another.
+ *
+ * Trimming rather than dropping the containers, which is the tempting simpler rule: prose can sit
+ * directly under a parent heading before its first subheading, and dropping such a section would
+ * discard it silently. On this workspace exactly one section of 270 had both children and prose
+ * of its own, so the two rules very nearly coincide here -- trimming is preferred because it does
+ * not depend on that staying true.
+ *
+ * Assumes a section's span begins at its own heading line, so a parent never shares a start
+ * offset with its first child. That is what markdown produces and what the importer records. A
+ * parent that did share one would not be trimmed, because a descendant is identified by starting
+ * strictly later -- and it would then contain its child. Stated rather than guarded, since the
+ * guard would be unreachable code asserting a shape the importer cannot emit.
+ */
+export function ownProseEnd(rows: SectionSpan[]): Map<string, number> {
+  const byRevision = new Map<string, SectionSpan[]>();
+  for (const row of rows) {
+    // Grouped by revision, not by document: offsets index one revision's text, and comparing
+    // them across revisions would nest a section inside a span from a different string.
+    const group = byRevision.get(row.revision_guid);
+    if (group) {
+      group.push(row);
+    } else {
+      byRevision.set(row.revision_guid, [row]);
+    }
+  }
+
+  const ends = new Map<string, number>();
+  for (const group of byRevision.values()) {
+    const ordered = [...group].sort((a, b) => a.start_offset - b.start_offset);
+    for (let index = 0; index < ordered.length; index += 1) {
+      const section = ordered[index]!;
+      let end = section.end_offset;
+      // The first section that starts after this one and ends within it is its first descendant.
+      // Scanning forward only is enough because the list is sorted by start offset.
+      //
+      // The two bounds are belt and braces. Sections nest and never partially overlap, so given
+      // the early exit below, "starts after this one" would already imply "ends within it" -- a
+      // mutation dropping the end bound passes every test here. Kept because the cost is one
+      // comparison and the failure it forecloses is a record silently extending past its own
+      // section, which no assertion downstream would notice.
+      for (let next = index + 1; next < ordered.length; next += 1) {
+        const candidate = ordered[next]!;
+        if (candidate.start_offset >= section.end_offset) {
+          break;
+        }
+        if (candidate.end_offset <= section.end_offset && candidate.start_offset > section.start_offset) {
+          end = candidate.start_offset;
+          break;
+        }
+      }
+      ends.set(section.section_guid, end);
+    }
+  }
+  return ends;
 }
 
 /**
