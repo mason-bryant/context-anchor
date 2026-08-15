@@ -80,6 +80,30 @@ describe.runIf(await isTestDatabaseReachable())("runtime telemetry retention (re
     }
   });
 
+  it("carries an unscheduled job when the operator drives retention from cron", async () => {
+    // Configured and scheduled are separate questions. intervalHours: 0 means "cron owns the
+    // cadence", not "retention is not set up" -- and the handle has to remain for a caller that
+    // wants to run a pass now. The doc comment claimed this field went undefined here, which the
+    // code never did; raised in review on f2a9185.
+    const runtime = await createAnchorRuntime(configWith(0), { databaseUrl: TEST_DATABASE_URL });
+    try {
+      expect(runtime.telemetryRetention).toBeDefined();
+
+      runtime.startBackgroundJobs();
+      // No opening pass either. start() returns before it, so "disabled" cannot quietly mean
+      // "runs once per server start".
+      await new Promise((resolve) => setTimeout(resolve, 150));
+      expect(await runCount()).toBe(0);
+
+      // Still drivable by hand, which is the whole point of keeping the handle.
+      expect(await runtime.telemetryRetention?.tick()).toBeDefined();
+      expect(await runCount()).toBe(1);
+    } finally {
+      runtime.stopBackgroundJobs();
+      await runtime.knowledgeDb?.close();
+    }
+  });
+
   it("builds no retention job at all without a database", async () => {
     // Git-only mode has no telemetry schema to thin. A job constructed anyway would fail its
     // first pass and log an error on every start for a server that is behaving correctly.

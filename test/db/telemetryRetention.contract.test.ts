@@ -291,6 +291,15 @@ describe.runIf(await isTestDatabaseReachable())("telemetry retention (real Postg
     ).rejects.toThrow(/taskTextDays "0"/);
   });
 
+  it("refuses an unusable policy when reporting status, not only when applying it", async () => {
+    // Status reports what is "past its window". An unusable policy does not make that question
+    // unanswerable -- it makes it answerable and wrong, which is worse: a backlog of zero reads
+    // as retention keeping up. Raised in review on f2a9185; the pass validated and this did not.
+    await expect(
+      telemetryRetentionStatus(pool, telemetrySchema, { taskTextDays: 90, requestDays: 30 }),
+    ).rejects.toThrow(/is below taskTextDays/);
+  });
+
   it("refuses a schema name that would reach SQL as an identifier", async () => {
     await expect(
       thinTelemetry(pool, 'evil"; DROP SCHEMA public CASCADE; --', DEFAULT_TELEMETRY_RETENTION),

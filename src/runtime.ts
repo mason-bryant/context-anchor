@@ -23,7 +23,15 @@ export type AnchorRuntime = {
   traceRatings: TraceRatingsStore;
   /** Undefined when no databaseUrl was supplied — the server serves Git-backed tools only. */
   knowledgeDb?: KnowledgeDatabase;
-  /** Undefined without a database, or when the operator set intervalHours to 0 to drive it from cron. */
+  /**
+   * Undefined without a database, since there is no telemetry schema to thin.
+   *
+   * Present but unscheduled when `intervalHours` is 0: the operator drives it from cron, and
+   * `start()` returns without arming a timer. Configured and scheduled are separate questions,
+   * and collapsing them here would leave no handle for a caller that wants to run a pass now.
+   * This comment previously claimed the field was undefined in that case, which the code has
+   * never done.
+   */
   telemetryRetention?: TelemetryRetentionJob;
   /**
    * Starts every background job the transports own: the auto-sync pull and the telemetry

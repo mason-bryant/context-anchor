@@ -177,6 +177,10 @@ export async function telemetryRetentionStatus(
   options: { now?: () => Date } = {},
 ): Promise<TelemetryRetentionStatus> {
   assertValidSchemaName(telemetrySchemaName);
+  // Validated here too, not only in the pass. This reports what is "past its window", and an
+  // unusable policy does not make that question unanswerable — it makes it answerable and wrong,
+  // which is worse: an operator reads a backlog of zero and concludes retention is keeping up.
+  assertUsableRetentionPolicy(policy);
   const now = options.now?.() ?? new Date();
 
   const last = await pool.query<{
