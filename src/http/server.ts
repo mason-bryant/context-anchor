@@ -7,6 +7,7 @@ import cors from "cors";
 import type { NextFunction, Request, Response } from "express";
 
 import type { AnchorService } from "../anchorService.js";
+import { DEFAULT_ROUTE_BUDGET } from "../db/routing/plan.js";
 import { errorMetadata, type AppLogger } from "../logger.js";
 import { createAnchorRuntime } from "../runtime.js";
 import { createAnchorMcpServer } from "../server.js";
@@ -175,6 +176,10 @@ export async function startHttpServer(
           expandedParam === undefined
             ? preset
             : { listed: Math.max(preset?.listed ?? 10, expandedParam), expanded: expandedParam };
+        // What the routed side will actually do, which is what the legacy side has to match.
+        // Undefined budget means the planner's own default, so the number has to come from there
+        // rather than being assumed to be zero.
+        const effectiveExpanded = budget?.expanded ?? DEFAULT_ROUTE_BUDGET.expanded;
 
         // Identical inputs but for the one flag under test. Withholding anything else from
         // one side would show a difference the reader would attribute to recordLexical —
@@ -204,7 +209,11 @@ export async function startHttpServer(
           // carrying expanded records made routed look richer on every task regardless of
           // whether it routed well. The planner returns a *suggested* loadContext call rather
           // than content, so matching the depth means making that call.
-          legacyBundle(runtime.service, task, referencedPaths, disclosure),
+          // Given the *effective* expansion, not the preset name. `disclosure=agent&expanded=25`
+          // asks the routed side for full content on every route; a legacy side still pinned to
+          // the agent preset's excerpts would look thinner for a reason that has nothing to do
+          // with routing, which is the asymmetry this endpoint was rebuilt to remove.
+          legacyBundle(runtime.service, task, referencedPaths, effectiveExpanded, disclosure),
         ]);
 
         // Settled rather than all: the record-lexical call is the newest and heaviest query
@@ -546,10 +555,13 @@ async function legacyBundle(
   service: AnchorService,
   task: string,
   filePaths: string[],
+  expanded: number,
   disclosure: string,
 ): Promise<Record<string, unknown>> {
   const plan = await service.planContextBundle({ task, filePaths });
-  if (disclosure === "plan") {
+  // Keyed on what the routed side is doing, not on the preset that was asked for. Expanding
+  // nothing on one side and loading anchors on the other is not a comparison.
+  if (expanded === 0) {
     return { ...plan };
   }
 
@@ -562,9 +574,12 @@ async function legacyBundle(
   // side. `task` is passed so excerpting picks sections relevant to it rather than the head of
   // each anchor — withholding it would hand the baseline a worse answer for a reason that has
   // nothing to do with routing.
+  // Full bodies once the routed side is expanding more than an agent would by default, since
+  // above that line the reader has deliberately asked both sides for everything.
   const loaded = await service.loadContext({
     names,
-    includeContent: disclosure === "agent" ? "excerpt" : "full",
+    includeContent:
+      disclosure === "full" || expanded > DEFAULT_ROUTE_BUDGET.expanded ? "full" : "excerpt",
     task,
   });
   return { ...plan, bundle: loaded };

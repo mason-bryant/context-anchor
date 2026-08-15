@@ -1968,6 +1968,10 @@ the index when your workflow checks in that file.`,
           "matched scope is part of. Routes are ordered by how they matched, and every route carries its reasons, a " +
           "record count, and a content fingerprint so a caller holding an earlier response can see which routes " +
           "moved. Expansion is stateless: pass the task again with routeKeys to expand a route the budget listed. " +
+          "Only the top budget.expanded routes return records with content; every other listed route returns " +
+          "recordLinks -- a typed ref, heading, kind and standing per record, and no content -- so choosing what " +
+          "to read costs one listing rather than a payload. budget.expanded may be 0, which lists everything and " +
+          "returns no content at all. " +
           "Requires the database backend.",
         inputSchema: z.object({
           traceId: TraceIdSchema,
@@ -1979,6 +1983,10 @@ the index when your workflow checks in that file.`,
               expanded: z.number().int().min(0),
               listed: z.number().int().min(1),
               recordsPerRoute: z.number().int().min(1),
+              // Advertised, or it is unreachable: zod strips unknown keys, so a caller setting
+              // this without it in the schema has it silently dropped and gets the default.
+              // Exactly how recordLexical shipped unreachable twice.
+              linksPerRoute: z.number().int().min(1),
             })
             .partial()
             .optional(),

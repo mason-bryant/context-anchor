@@ -267,8 +267,11 @@ export async function planRoutedBundle(
       // route used to carry a count and nothing else, which made the count the only thing a
       // caller could reason about and left expanding a route a guess about what was inside it.
       //
-      // Both slices honour recordsPerRoute: a scope holding 279 records would otherwise send
-      // 279 links, which is a smaller pile but still a pile.
+      // Each slice honours its own bound: records by recordsPerRoute, links by linksPerRoute.
+      // Not the same number, and the difference is the whole reason linksPerRoute exists -- 25
+      // is a reasonable slice of content for a route the caller asked to expand and a terrible
+      // one for every route it did not. This comment previously said both honoured
+      // recordsPerRoute, which would have led a reader to "fix" the code toward the bug.
       ...(expanded
         ? { records: returned, recordsTruncated: records.length > returned.length }
         : {
