@@ -242,9 +242,10 @@ export type SelectionInput = {
   task: string;
   referencedPaths?: string[];
   /**
-   * Off by default (T-46). Matches task terms against assertion titles and section headings so
-   * ordinary phrasing can reach a scope at all; flagged because it adds a signal kind, and tier
-   * 1 of the ranking rule counts distinct kinds, so enabling it changes existing orderings.
+   * On unless refused, from 2026-08-16 (T-46). Matches task terms against assertion titles and
+   * section headings so ordinary phrasing can reach a scope at all. Still a flag because it adds
+   * a signal kind, and tier 1 of the ranking rule counts distinct kinds, so refusing it changes
+   * orderings as well as membership -- the gate's baseline pane refuses it for exactly that.
    */
   recordLexical?: boolean;
 };
@@ -353,9 +354,20 @@ export async function selectRouteCandidates(
   // working and is harder to notice than returning nothing.
   //
   // Weakest kind by position in SIGNAL_KINDS, but tier 1 counts distinct kinds, so this can
-  // still promote a scope. That is why it ships behind a flag and is measured as a shadow
-  // ranker before it decides anything.
-  if (input.recordLexical) {
+  // still promote a scope.
+  //
+  // On unless refused, from 2026-08-16. It shipped behind a flag because it was noisy, and the
+  // measurement that said so was taken with `expanded: 2`, where every noisy route cost tens of
+  // kilobytes of prose. With nothing expanded by default a weak match costs a line of JSON, and
+  // the corpus on the real workspace moves from 86% of tasks returning nothing to 18%.
+  //
+  // The noise is real and unmitigated: template headings reach every scope by construction, which
+  // is what T-51 established and could not fix. It is now a cost worth paying rather than one
+  // worth avoiding, because what it buys is a system that answers at all.
+  //
+  // `!== false` rather than `=== true`: absent means the default, and a caller that means to
+  // switch it off says so.
+  if (input.recordLexical !== false) {
     // Restricted to scopes the caller can read, rather than filtering after the fact in add().
     // Every other producer here matches against something already narrowed; this one would
     // otherwise read every active assertion title and current section heading in the workspace

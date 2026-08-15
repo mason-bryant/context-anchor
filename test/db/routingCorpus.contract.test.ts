@@ -74,7 +74,13 @@ describe.runIf(await isTestDatabaseReachable())("routing task corpus (real Postg
     await pool.end();
   });
 
-  const run = (recordLexical: boolean): Promise<CorpusReport> =>
+  const run = (
+    recordLexical: boolean,
+    // Some assertions here are about records the caller actually received, which needs a route
+    // expanded. The default is 0 -- nothing delivered until asked for -- so those tests say so
+    // rather than relying on a default that deliberately returns no content.
+    budget?: { listed?: number; expanded?: number; recordsPerRoute?: number },
+  ): Promise<CorpusReport> =>
     runCorpus({
       pool,
       schemaName,
@@ -83,7 +89,12 @@ describe.runIf(await isTestDatabaseReachable())("routing task corpus (real Postg
       principalGuid: bootstrap.ownerPrincipalGuid,
       role: "owner",
       corpus,
-      ...(recordLexical ? { recordLexical: true } : {}),
+      // Passed explicitly rather than omitted when false. Omission used to mean off; since the
+      // signal became the default it means on, so `...(x ? {x:true} : {})` quietly ran both
+      // arms of this comparison with the signal enabled and every assertion below compared a
+      // run against itself.
+      recordLexical,
+      ...(budget ? { budget } : {}),
     });
 
   it("refuses a schema name that would reach SQL as an identifier", async () => {
@@ -534,9 +545,12 @@ describe.runIf(await isTestDatabaseReachable())("routing task corpus (real Postg
       role: "owner",
       corpus,
       recordLexical: true,
-      budget: { recordsPerRoute: 1 },
+      // expanded is named on both sides. recordsPerRoute clips content within an expanded route,
+      // so with the default of 0 neither side returns any records and "clipped is smaller than
+      // generous" compares nothing to nothing.
+      budget: { recordsPerRoute: 1, expanded: 2 },
     });
-    const generous = await run(true);
+    const generous = await run(true, { expanded: 2 });
 
     const total = (report: CorpusReport): number =>
       report.results.reduce((sum, result) => sum + result.recordsReturned, 0);
@@ -567,8 +581,21 @@ describe.runIf(await isTestDatabaseReachable())("routing task corpus (real Postg
     expect(report.zeroRouteRate).toBeGreaterThan(0);
   });
 
+  it("counts a route that holds nothing, not one the budget chose not to deliver", async () => {
+    // offeredButEmptyCount answers "were the routes empty", and disclosure is the caller's
+    // choice. When `expanded` defaulted to 0 and this counted deliveries, it reported 23 of 28
+    // tasks empty on a workspace whose routes were fine -- a gate criterion turned into a
+    // constant. Counted from what the routes hold, so the budget cannot move it.
+    const undelivered = await run(true, { expanded: 0 });
+    const delivered = await run(true, { expanded: 2 });
+
+    expect(undelivered.offeredButEmptyCount).toBe(delivered.offeredButEmptyCount);
+    // And it is not vacuously equal because both are everything.
+    expect(undelivered.offeredButEmptyCount).toBeLessThan(undelivered.taskCount);
+  });
+
   it("counts records returned, not records a route claims to hold", async () => {
-    const report = await run(true);
+    const report = await run(true, { expanded: 2 });
     const served = report.results.filter((result) => result.recordsReturned > 0);
 
     // "Most offered routes carry no records, so a route being offered is not the caller

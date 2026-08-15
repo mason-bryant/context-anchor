@@ -1996,14 +1996,17 @@ the index when your workflow checks in that file.`,
             })
             .partial()
             .optional(),
-          // Off by default: nothing on the server reads the task back, so retaining it is a
-          // diagnostics choice rather than a requirement.
+          // Retained by default since 2026-08-15. Nothing on the server reads the task back, so
+          // retention is a diagnostics decision rather than a requirement -- and a hash alone can
+          // never show anyone what was asked. Set false to withhold one question; a workspace
+          // that keeps none is `database.storeTaskText`. This comment said "off by default" for
+          // a day after the default flipped.
           storeTaskText: z.boolean().optional(),
-          // Off by default. Matches task terms against assertion titles and section headings as
-          // well as scope names, which is the only entry point for a task naming no scope --
-          // and which widens answers sharply, so the caller asks for it rather than inheriting
-          // it. Exposed here because a flag reachable only from library code cannot be measured
-          // against real traffic, which is the entire point of shipping it off by default.
+          // On by default since 2026-08-16. Matches task terms against assertion titles and
+          // section headings as well as scope names, which is the only entry point for a task
+          // naming no scope: without it 86% of corpus tasks on the real workspace return nothing.
+          // Set false for scope-name matching alone, which is the baseline the gate measures
+          // against.
           recordLexical: z.boolean().optional(),
           consumer: z.string().trim().min(1).optional(),
         }),

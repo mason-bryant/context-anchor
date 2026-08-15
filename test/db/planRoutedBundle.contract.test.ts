@@ -105,12 +105,59 @@ describe.runIf(await isTestDatabaseReachable())("planRoutedBundle (real Postgres
    * the titles of records inside a scope — and deliberately no further.
    */
   describe("record-lexical signal", () => {
-    it("is off unless asked for, so a heading match alone routes nowhere", async () => {
-      expect((await plan("decisions")).routes).toEqual([]);
+    it("is on unless refused, so a heading match alone can route", async () => {
+      // Flipped on 2026-08-16. It was off because it was noisy, and that measurement was taken
+      // with two routes expanded by default, where a weak match cost tens of kilobytes of prose.
+      // With nothing expanded it costs a line of JSON, and the corpus moves from 86% of tasks
+      // returning nothing to 18%.
+      expect((await plan("decisions")).routes.length).toBeGreaterThan(0);
     });
 
-    it("routes a task that names no scope, once enabled", async () => {
-      const result = await plan("decisions", { recordLexical: true });
+    it("routes nowhere for a heading-only match when a caller refuses the signal", async () => {
+      // The refusal has to work, or "on by default" is really "always on" and a caller with a
+      // reason to want scope-name matching alone has no way to ask for it.
+      expect((await plan("decisions", { recordLexical: false })).routes).toEqual([]);
+    });
+
+    it("reports the signal as applied when it ran by default, not only when asked for", async () => {
+      // appliedSignals exists so a response says which signals produced it. Both existing checks
+      // pass the flag explicitly, so a version reading `=== true` reported `false` on every
+      // default request while the signal was in fact running -- a response lying about itself,
+      // and the one field a reader would use to explain why a route appeared.
+      expect((await plan("decisions")).appliedSignals).toEqual({ recordLexical: true });
+      expect((await plan("decisions", { recordLexical: false })).appliedSignals).toEqual({
+        recordLexical: false,
+      });
+    });
+
+    it("delivers no content by default, only routes and links", async () => {
+      // The default is `expanded: 0` from 2026-08-16. Asserted by what a caller receives rather
+      // than by reading the constant, because the constant being 0 while some other path expands
+      // anyway is the failure that matters.
+      //
+      // This is also what makes the signal above affordable: a route matched for a weak reason
+      // costs a line of JSON. At the previous default of 2 it cost tens of kilobytes of prose,
+      // which is why the noise looked unaffordable when the noise was never the expensive part.
+      const result = await plan("decisions");
+
+      expect(result.routes.length).toBeGreaterThan(0);
+      for (const route of result.routes) {
+        expect(route.records).toBeUndefined();
+        expect(route.expanded).toBe(false);
+      }
+      // Reachable rather than present: every route still says what it holds and offers links.
+      expect(result.routes.some((route) => (route.recordLinks?.length ?? 0) > 0)).toBe(true);
+    });
+
+    it("still expands when a caller asks", async () => {
+      // Nothing-by-default must not become nothing-at-all: the budget is the caller's to raise.
+      const result = await plan("decisions", { budget: { expanded: 1 } });
+
+      expect(result.routes.filter((route) => route.records !== undefined)).toHaveLength(1);
+    });
+
+    it("routes a task that names no scope", async () => {
+      const result = await plan("decisions");
 
       expect(result.routes.length).toBeGreaterThan(0);
       // Pinned to the whole sentence, not a prefix. `/matched section title/` matched both the
@@ -596,7 +643,15 @@ describe.runIf(await isTestDatabaseReachable())("planRoutedBundle (real Postgres
         pool,
         schemaName,
         telemetrySchema,
-        { workspaceGuid: bootstrap.workspaceGuid, principalGuid: bootstrap.ownerPrincipalGuid, role: "owner", task: "anchor mcp" },
+        {
+          workspaceGuid: bootstrap.workspaceGuid,
+          principalGuid: bootstrap.ownerPrincipalGuid,
+          role: "owner",
+          task: "anchor mcp",
+          // Expansion is asked for explicitly: the default is now 0, and this test is about the
+          // clock stamped on an expanded impression, which needs one to exist.
+          budget: { expanded: 2 },
+        },
         { now: () => fixed },
       );
 

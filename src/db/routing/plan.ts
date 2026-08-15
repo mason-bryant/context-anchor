@@ -44,7 +44,28 @@ export type RouteBudget = {
 };
 
 export const DEFAULT_ROUTE_BUDGET: RouteBudget = {
-  expanded: 2,
+  /**
+   * Nothing delivered by default: routes and links, and the caller expands what it wants.
+   *
+   * This was 2, which contradicted the thing the design calls its first goal. Progressive
+   * disclosure means reachable rather than present, and a default that ships two routes' content
+   * unasked is content-by-default with disclosure available on request -- the opposite arrangement.
+   *
+   * It is also what makes reach affordable. Measured on the real workspace over the four
+   * worst-behaved corpus tasks, cost is almost entirely expansion rather than routing:
+   *
+   *   expanded 0 -> mean 1KB, worst 3KB
+   *   expanded 1 -> mean 3KB, worst 10KB
+   *   expanded 2 -> mean 17KB, worst 65KB
+   *
+   * A route matched for a weak reason costs a line of JSON here. At 2 it cost tens of kilobytes
+   * of prose, which is what made record-lexical's noise look unaffordable when the noise was
+   * never the expensive part.
+   *
+   * The cost is a second call for a caller that wants content immediately. That is the trade,
+   * and it is the caller's to make per request.
+   */
+  expanded: 0,
   listed: 10,
   recordsPerRoute: 25,
   linksPerRoute: 5,
@@ -82,11 +103,16 @@ export type PlanInput = {
   /**
    * Match task terms against assertion titles and section headings as well as scope names.
    *
-   * Off unless asked for. It is the fix for tasks that name no scope reaching nothing at all
-   * (T-45), but it widens answers sharply on the same workspace — "proposals and review" goes
-   * from 2 routes to 15 of 23 — and 15 of 23 scopes is not a route, it is the workspace with
-   * extra steps. Which trade is right is settled by judging the routes it adds, not by a
-   * default chosen here.
+   * On unless refused, from 2026-08-16. It is the fix for tasks that name no scope reaching
+   * nothing at all (T-45): on the real workspace the corpus goes from 86% of tasks returning
+   * nothing to 18%.
+   *
+   * It does widen answers sharply — four corpus tasks exceed their route ceiling and two select
+   * half the workspace, all of them template or stopword vocabulary that reaches every scope by
+   * construction (T-51). That was the reason it stayed off, and the reason has changed rather
+   * than the noise: the measurement was taken when `expanded` defaulted to 2, where a weak match
+   * cost tens of kilobytes of prose. With nothing expanded by default it costs a line of JSON,
+   * so the trade is now silence against a longer list rather than silence against a bill.
    *
    * This comment used to name the shadow ranker as the way to settle it. That was wrong:
    * selection runs once and every shadow ranker receives that same candidate array, so a
@@ -224,8 +250,8 @@ function toLink(record: RouteRecord): RouteRecordLink {
  *
  * Stateless in the strong sense — the caller resupplies the task on expansion and the
  * server retains nothing between calls. `requestId` is a telemetry correlation token only
- * and is never an input to recomputation, which is what lets task text stay opt-in and
- * makes current permissions apply automatically.
+ * and is never an input to recomputation, which is what lets task text be refusable per request
+ * and makes current permissions apply automatically.
  */
 export async function planRoutedBundle(
   pool: Pool,
@@ -363,7 +389,9 @@ export async function planRoutedBundle(
     // candidates (A3 permits dropping, only not inventing) is reported as having dropped them
     // instead of inflating the count with routes that were never offerable.
     candidateCount: outcome.routes.length,
-    appliedSignals: { recordLexical: input.recordLexical === true },
+    // Reports what ran, so a response is self-describing about which signals produced it. Reads
+    // the same way as the switch in selectRoutes: on unless the caller said otherwise.
+    appliedSignals: { recordLexical: input.recordLexical !== false },
     routes,
   };
 }

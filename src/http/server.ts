@@ -195,6 +195,12 @@ export async function startHttpServer(
             task,
             referencedPaths,
             ...(budget ? { budget } : {}),
+            // Stated, not inherited. This pane is the baseline the other is measured against, and
+            // when recordLexical became the default this call silently started matching headings
+            // too -- both panes computing the same answer, the diff reporting nothing added, and
+            // a reader concluding the signal changes nothing. A gate whose two sides agree by
+            // construction is worse than no gate.
+            recordLexical: false,
             consumer: "comparison-gate",
           }),
           knowledgeDb.planRoutedBundleAsOwner({
