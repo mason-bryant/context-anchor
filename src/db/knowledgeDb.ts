@@ -6,6 +6,7 @@ import type { AppLogger } from "../logger.js";
 import { resolveScopeAccess, type WorkspaceRole } from "./access.js";
 import { parseChangeWindow } from "./changeWindow.js";
 import { CommandHandler } from "./commandHandler.js";
+import { isGuid } from "./guids.js";
 import type { ScopeDeclaration } from "./scopeRegistry.js";
 import { routingDiagnostics, type RoutingDiagnostics } from "./comparison.js";
 import {
@@ -49,9 +50,6 @@ export type ScopeSummary = {
   summary: string | null;
   aliases: string[];
 };
-
-/** Guarded before a guid lookup so a non-uuid slug never reaches Postgres as a uuid cast. */
-const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export class ScopeNotFoundError extends Error {
   constructor(scope: string) {
@@ -250,7 +248,8 @@ export class KnowledgeDatabase {
       return bySlug.rows[0].scope_guid;
     }
 
-    if (UUID_PATTERN.test(scope)) {
+    // Guarded before the guid lookup so a non-uuid slug never reaches Postgres as a uuid cast.
+    if (isGuid(scope)) {
       const byGuid = await this.pool.query<{ scope_guid: string }>(
         `SELECT scope_guid FROM "${this.schemaName}".scopes
          WHERE workspace_guid = $1 AND scope_guid = $2 AND retired_at IS NULL`,
