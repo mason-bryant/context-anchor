@@ -147,7 +147,11 @@ export async function thinTelemetry(
       durationMs,
     };
   } catch (error) {
-    await client.query("ROLLBACK");
+    // The rollback's own failure is discarded, never rethrown. If the connection dropped, that
+    // is why the pass failed and ROLLBACK is guaranteed to fail too — rethrowing it would
+    // replace the error that explains the problem with one that merely restates its
+    // consequence, and the transaction is already gone either way.
+    await client.query("ROLLBACK").catch(() => {});
     throw error;
   } finally {
     client.release();
