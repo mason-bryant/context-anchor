@@ -291,6 +291,25 @@ describe.runIf(await isTestDatabaseReachable())("telemetry retention (real Postg
     ).rejects.toThrow(/taskTextDays "0"/);
   });
 
+  it("reports the last workspace-wide pass, not a narrowed one that ran after it", async () => {
+    // The backlog beside it counts every workspace, so a run narrowed to one would put that
+    // workspace's counts next to a schema-wide number with nothing saying they differ. Nothing
+    // narrows a pass today; the parameter exists, which is enough. Raised in review on 8672d8d.
+    await askAt("anchor mcp", daysAgo(120));
+    const wide = await thinTelemetry(pool, telemetrySchema, POLICY, { now: () => daysAgo(3) });
+    await thinTelemetry(pool, telemetrySchema, POLICY, {
+      now: () => NOW,
+      workspaceGuid: bootstrap.workspaceGuid,
+    });
+
+    const status = await telemetryRetentionStatus(pool, telemetrySchema, POLICY, { now: () => NOW });
+    expect(status.lastRanAt).toBe(wide.ranAt);
+    // Both runs are recorded. The narrowed one is simply not what this line answers.
+    expect(
+      await countOf(`SELECT count(*)::text AS n FROM "${telemetrySchema}".telemetry_retention_runs`),
+    ).toBe(2);
+  });
+
   it("refuses an unusable policy when reporting status, not only when applying it", async () => {
     // Status reports what is "past its window". An unusable policy does not make that question
     // unanswerable -- it makes it answerable and wrong, which is worse: a backlog of zero reads

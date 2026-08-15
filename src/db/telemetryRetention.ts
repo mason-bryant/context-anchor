@@ -159,11 +159,19 @@ export async function thinTelemetry(
 }
 
 export type TelemetryRetentionStatus = {
-  /** Null when retention has never run, which is the state this whole task exists to make visible. */
+  /**
+   * The last pass that covered the whole schema, or null when none ever has — the state this
+   * task exists to make visible.
+   *
+   * Workspace-wide deliberately, because the backlog it sits beside is workspace-wide. A pass
+   * narrowed to one workspace reports counts that apply only to that workspace, and showing
+   * those next to a schema-wide backlog would read as though the two described the same thing.
+   * Narrowed passes are still recorded; they are just not what this line answers.
+   */
   lastRanAt: string | null;
   lastTaskTextRedacted: number | null;
   lastRequestsDeleted: number | null;
-  /** Rows that the current policy would act on if a pass ran right now. */
+  /** Rows that the current policy would act on if a pass ran right now, across every workspace. */
   requestsPastWindow: number;
   taskTextPastWindow: number;
 };
@@ -194,8 +202,12 @@ export async function telemetryRetentionStatus(
     task_text_redacted: number;
     requests_deleted: number;
   }>(
+    // Global passes only. Nothing narrows a pass today -- both the scheduled job and `db thin`
+    // cover every workspace -- but the parameter exists, and a narrowed run landing here would
+    // put one workspace's counts beside a schema-wide backlog with nothing saying they differ.
     `SELECT ran_at, task_text_redacted, requests_deleted
        FROM "${telemetrySchemaName}".telemetry_retention_runs
+      WHERE workspace_guid IS NULL
       ORDER BY ran_at DESC
       LIMIT 1`,
   );
