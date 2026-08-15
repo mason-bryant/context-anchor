@@ -3,7 +3,7 @@ import pg from "pg";
 
 import { COMPOSE_MANAGED_DATABASE_URL } from "../src/db/cliArgs.js";
 import { CommandHandler } from "../src/db/commandHandler.js";
-import { ASSERTION_KINDS, createAssertion } from "../src/db/createAssertion.js";
+import { createAssertion } from "../src/db/createAssertion.js";
 import { parseArgs } from "./authorAssertionArgs.js";
 
 /**
@@ -129,9 +129,6 @@ async function main(): Promise<void> {
       ["--quote", args.quote],
     ] as const) {
       if (value === undefined) throw new Error(`${flag} is required to create an assertion.`);
-    }
-    if (!ASSERTION_KINDS.includes(args.kind!)) {
-      throw new Error(`--kind ${JSON.stringify(args.kind)} is not one of: ${ASSERTION_KINDS.join(", ")}.`);
     }
 
     const owner = await pool.query<{ principal_guid: string }>(

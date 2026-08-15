@@ -101,6 +101,15 @@ describe("author-assertion argument parsing", () => {
     expect(() => parseArgs(create().map((t) => (t === "a quote" ? "   " : t)))).not.toThrow();
   });
 
+  it("refuses a kind that is not one of the eight", () => {
+    // The cast made the return type a lie: any string arrived typed as AssertionKind, and the
+    // real check lived in whichever command happened to run next.
+    expect(() => parseArgs(create().map((t) => (t === "decision" ? "opinion" : t)))).toThrow(
+      /--kind "opinion" is not one of/,
+    );
+    expect(parseArgs(create()).kind).toBe("decision");
+  });
+
   it("does not demand authoring fields when only listing", () => {
     // --list is a read. Requiring a block guid to look at a scope's material would make the
     // listing useless for deciding what to cite.

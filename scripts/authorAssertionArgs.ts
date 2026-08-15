@@ -116,7 +116,18 @@ export function parseArgs(argv: string[]): Args {
     }
     else if (arg === "--schema") { args.schema = take(index); index += step(index); }
     else if (arg === "--scope") { args.scope = take(index); index += step(index); }
-    else if (arg === "--kind") { args.kind = take(index) as AssertionKind; index += step(index); }
+    else if (arg === "--kind") {
+      // Validated here rather than cast. `as AssertionKind` made the return type a lie: a caller
+      // received an arbitrary string typed as one of eight kinds, and the check lived downstream
+      // in the command that happened to use it. The MCP surface rejects unknown kinds at its
+      // schema; this is the same boundary.
+      const kind = take(index);
+      if (!(ASSERTION_KINDS as readonly string[]).includes(kind)) {
+        throw new Error(`--kind ${JSON.stringify(kind)} is not one of: ${ASSERTION_KINDS.join(", ")}.`);
+      }
+      args.kind = kind as AssertionKind;
+      index += step(index);
+    }
     else if (arg === "--title") { args.title = take(index); index += step(index); }
     else if (arg === "--content") { args.content = take(index); index += step(index); }
     else if (arg === "--block") { args.block = take(index); index += step(index); }
