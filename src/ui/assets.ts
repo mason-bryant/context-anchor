@@ -534,7 +534,7 @@ export const UI_HTML = `<!doctype html>
               <input id="compare-paths" type="text" placeholder="comma separated, optional" aria-label="Referenced paths">
               <label for="compare-disclosure">Disclosure</label>
               <select id="compare-disclosure" aria-label="How much of each answer to disclose">
-                <option value="plan" selected>Plan only &mdash; routes and reasons</option>
+                <option value="plan" selected>Plan only &mdash; routes, reasons and links</option>
                 <option value="agent">As an agent receives it</option>
                 <option value="full">Everything both sides can offer</option>
               </select>
@@ -12393,6 +12393,10 @@ export const UI_JS = `(function () {
       var task = el("compare-task").value.trim();
       var errorBox = el("compare-error");
       errorBox.hidden = true;
+      // Before the validation, not after it. A note describing the previous run outlives any
+      // path that leaves without producing a new one -- an empty task returns early, and a
+      // failed fetch never reaches the render.
+      el("compare-disclosure-note").hidden = true;
       if (!task) {
         errorBox.textContent = "Enter a task to compare.";
         errorBox.hidden = false;
@@ -12428,7 +12432,7 @@ export const UI_JS = `(function () {
           (result.routedRecordLexical && result.routedRecordLexical.budget) || null;
         var shown = result.disclosure || disclosure;
         var wording = {
-          plan: "Plan only: routes and their reasons, no records, against the legacy planner's own plan. The symmetric comparison for judging routing.",
+          plan: "Plan only: routes, their reasons, and a link per record -- no record content -- against the legacy planner's own plan. The symmetric comparison for judging routing.",
           agent: "As an agent receives it: planRoutedBundle at its defaults, against the legacy plan with its anchors loaded.",
           full: "Everything both sides can offer. More than an agent receives -- useful for seeing how far a signal widens an answer, not for judging what an agent would get."
         };
