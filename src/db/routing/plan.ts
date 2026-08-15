@@ -103,11 +103,16 @@ export type PlanInput = {
   /**
    * Match task terms against assertion titles and section headings as well as scope names.
    *
-   * Off unless asked for. It is the fix for tasks that name no scope reaching nothing at all
-   * (T-45), but it widens answers sharply on the same workspace — "proposals and review" goes
-   * from 2 routes to 15 of 23 — and 15 of 23 scopes is not a route, it is the workspace with
-   * extra steps. Which trade is right is settled by judging the routes it adds, not by a
-   * default chosen here.
+   * On unless refused, from 2026-08-16. It is the fix for tasks that name no scope reaching
+   * nothing at all (T-45): on the real workspace the corpus goes from 86% of tasks returning
+   * nothing to 18%.
+   *
+   * It does widen answers sharply — four corpus tasks exceed their route ceiling and two select
+   * half the workspace, all of them template or stopword vocabulary that reaches every scope by
+   * construction (T-51). That was the reason it stayed off, and the reason has changed rather
+   * than the noise: the measurement was taken when `expanded` defaulted to 2, where a weak match
+   * cost tens of kilobytes of prose. With nothing expanded by default it costs a line of JSON,
+   * so the trade is now silence against a longer list rather than silence against a bill.
    *
    * This comment used to name the shadow ranker as the way to settle it. That was wrong:
    * selection runs once and every shadow ranker receives that same candidate array, so a
@@ -245,8 +250,8 @@ function toLink(record: RouteRecord): RouteRecordLink {
  *
  * Stateless in the strong sense — the caller resupplies the task on expansion and the
  * server retains nothing between calls. `requestId` is a telemetry correlation token only
- * and is never an input to recomputation, which is what lets task text stay opt-in and
- * makes current permissions apply automatically.
+ * and is never an input to recomputation, which is what lets task text be refusable per request
+ * and makes current permissions apply automatically.
  */
 export async function planRoutedBundle(
   pool: Pool,

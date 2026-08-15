@@ -242,9 +242,10 @@ export type SelectionInput = {
   task: string;
   referencedPaths?: string[];
   /**
-   * Off by default (T-46). Matches task terms against assertion titles and section headings so
-   * ordinary phrasing can reach a scope at all; flagged because it adds a signal kind, and tier
-   * 1 of the ranking rule counts distinct kinds, so enabling it changes existing orderings.
+   * On unless refused, from 2026-08-16 (T-46). Matches task terms against assertion titles and
+   * section headings so ordinary phrasing can reach a scope at all. Still a flag because it adds
+   * a signal kind, and tier 1 of the ranking rule counts distinct kinds, so refusing it changes
+   * orderings as well as membership -- the gate's baseline pane refuses it for exactly that.
    */
   recordLexical?: boolean;
 };
