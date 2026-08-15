@@ -12434,7 +12434,11 @@ export const UI_JS = `(function () {
         var wording = {
           plan: "Plan only: routes, their reasons, and a link per record -- no record content -- against the legacy planner's own plan. The symmetric comparison for judging routing.",
           agent: "As an agent receives it: planRoutedBundle at its defaults, against the legacy plan with its anchors loaded.",
-          full: "Everything both sides can offer. More than an agent receives -- useful for seeing how far a signal widens an answer, not for judging what an agent would get."
+          full: "Everything both sides can offer. More than an agent receives -- useful for seeing how far a signal widens an answer, not for judging what an agent would get.",
+          // The server reports this once an explicit expand-top has moved the request off a
+          // preset. Added late, because the label was introduced server-side without a wording
+          // here, so the note rendered a bare "custom" and explained nothing.
+          custom: "Custom: the expand-top setting has moved this off a preset, so it is neither the agent's answer nor a preset comparison. Read the budget below for what was actually asked for."
         };
         note.textContent = (wording[shown] || shown) +
           (budget ? " Budget: listed " + budget.listed + ", expanded " + budget.expanded +

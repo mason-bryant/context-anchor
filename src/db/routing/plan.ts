@@ -123,9 +123,14 @@ export type PlannedRoute = {
   /**
    * The records this route holds, as links, when it was listed rather than expanded.
    *
-   * Present exactly when `expanded` is false. Expanding costs a round trip through
-   * expandRoutes, which is stateless — the caller supplies the task again — so a link is a
-   * real address rather than a promise the server has to remember.
+   * Present when a route was listed rather than expanded *and* resolved to a real scope. A
+   * route reported `unavailable` — a stale key the caller asked to expand — also carries
+   * `expanded: false` and has nothing to link to, so "exactly when expanded is false" was
+   * wrong, and wrong in the direction that makes a consumer trust an absent field.
+   *
+   * Expanding costs a round trip through expandRoutes, which is stateless — the caller supplies
+   * the task again — so a link is a real address rather than a promise the server has to
+   * remember.
    */
   recordLinks?: RouteRecordLink[];
   /** True when the route holds more records than the budget returned, so a caller knows the slice is partial. */
