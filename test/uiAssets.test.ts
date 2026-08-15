@@ -386,6 +386,22 @@ describe("UI browser assets", () => {
     expect(UI_JS).toContain('view: "questions"');
   });
 
+  it("dispatches every tab that has a view function, rather than only activating it", () => {
+    // A tab whose click falls through to the bare showTab() gets its panel shown and nothing
+    // else: no fetch, and no URL. Questions shipped that way and the assertions above passed
+    // anyway, because they proved the view function pushes a URL without proving anything
+    // calls it. Written over all tabs rather than over "questions", since naming the one tab
+    // that was broken is how the next one gets missed.
+    const views = [...UI_JS.matchAll(/function show([A-Z]\w*)View\(/g)].map((match) => match[1]!);
+    expect(views.length).toBeGreaterThan(3);
+
+    const undispatched = views
+      .map((view) => view.charAt(0).toLowerCase() + view.slice(1))
+      .filter((tab) => UI_HTML.includes(`data-tab="${tab}"`))
+      .filter((tab) => !UI_JS.includes(`button.dataset.tab === "${tab}"`));
+    expect(undispatched).toEqual([]);
+  });
+
   it("includes the planner tab, controls, and output regions", () => {
     expect(UI_HTML).toContain('data-tab="planner"');
     expect(UI_HTML).toContain('id="planner-task"');

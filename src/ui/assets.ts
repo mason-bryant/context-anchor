@@ -12381,6 +12381,10 @@ export const UI_JS = `(function () {
           showCompareView();
           return;
         }
+        if (button.dataset.tab === "questions") {
+          showQuestionsView();
+          return;
+        }
         if (button.dataset.tab === "graph") {
           showGraphView();
           return;
