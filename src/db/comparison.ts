@@ -1,3 +1,4 @@
+import { INSTRUMENT_CONSUMERS } from "./instrumentConsumers.js";
 import type { Pool } from "pg";
 
 /**
@@ -27,34 +28,6 @@ export type RoutingDiagnostics = {
  * Read straight from the telemetry schema rather than recomputed, so the diagnostics
  * describe what callers were actually offered rather than what a replay would produce now.
  */
-/**
- * Consumers whose traffic is the instrument rather than the thing being measured.
- *
- * The comparison gate plans a task to show a person two answers side by side; nobody acts on
- * those routes, and nothing is ever expanded beyond the first few. Counted as retrieval, they
- * answer "which routes are dead weight" with routes that were only ever offered by the panel
- * asking the question — and the panel renders these diagnostics on the same screen, so a
- * reader watches the numbers they are generating. Twenty-five judged tasks produce over a
- * thousand such impressions.
- *
- * Listed exactly rather than matched by prefix. `consumer` is caller-supplied — the
- * planRoutedBundle tool takes any non-empty string — so a prefix rule lets any agent that names
- * itself `comparison-gate-anything` erase itself from every diagnostic, permanently and
- * retroactively, and would swallow a future legitimate consumer whose name merely begins the
- * same way. The cost of an exact list is that a new gate tag must be added here, which is a
- * change someone makes deliberately.
- *
- * Bound as a parameter rather than interpolated: values spliced into SQL are a habit that
- * outlives the constant that made them safe.
- */
-const INSTRUMENT_CONSUMERS = [
-  "comparison-gate",
-  "comparison-gate-record-lexical",
-  // The task corpus (T-50). Twenty-eight tasks per run, and one of them offers every scope in
-  // the workspace by design — counted as retrieval they answer "which routes are dead weight"
-  // with routes only ever offered by the instrument asking the question.
-  "routing-corpus",
-];
 
 /**
  * Applied at every site rather than to some of them -- seven predicates across four statements,

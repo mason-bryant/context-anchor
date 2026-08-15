@@ -6043,7 +6043,7 @@ export const UI_JS = `(function () {
   function renderQuestions(payload) {
     var questions = payload.questions || [];
     if (questions.length === 0) {
-      return "<p class=\"empty\">No questions recorded yet.</p>";
+      return "<p class=\\"empty\\">No questions recorded yet.</p>";
     }
     return questions
       .map(function (question) {
@@ -6058,28 +6058,28 @@ export const UI_JS = `(function () {
           .map(function (route) {
             return "<li>" + escapeHtml(route.routeKey) +
               (route.expanded ? " <em>expanded</em>" : " <em>listed</em>") +
-              " <span class=\"compare-count\">" + route.recordCount + " record(s)</span></li>";
+              " <span class=\\"compare-count\\">" + route.recordCount + " record(s)</span></li>";
           })
           .join("");
         var silent = question.routesOffered === 0
-          ? " <span class=\"badge\">NO ROUTES</span>"
+          ? " <span class=\\"badge\\">NO ROUTES</span>"
           : "";
         var budget = question.routeBudget
           ? " &middot; budget listed " + question.routeBudget.listed + ", expanded " + question.routeBudget.expanded
           : "";
         return (
-          "<article class=\"compare-route\">" +
+          "<article class=\\"compare-route\\">" +
           "<h4>" + asked + silent + "</h4>" +
-          "<p class=\"compare-applies\">" + escapeHtml(new Date(question.askedAt).toLocaleString()) +
+          "<p class=\\"compare-applies\\">" + escapeHtml(new Date(question.askedAt).toLocaleString()) +
           (question.consumer ? " &middot; " + escapeHtml(question.consumer) : "") +
           " &middot; " + escapeHtml(question.ranker.id) + " " + escapeHtml(question.ranker.version) +
           budget + "</p>" +
-          "<p class=\"compare-count\">" + question.routesOffered + " offered, " +
+          "<p class=\\"compare-count\\">" + question.routesOffered + " offered, " +
           question.routesExpanded + " expanded, " + question.recordUses + " used</p>" +
-          (routes ? "<ul class=\"compare-records\">" + routes + "</ul>" : "") +
+          (routes ? "<ul class=\\"compare-records\\">" + routes + "</ul>" : "") +
           (question.taskText
-            ? "<button type=\"button\" class=\"questions-rerun\" data-task=\"" +
-              escapeHtml(question.taskText) + "\">Re-run in Compare</button>"
+            ? "<button type=\\"button\\" class=\\"questions-rerun\\" data-task=\\"" +
+              escapeHtml(question.taskText) + "\\">Re-run in Compare</button>"
             : "") +
           "</article>"
         );
@@ -6092,7 +6092,7 @@ export const UI_JS = `(function () {
     var note = el("questions-note");
     errorBox.hidden = true;
     note.hidden = true;
-    el("questions-list").innerHTML = "<p class=\"empty\">Loading…</p>";
+    el("questions-list").innerHTML = "<p class=\\"empty\\">Loading…</p>";
 
     var query = "/api/db/questions?limit=" + encodeURIComponent(el("questions-limit").value || "50");
     if (el("questions-instruments").checked) { query += "&instruments=true"; }

@@ -513,7 +513,14 @@ describe("CLI args — config.database (poolSize, schemaName)", () => {
     await writeFile(configPath, JSON.stringify({ database: { poolSize: 4, schemaName: "knowledge_dev" } }), "utf8");
 
     const options = parseCliArgs(["--config", configPath], {});
-    expect(options.config.database).toEqual({ poolSize: 4, schemaName: "knowledge_dev" });
+    // storeTaskText comes through resolved too: a config block that named only poolSize and
+    // schemaName still carries the retention decision, and asserting the whole object is what
+    // makes a silently-added or silently-dropped setting visible here.
+    expect(options.config.database).toEqual({
+      poolSize: 4,
+      schemaName: "knowledge_dev",
+      storeTaskText: true,
+    });
   });
 
   it("defaults poolSize and schemaName when the database block is empty", async () => {
@@ -522,7 +529,11 @@ describe("CLI args — config.database (poolSize, schemaName)", () => {
     await writeFile(configPath, JSON.stringify({ database: {} }), "utf8");
 
     const options = parseCliArgs(["--config", configPath], {});
-    expect(options.config.database).toEqual({ poolSize: 10, schemaName: "knowledge" });
+    expect(options.config.database).toEqual({
+      poolSize: 10,
+      schemaName: "knowledge",
+      storeTaskText: true,
+    });
   });
 
   it("rejects a non-object database config value", async () => {

@@ -1,6 +1,7 @@
 import type { Pool } from "pg";
 
 import { assertValidSchemaName } from "./config.js";
+import { INSTRUMENT_CONSUMERS } from "./instrumentConsumers.js";
 
 /**
  * The questions agents actually asked, and what came back (T-50 follow-on).
@@ -45,16 +46,6 @@ export type QuestionsQuery = {
   /** Only questions whose text was recorded, for a reader who wants to skip the hash-only rows. */
   withTextOnly?: boolean;
 };
-
-/**
- * Consumers that are this project measuring itself.
- *
- * The same list `routingDiagnostics` excludes, and for the same reason: a corpus run is
- * twenty-eight questions nobody asked, and the comparison gate is a person driving the
- * instrument. Counted here they would swamp real traffic, which on this workspace is a few
- * dozen rows against several hundred.
- */
-const INSTRUMENT_CONSUMERS = ["comparison-gate", "comparison-gate-record-lexical", "routing-corpus"];
 
 const DEFAULT_LIMIT = 50;
 const MAX_LIMIT = 500;
