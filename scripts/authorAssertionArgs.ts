@@ -37,7 +37,17 @@ export type CreateArgs = {
   quote: string;
 };
 
-export type Args = ListArgs | CreateArgs;
+/**
+ * `--help` as a mode rather than a side effect.
+ *
+ * Printing and calling process.exit inside the parser made it unusable from anywhere that is
+ * not a terminal — including a test, where it would take the runner down with it. Extracting
+ * this module for testing and then exiting the process from it is the sort of thing that only
+ * shows up the first time someone writes `parseArgs(["--help"])`.
+ */
+export type HelpArgs = { mode: "help"; usage: string };
+
+export type Args = ListArgs | CreateArgs | HelpArgs;
 
 /** The parser's own working shape, before it has established which mode it is in. */
 type PartialArgs = {
@@ -67,7 +77,7 @@ type PartialArgs = {
 /** Same shape the rest of the codebase uses for a record guid. */
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-export const KNOWN_FLAGS = new Set([
+const KNOWN_FLAGS = new Set([
   "--list",
   "--schema",
   "--scope",
@@ -174,7 +184,9 @@ export function parseArgs(argv: string[]): Args {
       index += step(index);
     }
     else if (arg === "--help" || arg === "-h") {
-      console.log(
+      return {
+        mode: "help",
+        usage:
         `Usage:\n` +
           `  npm run author -- --scope <slug> --list [--min-length N]\n` +
           `      Blocks in that scope, with guids and text, as authoring material.\n\n` +
@@ -185,8 +197,7 @@ export function parseArgs(argv: string[]): Args {
           `  --schema defaults to anchor_real.\n` +
           `  --flag=value is accepted too, and is required when a value is exactly a flag name,\n` +
           `  e.g. --quote=--list\n`,
-      );
-      process.exit(0);
+      };
     } else {
       // Fails rather than ignoring. A typo'd flag in a command that writes is a value silently
       // dropped, and the write still happens -- with the wrong content, or under a default the

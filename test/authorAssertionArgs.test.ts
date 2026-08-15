@@ -131,6 +131,15 @@ describe("author-assertion argument parsing", () => {
     );
   });
 
+  it("reports --help as a mode instead of exiting the process", () => {
+    // Printing and exiting from the parser made it unusable from anywhere that is not a
+    // terminal. Called from here, it would have taken the test runner down with it.
+    const args = parseArgs(["--help"]);
+    expect(args.mode).toBe("help");
+    if (args.mode !== "help") throw new Error("unreachable");
+    expect(args.usage).toMatch(/--quote=--list/);
+  });
+
   it("does not demand authoring fields when only listing", () => {
     // --list is a read. Requiring a block guid to look at a scope's material would make the
     // listing useless for deciding what to cite.

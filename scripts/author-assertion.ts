@@ -28,6 +28,12 @@ import { parseArgs } from "./authorAssertionArgs.js";
 
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
+  // The entry point decides what --help does. The parser only reports that it was asked for,
+  // so it stays callable from anywhere that is not a terminal.
+  if (args.mode === "help") {
+    console.log(args.usage);
+    return;
+  }
   const schema = args.schema;
   const pool = new pg.Pool({
     connectionString: process.env.DATABASE_URL ?? COMPOSE_MANAGED_DATABASE_URL,
