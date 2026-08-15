@@ -1,6 +1,18 @@
 import { describe, expect, it } from "vitest";
 
-import { parseArgs } from "../scripts/authorAssertionArgs.js";
+import { parseArgs, type CreateArgs, type ListArgs } from "../scripts/authorAssertionArgs.js";
+
+/** Parses and asserts the mode, so a test reads only the fields that mode guarantees. */
+const asCreate = (argv: string[]): CreateArgs => {
+  const args = parseArgs(argv);
+  if (args.mode !== "create") throw new Error("expected create mode");
+  return args;
+};
+const asList = (argv: string[]): ListArgs => {
+  const args = parseArgs(argv);
+  if (args.mode !== "list") throw new Error("expected list mode");
+  return args;
+};
 
 const BLOCK = "0bf16885-9dfe-489a-9f6f-820b7baedddd";
 const create = (...extra: string[]): string[] => [
@@ -24,16 +36,15 @@ const create = (...extra: string[]): string[] => [
  */
 describe("author-assertion argument parsing", () => {
   it("reads a value attached with = as one token", () => {
-    const args = parseArgs(["--scope=abac", "--list"]);
+    const args = asList(["--scope=abac", "--list"]);
     expect(args.scope).toBe("abac");
-    expect(args.list).toBe(true);
   });
 
   it("does not let an inline flag swallow the argument after it", () => {
     // The regression: every branch advanced the cursor by one, which is right for `--flag value`
     // and wrong for `--flag=value`. `--title=x --content=y` lost the content, and the error
     // named --content rather than the parser.
-    const inlined = parseArgs(["--scope=abac", "--kind=decision", "--title=x", "--content=y", "--block=" + BLOCK, "--quote=z"]);
+    const inlined = asCreate(["--scope=abac", "--kind=decision", "--title=x", "--content=y", "--block=" + BLOCK, "--quote=z"]);
     expect(inlined.title).toBe("x");
     expect(inlined.content).toBe("y");
     expect(inlined.quote).toBe("z");
@@ -42,19 +53,19 @@ describe("author-assertion argument parsing", () => {
 
   it("accepts a value that is exactly a flag name, via =", () => {
     // The case the = form exists for. Space-separated this is genuinely ambiguous.
-    const args = parseArgs(["--scope=abac", "--kind=decision", "--title=--list", "--content=y", "--block=" + BLOCK, "--quote=--list"]);
+    const args = asCreate(["--scope=abac", "--kind=decision", "--title=--list", "--content=y", "--block=" + BLOCK, "--quote=--list"]);
     expect(args.quote).toBe("--list");
     expect(args.title).toBe("--list");
   });
 
   it("accepts a quote that merely starts with dashes", () => {
     // Ordinary in the material being cited: a SQL comment, a Markdown rule, a diff line.
-    const args = parseArgs(create().slice(0, -1).concat(["-- a sql comment"]));
+    const args = asCreate(create().slice(0, -1).concat(["-- a sql comment"]));
     expect(args.quote).toBe("-- a sql comment");
   });
 
   it("mixes = and space forms in one command", () => {
-    const args = parseArgs(["--scope", "abac", "--kind=decision", "--title", "t", "--content=c", "--block", BLOCK, "--quote=q"]);
+    const args = asCreate(["--scope", "abac", "--kind=decision", "--title", "t", "--content=c", "--block", BLOCK, "--quote=q"]);
     expect(args).toMatchObject({ scope: "abac", kind: "decision", title: "t", content: "c", quote: "q" });
   });
 
@@ -86,7 +97,7 @@ describe("author-assertion argument parsing", () => {
     // writing a second assertion that a retry never converges on. The quote is the opposite
     // case: it must match the block byte for byte, and reshaping it silently is the failure
     // the citation check exists to prevent.
-    const args = parseArgs(create().map((t) =>
+    const args = asCreate(create().map((t) =>
       t === "a title" ? "  a title  " : t === "a quote" ? "  a quote  " : t,
     ));
     expect(args.title).toBe("a title");
@@ -107,7 +118,7 @@ describe("author-assertion argument parsing", () => {
     expect(() => parseArgs(create().map((t) => (t === "decision" ? "opinion" : t)))).toThrow(
       /--kind "opinion" is not one of/,
     );
-    expect(parseArgs(create()).kind).toBe("decision");
+    expect(asCreate(create()).kind).toBe("decision");
   });
 
   it("names a missing authoring flag before anything opens a connection", () => {
@@ -135,6 +146,6 @@ describe("author-assertion argument parsing", () => {
   it("rejects a non-numeric or negative --min-length before it reaches the query", () => {
     expect(() => parseArgs(["--scope", "abac", "--list", "--min-length", "abc"])).toThrow(/non-negative whole number/);
     expect(() => parseArgs(["--scope", "abac", "--list", "--min-length", "-5"])).toThrow(/non-negative whole number/);
-    expect(parseArgs(["--scope", "abac", "--list", "--min-length", "0"]).minLength).toBe(0);
+    expect(asList(["--scope", "abac", "--list", "--min-length", "0"]).minLength).toBe(0);
   });
 });

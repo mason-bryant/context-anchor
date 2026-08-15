@@ -11,7 +11,36 @@ import { assertValidSchemaName } from "../src/db/config.js";
  * This is the entry point that writes assertions to a real database.
  */
 
-export type Args = {
+/**
+ * What the parser guarantees, expressed in the type rather than left to the caller.
+ *
+ * A single optional-everything shape meant the CLI reached for `!` on five fields in a path that
+ * writes to a database — asserting a guarantee the type did not carry, in the one place where
+ * being wrong means an assertion authored from undefined. The parser already refuses each of
+ * these; the union is how it says so.
+ */
+export type ListArgs = {
+  mode: "list";
+  schema: string;
+  scope: string;
+  minLength: number;
+};
+
+export type CreateArgs = {
+  mode: "create";
+  schema: string;
+  scope: string;
+  kind: AssertionKind;
+  title: string;
+  content: string;
+  block: string;
+  quote: string;
+};
+
+export type Args = ListArgs | CreateArgs;
+
+/** The parser's own working shape, before it has established which mode it is in. */
+type PartialArgs = {
   schema: string;
   scope: string | undefined;
   list: boolean;
@@ -53,7 +82,7 @@ export const KNOWN_FLAGS = new Set([
 ]);
 
 export function parseArgs(argv: string[]): Args {
-  const args: Args = {
+  const args: PartialArgs = {
     schema: "anchor_real",
     scope: undefined,
     list: false,
@@ -174,12 +203,13 @@ export function parseArgs(argv: string[]): Args {
   // for type uuid`, and a whitespace title is authored -- while the MCP surface for the same
   // operation trims and requires min(1) on all three. Two entry points to one command should
   // not disagree about what is a legal claim.
-  args.scope = args.scope?.trim();
-  if (args.scope === undefined || args.scope.length === 0) {
+  const scope = args.scope?.trim();
+  if (scope === undefined || scope.length === 0) {
     throw new Error("--scope is required. See --help.");
   }
+  args.scope = scope;
   if (args.list) {
-    return args;
+    return { mode: "list", schema: args.schema, scope: args.scope, minLength: args.minLength };
   }
 
   // Trimmed, not merely checked for blankness. The MCP surface trims these, and the default
@@ -225,7 +255,19 @@ export function parseArgs(argv: string[]): Args {
   if (args.block !== undefined && !UUID_PATTERN.test(args.block)) {
     throw new Error(`--block ${JSON.stringify(args.block)} is not a uuid.`);
   }
-  return args;
+
+  // Narrowed by the loop above, which throws on any of them being undefined. Assembled
+  // explicitly so the compiler carries the guarantee to every caller.
+  return {
+    mode: "create",
+    schema: args.schema,
+    scope: args.scope,
+    kind: args.kind as AssertionKind,
+    title: args.title as string,
+    content: args.content as string,
+    block: args.block as string,
+    quote: args.quote as string,
+  };
 }
 
 

@@ -53,7 +53,7 @@ async function main(): Promise<void> {
     }
     const workspaceGuid = workspaces.rows[0]!.workspace_guid;
 
-    if (args.list) {
+    if (args.mode === "list") {
       // Current revision only. A block from a superseded revision still has a row, and citing it
       // would anchor a claim to text the commit no longer contains.
       const blocks = await pool.query<{
@@ -136,11 +136,11 @@ async function main(): Promise<void> {
       handler: new CommandHandler(pool, schema),
       workspaceGuid,
       actorPrincipalGuid,
-      scopeSlug: args.scope!,
-      kind: args.kind!,
-      title: args.title!,
-      content: args.content!,
-      citation: { blockGuid: args.block!, exactQuote: args.quote! },
+      scopeSlug: args.scope,
+      kind: args.kind,
+      title: args.title,
+      content: args.content,
+      citation: { blockGuid: args.block, exactQuote: args.quote },
     });
 
     console.log(
