@@ -5,7 +5,7 @@ import type { AnchorSchemaMode, FileLoggingConfig, LoggingConfig, RequestLogging
 import { ANCHOR_SCHEMA_MODES } from "../types.js";
 import { assertValidDatabaseUrl, resolveDatabaseConfig, type DatabaseConfig, type TelemetryRetentionSettings } from "../db/config.js";
 import { parseDbCliArgs, type DbCliArgs } from "../db/cliArgs.js";
-import { parseSkillAgents, type InstallSkillArgs } from "./installSkill.js";
+import { SKILL_AGENTS, parseSkillAgents, type InstallSkillArgs } from "./installSkill.js";
 import { expandHome } from "../utils/path.js";
 import { DEFAULT_GRAPH_SCORING_ENABLED, DEFAULT_GRAPH_SCORING_MAX_BOOST, clampGraphScoringMaxBoost } from "../graph/proximity.js";
 
@@ -23,7 +23,7 @@ Commands (default: serve)
   db <command>                  Manage the database (see below)
 
 Install
-  --agent <list>                claude, cursor, or both (default: both)
+  --agent <list>                ${SKILL_AGENTS.join(" and/or ")}, comma-separated (default: all)
   --stealth                     Keep the install out of git
   --force                       Overwrite a file of the same name that anchor-mcp did not write
 

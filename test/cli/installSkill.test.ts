@@ -11,8 +11,8 @@ import {
   renderClaudeSkill,
   renderCursorRule,
 } from "../../src/builtin/agentSkill.js";
-import { parseCliArgs } from "../../src/cli/args.js";
-import { installSkill, parseSkillAgents } from "../../src/cli/installSkill.js";
+import { HELP_TEXT, parseCliArgs } from "../../src/cli/args.js";
+import { SKILL_AGENTS, installSkill, parseSkillAgents } from "../../src/cli/installSkill.js";
 import type { AnchorService } from "../../src/anchorService.js";
 import { createAnchorMcpServer } from "../../src/server.js";
 
@@ -256,6 +256,20 @@ describe("install argument parsing", () => {
 
   it("leaves install absent for every other command", () => {
     expect(parseCliArgs(["status"], {}).install).toBeUndefined();
+  });
+
+  /**
+   * The help line said "claude, cursor, or both", which reads as offering `--agent both` -- a
+   * value the parser has never accepted. It is now built from SKILL_AGENTS, so the promise and
+   * the validation cannot disagree; this asserts the list a user is shown really does parse.
+   */
+  it("offers only agent names the parser accepts", () => {
+    const offered = /--agent <list>\s+(.+?), comma-separated/.exec(HELP_TEXT)?.[1];
+    expect(offered).toBeDefined();
+
+    const names = offered!.split(" and/or ");
+    expect(names).toEqual([...SKILL_AGENTS]);
+    expect(() => parseSkillAgents(names.join(","))).not.toThrow();
   });
 });
 

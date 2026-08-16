@@ -162,7 +162,7 @@ Run this anywhere inside the project you are working in — the code checkout, n
 repository. It installs at the working-tree root, which is where both harnesses read from:
 
 ```bash
-npx @mason/anchor-mcp install
+npx -y @mason/anchor-mcp@latest install
 ```
 
 It writes `.claude/skills/anchor-context/SKILL.md` and `.cursor/rules/anchor-context.mdc`:
@@ -174,7 +174,7 @@ wrote is replaced, and one it did not is refused unless you pass `--force`.
 To keep the install out of a repository you share:
 
 ```bash
-npx @mason/anchor-mcp install --stealth
+npx -y @mason/anchor-mcp@latest install --stealth
 ```
 
 The Claude Code skill then goes to `~/.claude/skills/`, where it covers every project. Cursor
