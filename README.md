@@ -40,7 +40,9 @@ consult the anchors when the topic changes rather than only at session start:
 npx -y @mason/anchor-mcp@latest install
 ```
 
-Add `--stealth` to keep it out of a shared repository.
+Add `--stealth` to keep it out of a shared repository. If you pinned a version above, pin the
+same one here: the skill it writes names the tools that version offers, so a skill from one
+release and a server from another can disagree about what an agent should call.
 
 For setup walkthroughs, see [QUICKSTART.md](QUICKSTART.md).
 
