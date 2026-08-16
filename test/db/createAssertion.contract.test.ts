@@ -184,9 +184,15 @@ describe.runIf(await isTestDatabaseReachable())("createAssertion (real Postgres)
     // rename: retained and reported as orphaned, never silently retired.
     const created = await author();
 
+    // Constrained to this workspace and to live rows. Every other query in this file is scoped
+    // that way, and a slug is not unique across workspaces or across retirement -- so the loose
+    // version would pick an arbitrary scope the day this schema holds a second one.
     const scope = await pool.query<{ scope_guid: string }>(
-      `SELECT scope_guid FROM "${schemaName}".scopes WHERE scope_slug = 'anchor-mcp'`,
+      `SELECT scope_guid FROM "${schemaName}".scopes
+        WHERE workspace_guid = $1 AND scope_slug = 'anchor-mcp' AND retired_at IS NULL`,
+      [bootstrap.workspaceGuid],
     );
+    expect(scope.rowCount, "fixture should hold exactly one live anchor-mcp scope").toBe(1);
     const before = await loadRouteRecords(pool, schemaName, bootstrap.workspaceGuid, scope.rows[0]!.scope_guid);
     const liveCitation = before.find((r) => r.ref.guid === created.assertionGuid)?.citations?.[0];
     expect(liveCitation?.stale).toBe(false);
@@ -214,6 +220,67 @@ describe.runIf(await isTestDatabaseReachable())("createAssertion (real Postgres)
     expect(record?.citations).toHaveLength(1);
     expect(record?.citations?.[0]?.quote).toBe("requires a bearer token");
     expect(record?.citations?.[0]?.stale).toBe(true);
+  });
+
+  it("marks a citation into a retired document as stale, not merely one into an old revision", async () => {
+    // The read-path counterpart. A retired document keeps its latest revision, so a revision test
+    // alone reported a citation into a deleted file as perfectly current.
+    const created = await author();
+    const scope = await pool.query<{ scope_guid: string }>(
+      `SELECT scope_guid FROM "${schemaName}".scopes
+        WHERE workspace_guid = $1 AND scope_slug = 'anchor-mcp' AND retired_at IS NULL`,
+      [bootstrap.workspaceGuid],
+    );
+
+    await importDocuments({
+      pool,
+      schemaName,
+      handler,
+      workspaceGuid: bootstrap.workspaceGuid,
+      actorPrincipalGuid: bootstrap.ownerPrincipalGuid,
+      repository: "agent-context",
+      commitSha: "e".repeat(40),
+      files: [],
+      retireAbsentUnder: [""],
+      scopes: [{ scope: "anchor-mcp", title: "Anchor MCP", kind: "domain", locators: [] }],
+    });
+
+    const records = await loadRouteRecords(pool, schemaName, bootstrap.workspaceGuid, scope.rows[0]!.scope_guid);
+    const record = records.find((r) => r.ref.guid === created.assertionGuid);
+    // The claim survives its source being deleted -- that is the point of marking rather than
+    // dropping -- and says its evidence is no longer in the workspace.
+    expect(record?.citations).toHaveLength(1);
+    expect(record?.citations?.[0]?.stale).toBe(true);
+  });
+
+  it("refuses a block from a document the pinned commit no longer contains", async () => {
+    // Retirement, not supersession. A retired document keeps its blocks and its latest revision,
+    // so a revision test alone called this current -- a claim authored against a deleted file.
+    // loadRouteRecords already refuses retired documents for sections; this is that rule reaching
+    // assertions. Raised in review on b62fb2d.
+    await importDocuments({
+      pool,
+      schemaName,
+      handler,
+      workspaceGuid: bootstrap.workspaceGuid,
+      actorPrincipalGuid: bootstrap.ownerPrincipalGuid,
+      repository: "agent-context",
+      commitSha: "d".repeat(40),
+      files: [],
+      // Claims to cover the whole repository, which is what lets an absent file be retired --
+      // the same argument `db import` makes.
+      retireAbsentUnder: [""],
+      scopes: [{ scope: "anchor-mcp", title: "Anchor MCP", kind: "domain", locators: [] }],
+    });
+
+    const doc = await pool.query<{ retired_at: Date | null }>(
+      `SELECT retired_at FROM "${schemaName}".source_documents WHERE workspace_guid = $1`,
+      [bootstrap.workspaceGuid],
+    );
+    expect(doc.rows[0]?.retired_at).not.toBeNull();
+
+    await expect(author()).rejects.toThrow(StaleBlockError);
+    await expect(author()).rejects.toThrow(/retired/);
   });
 
   it("refuses a block from a revision the workspace has moved past", async () => {

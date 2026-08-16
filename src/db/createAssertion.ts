@@ -91,10 +91,17 @@ export class ScopeNotFoundForAssertionError extends Error {
  * would go looking for a typo in a guid that resolves perfectly well.
  */
 export class StaleBlockError extends Error {
-  constructor(public readonly blockGuid: string) {
+  constructor(
+    public readonly blockGuid: string,
+    /** Which way it is out of date, since the two need different things done about them. */
+    public readonly reason: "superseded" | "retired" = "superseded",
+  ) {
     super(
-      `Block ${blockGuid} belongs to a superseded revision of its document. Cite a block from the ` +
-        `current revision: the text this one holds is not text the workspace now contains.`,
+      reason === "retired"
+        ? `Block ${blockGuid} belongs to a document the workspace has retired. There is no current ` +
+          `revision to cite: the pinned commit no longer contains that file.`
+        : `Block ${blockGuid} belongs to a superseded revision of its document. Cite a block from ` +
+          `the current revision: the text this one holds is not text the workspace now contains.`,
     );
     this.name = "StaleBlockError";
   }
@@ -274,7 +281,7 @@ async function loadBlock(
   tx: CommandTransaction,
   input: CreateAssertionInput,
 ): Promise<{ raw_content: string }> {
-  const result = await tx.query<{ raw_content: string; is_current: boolean }>(
+  const result = await tx.query<{ raw_content: string; is_current: boolean; is_live: boolean }>(
     // content_blocks are revision-scoped and re-minted on every import, so a block_guid alone
     // identifies text in *some* revision rather than text the workspace currently holds. Selecting
     // by guid with no revision test let a claim be authored against a passage a later commit had
@@ -286,10 +293,13 @@ async function loadBlock(
                 FROM "${input.schemaName}".document_revisions dr2
                WHERE dr2.workspace_guid = dr.workspace_guid
                  AND dr2.document_guid = dr.document_guid
-            ) AS is_current
+            ) AS is_current,
+            sd.retired_at IS NULL AS is_live
        FROM "${input.schemaName}".content_blocks cb
        JOIN "${input.schemaName}".document_revisions dr
          ON dr.workspace_guid = cb.workspace_guid AND dr.revision_guid = cb.revision_guid
+       JOIN "${input.schemaName}".source_documents sd
+         ON sd.workspace_guid = dr.workspace_guid AND sd.document_guid = dr.document_guid
       WHERE cb.workspace_guid = $1 AND cb.block_guid = $2`,
     [input.workspaceGuid, input.citation.blockGuid],
   );
@@ -301,8 +311,11 @@ async function loadBlock(
   // that went stale after the fact. The two are different situations: a claim whose source moved
   // later is history worth keeping and re-anchoring, while one authored against text the pinned
   // commit does not contain is simply wrong, and the author is present to be told so.
-  if (!row.is_current) {
-    throw new StaleBlockError(input.citation.blockGuid);
+  // Retirement as well as supersession: a document dropped because the pinned commit no longer
+  // contains it keeps its blocks and its latest revision, so a revision test alone let a claim be
+  // authored against a deleted file.
+  if (!row.is_current || !row.is_live) {
+    throw new StaleBlockError(input.citation.blockGuid, row.is_live ? "superseded" : "retired");
   }
   return row;
 }

@@ -844,8 +844,15 @@ async function loadAssertionRecords(
                   -- source_citations has a foreign key to content_blocks, so a citation without
                   -- its block cannot be written. Only the superseded-revision case is testable
                   -- here; the other exists so the expression stays right if that key ever moves.
+                  --
+                  -- Retirement counts as well as supersession. A document dropped because the
+                  -- pinned commit no longer contains it still has a latest revision, so a
+                  -- revision test alone called a citation into a deleted file perfectly current.
+                  -- loadRouteRecords already refuses retired documents for sections, one query
+                  -- above; this is the same rule reaching assertions.
                   'stale', NOT coalesce(
-                     cdr.revision_number = (
+                     csd.retired_at IS NULL
+                     AND cdr.revision_number = (
                        SELECT max(cdr2.revision_number)
                          FROM "${schemaName}".document_revisions cdr2
                         WHERE cdr2.workspace_guid = cdr.workspace_guid
@@ -869,6 +876,8 @@ async function loadAssertionRecords(
          ON cb.workspace_guid = c.workspace_guid AND cb.block_guid = c.block_guid
        LEFT JOIN "${schemaName}".document_revisions cdr
          ON cdr.workspace_guid = cb.workspace_guid AND cdr.revision_guid = cb.revision_guid
+       LEFT JOIN "${schemaName}".source_documents csd
+         ON csd.workspace_guid = cdr.workspace_guid AND csd.document_guid = cdr.document_guid
       WHERE a.retired_at IS NULL AND a.status = 'active'
       GROUP BY a.assertion_guid, a.kind, a.status, a.title, a.content
       -- Title is not unique, so it is not a total order either. Same defect as the citation
