@@ -14,6 +14,10 @@ import {
   type CommandTransaction,
 } from "./commandHandler.js";
 import { assertValidSchemaName } from "./config.js";
+// Re-exported because this module can throw it, and a caller should not have to know that the
+// guard lives in a third file to catch what addCitation raises. createAssertion does the same.
+export { StaleBlockError } from "./citableBlock.js";
+import { loadCitableBlock } from "./citableBlock.js";
 
 /**
  * Binding an existing claim to a second piece of source text (T3).
@@ -332,14 +336,8 @@ async function loadBlock(
   workspaceGuid: string,
   blockGuid: string,
 ): Promise<{ raw_content: string }> {
-  const result = await tx.query<{ raw_content: string }>(
-    `SELECT raw_content FROM "${schema}".content_blocks
-      WHERE workspace_guid = $1 AND block_guid = $2`,
-    [workspaceGuid, blockGuid],
-  );
-  const row = result.rows[0];
-  if (!row) {
-    throw new BlockNotFoundError(blockGuid);
-  }
-  return row;
+  // Shared with createAssertion. This surface had no revision or retirement guard at all, so a
+  // citation added to an existing claim could name text the pinned commit no longer contains --
+  // the contract the other surface enforces, silently absent here.
+  return loadCitableBlock(tx, schema, workspaceGuid, blockGuid, (guid) => new BlockNotFoundError(guid));
 }

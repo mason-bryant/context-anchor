@@ -8,6 +8,9 @@ import {
   type CommandTransaction,
 } from "./commandHandler.js";
 import { assertValidSchemaName } from "./config.js";
+// Re-exported: callers and tests have imported StaleBlockError from this module since it landed.
+export { StaleBlockError } from "./citableBlock.js";
+import { loadCitableBlock } from "./citableBlock.js";
 
 /**
  * Authoring with provenance (T3).
@@ -257,14 +260,13 @@ async function loadBlock(
   tx: CommandTransaction,
   input: CreateAssertionInput,
 ): Promise<{ raw_content: string }> {
-  const result = await tx.query<{ raw_content: string }>(
-    `SELECT raw_content FROM "${input.schemaName}".content_blocks
-      WHERE workspace_guid = $1 AND block_guid = $2`,
-    [input.workspaceGuid, input.citation.blockGuid],
+  // Shared with addCitation. Two copies of this drifted once already: the revision guard was
+  // added here and the other surface kept accepting what this one had started refusing.
+  return loadCitableBlock(
+    tx,
+    input.schemaName,
+    input.workspaceGuid,
+    input.citation.blockGuid,
+    (blockGuid) => new BlockNotFoundError(blockGuid),
   );
-  const row = result.rows[0];
-  if (!row) {
-    throw new BlockNotFoundError(input.citation.blockGuid);
-  }
-  return row;
 }

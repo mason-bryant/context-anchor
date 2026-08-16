@@ -557,8 +557,19 @@ export type RouteRecord = {
   /** Assertions only: what sort of claim it is and what standing it has, both of which travel into every response. */
   kind?: string;
   status?: string;
-  /** Assertions only: the exact source text the claim was drawn from. */
-  citations?: Array<{ quote: string; blockGuid: string; relation: string }>;
+  /**
+   * Assertions only: the exact source text the claim was drawn from.
+   *
+   * `stale` means the text the claim was drawn from is not text the pinned commit contains:
+   * either a later import superseded the block's revision, or the whole document was retired
+   * because the commit no longer holds that file. Both are reported the same way, because what a
+   * reader needs to know is that the evidence needs re-anchoring, not which route it took to stop
+   * being current. Reported rather than dropped,
+   * following the same rule associations already use for a heading rename: a claim whose source
+   * moved has not stopped being a claim, and silently removing its evidence would leave an
+   * assertion that looks unsupported rather than one whose support needs re-anchoring.
+   */
+  citations?: Array<{ quote: string; blockGuid: string; relation: string; stale: boolean }>;
 };
 
 /**
@@ -802,7 +813,7 @@ async function loadAssertionRecords(
     status: string;
     title: string;
     content: string;
-    citations: Array<{ quote: string; blockGuid: string; relation: string }> | null;
+    citations: Array<{ quote: string; blockGuid: string; relation: string; stale: boolean }> | null;
   }>(
     // Associations are deduped before the citation join. record_scopes permits several live
     // rows for one assertion in one scope — one per association_type — and joining citations
@@ -817,7 +828,40 @@ async function loadAssertionRecords(
      SELECT a.assertion_guid, a.kind, a.status, a.title, a.content,
             coalesce(
               jsonb_agg(
-                jsonb_build_object('quote', c.exact_quote, 'blockGuid', c.block_guid, 'relation', c.relation)
+                jsonb_build_object(
+                  'quote', c.exact_quote, 'blockGuid', c.block_guid, 'relation', c.relation,
+                  -- True when the cited block is not in its document's current revision.
+                  -- content_blocks are revision-scoped and re-minted on every import, so a
+                  -- citation written against revision N keeps returning N's text after N+1
+                  -- rewrites the passage -- provenance pointing at words the pinned commit does
+                  -- not contain.
+                  --
+                  -- Phrased as "stale unless provably current" rather than as an inequality. A
+                  -- review round of mine claimed IS DISTINCT FROM made an absent block read as
+                  -- stale; it does not. With no block row, cdr.document_guid is NULL, so the
+                  -- subquery matches nothing and returns NULL too -- and NULL IS DISTINCT FROM
+                  -- NULL is false, reporting a citation with no source at all as perfectly
+                  -- current. coalesce(..., false) cannot invert like that.
+                  --
+                  -- That arm is unreachable today, and by the schema rather than by convention:
+                  -- source_citations has a foreign key to content_blocks, so a citation without
+                  -- its block cannot be written. Only the superseded-revision case is testable
+                  -- here; the other exists so the expression stays right if that key ever moves.
+                  --
+                  -- Retirement counts as well as supersession. A document dropped because the
+                  -- pinned commit no longer contains it still has a latest revision, so a
+                  -- revision test alone called a citation into a deleted file perfectly current.
+                  -- loadRouteRecords already refuses retired documents for sections, one query
+                  -- above; this is the same rule reaching assertions.
+                  'stale', NOT coalesce(
+                     csd.retired_at IS NULL
+                     AND cdr.revision_number = (
+                       SELECT max(cdr2.revision_number)
+                         FROM "${schemaName}".document_revisions cdr2
+                        WHERE cdr2.workspace_guid = cdr.workspace_guid
+                          AND cdr2.document_guid = cdr.document_guid),
+                     false)
+                )
                 -- created_at alone is not a total order: now() is constant within a
                 -- transaction, so citations written together share a timestamp and their
                 -- aggregate order could vary between reads. The guid breaks the tie.
@@ -830,6 +874,13 @@ async function loadAssertionRecords(
          ON a.workspace_guid = $1 AND a.assertion_guid = scoped.record_guid
        LEFT JOIN "${schemaName}".source_citations c
          ON c.workspace_guid = a.workspace_guid AND c.assertion_guid = a.assertion_guid
+       -- Both LEFT, so a citation whose block was deleted outright still comes back, marked.
+       LEFT JOIN "${schemaName}".content_blocks cb
+         ON cb.workspace_guid = c.workspace_guid AND cb.block_guid = c.block_guid
+       LEFT JOIN "${schemaName}".document_revisions cdr
+         ON cdr.workspace_guid = cb.workspace_guid AND cdr.revision_guid = cb.revision_guid
+       LEFT JOIN "${schemaName}".source_documents csd
+         ON csd.workspace_guid = cdr.workspace_guid AND csd.document_guid = cdr.document_guid
       WHERE a.retired_at IS NULL AND a.status = 'active'
       GROUP BY a.assertion_guid, a.kind, a.status, a.title, a.content
       -- Title is not unique, so it is not a total order either. Same defect as the citation

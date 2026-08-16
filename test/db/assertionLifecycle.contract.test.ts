@@ -15,6 +15,7 @@ import {
 } from "../../src/db/commandHandler.js";
 import { createAssertion, QuoteNotFoundError } from "../../src/db/createAssertion.js";
 import { createAssertionRelation } from "../../src/db/createAssertionRelation.js";
+import { StaleBlockError } from "../../src/db/citableBlock.js";
 import { importDocuments } from "../../src/db/importDocuments.js";
 import {
   retireAssertion,
@@ -1050,6 +1051,35 @@ describe.runIf(await isTestDatabaseReachable())("assertion lifecycle, T3 (real P
   });
 
   describe("addCitation", () => {
+    it("refuses a block the pinned commit no longer contains, as createAssertion does", async () => {
+      // The guard was added to createAssertion and this surface kept its own copy of loadBlock
+      // without one, so "authoring cannot cite superseded text" was true of one entry point and
+      // false of the other -- and a citation added to an existing claim could name text the
+      // commit had already rewritten. Raised in review on 783c5d8; both now share one loader.
+      const created = await author("Bearer tokens are required", "The transport requires one.");
+
+      await importDocuments({
+        pool,
+        schemaName,
+        handler,
+        workspaceGuid: bootstrap.workspaceGuid,
+        actorPrincipalGuid: bootstrap.ownerPrincipalGuid,
+        repository: "agent-context",
+        commitSha: "f".repeat(40),
+        files: [{ path: "projects/anchor-mcp/anchor-mcp-project-context.md", content: DOC.replace("one hour", "one day") }],
+        scopes: [{ scope: "anchor-mcp", title: "Anchor MCP", kind: "domain", locators: [] }],
+      });
+
+      await expect(
+        addCitation({
+          ...context(),
+          assertionGuid: created.assertionGuid,
+          citation: { blockGuid: otherBlockGuid, exactQuote: "one hour" },
+          reason: "a source the commit has moved past",
+        }),
+      ).rejects.toThrow(StaleBlockError);
+    });
+
     it("binds a second source to a live claim and captures its selectors", async () => {
       const created = await author("Bearer tokens are required", "The transport requires one.");
 
