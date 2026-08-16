@@ -273,10 +273,14 @@ describe.runIf(await isTestDatabaseReachable())("createAssertion (real Postgres)
       scopes: [{ scope: "anchor-mcp", title: "Anchor MCP", kind: "domain", locators: [] }],
     });
 
+    // Named by path and asserted to be exactly one row. An unscoped SELECT with no ORDER BY
+    // would take whichever document Postgres returned first the day this fixture holds two.
     const doc = await pool.query<{ retired_at: Date | null }>(
-      `SELECT retired_at FROM "${schemaName}".source_documents WHERE workspace_guid = $1`,
-      [bootstrap.workspaceGuid],
+      `SELECT retired_at FROM "${schemaName}".source_documents
+        WHERE workspace_guid = $1 AND name = $2`,
+      [bootstrap.workspaceGuid, "projects/anchor-mcp/anchor-mcp-project-context.md"],
     );
+    expect(doc.rowCount).toBe(1);
     expect(doc.rows[0]?.retired_at).not.toBeNull();
 
     await expect(author()).rejects.toThrow(StaleBlockError);
