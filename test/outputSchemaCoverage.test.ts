@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
 
 import type { AnchorService } from "../src/anchorService.js";
 import { createAnchorMcpServer } from "../src/server.js";
@@ -59,16 +59,28 @@ const DB_TOOLS_WITHOUT_OUTPUT_SCHEMA = new Set([
 ]);
 
 describe("MCP tool output schemas", () => {
-  const registry = createAnchorMcpServer({} as AnchorService) as unknown as Registry;
-  const names = Object.keys(registry._registeredTools).sort();
+  let registry: Registry;
+  let names: string[];
+  let dbRegistry: Registry;
+  let dbNames: string[];
+  let dbOnly: string[];
 
-  // Constructed with a backend so the db-only tools register. The stub is never called: this
-  // file reads the registry rather than invoking anything.
-  const dbRegistry = createAnchorMcpServer({} as AnchorService, {
-    knowledgeDb: {} as never,
-  }) as unknown as Registry;
-  const dbNames = Object.keys(dbRegistry._registeredTools).sort();
-  const dbOnly = dbNames.filter((name) => !names.includes(name));
+  // In a hook rather than at describe-evaluation time. Building the server while the suite is
+  // being defined turns any throw from createAnchorMcpServer into a collection error -- the file
+  // fails to load, with no test named and a stack pointing at module evaluation, which is a poor
+  // way to learn that tool registration is broken.
+  beforeAll(() => {
+    registry = createAnchorMcpServer({} as AnchorService) as unknown as Registry;
+    names = Object.keys(registry._registeredTools).sort();
+
+    // Constructed with a backend so the db-only tools register. The stub is never called: this
+    // file reads the registry rather than invoking anything.
+    dbRegistry = createAnchorMcpServer({} as AnchorService, {
+      knowledgeDb: {} as never,
+    }) as unknown as Registry;
+    dbNames = Object.keys(dbRegistry._registeredTools).sort();
+    dbOnly = dbNames.filter((name) => !names.includes(name));
+  });
 
   it("registers tools at all, so an empty registry cannot pass every check here", () => {
     // The checks below iterate the registry, so a construction failure producing no tools would
