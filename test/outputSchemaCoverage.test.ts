@@ -73,10 +73,23 @@ describe("MCP tool output schemas", () => {
     registry = createAnchorMcpServer({} as AnchorService) as unknown as Registry;
     names = Object.keys(registry._registeredTools).sort();
 
-    // Constructed with a backend so the db-only tools register. The stub is never called: this
-    // file reads the registry rather than invoking anything.
+    // Constructed with a backend so the db-only tools register. This file reads the registry and
+    // invokes nothing, so the stub throws rather than being empty: if a handler is ever reached
+    // from here, "the coverage guard called a db tool" is a far better error than the
+    // "x is not a function" an empty object produces three frames down.
+    const unusedDb = new Proxy(
+      {},
+      {
+        get: (_target, property) => {
+          throw new Error(
+            `outputSchemaCoverage constructed a database stub that must never be called, ` +
+              `but ${String(property)} was accessed. This file reads the tool registry only.`,
+          );
+        },
+      },
+    ) as never;
     dbRegistry = createAnchorMcpServer({} as AnchorService, {
-      knowledgeDb: {} as never,
+      knowledgeDb: unusedDb,
     }) as unknown as Registry;
     dbNames = Object.keys(dbRegistry._registeredTools).sort();
     dbOnly = dbNames.filter((name) => !names.includes(name));
