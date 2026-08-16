@@ -156,6 +156,25 @@ describe.runIf(await isTestDatabaseReachable())("createAssertion (real Postgres)
     await expect(
       author({ citation: { blockGuid: randomUUID(), exactQuote: "anything" } }),
     ).rejects.toThrow(BlockNotFoundError);
+    await expect(author({ scopeSlug: "no-such-scope" })).rejects.toThrow(ScopeNotFoundForAssertionError);
+
+    // "Writing nothing" has to mean all three tables, not just the one: a citation or an
+    // association surviving a failed create is the same broken half-state as a bare claim.
+    const ws = [bootstrap.workspaceGuid];
+    expect(
+      (await pool.query(`SELECT 1 FROM "${schemaName}".assertions WHERE workspace_guid = $1`, ws)).rowCount,
+    ).toBe(0);
+    expect(
+      (await pool.query(`SELECT 1 FROM "${schemaName}".source_citations WHERE workspace_guid = $1`, ws)).rowCount,
+    ).toBe(0);
+    expect(
+      (
+        await pool.query(
+          `SELECT 1 FROM "${schemaName}".record_scopes WHERE workspace_guid = $1 AND record_type = 'assertion'`,
+          ws,
+        )
+      ).rowCount,
+    ).toBe(0);
   });
 
   it("marks a citation whose source moved after the claim was written, rather than dropping it", async () => {
@@ -232,25 +251,6 @@ describe.runIf(await isTestDatabaseReachable())("createAssertion (real Postgres)
     expect(still.rowCount).toBe(1);
 
     await expect(author()).rejects.toThrow(StaleBlockError);
-    await expect(author({ scopeSlug: "no-such-scope" })).rejects.toThrow(ScopeNotFoundForAssertionError);
-
-    // "Writing nothing" has to mean all three tables, not just the one: a citation or an
-    // association surviving a failed create is the same broken half-state as a bare claim.
-    const ws = [bootstrap.workspaceGuid];
-    expect(
-      (await pool.query(`SELECT 1 FROM "${schemaName}".assertions WHERE workspace_guid = $1`, ws)).rowCount,
-    ).toBe(0);
-    expect(
-      (await pool.query(`SELECT 1 FROM "${schemaName}".source_citations WHERE workspace_guid = $1`, ws)).rowCount,
-    ).toBe(0);
-    expect(
-      (
-        await pool.query(
-          `SELECT 1 FROM "${schemaName}".record_scopes WHERE workspace_guid = $1 AND record_type = 'assertion'`,
-          ws,
-        )
-      ).rowCount,
-    ).toBe(0);
   });
 
   // Authoring the same claim citing the same text twice is a retry, not two claims — and a
