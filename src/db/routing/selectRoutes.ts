@@ -560,8 +560,11 @@ export type RouteRecord = {
   /**
    * Assertions only: the exact source text the claim was drawn from.
    *
-   * `stale` means the cited block is not in its document's current revision -- the text the
-   * claim was drawn from is not text the pinned commit contains. Reported rather than dropped,
+   * `stale` means the text the claim was drawn from is not text the pinned commit contains:
+   * either a later import superseded the block's revision, or the whole document was retired
+   * because the commit no longer holds that file. Both are reported the same way, because what a
+   * reader needs to know is that the evidence needs re-anchoring, not which route it took to stop
+   * being current. Reported rather than dropped,
    * following the same rule associations already use for a heading rename: a claim whose source
    * moved has not stopped being a claim, and silently removing its evidence would leave an
    * assertion that looks unsupported rather than one whose support needs re-anchoring.

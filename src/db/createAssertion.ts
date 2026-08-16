@@ -84,11 +84,16 @@ export class ScopeNotFoundForAssertionError extends Error {
 }
 
 /**
- * A citation naming a block from a superseded revision.
+ * A citation naming a block whose text the workspace no longer holds.
  *
- * Distinct from BlockNotFoundError: the block exists, and pointing at it is exactly the mistake
- * -- it holds text from a revision the workspace has moved past, so a caller told "not found"
- * would go looking for a typo in a guid that resolves perfectly well.
+ * Two ways that happens, and `reason` says which: the block's revision has been superseded by a
+ * later import, or its whole document has been retired because the pinned commit no longer
+ * contains that file. They need different things done about them -- a superseded block has a
+ * current revision to cite instead, a retired one has nothing.
+ *
+ * Distinct from BlockNotFoundError either way: the block exists, and pointing at it is exactly
+ * the mistake, so a caller told "not found" would go looking for a typo in a guid that resolves
+ * perfectly well.
  */
 export class StaleBlockError extends Error {
   constructor(
