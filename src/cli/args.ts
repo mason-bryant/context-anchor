@@ -154,7 +154,7 @@ export function parseCliArgs(
   // how to use it never depends on being correctly configured — including not depending on
   // the default anchor repository existing, which on a fresh machine it does not.
   if (argv.includes("--help") || argv.includes("-h")) {
-    return helpOnlyOptions();
+    return unconfiguredOptions({ help: true, command: "serve" });
   }
 
   const { command, rest } = takeSubcommand(argv);
@@ -192,14 +192,22 @@ export function parseCliArgs(
     assertNoStraySubcommand(positionals);
   }
 
-  const install =
-    command === "install"
-      ? {
-          agents: parseSkillAgents(stringFlag(flags, "agent")),
-          stealth: booleanFlag(flags, "stealth"),
-          force: booleanFlag(flags, "force"),
-        }
-      : undefined;
+  // Resolved and returned before any configuration is read, for the same reason `--help` is:
+  // installing the skill uses no server setting, and the moment a new user runs it is exactly
+  // the moment nothing is set up yet. Falling through would make `install` fail on a malformed
+  // anchor-mcp.config.json in the current directory, or on a DATABASE_URL exported for
+  // something else entirely -- neither of which it would have gone on to read.
+  if (command === "install") {
+    return unconfiguredOptions({
+      help: false,
+      command,
+      install: {
+        agents: parseSkillAgents(stringFlag(flags, "agent")),
+        stealth: booleanFlag(flags, "stealth"),
+        force: booleanFlag(flags, "force"),
+      },
+    });
+  }
 
   const configPath = resolveConfigPath(flags, env, options.cwd ?? process.cwd());
   const fileConfig = readConfigFile(configPath);
@@ -233,7 +241,6 @@ export function parseCliArgs(
     help: false,
     command,
     ...(db ? { db } : {}),
-    ...(install ? { install } : {}),
     ...(configPath ? { configPath } : {}),
     transport,
     transportExplicit: chosenTransport !== undefined,
@@ -287,14 +294,12 @@ export function parseCliArgs(
 }
 
 /**
- * A structurally valid CliOptions for the help path. None of it is used — the caller prints
- * usage and exits — but returning a complete object keeps CliOptions free of optional fields
- * that every other consumer would then have to narrow.
+ * A structurally valid CliOptions for the paths that resolve no configuration. None of the
+ * server settings are used — the caller prints usage, or writes two files — but returning a
+ * complete object keeps CliOptions free of optional fields every other consumer would narrow.
  */
-function helpOnlyOptions(): CliOptions {
+function unconfiguredOptions(overrides: Partial<CliOptions> & Pick<CliOptions, "help" | "command">): CliOptions {
   return {
-    help: true,
-    command: "serve",
     transport: "stdio",
     transportExplicit: false,
     host: "127.0.0.1",
@@ -310,6 +315,7 @@ function helpOnlyOptions(): CliOptions {
       staleAfterDays: 45,
       graphScoring: { enabled: DEFAULT_GRAPH_SCORING_ENABLED, maxBoost: DEFAULT_GRAPH_SCORING_MAX_BOOST },
     },
+    ...overrides,
   };
 }
 

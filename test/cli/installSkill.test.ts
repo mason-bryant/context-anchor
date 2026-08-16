@@ -138,6 +138,16 @@ describe("anchor-mcp install", () => {
     expect(readFileSync(join(cwd, CURSOR_PATH), "utf8")).toBe(hand);
   });
 
+  /** `.cursor/rules` is itself a directory of rules, so a directory at this path is a plausible mistake. */
+  it("reports a directory in the way instead of raising EISDIR", () => {
+    const { cwd, home } = project();
+    mkdirSync(join(cwd, CURSOR_PATH), { recursive: true });
+
+    expect(() => installSkill({ ...defaults, agents: ["cursor"] }, { cwd, home })).toThrow(
+      /not a regular file/,
+    );
+  });
+
   it("overwrites a foreign file with --force", () => {
     const { cwd, home } = project();
     mkdirSync(join(cwd, ".cursor", "rules"), { recursive: true });
@@ -180,6 +190,15 @@ describe("anchor-mcp install --stealth", () => {
     installSkill({ ...defaults, agents: ["cursor"], stealth: true }, { cwd: nested, home });
     const exclude = readFileSync(join(cwd, ".git", "info", "exclude"), "utf8");
     expect(exclude.split("\n")).toContain("/.cursor/rules/anchor-context.mdc");
+  });
+
+  it("reports a directory where the exclude file should be", () => {
+    const { cwd, home } = project();
+    mkdirSync(join(cwd, ".git", "info", "exclude"), { recursive: true });
+
+    expect(() => installSkill({ ...defaults, agents: ["cursor"], stealth: true }, { cwd, home })).toThrow(
+      /not a regular file/,
+    );
   });
 
   it("does not append the same exclude twice", () => {
@@ -256,6 +275,22 @@ describe("install argument parsing", () => {
 
   it("leaves install absent for every other command", () => {
     expect(parseCliArgs(["status"], {}).install).toBeUndefined();
+  });
+
+  /**
+   * `install` is what a new user runs before anything is set up, and it reads no server
+   * setting. Resolving configuration first made it fail on a malformed config file in the
+   * current directory, and on a DATABASE_URL exported for something else -- neither of which
+   * it would have gone on to use. Same reasoning as the `--help` early return above it.
+   */
+  it("resolves no configuration, so a broken config cannot block it", () => {
+    const { cwd } = project();
+    writeFileSync(join(cwd, "anchor-mcp.config.json"), "{ not json,,", "utf8");
+
+    const options = parseCliArgs(["install"], { DATABASE_URL: "not-a-url" }, { cwd });
+    expect(options.command).toBe("install");
+    expect(options.configPath).toBeUndefined();
+    expect(options.databaseUrl).toBeUndefined();
   });
 
   /**

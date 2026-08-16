@@ -95,7 +95,7 @@ function write(placement: Placement, force: boolean, cwd: string): string[] {
   const shown = display(placement.path, cwd);
 
   if (existsSync(placement.path)) {
-    const existing = readFileSync(placement.path, "utf8");
+    const existing = readExistingFile(placement.path, shown);
     if (existing === contents) {
       return [`${placement.agent}: unchanged  ${shown}`];
     }
@@ -125,7 +125,7 @@ function excludeLocally(target: string, root: string, gitDir: string | undefined
 
   const excludePath = join(gitDir, "info", "exclude");
   const entry = `/${relative(root, target).split("\\").join("/")}`;
-  const existing = existsSync(excludePath) ? readFileSync(excludePath, "utf8") : "";
+  const existing = existsSync(excludePath) ? readExistingFile(excludePath, display(excludePath, root)) : "";
   if (existing.split("\n").some((line) => line.trim() === entry)) {
     return [`  already excluded in ${display(excludePath, root)}`];
   }
@@ -164,6 +164,21 @@ function findCheckout(from: string): { root: string; gitDir: string } | undefine
     }
     current = parent;
   }
+}
+
+/**
+ * Read a path we already know exists, having first established it is a regular file.
+ *
+ * A directory at one of these paths is unlikely but entirely possible — `.cursor/rules` is a
+ * directory of rules, and someone reaching for a folder of them is not a strange thing to do.
+ * Without the check `readFileSync` raises EISDIR, which reaches the operator as a stack trace
+ * saying nothing about what is in the way or what to do with it.
+ */
+function readExistingFile(target: string, shown: string): string {
+  if (!statSync(target).isFile()) {
+    throw new CliUsageError(`${shown} exists but is not a regular file. Move it aside and run this again.`);
+  }
+  return readFileSync(target, "utf8");
 }
 
 function display(target: string, cwd: string): string {

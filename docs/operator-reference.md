@@ -69,8 +69,13 @@ anchor-mcp install --force             # replace a same-named file anchor-mcp di
 
 `install` writes into the project being edited, not the anchor repository `--repo` points at.
 The skill's job is to tell an agent when to consult the anchors, so it has to be where a coding
-session looks. It builds no runtime and touches no database, which means it works before either
-exists.
+session looks.
+
+It resolves no configuration at all — no config file, no `DATABASE_URL`, no anchor repository —
+and returns from argument parsing before any of that is read, the same way `--help` does. The
+moment someone runs `install` is the moment none of it is set up yet, so a malformed
+`anchor-mcp.config.json` in the current directory, or a `DATABASE_URL` exported for something
+else, must not stand in the way of two files it would never have consulted them to write.
 
 The target is the **working-tree root**, found by walking up from the current directory to the
 enclosing `.git`, not the directory the command was run from. Both harnesses read their rules
