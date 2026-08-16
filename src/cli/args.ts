@@ -19,7 +19,7 @@ Commands (default: serve)
   stop                          Stop the detached HTTP server started by \`start\`
   restart                       stop, wait for the port, then start
   status                        Report resolved config, database, and whether a server is up
-  install                       Write the agent skill into the project in the current directory
+  install                       Write the agent skill into the surrounding project checkout
   db <command>                  Manage the database (see below)
 
 Install
@@ -27,9 +27,11 @@ Install
   --stealth                     Keep the install out of git
   --force                       Overwrite a file of the same name that anchor-mcp did not write
 
-  \`install\` writes into the working directory, not the anchor repository: the skill tells an
-  agent when to consult the anchors, so it belongs beside the code being edited. Re-run it to
-  upgrade — a file anchor-mcp wrote is replaced, one it did not is refused without \`--force\`.
+  \`install\` writes into the project being edited, not the anchor repository: the skill tells
+  an agent when to consult the anchors, so it belongs beside the code. Run it from anywhere in
+  the checkout — it installs at the working-tree root, which is where both harnesses read from.
+  Re-run it to upgrade: a file anchor-mcp wrote is replaced, one it did not is refused without
+  \`--force\`.
 
   \`--stealth\` puts the Claude Code skill in ~/.claude, where it covers every project. Cursor
   reads rules only from .cursor/rules in the project, so its file stays there and is added to

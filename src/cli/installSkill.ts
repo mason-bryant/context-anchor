@@ -2,10 +2,13 @@
  * `anchor-mcp install` — write the cross-agent skill into the project the operator is working
  * in (T-42).
  *
- * Note which repository this is: the *project* checkout at the current working directory, not
- * the anchor repository `--repo` points at. The skill tells an agent how to reach the anchors;
- * it belongs beside the code the agent is editing. Installing it into the anchor store would
- * put it where no coding session ever looks.
+ * Note which repository this is: the *project* checkout the operator is standing in, not the
+ * anchor repository `--repo` points at. The skill tells an agent how to reach the anchors; it
+ * belongs beside the code the agent is editing. Installing it into the anchor store would put
+ * it where no coding session ever looks.
+ *
+ * Within that checkout the target is the working-tree root rather than the current directory —
+ * see findCheckout below for why.
  */
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";

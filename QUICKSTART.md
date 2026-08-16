@@ -158,7 +158,8 @@ session — "now write the design doc", "now add a migration" — and each chang
 question the anchors may already answer. What agents do instead is answer it from AGENTS.md,
 or from nothing, because retrieval already happened once and felt done.
 
-Run this in the project you are working in — the code checkout, not the anchor repository:
+Run this anywhere inside the project you are working in — the code checkout, not the anchor
+repository. It installs at the working-tree root, which is where both harnesses read from:
 
 ```bash
 npx @mason/anchor-mcp install

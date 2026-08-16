@@ -57,7 +57,7 @@ describe("anchor-mcp install", () => {
    * takes no repo argument for that reason, and this asserts the resolved target really is the
    * caller's directory rather than anything the server config points at.
    */
-  it("installs into the working directory, never into a home-relative default", () => {
+  it("installs into the project checkout, never into a home-relative default", () => {
     const { cwd, home } = project();
     installSkill({ ...defaults }, { cwd, home });
 
@@ -299,20 +299,35 @@ describe("the skill text", () => {
     });
 
     /**
-     * The reverse direction, and the one that keeps working as the text changes: every code
-     * identifier the skill sets in backticks is either a registered tool or a response field
-     * named here. A new tool mention is checked automatically; a new field mention fails until
-     * someone says which it is, which is the right way round for a document whose only job is
-     * telling an agent what to call.
+     * The field names the skill tells an agent to read out of a response.
+     *
+     * Checked against the source below rather than trusted. The first version of this file
+     * listed `reasons` here, which no response has ever carried -- the field is `matchReasons`
+     * -- so the skill instructed every installed agent to read something that is not there, and
+     * the guard meant to catch exactly that waved it through because I had written the name on
+     * both sides. An allowlist asserted by the same hand that wrote the prose checks nothing.
      */
-    const RESPONSE_FIELDS = new Set(["traceId", "recordLinks", "reasons", "task", "routeKeys", "requestId"]);
+    const RESPONSE_FIELDS = ["traceId", "recordLinks", "matchReasons", "task", "routeKeys", "requestId"];
+
+    /** Property names declared where the routed response and the tool inputs are defined. */
+    function declaredFields(): Set<string> {
+      const sources = ["src/db/routing/plan.ts", "src/server.ts"].map((file) =>
+        readFileSync(new URL(`../../${file}`, import.meta.url), "utf8"),
+      );
+      return new Set(sources.flatMap((source) => [...source.matchAll(/^\s*(\w+)\??:/gm)].map((m) => m[1]!)));
+    }
+
+    it("allowlists only field names the code actually declares", () => {
+      const declared = declaredFields();
+      expect(RESPONSE_FIELDS.filter((field) => !declared.has(field))).toEqual([]);
+    });
 
     it("names no tool the server does not have", () => {
       // The whole identifier, digits included: a trailing `\b` after [A-Za-z]* simply fails to
       // match planRoutedBundleV2 rather than capturing it, so a versioned rename walks straight
       // past the check.
       const identifiers = [...SKILL_BODY_TEXT.matchAll(/`([a-z][A-Za-z0-9]*)/g)].map((match) => match[1]!);
-      const tools = [...new Set(identifiers)].filter((name) => !RESPONSE_FIELDS.has(name));
+      const tools = [...new Set(identifiers)].filter((name) => !RESPONSE_FIELDS.includes(name));
 
       expect(tools.length).toBeGreaterThan(0);
       expect(tools.filter((tool) => !registered.has(tool))).toEqual([]);

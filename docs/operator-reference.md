@@ -61,16 +61,23 @@ no change. The subcommand must come first, before any flags.
 ## Agent Skill
 
 ```sh
-anchor-mcp install                     # .claude/skills/ and .cursor/rules/ in this directory
+anchor-mcp install                     # .claude/skills/ and .cursor/rules/ at the checkout root
 anchor-mcp install --agent cursor      # one harness only
 anchor-mcp install --stealth           # keep it out of git
 anchor-mcp install --force             # replace a same-named file anchor-mcp did not write
 ```
 
-`install` writes into the current working directory — the project being edited, not the
-anchor repository `--repo` points at. The skill's job is to tell an agent when to consult the
-anchors, so it has to be where a coding session looks. It builds no runtime and touches no
-database, which means it works before either exists.
+`install` writes into the project being edited, not the anchor repository `--repo` points at.
+The skill's job is to tell an agent when to consult the anchors, so it has to be where a coding
+session looks. It builds no runtime and touches no database, which means it works before either
+exists.
+
+The target is the **working-tree root**, found by walking up from the current directory to the
+enclosing `.git`, not the directory the command was run from. Both harnesses read their rules
+from the root of the checkout, so installing into wherever the operator happened to be standing
+would put `src/.claude/skills/` on disk: files that exist, a command that reports success, and
+nothing that ever loads them. With no checkout to root at, it falls back to the current
+directory.
 
 The installed rule triggers on a **topic shift** rather than at session start: `startTask`
 fires before the topic is known, and the topic changes several times before a session ends.

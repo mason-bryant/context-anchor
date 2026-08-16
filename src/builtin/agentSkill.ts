@@ -86,9 +86,9 @@ reading the result and about precedence still applies.
 
 ## Reading the result
 
-Every route carries \`reasons\` explaining why it matched. Read those first.
+Every route carries \`matchReasons\` explaining why it matched. Read those first.
 
-- A route whose reasons match the topic **directly**: expand it. Call again with the same
+- A route whose match reasons name the topic **directly**: expand it. Call again with the same
   \`task\` plus \`routeKeys: ["<key>"]\`.
 - A **long list of weakly matched routes** means nothing applies. Take none. Do not expand one
   to be safe — a route that matched on a shared word does not contain a rule about your topic,
