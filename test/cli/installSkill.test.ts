@@ -81,6 +81,22 @@ describe("anchor-mcp install", () => {
     expect(report[0]).toBe(`project: ${cwd}`);
   });
 
+  /**
+   * A stray `.git` file that is not a gitdir pointer is not a checkout marker. Stopping there
+   * would install into the subdirectory while the real root sat above it — the same "files
+   * nothing ever loads" outcome the root resolution exists to prevent.
+   */
+  it("keeps walking past a .git file that is not a gitdir pointer", () => {
+    const { cwd, home } = project();
+    const nested = join(cwd, "vendor");
+    mkdirSync(nested, { recursive: true });
+    writeFileSync(join(nested, ".git"), "notes someone left here\n", "utf8");
+
+    installSkill({ ...defaults, agents: ["claude"] }, { cwd: nested, home });
+    expect(existsSync(join(cwd, CLAUDE_PATH))).toBe(true);
+    expect(existsSync(join(nested, ".claude"))).toBe(false);
+  });
+
   it("falls back to the current directory when there is no checkout to root at", () => {
     const { cwd, home } = project(false);
     installSkill({ ...defaults, agents: ["claude"] }, { cwd, home });

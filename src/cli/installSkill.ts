@@ -183,8 +183,14 @@ function findCheckout(from: string): { root: string; gitDir: string } | undefine
       if (statSync(candidate).isDirectory()) {
         return { root: current, gitDir: candidate };
       }
-      const match = /^gitdir:\s*(.+)$/.exec(readFileSync(candidate, "utf8").trim());
-      return match?.[1] ? { root: current, gitDir: resolve(current, match[1]) } : undefined;
+      // A `.git` file that is not a gitdir pointer is not a checkout marker, so keep walking
+      // rather than giving up here. Stopping would land the install in the current directory
+      // while a real repository root sat above it -- the same "files nothing ever loads"
+      // outcome the root resolution exists to prevent, reached by a different route.
+      const match = /^gitdir:\s*(.+)$/.exec(readGitPointer(candidate));
+      if (match?.[1]) {
+        return { root: current, gitDir: resolve(current, match[1]) };
+      }
     }
     const parent = dirname(current);
     if (parent === current) {
@@ -228,6 +234,15 @@ function readRegularFile(target: string, shown: string): string | undefined {
     throw new CliUsageError(`${shown} exists but is not a regular file. Move it aside and run this again.`);
   }
   return readFileSync(target, "utf8");
+}
+
+/** Unreadable is the same answer as unparseable here: not a pointer, keep looking. */
+function readGitPointer(candidate: string): string {
+  try {
+    return readFileSync(candidate, "utf8").trim();
+  } catch {
+    return "";
+  }
 }
 
 function display(target: string, cwd: string): string {
