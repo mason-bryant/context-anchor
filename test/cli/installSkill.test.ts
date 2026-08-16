@@ -97,6 +97,21 @@ describe("anchor-mcp install", () => {
     expect(existsSync(join(nested, ".claude"))).toBe(false);
   });
 
+  /** A removed worktree leaves its `.git` file behind, pointing at a directory that is gone. */
+  it("keeps walking past a gitdir pointer that leads nowhere", () => {
+    const { cwd, home } = project();
+    const nested = join(cwd, "stale-worktree");
+    mkdirSync(nested, { recursive: true });
+    writeFileSync(join(nested, ".git"), `gitdir: ${join(cwd, "deleted", "wt")}\n`, "utf8");
+
+    installSkill({ ...defaults, agents: ["cursor"], stealth: true }, { cwd: nested, home });
+    expect(existsSync(join(cwd, CURSOR_PATH))).toBe(true);
+    expect(readFileSync(join(cwd, ".git", "info", "exclude"), "utf8")).toContain(
+      "/.cursor/rules/anchor-context.mdc",
+    );
+    expect(existsSync(join(cwd, "deleted"))).toBe(false);
+  });
+
   it("falls back to the current directory when there is no checkout to root at", () => {
     const { cwd, home } = project(false);
     installSkill({ ...defaults, agents: ["claude"] }, { cwd, home });

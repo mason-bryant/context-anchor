@@ -187,9 +187,15 @@ function findCheckout(from: string): { root: string; gitDir: string } | undefine
       // rather than giving up here. Stopping would land the install in the current directory
       // while a real repository root sat above it -- the same "files nothing ever loads"
       // outcome the root resolution exists to prevent, reached by a different route.
+      // The pointer has to lead somewhere, too. A worktree that was removed leaves its `.git`
+      // file behind pointing at a directory that no longer exists, and trusting that would put
+      // `info/exclude` under a path with no repository in it — writing a file nothing reads,
+      // while a real root sat above. Three ways a `.git` file can fail to identify a checkout:
+      // not a pointer, unreadable, and pointing at nothing. All three keep walking.
       const match = /^gitdir:\s*(.+)$/.exec(readGitPointer(candidate));
-      if (match?.[1]) {
-        return { root: current, gitDir: resolve(current, match[1]) };
+      const pointer = match?.[1] ? resolve(current, match[1]) : undefined;
+      if (pointer && existsSync(pointer) && statSync(pointer).isDirectory()) {
+        return { root: current, gitDir: pointer };
       }
     }
     const parent = dirname(current);
