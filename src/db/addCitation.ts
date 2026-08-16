@@ -14,6 +14,9 @@ import {
   type CommandTransaction,
 } from "./commandHandler.js";
 import { assertValidSchemaName } from "./config.js";
+// Re-exported because this module can throw it, and a caller should not have to know that the
+// guard lives in a third file to catch what addCitation raises. createAssertion does the same.
+export { StaleBlockError } from "./citableBlock.js";
 import { loadCitableBlock } from "./citableBlock.js";
 
 /**
