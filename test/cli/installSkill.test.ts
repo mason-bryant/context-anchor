@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -136,6 +136,50 @@ describe("anchor-mcp install", () => {
 
     expect(() => installSkill({ ...defaults, agents: ["cursor"] }, { cwd, home })).toThrow(/--force/);
     expect(readFileSync(join(cwd, CURSOR_PATH), "utf8")).toBe(hand);
+  });
+
+  /**
+   * A symlinked target is written *through*, so following one would rewrite a file outside the
+   * checkout that the operator never named. Pointing the skill at a shared copy in a home
+   * directory is a reasonable thing to have done.
+   */
+  it("refuses a symlinked target rather than writing through it", () => {
+    const { cwd, home } = project();
+    const outside = join(home, "shared-rule.mdc");
+    writeFileSync(outside, "a rule shared across repos\n", "utf8");
+    mkdirSync(join(cwd, ".cursor", "rules"), { recursive: true });
+    symlinkSync(outside, join(cwd, CURSOR_PATH));
+
+    expect(() => installSkill({ ...defaults, agents: ["cursor"] }, { cwd, home })).toThrow(/symbolic link/);
+    expect(readFileSync(outside, "utf8")).toBe("a rule shared across repos\n");
+  });
+
+  /** --force means "replace a file I did not write", not "follow a link out of the repository". */
+  it("does not follow a symlink even with --force", () => {
+    const { cwd, home } = project();
+    const outside = join(home, "shared-rule.mdc");
+    writeFileSync(outside, "a rule shared across repos\n", "utf8");
+    mkdirSync(join(cwd, ".cursor", "rules"), { recursive: true });
+    symlinkSync(outside, join(cwd, CURSOR_PATH));
+
+    expect(() => installSkill({ ...defaults, agents: ["cursor"], force: true }, { cwd, home })).toThrow(
+      /symbolic link/,
+    );
+    expect(readFileSync(outside, "utf8")).toBe("a rule shared across repos\n");
+  });
+
+  /**
+   * The case existsSync cannot see: it resolves the link, so a broken one reads as absent and
+   * the write goes straight through to a path outside the tree, creating a file there.
+   */
+  it("refuses a broken symlink instead of creating its target", () => {
+    const { cwd, home } = project();
+    const outside = join(home, "never-created.mdc");
+    mkdirSync(join(cwd, ".cursor", "rules"), { recursive: true });
+    symlinkSync(outside, join(cwd, CURSOR_PATH));
+
+    expect(() => installSkill({ ...defaults, agents: ["cursor"] }, { cwd, home })).toThrow(/symbolic link/);
+    expect(existsSync(outside)).toBe(false);
   });
 
   /** `.cursor/rules` is itself a directory of rules, so a directory at this path is a plausible mistake. */

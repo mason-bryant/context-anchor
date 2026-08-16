@@ -10,7 +10,7 @@
  * Within that checkout the target is the working-tree root rather than the current directory —
  * see findCheckout below for why.
  */
-import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
 
@@ -94,8 +94,8 @@ function write(placement: Placement, force: boolean, cwd: string): string[] {
   const contents = placement.render();
   const shown = display(placement.path, cwd);
 
-  if (existsSync(placement.path)) {
-    const existing = readExistingFile(placement.path, shown);
+  const existing = readRegularFile(placement.path, shown);
+  if (existing !== undefined) {
     if (existing === contents) {
       return [`${placement.agent}: unchanged  ${shown}`];
     }
@@ -125,7 +125,7 @@ function excludeLocally(target: string, root: string, gitDir: string | undefined
 
   const excludePath = join(gitDir, "info", "exclude");
   const entry = `/${relative(root, target).split("\\").join("/")}`;
-  const existing = existsSync(excludePath) ? readExistingFile(excludePath, display(excludePath, root)) : "";
+  const existing = readRegularFile(excludePath, display(excludePath, root)) ?? "";
   if (existing.split("\n").some((line) => line.trim() === entry)) {
     return [`  already excluded in ${display(excludePath, root)}`];
   }
@@ -167,15 +167,36 @@ function findCheckout(from: string): { root: string; gitDir: string } | undefine
 }
 
 /**
- * Read a path we already know exists, having first established it is a regular file.
+ * The contents of a regular file at `target`, or undefined when nothing is there. Anything
+ * else present is a usage error.
  *
- * A directory at one of these paths is unlikely but entirely possible — `.cursor/rules` is a
- * directory of rules, and someone reaching for a folder of them is not a strange thing to do.
- * Without the check `readFileSync` raises EISDIR, which reaches the operator as a stack trace
- * saying nothing about what is in the way or what to do with it.
+ * `lstatSync`, not `statSync`, and the reason is the write that follows rather than this read.
+ * `statSync` resolves a symlink, so a symlinked target would be read *through* and then written
+ * through — clobbering a file outside the working tree that the operator never named. Someone
+ * pointing `.claude/skills/anchor-context/SKILL.md` at a shared copy in their home directory is
+ * a reasonable thing to have done, and `install` must not quietly overwrite it. `lstat` also
+ * sees a *broken* symlink, which `existsSync` reports as absent — the case that would otherwise
+ * write straight through to a path outside the tree with no existing file to warn about.
+ *
+ * A directory is the other case, and `.cursor/rules` being itself a directory of rules makes a
+ * folder here a plausible mistake. Unchecked, `readFileSync` raises EISDIR, which reaches the
+ * operator as a stack trace saying nothing about what is in the way.
+ *
+ * Deliberately not bypassed by `--force`: that flag means "replace a file I did not write", not
+ * "follow a link out of the repository".
  */
-function readExistingFile(target: string, shown: string): string {
-  if (!statSync(target).isFile()) {
+function readRegularFile(target: string, shown: string): string | undefined {
+  const stats = lstatSync(target, { throwIfNoEntry: false });
+  if (!stats) {
+    return undefined;
+  }
+  if (stats.isSymbolicLink()) {
+    throw new CliUsageError(
+      `${shown} is a symbolic link. Writing it would change whatever it points at, outside this ` +
+        `checkout; remove the link and run this again.`,
+    );
+  }
+  if (!stats.isFile()) {
     throw new CliUsageError(`${shown} exists but is not a regular file. Move it aside and run this again.`);
   }
   return readFileSync(target, "utf8");
