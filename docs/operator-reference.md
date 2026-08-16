@@ -58,6 +58,32 @@ anchor-mcp stop        # stop the detached server
 A bare `anchor-mcp` with no subcommand still serves, so existing MCP client stanzas need
 no change. The subcommand must come first, before any flags.
 
+## Agent Skill
+
+```sh
+anchor-mcp install                     # .claude/skills/ and .cursor/rules/ in this directory
+anchor-mcp install --agent cursor      # one harness only
+anchor-mcp install --stealth           # keep it out of git
+anchor-mcp install --force             # replace a same-named file anchor-mcp did not write
+```
+
+`install` writes into the current working directory — the project being edited, not the
+anchor repository `--repo` points at. The skill's job is to tell an agent when to consult the
+anchors, so it has to be where a coding session looks. It builds no runtime and touches no
+database, which means it works before either exists.
+
+The installed rule triggers on a **topic shift** rather than at session start: `startTask`
+fires before the topic is known, and the topic changes several times before a session ends.
+It also states precedence — an anchor beats AGENTS.md, and a conflict between them is
+reported to the operator rather than quietly resolved.
+
+`--stealth` sends the Claude Code skill to `~/.claude/skills/`, outside any repository, where
+it applies to every project. Cursor has no equivalent: project rules come from `.cursor/rules`
+and its User Rules are settings text rather than files, so the Cursor rule stays in the working
+tree and is appended to `.git/info/exclude` — per clone, never committed. In a linked worktree
+the exclude is written to the git dir the `.git` file points at, so it applies where the file
+actually is.
+
 `start`, `stop`, and `restart` apply only to the **HTTP** transport. A stdio server is a
 child process of the MCP client that spawned it, with its stdin and stdout wired to that
 client — there is typically one per client session, and its lifecycle belongs to the

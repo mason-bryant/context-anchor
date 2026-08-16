@@ -5,6 +5,7 @@ import type { AnchorSchemaMode, FileLoggingConfig, LoggingConfig, RequestLogging
 import { ANCHOR_SCHEMA_MODES } from "../types.js";
 import { assertValidDatabaseUrl, resolveDatabaseConfig, type DatabaseConfig, type TelemetryRetentionSettings } from "../db/config.js";
 import { parseDbCliArgs, type DbCliArgs } from "../db/cliArgs.js";
+import { parseSkillAgents, type InstallSkillArgs } from "./installSkill.js";
 import { expandHome } from "../utils/path.js";
 import { DEFAULT_GRAPH_SCORING_ENABLED, DEFAULT_GRAPH_SCORING_MAX_BOOST, clampGraphScoringMaxBoost } from "../graph/proximity.js";
 
@@ -18,7 +19,21 @@ Commands (default: serve)
   stop                          Stop the detached HTTP server started by \`start\`
   restart                       stop, wait for the port, then start
   status                        Report resolved config, database, and whether a server is up
+  install                       Write the agent skill into the project in the current directory
   db <command>                  Manage the database (see below)
+
+Install
+  --agent <list>                claude, cursor, or both (default: both)
+  --stealth                     Keep the install out of git
+  --force                       Overwrite a file of the same name that anchor-mcp did not write
+
+  \`install\` writes into the working directory, not the anchor repository: the skill tells an
+  agent when to consult the anchors, so it belongs beside the code being edited. Re-run it to
+  upgrade — a file anchor-mcp wrote is replaced, one it did not is refused without \`--force\`.
+
+  \`--stealth\` puts the Claude Code skill in ~/.claude, where it covers every project. Cursor
+  reads rules only from .cursor/rules in the project, so its file stays there and is added to
+  .git/info/exclude, which is per-clone and never committed.
 
 Database commands
   db start                      Start the local Postgres container and apply migrations
@@ -100,7 +115,7 @@ export const THREE_SOURCE_KEYS = [
   "repo",
 ] as const;
 
-export const CLI_COMMANDS = ["serve", "start", "stop", "restart", "status", "db"] as const;
+export const CLI_COMMANDS = ["serve", "start", "stop", "restart", "status", "install", "db"] as const;
 export type CliCommand = (typeof CLI_COMMANDS)[number];
 
 export type CliOptions = {
@@ -109,6 +124,8 @@ export type CliOptions = {
   command: CliCommand;
   /** Set only when command is `db`. */
   db?: DbCliArgs;
+  /** Set only when command is `install`. */
+  install?: InstallSkillArgs;
   /** Config file actually used, after --config / ANCHOR_MCP_CONFIG / discovery; undefined when none was found. */
   configPath?: string;
   /** True when the caller asked for usage; nothing else in this object is meaningful. */
@@ -173,6 +190,15 @@ export function parseCliArgs(
     assertNoStraySubcommand(positionals);
   }
 
+  const install =
+    command === "install"
+      ? {
+          agents: parseSkillAgents(stringFlag(flags, "agent")),
+          stealth: booleanFlag(flags, "stealth"),
+          force: booleanFlag(flags, "force"),
+        }
+      : undefined;
+
   const configPath = resolveConfigPath(flags, env, options.cwd ?? process.cwd());
   const fileConfig = readConfigFile(configPath);
   const repo =
@@ -205,6 +231,7 @@ export function parseCliArgs(
     help: false,
     command,
     ...(db ? { db } : {}),
+    ...(install ? { install } : {}),
     ...(configPath ? { configPath } : {}),
     transport,
     transportExplicit: chosenTransport !== undefined,
@@ -355,6 +382,7 @@ const VALUE_FLAGS = new Set([
   "auth-token",
   "graph-scoring-max-boost",
   "database-url",
+  "agent",
 ]);
 
 /**

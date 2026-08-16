@@ -33,6 +33,15 @@ For reproducible installs, pin the current release:
 npx -y @mason/anchor-mcp@2.1.0 --repo ~/agent-context
 ```
 
+Then, in the project you are working in, install the agent skill so Claude Code and Cursor
+consult the anchors when the topic changes rather than only at session start:
+
+```sh
+npx -y @mason/anchor-mcp@latest install
+```
+
+Add `--stealth` to keep it out of a shared repository.
+
 For setup walkthroughs, see [QUICKSTART.md](QUICKSTART.md).
 
 ## Key Benefits
