@@ -182,6 +182,43 @@ describe("anchor-mcp install", () => {
     expect(existsSync(outside)).toBe(false);
   });
 
+  /**
+   * mkdirSync and writeFileSync both follow symlinked ancestors, so a linked `.cursor` puts the
+   * file outside the checkout. Reported rather than refused: the link is usually deliberate
+   * (`~/.claude` into a dotfiles repo is a common arrangement, and --stealth writes there by
+   * design), and nothing is destroyed -- an existing file at the far end is still refused
+   * unless anchor-mcp wrote it. What was wrong was that it happened without saying so.
+   */
+  it("says so when a symlinked parent directory puts the file outside the checkout", () => {
+    const { cwd, home } = project();
+    const outside = join(cwd, "..", "elsewhere");
+    mkdirSync(join(outside, "rules"), { recursive: true });
+    symlinkSync(outside, join(cwd, ".cursor"));
+
+    const report = installSkill({ ...defaults, agents: ["cursor"] }, { cwd, home });
+    expect(report.join("\n")).toMatch(/note: a symlinked directory put this outside/);
+    expect(existsSync(join(outside, "rules", "anchor-context.mdc"))).toBe(true);
+  });
+
+  it("still refuses a foreign file reached through a symlinked parent", () => {
+    const { cwd, home } = project();
+    const outside = join(cwd, "..", "elsewhere");
+    mkdirSync(join(outside, "rules"), { recursive: true });
+    symlinkSync(outside, join(cwd, ".cursor"));
+    const leaf = join(outside, "rules", "anchor-context.mdc");
+    writeFileSync(leaf, "someone else's rule\n", "utf8");
+
+    expect(() => installSkill({ ...defaults, agents: ["cursor"] }, { cwd, home })).toThrow(/--force/);
+    expect(readFileSync(leaf, "utf8")).toBe("someone else's rule\n");
+  });
+
+  /** The common case must stay quiet, or the note is noise nobody reads. */
+  it("adds no note for an ordinary install", () => {
+    const { cwd, home } = project();
+    const report = installSkill({ ...defaults }, { cwd, home });
+    expect(report.join("\n")).not.toContain("note:");
+  });
+
   /** `.cursor/rules` is itself a directory of rules, so a directory at this path is a plausible mistake. */
   it("reports a directory in the way instead of raising EISDIR", () => {
     const { cwd, home } = project();

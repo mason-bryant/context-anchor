@@ -10,9 +10,9 @@
  * Within that checkout the target is the working-tree root rather than the current directory —
  * see findCheckout below for why.
  */
-import { existsSync, lstatSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join, relative, resolve } from "node:path";
+import { dirname, join, relative, resolve, sep } from "node:path";
 
 import { SKILL_SLUG, renderClaudeSkill, renderCursorRule, wasWrittenByUs } from "../builtin/agentSkill.js";
 import { CliUsageError } from "./errors.js";
@@ -38,6 +38,8 @@ export type InstallSkillOptions = {
 type Placement = {
   agent: SkillAgent;
   path: string;
+  /** The tree this install is meant to stay inside, for reporting when a symlink sends it elsewhere. */
+  boundary: string;
   render: () => string;
   /**
    * Set when a stealth install had to land inside the working tree anyway, because the harness
@@ -59,6 +61,7 @@ function placementFor(agent: SkillAgent, args: InstallSkillArgs, cwd: string, ho
     return {
       agent,
       path: join(root, ".claude", "skills", SKILL_SLUG, "SKILL.md"),
+      boundary: root,
       render: renderClaudeSkill,
       needsLocalExclude: false,
     };
@@ -67,6 +70,7 @@ function placementFor(agent: SkillAgent, args: InstallSkillArgs, cwd: string, ho
   return {
     agent,
     path: join(cwd, ".cursor", "rules", `${SKILL_SLUG}.mdc`),
+    boundary: cwd,
     render: renderCursorRule,
     needsLocalExclude: args.stealth,
   };
@@ -108,7 +112,31 @@ function write(placement: Placement, force: boolean, cwd: string): string[] {
 
   mkdirSync(dirname(placement.path), { recursive: true });
   writeFileSync(placement.path, contents, "utf8");
-  return [`${placement.agent}: wrote     ${shown}`];
+  return [`${placement.agent}: wrote     ${shown}`, ...escapeNote(placement.path, placement.boundary)];
+}
+
+/**
+ * A line when a symlinked parent directory has sent the file outside the tree it was installed
+ * into. `mkdirSync` and `writeFileSync` both follow symlinked ancestors, so `.cursor` or
+ * `~/.claude` being a link puts the file somewhere the operator did not name.
+ *
+ * Reported rather than refused, because that link is usually deliberate: `~/.claude` pointing
+ * into a dotfiles repository is a common arrangement, and `--stealth` writes there by design.
+ * Nothing is destroyed either way -- an existing file at the far end is still read through
+ * `readRegularFile` and refused unless anchor-mcp wrote it -- so the only defect worth fixing
+ * is that it happened silently.
+ *
+ * Compared after resolving both sides: on macOS a temporary directory under /var already
+ * resolves to /private/var, so comparing a resolved path against an unresolved boundary would
+ * report an escape for every install run there.
+ */
+function escapeNote(target: string, boundary: string): string[] {
+  const resolvedBoundary = realpathSync(boundary);
+  const resolvedDir = realpathSync(dirname(target));
+  if (resolvedDir === resolvedBoundary || resolvedDir.startsWith(resolvedBoundary + sep)) {
+    return [];
+  }
+  return [`  note: a symlinked directory put this outside ${boundary}, at ${resolvedDir}`];
 }
 
 /**
@@ -133,7 +161,7 @@ function excludeLocally(target: string, root: string, gitDir: string | undefined
   mkdirSync(dirname(excludePath), { recursive: true });
   const separator = existing === "" || existing.endsWith("\n") ? "" : "\n";
   writeFileSync(excludePath, `${existing}${separator}${entry}\n`, "utf8");
-  return [`  excluded in ${display(excludePath, root)}`];
+  return [`  excluded in ${display(excludePath, root)}`, ...escapeNote(excludePath, gitDir)];
 }
 
 /**
