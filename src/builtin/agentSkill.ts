@@ -25,6 +25,9 @@ export const SKILL_SLUG = "anchor-context";
  */
 export const SKILL_MARKER = "installed by anchor-mcp";
 
+/** The whole marker opening, so recognition is as precise as writing it. */
+const MARKER_PREFIX = `<!-- ${SKILL_MARKER} v`;
+
 function packageVersion(): string {
   try {
     const raw = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "../../package.json"), "utf8");
@@ -125,7 +128,21 @@ one moment, with no route, no status, and no way to tell current from retired. A
 `;
 
 function marker(): string {
-  return `<!-- ${SKILL_MARKER} v${packageVersion()} — re-run \`anchor-mcp install\` to update -->`;
+  return `${MARKER_PREFIX}${packageVersion()} — re-run \`anchor-mcp install\` to update -->`;
+}
+
+/**
+ * Whether a file at one of our paths is a previous install, which is what decides between
+ * overwriting it and refusing.
+ *
+ * Lives beside `marker()` rather than in the installer, and matches the whole comment opening
+ * at the start of a line rather than the bare words. Testing for the substring alone would
+ * claim a hand-written rule that merely mentions being "installed by anchor-mcp" -- describing
+ * this very file is a plausible thing for such a rule to do -- and then destroy it on the next
+ * upgrade, which is precisely what the check exists to prevent.
+ */
+export function wasWrittenByUs(contents: string): boolean {
+  return contents.split("\n").some((line) => line.startsWith(MARKER_PREFIX));
 }
 
 /**

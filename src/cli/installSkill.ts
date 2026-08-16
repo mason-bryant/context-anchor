@@ -14,12 +14,7 @@ import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "no
 import { homedir } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
 
-import {
-  SKILL_MARKER,
-  SKILL_SLUG,
-  renderClaudeSkill,
-  renderCursorRule,
-} from "../builtin/agentSkill.js";
+import { SKILL_SLUG, renderClaudeSkill, renderCursorRule, wasWrittenByUs } from "../builtin/agentSkill.js";
 import { CliUsageError } from "./errors.js";
 
 export const SKILL_AGENTS = ["claude", "cursor"] as const;
@@ -104,7 +99,7 @@ function write(placement: Placement, force: boolean, cwd: string): string[] {
     if (existing === contents) {
       return [`${placement.agent}: unchanged  ${shown}`];
     }
-    if (!existing.includes(SKILL_MARKER) && !force) {
+    if (!wasWrittenByUs(existing) && !force) {
       throw new CliUsageError(
         `${shown} exists and was not written by anchor-mcp. Move it aside, or pass --force to overwrite it.`,
       );

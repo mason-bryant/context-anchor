@@ -123,6 +123,21 @@ describe("anchor-mcp install", () => {
     expect(readFileSync(join(cwd, CURSOR_PATH), "utf8")).toBe("a rule someone wrote by hand\n");
   });
 
+  /**
+   * A hand-written rule at this path talking *about* the installer is a plausible thing to
+   * find, and recognising it by the bare words "installed by anchor-mcp" would call it ours and
+   * destroy it on the next upgrade -- the exact outcome the guard exists to prevent.
+   */
+  it("refuses a hand-written file that merely mentions the marker text", () => {
+    const { cwd, home } = project();
+    const hand = `# our own rule\n\nThis replaces the one ${SKILL_MARKER} writes.\n`;
+    mkdirSync(join(cwd, ".cursor", "rules"), { recursive: true });
+    writeFileSync(join(cwd, CURSOR_PATH), hand, "utf8");
+
+    expect(() => installSkill({ ...defaults, agents: ["cursor"] }, { cwd, home })).toThrow(/--force/);
+    expect(readFileSync(join(cwd, CURSOR_PATH), "utf8")).toBe(hand);
+  });
+
   it("overwrites a foreign file with --force", () => {
     const { cwd, home } = project();
     mkdirSync(join(cwd, ".cursor", "rules"), { recursive: true });
