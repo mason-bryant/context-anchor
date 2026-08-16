@@ -44,14 +44,41 @@ const WITHOUT_OUTPUT_SCHEMA = new Set([
   "writePeopleRegistry", "writeProjectMappings",
 ]);
 
+/**
+ * Database-backed tools, registered only when a knowledgeDb is supplied.
+ *
+ * A separate list because they are a separate registry. The first version of this file built the
+ * server without a backend and checked only what that produced -- so every db tool was outside
+ * the guard entirely, and a new one with no outputSchema would have passed while this file
+ * claimed to prevent exactly that. Raised in review.
+ */
+const DB_TOOLS_WITHOUT_OUTPUT_SCHEMA = new Set([
+  "addCitation", "createAssertion", "createAssertionRelation", "importDocuments",
+  "listScopeChanges", "listScopes", "planRoutedBundle", "reportRecordUse", "retireAssertion",
+  "setAssertionStatus", "setRecordScopes", "updateAssertion",
+]);
+
 describe("MCP tool output schemas", () => {
   const registry = createAnchorMcpServer({} as AnchorService) as unknown as Registry;
   const names = Object.keys(registry._registeredTools).sort();
 
+  // Constructed with a backend so the db-only tools register. The stub is never called: this
+  // file reads the registry rather than invoking anything.
+  const dbRegistry = createAnchorMcpServer({} as AnchorService, {
+    knowledgeDb: {} as never,
+  }) as unknown as Registry;
+  const dbNames = Object.keys(dbRegistry._registeredTools).sort();
+  const dbOnly = dbNames.filter((name) => !names.includes(name));
+
   it("registers tools at all, so an empty registry cannot pass every check here", () => {
-    // Both assertions below iterate the registry. A construction failure that produced no tools
-    // would satisfy them vacuously, which is exactly how a coverage guard stops guarding.
-    expect(names.length).toBeGreaterThan(50);
+    // The checks below iterate the registry, so a construction failure producing no tools would
+    // satisfy them vacuously -- which is exactly how a coverage guard stops guarding.
+    //
+    // Named rather than counted. A threshold fails on a legitimate tool removal, which teaches
+    // whoever hits it that this file is noise; a tool that must exist for the server to be a
+    // server does not move when the surface is refactored.
+    expect(names.length).toBeGreaterThan(0);
+    expect(names).toContain("readAnchor");
   });
 
   it("requires a new tool to declare what it returns", () => {
@@ -61,6 +88,22 @@ describe("MCP tool output schemas", () => {
     // A tool reaching here is new since 2026-08-16. Declare its outputSchema rather than adding
     // it to the list: the list is a record of debt that predates the rule, not a way past it.
     expect(undeclared).toEqual([]);
+  });
+
+  it("covers the database-backed tools, which register only with a backend", () => {
+    expect(dbOnly.length).toBeGreaterThan(0);
+    const undeclared = dbOnly.filter(
+      (name) =>
+        !dbRegistry._registeredTools[name]!.outputSchema && !DB_TOOLS_WITHOUT_OUTPUT_SCHEMA.has(name),
+    );
+    expect(undeclared).toEqual([]);
+  });
+
+  it("keeps the database burn-down list honest too", () => {
+    const stale = [...DB_TOOLS_WITHOUT_OUTPUT_SCHEMA].filter(
+      (name) => !dbNames.includes(name) || dbRegistry._registeredTools[name]?.outputSchema,
+    );
+    expect(stale).toEqual([]);
   });
 
   it("keeps the burn-down list honest as tools gain schemas or disappear", () => {
