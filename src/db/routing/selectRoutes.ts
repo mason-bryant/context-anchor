@@ -827,23 +827,30 @@ async function loadAssertionRecords(
               jsonb_agg(
                 jsonb_build_object(
                   'quote', c.exact_quote, 'blockGuid', c.block_guid, 'relation', c.relation,
-                  -- True when the cited block is absent from its document's current revision, or
-                  -- absent altogether. content_blocks are revision-scoped and re-minted on every
-                  -- import, so a citation written against revision N keeps returning N's text
-                  -- after N+1 rewrites the passage -- provenance pointing at words the pinned
-                  -- commit does not contain.
+                  -- True when the cited block is not in its document's current revision.
+                  -- content_blocks are revision-scoped and re-minted on every import, so a
+                  -- citation written against revision N keeps returning N's text after N+1
+                  -- rewrites the passage -- provenance pointing at words the pinned commit does
+                  -- not contain.
                   --
-                  -- IS DISTINCT FROM rather than <> so a missing block, whose NULL revision would
-                  -- make <> yield NULL, reads as stale rather than as null. Unreachable today --
-                  -- nothing deletes content_blocks, and re-import mints new ones beside the old --
-                  -- so a mutation swapping it for <> passes every test here. Kept because the
-                  -- alternative emits a null into a boolean field, which every reader would
-                  -- treat as false.
-                  'stale', cdr.revision_number IS DISTINCT FROM (
-                     SELECT max(cdr2.revision_number)
-                       FROM "${schemaName}".document_revisions cdr2
-                      WHERE cdr2.workspace_guid = cdr.workspace_guid
-                        AND cdr2.document_guid = cdr.document_guid)
+                  -- Phrased as "stale unless provably current" rather than as an inequality. A
+                  -- review round of mine claimed IS DISTINCT FROM made an absent block read as
+                  -- stale; it does not. With no block row, cdr.document_guid is NULL, so the
+                  -- subquery matches nothing and returns NULL too -- and NULL IS DISTINCT FROM
+                  -- NULL is false, reporting a citation with no source at all as perfectly
+                  -- current. coalesce(..., false) cannot invert like that.
+                  --
+                  -- That arm is unreachable today, and by the schema rather than by convention:
+                  -- source_citations has a foreign key to content_blocks, so a citation without
+                  -- its block cannot be written. Only the superseded-revision case is testable
+                  -- here; the other exists so the expression stays right if that key ever moves.
+                  'stale', NOT coalesce(
+                     cdr.revision_number = (
+                       SELECT max(cdr2.revision_number)
+                         FROM "${schemaName}".document_revisions cdr2
+                        WHERE cdr2.workspace_guid = cdr.workspace_guid
+                          AND cdr2.document_guid = cdr.document_guid),
+                     false)
                 )
                 -- created_at alone is not a total order: now() is constant within a
                 -- transaction, so citations written together share a timestamp and their
