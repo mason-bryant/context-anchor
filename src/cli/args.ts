@@ -5,6 +5,7 @@ import type { AnchorSchemaMode, FileLoggingConfig, LoggingConfig, RequestLogging
 import { ANCHOR_SCHEMA_MODES } from "../types.js";
 import { assertValidDatabaseUrl, resolveDatabaseConfig, type DatabaseConfig, type TelemetryRetentionSettings } from "../db/config.js";
 import { parseDbCliArgs, type DbCliArgs } from "../db/cliArgs.js";
+import { SKILL_AGENTS, parseSkillAgents, type InstallSkillArgs } from "./installSkill.js";
 import { expandHome } from "../utils/path.js";
 import { DEFAULT_GRAPH_SCORING_ENABLED, DEFAULT_GRAPH_SCORING_MAX_BOOST, clampGraphScoringMaxBoost } from "../graph/proximity.js";
 
@@ -18,7 +19,23 @@ Commands (default: serve)
   stop                          Stop the detached HTTP server started by \`start\`
   restart                       stop, wait for the port, then start
   status                        Report resolved config, database, and whether a server is up
+  install                       Write the agent skill into the surrounding project checkout
   db <command>                  Manage the database (see below)
+
+Install
+  --agent <list>                ${SKILL_AGENTS.join(" and/or ")}, comma-separated (default: all)
+  --stealth                     Keep the install out of git
+  --force                       Overwrite a file of the same name that anchor-mcp did not write
+
+  \`install\` writes into the project being edited, not the anchor repository: the skill tells
+  an agent when to consult the anchors, so it belongs beside the code. Run it from anywhere in
+  the checkout — it installs at the working-tree root, which is where both harnesses read from.
+  Re-run it to upgrade: a file anchor-mcp wrote is replaced, one it did not is refused without
+  \`--force\`.
+
+  \`--stealth\` puts the Claude Code skill in ~/.claude, where it covers every project. Cursor
+  reads rules only from .cursor/rules in the project, so its file stays there and is added to
+  .git/info/exclude, which is per-clone and never committed.
 
 Database commands
   db start                      Start the local Postgres container and apply migrations
@@ -100,7 +117,7 @@ export const THREE_SOURCE_KEYS = [
   "repo",
 ] as const;
 
-export const CLI_COMMANDS = ["serve", "start", "stop", "restart", "status", "db"] as const;
+export const CLI_COMMANDS = ["serve", "start", "stop", "restart", "status", "install", "db"] as const;
 export type CliCommand = (typeof CLI_COMMANDS)[number];
 
 export type CliOptions = {
@@ -109,6 +126,8 @@ export type CliOptions = {
   command: CliCommand;
   /** Set only when command is `db`. */
   db?: DbCliArgs;
+  /** Set only when command is `install`. */
+  install?: InstallSkillArgs;
   /** Config file actually used, after --config / ANCHOR_MCP_CONFIG / discovery; undefined when none was found. */
   configPath?: string;
   /** True when the caller asked for usage; nothing else in this object is meaningful. */
@@ -135,7 +154,7 @@ export function parseCliArgs(
   // how to use it never depends on being correctly configured — including not depending on
   // the default anchor repository existing, which on a fresh machine it does not.
   if (argv.includes("--help") || argv.includes("-h")) {
-    return helpOnlyOptions();
+    return unconfiguredOptions({ help: true, command: "serve" });
   }
 
   const { command, rest } = takeSubcommand(argv);
@@ -171,6 +190,23 @@ export function parseCliArgs(
   const db = command === "db" ? parseDbCliArgs(dbArgv(positionals, flags)) : undefined;
   if (command !== "db") {
     assertNoStraySubcommand(positionals);
+  }
+
+  // Resolved and returned before any configuration is read, for the same reason `--help` is:
+  // installing the skill uses no server setting, and the moment a new user runs it is exactly
+  // the moment nothing is set up yet. Falling through would make `install` fail on a malformed
+  // anchor-mcp.config.json in the current directory, or on a DATABASE_URL exported for
+  // something else entirely -- neither of which it would have gone on to read.
+  if (command === "install") {
+    return unconfiguredOptions({
+      help: false,
+      command,
+      install: {
+        agents: parseSkillAgents(stringFlag(flags, "agent")),
+        stealth: booleanFlag(flags, "stealth"),
+        force: booleanFlag(flags, "force"),
+      },
+    });
   }
 
   const configPath = resolveConfigPath(flags, env, options.cwd ?? process.cwd());
@@ -258,14 +294,12 @@ export function parseCliArgs(
 }
 
 /**
- * A structurally valid CliOptions for the help path. None of it is used — the caller prints
- * usage and exits — but returning a complete object keeps CliOptions free of optional fields
- * that every other consumer would then have to narrow.
+ * A structurally valid CliOptions for the paths that resolve no configuration. None of the
+ * server settings are used — the caller prints usage, or writes two files — but returning a
+ * complete object keeps CliOptions free of optional fields every other consumer would narrow.
  */
-function helpOnlyOptions(): CliOptions {
+function unconfiguredOptions(overrides: Partial<CliOptions> & Pick<CliOptions, "help" | "command">): CliOptions {
   return {
-    help: true,
-    command: "serve",
     transport: "stdio",
     transportExplicit: false,
     host: "127.0.0.1",
@@ -281,6 +315,7 @@ function helpOnlyOptions(): CliOptions {
       staleAfterDays: 45,
       graphScoring: { enabled: DEFAULT_GRAPH_SCORING_ENABLED, maxBoost: DEFAULT_GRAPH_SCORING_MAX_BOOST },
     },
+    ...overrides,
   };
 }
 
@@ -355,6 +390,7 @@ const VALUE_FLAGS = new Set([
   "auth-token",
   "graph-scoring-max-boost",
   "database-url",
+  "agent",
 ]);
 
 /**

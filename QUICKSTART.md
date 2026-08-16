@@ -151,13 +151,48 @@ for broader discovery. If you only need the index, call **`contextRoot`** instea
 
 If `truncated` is true or the response is too large: pass **`nextCursor`** from the prior response, or lower **`limit`** / **`maxBytes`**, or set **`includeContent`** to `excerpt` or `none`.
 
-### Cursor rule snippet (recommended)
+## Mid-session: install the agent skill (recommended)
 
-Put this in `.cursor/rules/` (or global Cursor rules) so it survives buried MCP `instructions`:
+Opening with `startTask` is not enough on its own. The topic changes several times in a
+session — "now write the design doc", "now add a migration" — and each change is a new
+question the anchors may already answer. What agents do instead is answer it from AGENTS.md,
+or from nothing, because retrieval already happened once and felt done.
+
+Run this anywhere inside the project you are working in — the code checkout, not the anchor
+repository. It installs at the working-tree root, which is where both harnesses read from:
+
+```bash
+npx -y @mason/anchor-mcp@latest install
+```
+
+It writes `.claude/skills/anchor-context/SKILL.md` and `.cursor/rules/anchor-context.mdc`:
+one instruction set, in the two places Claude Code and Cursor each look. Both harnesses load
+it on demand from its description, so it costs nothing until the topic actually shifts. Narrow
+it with `--agent claude` or `--agent cursor`. Re-run it after an upgrade — a file anchor-mcp
+wrote is replaced, and one it did not is refused unless you pass `--force`.
+
+To keep the install out of a repository you share:
+
+```bash
+npx -y @mason/anchor-mcp@latest install --stealth
+```
+
+The Claude Code skill then goes to `~/.claude/skills/`, where it covers every project. Cursor
+reads project rules only from `.cursor/rules` — its User Rules are settings text, not files —
+so that one stays where it is and gets added to `.git/info/exclude`, which is per-clone and
+never committed. Either way there is nothing for your teammates to review.
+
+The skill tells the agent to route on a topic shift, to take nothing when the routes match
+only weakly, to report what it used via `reportRecordUse`, and to follow the anchor when an
+anchor and AGENTS.md disagree — while reading both, so the conflict gets reported to you
+rather than silently resolved.
+
+### Rules the skill does not cover
+
+These are session hygiene rather than retrieval; add them to your own rules file if you want
+them enforced:
 
 ```md
-- Before any non-trivial tool use, call anchor-mcp `startTask` when you know the project and task; otherwise call `loadContext` first (or `contextRoot` if only the index is needed).
 - If overloaded or `truncated`: use `nextCursor`, or reduce `limit` / `maxBytes`, or set `includeContent` to `excerpt` or `none`.
-- Do not locate anchors via filesystem search; use MCP tools only.
 - For project updates or backlog requests, load built-in `server-rules/project-updates.md`; backlog tasks go on the reserved `milestone_id: backlog` milestone without `sequence`, invented dates, owners, or goal ids.
 ```

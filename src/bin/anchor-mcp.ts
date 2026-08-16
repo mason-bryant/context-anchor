@@ -6,6 +6,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/server";
 import { HELP_TEXT, parseCliArgs, type CliOptions } from "../cli/args.js";
 import { runDbCommand } from "../cli/dbCommands.js";
 import { CliUsageError, isCliUsageError } from "../cli/errors.js";
+import { installSkill } from "../cli/installSkill.js";
 import { runtimePaths, startServer, stopServer, waitForPortFree } from "../cli/lifecycle.js";
 import { statusReport } from "../cli/status.js";
 import { COMPOSE_MANAGED_DATABASE_URL } from "../db/cliArgs.js";
@@ -35,6 +36,9 @@ async function main(): Promise<void> {
     case "status":
       console.log((await statusReport(options)).join("\n"));
       return;
+    case "install":
+      install(options);
+      return;
     case "stop":
       await stop(options);
       return;
@@ -48,6 +52,18 @@ async function main(): Promise<void> {
       await serve(options);
       return;
   }
+}
+
+/**
+ * Deliberately does not build a runtime: installing the skill writes two files into the
+ * current project and must work before the anchor repository or the database exist, which is
+ * exactly when a new user runs it.
+ */
+function install(options: CliOptions): void {
+  if (!options.install) {
+    throw new Error("Missing install arguments.");
+  }
+  console.log(installSkill(options.install, { cwd: process.cwd() }).join("\n"));
 }
 
 async function db(options: CliOptions): Promise<void> {
