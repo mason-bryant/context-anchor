@@ -299,15 +299,28 @@ describe("the skill text", () => {
     });
 
     /**
-     * The field names the skill tells an agent to read out of a response.
+     * Every identifier the skill mentions that is a field rather than a tool -- request
+     * parameters (`task`, `routeKeys`, `traceId`) and response fields (`matchReasons`,
+     * `recordLinks`) alike, since the prose names both and the check cannot tell them apart.
      *
-     * Checked against the source below rather than trusted. The first version of this file
+     * Verified against the source below rather than trusted. The first version of this file
      * listed `reasons` here, which no response has ever carried -- the field is `matchReasons`
      * -- so the skill instructed every installed agent to read something that is not there, and
      * the guard meant to catch exactly that waved it through because I had written the name on
      * both sides. An allowlist asserted by the same hand that wrote the prose checks nothing.
      */
-    const RESPONSE_FIELDS = ["traceId", "recordLinks", "matchReasons", "task", "routeKeys", "requestId"];
+    const KNOWN_FIELDS = [
+      "traceId",
+      "recordLinks",
+      "matchReasons",
+      "task",
+      "routeKeys",
+      "requestId",
+      "type",
+      "guid",
+      "routeKey",
+      "stableKey",
+    ];
 
     /** Property names declared where the routed response and the tool inputs are defined. */
     function declaredFields(): Set<string> {
@@ -319,7 +332,7 @@ describe("the skill text", () => {
 
     it("allowlists only field names the code actually declares", () => {
       const declared = declaredFields();
-      expect(RESPONSE_FIELDS.filter((field) => !declared.has(field))).toEqual([]);
+      expect(KNOWN_FIELDS.filter((field) => !declared.has(field))).toEqual([]);
     });
 
     it("names no tool the server does not have", () => {
@@ -327,7 +340,7 @@ describe("the skill text", () => {
       // match planRoutedBundleV2 rather than capturing it, so a versioned rename walks straight
       // past the check.
       const identifiers = [...SKILL_BODY_TEXT.matchAll(/`([a-z][A-Za-z0-9]*)/g)].map((match) => match[1]!);
-      const tools = [...new Set(identifiers)].filter((name) => !RESPONSE_FIELDS.includes(name));
+      const tools = [...new Set(identifiers)].filter((name) => !KNOWN_FIELDS.includes(name));
 
       expect(tools.length).toBeGreaterThan(0);
       expect(tools.filter((tool) => !registered.has(tool))).toEqual([]);

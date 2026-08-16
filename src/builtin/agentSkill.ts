@@ -96,9 +96,20 @@ Every route carries \`matchReasons\` explaining why it matched. Read those first
 - **Zero routes is an answer**, not a failure. This project has recorded nothing here. Proceed
   on your own judgement, and say that is what you are doing.
 
-Once you act on a record, report it: \`reportRecordUse({ requestId, refs, useKind })\`, with the
-\`requestId\` the bundle returned. Nothing else distinguishes a record that was served from one
-that was useful, and that difference is what ranking is built from.
+Once you act on a record, report it with \`reportRecordUse\`, passing the \`requestId\` the bundle
+returned. Every ref carries its \`type\`, its \`guid\`, and the \`routeKey\` of the route that served
+it — a record can belong to several scopes, so without the route the use cannot be attributed.
+Sections carry a \`stableKey\` as well, because their guids are revision-scoped.
+
+    reportRecordUse({
+      requestId,
+      useKind: "<what you did with it>",
+      refs: [{ type: "assertion", guid, routeKey },
+             { type: "section", guid, stableKey, routeKey }]
+    })
+
+Nothing else distinguishes a record that was served from one that was useful, and that
+difference is what ranking is built from.
 
 ## Precedence
 
